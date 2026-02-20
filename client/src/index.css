@@ -331,3 +331,41 @@
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--muted-foreground) / 0.3);
 }
+
+@keyframes nodeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes edgeDraw {
+  from {
+    stroke-dasharray: 1000;
+    stroke-dashoffset: 1000;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-node-in {
+  animation: nodeIn 300ms ease-out;
+}
+
+.react-flow__node {
+  transition: transform 200ms ease, opacity 200ms ease;
+}
+
+.react-flow__edge path {
+  transition: stroke 200ms ease;
+}
+
+.react-flow__controls {
+  bottom: 10px !important;
+  left: 10px !important;
+}

@@ -1,0 +1,47 @@
+Now build the live visual process map in the center panel of the CannonBall Idea Workspace. This is the most important feature in MVP 1.
+
+PROCESS MAP ENGINE
+Use React Flow as the base library. If React Flow cannot deliver the visual quality and live-update behavior described below, build a custom canvas component instead. Do not compromise the experience to fit the library.
+
+PARSING
+After every LLM response, parse the response text for lines matching this pattern:
+[STEP: <name> | ROLE: <role> | SYSTEM: <system> | TYPE: <task/decision/start/end>]
+
+For each parsed step, add or update a node on the process map. Connect nodes in the order they appear. Do not duplicate nodes with the same name — update them if they already exist.
+
+NODE STYLES
+- Start/End: Rounded pill shape, teal fill (#008b9b)
+- Task: Rounded rectangle, dark surface (#242424) with orange left border (#e8450a)
+- Decision: Diamond shape, gold fill (#c8940a)
+- Node label: white text, step name on top, role and system in smaller muted text below
+- Incomplete/ghost nodes (mentioned in conversation but not yet fully described): dashed border, 50% opacity — they solidify when the LLM outputs a full [STEP] tag for them
+
+LIVE UPDATE ANIMATION
+When a new node is added:
+- It fades in and scales up from 0.8 to 1.0 over 300ms
+- The connecting edge draws from the previous node to the new node with a path animation over 400ms
+- The map auto-fits to keep all nodes visible after each addition
+
+This should feel like the process map is painting itself in real time as the SME types.
+
+NODE EDITING
+Every node is clickable. Clicking a node opens an inline edit panel on the right side of the center panel (do not use a modal — keep it in context):
+- Edit step name
+- Edit role
+- Edit system
+- Change type (task/decision/start/end)
+- Add a description/notes field
+- Mark as pain point (adds a red flag icon to the node)
+- Save / Cancel buttons
+
+Right-clicking on the canvas (not on a node) opens a context menu: "Add Step Here". Clicking it adds a new empty node at that position with an edit panel open immediately. When the SME saves that new step, send a message to the LLM: "The SME manually added a step called '{step name}' with role '{role}' after the step '{previous step}'. Please acknowledge this and adjust your understanding of the process accordingly."
+
+Edges between nodes are also clickable. Clicking an edge lets the user add a label (condition, decision branch label, e.g. "Yes / No / Approved / Rejected").
+
+APPROVAL BUTTON
+When the process map has at least 3 nodes, show an "Approve As-Is Map" button at the bottom of the center panel. Clicking it:
+- Opens a confirmation modal: "By approving, you are formally signing off on this As-Is process map. This action is recorded with your name, role, and timestamp."
+- On confirm: write an approval record to Supabase (approvals table: idea_id, user_id, role, document_type: 'as-is-map', timestamp, version_snapshot of the nodes JSON)
+- The button changes to a green "As-Is Approved ✓" state with the timestamp
+- The stage tracker on the left panel moves "Design" to in-progress
+- A message appears in the chat from the assistant: "Great — As-Is process map approved. I'll now prepare your Process Design Document."

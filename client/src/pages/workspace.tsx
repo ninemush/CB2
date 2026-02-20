@@ -9,10 +9,7 @@ import {
   Check,
   Lock,
   Sparkles,
-  Map,
-  ToggleLeft,
   Bot,
-  ChevronRight,
   File as FileIcon,
   X,
 } from "lucide-react";
@@ -26,6 +23,8 @@ import {
   ResizableHandle,
 } from "@/components/ui/resizable";
 import { PIPELINE_STAGES, type Idea, type PipelineStage, type ChatMessage as DBChatMessage } from "@shared/schema";
+import ProcessMapPanel from "@/components/process-map-panel";
+import { parseStepsFromText } from "@/lib/step-parser";
 
 function getStageBadgeClass(stage: string): string {
   const approvalStages = ["CoE Approval", "Governance / Security Scan"];
@@ -208,6 +207,7 @@ function ChatPanel({ idea }: { idea: Idea }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const streamingMsgRef = useRef<string>("");
 
   const guidance = STAGE_GUIDANCE[idea.stage];
 
@@ -280,6 +280,7 @@ function ChatPanel({ idea }: { idea: Idea }) {
       isStreaming: true,
     };
     setStreamingMsg(streamMsg);
+    streamingMsgRef.current = "";
 
     try {
       const res = await fetch("/api/chat", {
@@ -312,6 +313,7 @@ function ChatPanel({ idea }: { idea: Idea }) {
             try {
               const data = JSON.parse(line.slice(6));
               if (data.token) {
+                streamingMsgRef.current += data.token;
                 setStreamingMsg((prev) =>
                   prev ? { ...prev, content: prev.content + data.token } : prev
                 );
@@ -341,8 +343,58 @@ function ChatPanel({ idea }: { idea: Idea }) {
     } finally {
       setIsStreaming(false);
       setPendingUserMsg(null);
+      const finalContent = streamingMsgRef.current;
       setStreamingMsg(null);
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+
+      if (finalContent) {
+        const steps = parseStepsFromText(finalContent);
+        if (steps.length > 0) {
+          const existingNodes = await fetch(`/api/ideas/${idea.id}/process-map?view=as-is`, { credentials: "include" })
+            .then((r) => r.json())
+            .then((d) => d.nodes || []);
+
+          for (let i = 0; i < steps.length; i++) {
+            const step = steps[i];
+            await fetch(`/api/ideas/${idea.id}/process-nodes`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({
+                viewType: "as-is",
+                name: step.name,
+                role: step.role,
+                system: step.system,
+                nodeType: step.nodeType,
+                orderIndex: existingNodes.length + i,
+              }),
+            });
+          }
+
+          const updatedMap = await fetch(`/api/ideas/${idea.id}/process-map?view=as-is`, { credentials: "include" }).then((r) => r.json());
+          const allNodes = updatedMap.nodes || [];
+
+          for (let i = 1; i < allNodes.length; i++) {
+            const existingEdges = updatedMap.edges || [];
+            const edgeExists = existingEdges.some((e: any) => e.sourceNodeId === allNodes[i - 1].id && e.targetNodeId === allNodes[i].id);
+            if (!edgeExists) {
+              await fetch(`/api/ideas/${idea.id}/process-edges`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({
+                  viewType: "as-is",
+                  sourceNodeId: allNodes[i - 1].id,
+                  targetNodeId: allNodes[i].id,
+                  label: "",
+                }),
+              });
+            }
+          }
+
+          queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "process-map", "as-is"] });
+        }
+      }
     }
   }, [inputValue, attachedFile, isStreaming, idea.id]);
 
@@ -515,58 +567,6 @@ function ChatPanel({ idea }: { idea: Idea }) {
   );
 }
 
-function ProcessMapPanel() {
-  const [activeView, setActiveView] = useState<"as-is" | "to-be">("as-is");
-
-  return (
-    <div className="flex flex-col h-full" data-testid="panel-process-map">
-      <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Map className="h-4 w-4 text-cb-teal" />
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            {activeView === "as-is" ? "As-Is" : "To-Be"} Process Map
-          </h3>
-        </div>
-        <button
-          onClick={() =>
-            setActiveView((v) => (v === "as-is" ? "to-be" : "as-is"))
-          }
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium bg-secondary/50 border border-border hover:bg-secondary transition-colors"
-          data-testid="button-toggle-view"
-        >
-          <ToggleLeft className="h-3 w-3" />
-          <span>As-Is</span>
-          <ChevronRight className="h-2.5 w-2.5 text-muted-foreground" />
-          <span>To-Be</span>
-        </button>
-      </div>
-
-      <div className="flex-1 flex items-center justify-center p-6">
-        <div className="flex flex-col items-center gap-4 max-w-sm text-center">
-          <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-card border border-card-border">
-            <Map className="h-7 w-7 text-muted-foreground/30" />
-          </div>
-          <div className="space-y-2">
-            <h3 className="text-sm font-medium text-foreground/70">
-              {activeView === "as-is"
-                ? "Process map will appear here"
-                : "To-Be map will appear here"}
-            </h3>
-            <p className="text-xs text-muted-foreground/60 leading-relaxed">
-              {activeView === "as-is"
-                ? "As you describe your process in the chat, the AI will visualize each step, decision point, and handoff in a clear flowchart."
-                : "Once the As-Is process is mapped, the AI will generate an optimized To-Be workflow showing where automation removes manual steps."}
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5 text-[10px] text-primary/60 mt-1">
-            <Sparkles className="h-3 w-3" />
-            <span>Powered by AI process mining</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default function Workspace() {
   const [, params] = useRoute("/workspace/:id");
@@ -698,7 +698,7 @@ export default function Workspace() {
           <ResizableHandle withHandle />
 
           <ResizablePanel defaultSize={50} minSize={30}>
-            <ProcessMapPanel />
+            <ProcessMapPanel ideaId={idea.id} />
           </ResizablePanel>
 
           <ResizableHandle withHandle />
