@@ -36,6 +36,10 @@ import {
   Loader2,
   Pencil,
   Trash2,
+  User,
+  Monitor,
+  Bot,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -88,15 +92,63 @@ function getConfidenceStyles(confidence: number, isGhost: boolean) {
   return { opacity: 1, borderStyle: "solid" as const, level: "high" };
 }
 
+type PerformerType = "human" | "system" | "hybrid";
+
+function classifyPerformer(role: string, system: string): PerformerType {
+  const r = (role || "").toLowerCase().trim();
+  const s = (system || "").toLowerCase().trim();
+  const humanKeywords = ["customer", "user", "officer", "clerk", "analyst", "manager", "agent", "specialist", "admin", "employee", "staff", "reviewer", "approver", "supervisor"];
+  const systemKeywords = ["system", "api", "bot", "erp", "crm", "app", "platform", "email", "sms", "portal", "database", "server", "automation", "rpa", "mobile"];
+  const isHuman = humanKeywords.some((k) => r.includes(k));
+  const isSystem = systemKeywords.some((k) => r.includes(k) || s.includes(k));
+  if (isHuman && isSystem) return "hybrid";
+  if (isSystem) return "system";
+  if (isHuman) return "human";
+  if (s && s !== "manual") return "system";
+  return "human";
+}
+
+function PerformerBadge({ performer, size = "normal" }: { performer: PerformerType; size?: "normal" | "small" }) {
+  const iconSize = size === "small" ? "h-2.5 w-2.5" : "h-3 w-3";
+  const textSize = size === "small" ? "text-[7px]" : "text-[8px]";
+  const padding = size === "small" ? "px-1 py-0" : "px-1.5 py-0.5";
+
+  if (performer === "human") {
+    return (
+      <span className={`inline-flex items-center gap-0.5 ${padding} rounded-full bg-blue-500/20 border border-blue-500/30 ${textSize} text-blue-300 font-medium`} data-testid="badge-performer-human">
+        <User className={iconSize} />
+        Human
+      </span>
+    );
+  }
+  if (performer === "system") {
+    return (
+      <span className={`inline-flex items-center gap-0.5 ${padding} rounded-full bg-purple-500/20 border border-purple-500/30 ${textSize} text-purple-300 font-medium`} data-testid="badge-performer-system">
+        <Monitor className={iconSize} />
+        System
+      </span>
+    );
+  }
+  return (
+    <span className={`inline-flex items-center gap-0.5 ${padding} rounded-full bg-amber-500/20 border border-amber-500/30 ${textSize} text-amber-300 font-medium`} data-testid="badge-performer-hybrid">
+      <User className={iconSize} />
+      <Monitor className={iconSize} />
+      Hybrid
+    </span>
+  );
+}
+
 function ProcessNodeComponent({ data, id }: { data: any; id: string }) {
   const nodeType = data.nodeType || "task";
   const isGhost = data.isGhost;
   const isPainPoint = data.isPainPoint;
   const confidence = getNodeConfidence(data);
   const confStyle = getConfidenceStyles(confidence, isGhost);
+  const performer = classifyPerformer(data.role || "", data.system || "");
+  const isAutomated = (data.description || "").startsWith("[AUTOMATED]");
+  const isToBeView = data.viewType === "to-be";
 
   const baseClasses = "relative transition-all duration-300";
-  const ghostClasses = isGhost ? "opacity-50 border-dashed" : "";
 
   if (nodeType === "start" || nodeType === "end") {
     return (
@@ -125,27 +177,35 @@ function ProcessNodeComponent({ data, id }: { data: any; id: string }) {
     return (
       <div
         className={`${baseClasses} cursor-pointer`}
-        style={{ width: 140, height: 100, opacity: confStyle.opacity }}
+        style={{ width: 160, height: 120, opacity: confStyle.opacity }}
         data-testid={`node-${id}`}
       >
         <Handle type="target" position={Position.Left} className="!bg-[#c8940a] !border-[#daa520] !w-2 !h-2" style={{ top: "50%" }} />
         <div
-          className="absolute inset-0 flex flex-col items-center justify-center"
+          className="absolute flex flex-col items-center justify-center"
           style={{
             transform: "rotate(45deg)",
-            backgroundColor: confStyle.level === "low" ? "#555" : "#c8940a",
+            backgroundColor: isToBeView && isAutomated ? "#166534" : confStyle.level === "low" ? "#555" : "#c8940a",
             borderRadius: 8,
-            border: `2px ${confStyle.borderStyle} #daa520`,
-            width: "70%",
-            height: "70%",
-            top: "15%",
-            left: "15%",
+            border: `2px ${confStyle.borderStyle} ${isToBeView && isAutomated ? "#22c55e" : "#daa520"}`,
+            width: "65%",
+            height: "65%",
+            top: "10%",
+            left: "17.5%",
           }}
         >
           <div style={{ transform: "rotate(-45deg)" }} className="text-center px-1">
             <div className="text-white text-[10px] font-semibold leading-tight">{data.label}</div>
-            {data.role && <div className="text-white/60 text-[8px] mt-0.5">{data.role}</div>}
+            {data.role && <div className="text-white/60 text-[7px] mt-0.5">{data.role}</div>}
           </div>
+        </div>
+        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 flex items-center gap-1 whitespace-nowrap">
+          <PerformerBadge performer={performer} size="small" />
+          {isToBeView && isAutomated && (
+            <span className="inline-flex items-center gap-0.5 px-1 rounded-full bg-green-500/20 border border-green-500/30 text-[7px] text-green-300 font-medium" data-testid="badge-automated">
+              <Zap className="h-2 w-2" />
+            </span>
+          )}
         </div>
         <Handle type="source" position={Position.Right} className="!bg-[#c8940a] !border-[#daa520] !w-2 !h-2" style={{ top: "50%" }} />
         <Handle type="source" position={Position.Bottom} id="bottom" className="!bg-[#c8940a] !border-[#daa520] !w-2 !h-2" />
@@ -154,30 +214,41 @@ function ProcessNodeComponent({ data, id }: { data: any; id: string }) {
     );
   }
 
+  const automatedBorder = isToBeView && isAutomated;
+
   return (
     <div
       className={`${baseClasses} rounded-lg border cursor-pointer`}
       style={{
-        backgroundColor: confStyle.level === "low" ? "#1a1a1a" : "#242424",
-        borderColor: confStyle.level === "low" ? "#444" : "#333",
+        backgroundColor: automatedBorder ? "#0a2e1a" : confStyle.level === "low" ? "#1a1a1a" : "#242424",
+        borderColor: automatedBorder ? "#22c55e" : confStyle.level === "low" ? "#444" : "#333",
         borderStyle: confStyle.borderStyle,
         borderLeftWidth: 3,
-        borderLeftColor: confStyle.level === "low" ? "#888" : "#e8450a",
+        borderLeftColor: automatedBorder ? "#22c55e" : confStyle.level === "low" ? "#888" : "#e8450a",
         opacity: confStyle.opacity,
-        minWidth: 180,
-        maxWidth: 220,
+        minWidth: 200,
+        maxWidth: 240,
       }}
       data-testid={`node-${id}`}
     >
-      <Handle type="target" position={Position.Left} className="!bg-[#e8450a] !border-[#ff5722] !w-2 !h-2" />
+      <Handle type="target" position={Position.Left} className={automatedBorder ? "!bg-green-500 !border-green-400 !w-2 !h-2" : "!bg-[#e8450a] !border-[#ff5722] !w-2 !h-2"} />
       <div className="px-3 py-2.5">
         <div className="text-white text-xs font-medium leading-tight">{data.label}</div>
         {data.role && <div className="text-gray-400 text-[10px] mt-1">{data.role}</div>}
         {data.system && data.system !== "manual" && (
           <div className="text-gray-500 text-[9px] mt-0.5 italic">{data.system}</div>
         )}
+        <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+          <PerformerBadge performer={performer} />
+          {isToBeView && isAutomated && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-green-500/20 border border-green-500/30 text-[8px] text-green-300 font-medium" data-testid="badge-automated">
+              <Zap className="h-3 w-3" />
+              Automated
+            </span>
+          )}
+        </div>
       </div>
-      <Handle type="source" position={Position.Right} className="!bg-[#e8450a] !border-[#ff5722] !w-2 !h-2" />
+      <Handle type="source" position={Position.Right} className={automatedBorder ? "!bg-green-500 !border-green-400 !w-2 !h-2" : "!bg-[#e8450a] !border-[#ff5722] !w-2 !h-2"} />
       {isPainPoint && <Flag className="absolute -top-2 -right-2 h-3.5 w-3.5 text-red-500 fill-red-500" />}
     </div>
   );
@@ -210,7 +281,7 @@ function CustomEdge({
         path={edgePath}
         style={{
           ...style,
-          stroke: "#555",
+          stroke: data?.viewType === "to-be" ? "#22c55e" : "#555",
           strokeWidth: 2,
           animation: data?.isNew ? "edgeDraw 0.4s ease-out" : undefined,
         }}
@@ -426,7 +497,7 @@ function ContextMenu({
   );
 }
 
-function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "as-is" | "to-be" }) {
+function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "as-is" | "to-be"; }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [editingNode, setEditingNode] = useState<NodeEditData | null>(null);
@@ -473,6 +544,7 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
           isPainPoint: n.isPainPoint,
           description: n.description,
           dbId: n.id,
+          viewType: activeView,
         },
         className: isNew ? "animate-node-in" : "",
       };
@@ -483,8 +555,8 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
       source: String(e.sourceNodeId),
       target: String(e.targetNodeId),
       type: "custom",
-      data: { label: e.label, dbId: e.id },
-      animated: false,
+      data: { label: e.label, dbId: e.id, viewType: activeView },
+      animated: activeView === "to-be",
     }));
 
     setNodes(newNodes);
@@ -876,7 +948,38 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
         </button>
       </div>
 
-      {nodeCount > 0 && !approval && (
+      {activeView === "to-be" && nodeCount > 0 && (
+        <div className="px-4 py-2 border-b border-border" data-testid="automation-impact-bar">
+          {(() => {
+            const nodes = mapData?.nodes || [];
+            const automatedCount = nodes.filter((n) => (n.description || "").startsWith("[AUTOMATED]")).length;
+            const humanCount = nodes.filter((n) => {
+              const p = classifyPerformer(n.role || "", n.system || "");
+              return p === "human" && !(n.description || "").startsWith("[AUTOMATED]");
+            }).length;
+            const systemCount = nodes.filter((n) => classifyPerformer(n.role || "", n.system || "") === "system").length;
+            const totalAutomatable = automatedCount + systemCount;
+            const startEndCount = nodes.filter((n) => n.nodeType === "start" || n.nodeType === "end").length;
+            const processSteps = nodes.length - startEndCount;
+            const automationPct = processSteps > 0 ? Math.round(totalAutomatable / processSteps * 100) : 0;
+            return (
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <Zap className="h-3 w-3 text-green-400" />
+                  <span className="text-[10px] font-semibold text-green-400">{automationPct}% automated</span>
+                </div>
+                <div className="flex items-center gap-2 text-[9px] text-muted-foreground">
+                  <span className="flex items-center gap-0.5"><Zap className="h-2.5 w-2.5 text-green-400" /> {automatedCount} pain points resolved</span>
+                  <span className="flex items-center gap-0.5"><Monitor className="h-2.5 w-2.5 text-purple-400" /> {systemCount} system-driven</span>
+                  <span className="flex items-center gap-0.5"><User className="h-2.5 w-2.5 text-blue-400" /> {humanCount} human-in-loop</span>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {nodeCount > 0 && !approval && activeView === "as-is" && (
         <div className="px-4 py-2 border-b border-border" data-testid="map-completeness-bar">
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] text-muted-foreground font-medium">Map Completeness</span>
@@ -908,12 +1011,12 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
               onClick={() => setShowApprovalConfirm(true)}
               data-testid="button-approve-map"
             >
-              <Check className="h-3 w-3 mr-1" /> Approve As-Is Map
+              <Check className="h-3 w-3 mr-1" /> Approve {activeView === "as-is" ? "As-Is" : "To-Be"} Map
             </Button>
           ) : (
             <div className="flex-1 space-y-2">
               <p className="text-[11px] text-gray-300 leading-relaxed">
-                By approving, you are formally signing off on this As-Is process map. This action is recorded with your name, role, and timestamp.
+                By approving, you are formally signing off on this {activeView === "as-is" ? "As-Is" : "To-Be"} process map. This action is recorded with your name, role, and timestamp.
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -945,7 +1048,7 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
         <div className="px-4 py-2.5 border-t border-border flex items-center gap-2" data-testid="approval-badge">
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-green-500/10 border border-green-500/20">
             <Check className="h-3 w-3 text-green-500" />
-            <span className="text-[11px] text-green-400 font-medium">As-Is Approved</span>
+            <span className="text-[11px] text-green-400 font-medium">{activeView === "as-is" ? "As-Is" : "To-Be"} Approved</span>
           </div>
           <span className="text-[10px] text-gray-500">
             {new Date(approval.approvedAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}
