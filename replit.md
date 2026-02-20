@@ -186,6 +186,9 @@ Automated transitions evaluated after each chat exchange:
 - Skeleton loaders for loading states
 
 ## Recent Changes
+- 2026-02-20: Fixed NuGet package structure for proper UiPath Orchestrator indexing: files now in lib/net45/ with complete project.json (entryPoints, designOptions, runtimeOptions), nuspec dependencies, core-properties. Package uploads verified indexed by Orchestrator feed.
+- 2026-02-20: Added auto-Process (Release) creation after package upload with folder compatibility detection. FolderHierarchy feed type folders get clear error messages with suggested compatible folders.
+- 2026-02-20: Updated AI chat system prompt to accurately describe UiPath deployment capabilities (was incorrectly saying it couldn't push packages)
 - 2026-02-20: Added UiPath Orchestrator integration: Admin Integrations tab for credentials, Push to UiPath button on package cards, OAuth token exchange + NuGet upload
 - 2026-02-20: Added confidence scoring, map completeness bar, automated stage transitions, audit logging
 - 2026-02-20: Built CoE review page, Admin panel (Users/Audit/System), User Guide (9 sections)

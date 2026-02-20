@@ -170,6 +170,17 @@ function buildXaml(className: string, displayName: string, activities: string): 
 </Activity>`;
 }
 
+function generateUuid(): string {
+  const hex = "0123456789abcdef";
+  let uuid = "";
+  for (let i = 0; i < 36; i++) {
+    if (i === 8 || i === 13 || i === 18 || i === 23) uuid += "-";
+    else if (i === 14) uuid += "4";
+    else uuid += hex[Math.floor(Math.random() * 16)];
+  }
+  return uuid;
+}
+
 async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     const buffers: Buffer[] = [];
@@ -182,22 +193,34 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<B
     archive.pipe(passthrough);
 
     const projectName = (pkg.projectName || "Automation").replace(/\s+/g, "_");
+    const libPath = "lib/net45";
 
     const contentTypesXml = `<?xml version="1.0" encoding="utf-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml" />
   <Default Extension="nuspec" ContentType="application/octet" />
-  <Default Extension="xaml" ContentType="application/octet-stream" />
+  <Default Extension="psmdcp" ContentType="application/vnd.openxmlformats-package.core-properties+xml" />
+  <Default Extension="xaml" ContentType="application/octet" />
   <Default Extension="json" ContentType="application/json" />
-  <Default Extension="md" ContentType="text/markdown" />
 </Types>`;
     archive.append(contentTypesXml, { name: "[Content_Types].xml" });
 
+    const corePropsId = generateUuid();
     const relsXml = `<?xml version="1.0" encoding="utf-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="/${projectName}.nuspec" Id="R1" />
+  <Relationship Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="/package/services/metadata/core-properties/${corePropsId}.psmdcp" Id="R2" />
 </Relationships>`;
     archive.append(relsXml, { name: "_rels/.rels" });
+
+    const coreProps = `<?xml version="1.0" encoding="utf-8"?>
+<coreProperties xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://schemas.openxmlformats.org/package/2006/metadata/core-properties">
+  <dc:creator>CannonBall</dc:creator>
+  <dc:description>${escapeXml(pkg.description || projectName)}</dc:description>
+  <dc:identifier>${projectName}</dc:identifier>
+  <version>${version}</version>
+</coreProperties>`;
+    archive.append(coreProps, { name: `package/services/metadata/core-properties/${corePropsId}.psmdcp` });
 
     const deps: Record<string, string> = {
       "UiPath.System.Activities": "[23.10.0]",
@@ -210,19 +233,51 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<B
       }
     }
 
+    const entryPointId = generateUuid();
     const projectJson = {
       name: projectName,
       description: pkg.description || "",
       main: "Main.xaml",
       dependencies: deps,
+      webServices: [],
+      entitiesStores: [],
       schemaVersion: "4.0",
       studioVersion: "23.10.0",
       projectVersion: version,
-      projectType: "Process",
-      targetFramework: "Windows",
-      runtimeOptions: { autoDispose: false, netFrameworkLazyLoading: false },
+      runtimeOptions: {
+        autoDispose: false,
+        netFrameworkLazyLoading: false,
+        isPausable: true,
+        isAttended: false,
+        requiresUserInteraction: false,
+        supportsPersistence: false,
+        executionType: "Workflow",
+        readyForPiP: false,
+        startsInPiP: false,
+        mustRestoreAllDependencies: true,
+      },
+      designOptions: {
+        projectProfile: "Developement",
+        outputType: "Process",
+        libraryOptions: { includeOriginalXaml: false, privateWorkflows: [] },
+        processOptions: { ignoredFiles: [] },
+        fileInfoCollection: [],
+        modernBehavior: false,
+      },
+      expressionLanguage: "VisualBasic",
+      entryPoints: [
+        {
+          filePath: "Main.xaml",
+          uniqueId: entryPointId,
+          input: [],
+          output: [],
+        },
+      ],
+      isTemplate: false,
+      templateProjectData: {},
+      publishData: {},
     };
-    archive.append(JSON.stringify(projectJson, null, 2), { name: "project.json" });
+    archive.append(JSON.stringify(projectJson, null, 2), { name: `${libPath}/project.json` });
 
     const workflows = pkg.workflows || [];
     let hasMain = false;
@@ -238,7 +293,7 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<B
 
       const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
       const xaml = buildXaml(wfName, wf.name || "Main Sequence", activities);
-      archive.append(xaml, { name: `${wfName}.xaml` });
+      archive.append(xaml, { name: `${libPath}/${wfName}.xaml` });
       if (wfName === "Main") hasMain = true;
     }
 
@@ -256,24 +311,12 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<B
         <ui:Comment DisplayName="Process: ${escapeXml(projectName)}" Text="${escapeXml(pkg.description || "")}" />`;
       }
       const mainXaml = buildXaml("Main", `${projectName} - Main Workflow`, mainActivities);
-      archive.append(mainXaml, { name: "Main.xaml" });
+      archive.append(mainXaml, { name: `${libPath}/Main.xaml` });
     }
 
-    const readmeMd = [
-      `# ${projectName}`,
-      ``,
-      pkg.description || "",
-      ``,
-      `## Generated by CannonBall`,
-      `This automation package was generated from the CannonBall automation pipeline.`,
-      `Open this project in UiPath Studio to build out the workflow logic.`,
-      ``,
-      `### Included Workflows`,
-      ...(workflows.length > 0
-        ? workflows.map((wf: any) => `- ${wf.name || "Workflow"}`)
-        : ["- Main.xaml (entry point)"]),
-    ].join("\n");
-    archive.append(readmeMd, { name: "README.md" });
+    const depEntries = Object.entries(deps).map(
+      ([id, ver]) => `      <dependency id="${id}" version="${ver}" />`
+    ).join("\n");
 
     const nuspecXml = `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
@@ -285,6 +328,9 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<B
     <authors>CannonBall</authors>
     <owners>CannonBall</owners>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <dependencies>
+${depEntries}
+    </dependencies>
   </metadata>
 </package>`;
     archive.append(nuspecXml, { name: `${projectName}.nuspec` });
@@ -481,6 +527,26 @@ function folderHeaders(config: UiPathConfig, token: string): Record<string, stri
   return headers;
 }
 
+async function tryCreateRelease(
+  base: string,
+  headers: Record<string, string>,
+  body: Record<string, any>,
+  folderLabel: string
+): Promise<{ ok: boolean; status: number; data?: any; text?: string }> {
+  console.log(`[UiPath] Creating process in ${folderLabel}: ${JSON.stringify(body)}`);
+  const res = await fetch(`${base}/odata/Releases`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  console.log(`[UiPath] Create process response from ${folderLabel} (${res.status}): ${text.slice(0, 500)}`);
+  if (res.ok) {
+    return { ok: true, status: res.status, data: JSON.parse(text) };
+  }
+  return { ok: false, status: res.status, text };
+}
+
 export async function createProcess(
   packageId: string,
   packageVersion: string,
@@ -545,7 +611,7 @@ export async function createProcess(
       };
     }
 
-    const body: Record<string, any> = {
+    const releaseBody: Record<string, any> = {
       Name: processName,
       ProcessKey: packageId,
       ProcessVersion: packageVersion,
@@ -553,29 +619,49 @@ export async function createProcess(
       Description: description || `Created by CannonBall`,
     };
 
-    console.log(`[UiPath] Creating process: ${JSON.stringify(body)}`);
+    const result = await tryCreateRelease(base, headers, releaseBody, config.folderName || "configured folder");
 
-    const res = await fetch(`${base}/odata/Releases`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
-    const text = await res.text();
-    console.log(`[UiPath] Create process response (${res.status}): ${text.slice(0, 500)}`);
-
-    if (!res || !res.ok) {
-      if (res?.status === 403) {
-        return { success: false, message: "Access denied creating process. Ensure your app has OR.Execution scope with Create permission." };
-      }
-      return { success: false, message: `Failed to create process (${res?.status}): ${text.slice(0, 200)}` };
+    if (result.ok) {
+      return {
+        success: true,
+        message: `Process "${result.data.Name}" created successfully (ID: ${result.data.Id}).`,
+        process: result.data,
+      };
     }
 
-    const data = JSON.parse(text);
-    return {
-      success: true,
-      message: `Process "${data.Name}" created successfully (ID: ${data.Id}).`,
-      process: data,
-    };
+    const isPackageNotFound = result.text?.includes("1677") || result.text?.includes("Package not found");
+
+    if (isPackageNotFound) {
+      console.log(`[UiPath] Package not found in configured folder "${config.folderName}" (FeedType may be FolderHierarchy).`);
+
+      let suggestedFolders: string[] = [];
+      try {
+        const foldersRes = await fetch(`${base}/odata/Folders?$top=50&$orderby=DisplayName`, {
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        });
+        if (foldersRes.ok) {
+          const foldersData = await foldersRes.json();
+          suggestedFolders = (foldersData.value || [])
+            .filter((f: any) => f.FeedType === "Processes" && f.IsActive)
+            .slice(0, 5)
+            .map((f: any) => f.DisplayName);
+        }
+      } catch {}
+
+      const suggestion = suggestedFolders.length > 0
+        ? ` Compatible folders in your tenant: ${suggestedFolders.map(n => `"${n}"`).join(", ")}. Update your folder selection in Admin > Integrations.`
+        : " Try switching to a folder with standard feed type in Admin > Integrations.";
+
+      return {
+        success: false,
+        message: `Package "${packageId}" uploaded successfully and is indexed in the feed, but Process (Release) creation failed because folder "${config.folderName}" uses a "FolderHierarchy" feed type which doesn't support API-based Release creation.${suggestion} Alternatively, create the Process manually in Orchestrator from the uploaded package.`,
+      };
+    }
+
+    if (result.status === 403) {
+      return { success: false, message: "Access denied creating process. Ensure your app has OR.Execution scope with Create permission." };
+    }
+    return { success: false, message: `Failed to create process (${result.status}): ${(result.text || "").slice(0, 200)}` };
   } catch (err: any) {
     console.error("[UiPath] Create process error:", err.message);
     return { success: false, message: `Failed to create process: ${err.message}` };
