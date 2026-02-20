@@ -1,6 +1,8 @@
 import { db } from "./db";
 import { appSettings } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import archiver from "archiver";
+import { PassThrough } from "stream";
 
 type UiPathConfig = {
   orgName: string;
@@ -106,8 +108,6 @@ async function getAccessToken(config: UiPathConfig): Promise<string> {
 }
 
 async function buildNuGetPackage(pkg: any): Promise<Buffer> {
-  const archiver = require("archiver");
-  const { PassThrough } = require("stream");
 
   return new Promise<Buffer>((resolve, reject) => {
     const buffers: Buffer[] = [];
