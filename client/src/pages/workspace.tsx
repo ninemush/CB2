@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { queryClient } from "@/lib/queryClient";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useRoute, Link } from "wouter";
 import {
@@ -14,6 +14,7 @@ import {
   File as FileIcon,
   X,
   Package,
+  Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -854,11 +855,28 @@ export default function Workspace() {
   const [selectedCompletedStage, setSelectedCompletedStage] = useState<
     string | null
   >(null);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
 
   const { data: idea, isLoading } = useQuery<Idea>({
     queryKey: ["/api/ideas", ideaId],
     enabled: !!ideaId,
   });
+
+  useEffect(() => {
+    if (idea && !isEditingTitle) {
+      setEditTitle(idea.title);
+    }
+  }, [idea?.title]);
+
+  useEffect(() => {
+    if (isEditingTitle && titleInputRef.current) {
+      titleInputRef.current.focus();
+      titleInputRef.current.select();
+    }
+  }, [isEditingTitle]);
 
   if (isLoading) {
     return (
@@ -884,6 +902,25 @@ export default function Workspace() {
   const currentIndex = PIPELINE_STAGES.indexOf(idea.stage as PipelineStage);
   const completedStages = getCompletedStagesForIdea(idea);
 
+  async function handleTitleSave() {
+    const trimmed = editTitle.trim();
+    if (!trimmed || trimmed === idea!.title) {
+      setEditTitle(idea!.title);
+      setIsEditingTitle(false);
+      return;
+    }
+    try {
+      await apiRequest("PATCH", `/api/ideas/${idea!.id}`, { title: trimmed });
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea!.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas"] });
+      toast({ title: "Idea renamed", description: `Title updated to "${trimmed}"` });
+    } catch {
+      setEditTitle(idea!.title);
+      toast({ title: "Failed to rename", variant: "destructive" });
+    }
+    setIsEditingTitle(false);
+  }
+
   function handleStageClick(stage: string) {
     setSelectedCompletedStage((prev) => (prev === stage ? null : stage));
   }
@@ -903,12 +940,34 @@ export default function Workspace() {
           </Link>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <h1
-                className="text-sm font-semibold text-foreground truncate"
-                data-testid="text-idea-title"
-              >
-                {idea.title}
-              </h1>
+              {isEditingTitle ? (
+                <input
+                  ref={titleInputRef}
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  onBlur={handleTitleSave}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleTitleSave();
+                    if (e.key === "Escape") { setEditTitle(idea.title); setIsEditingTitle(false); }
+                  }}
+                  className="text-sm font-semibold text-foreground bg-transparent border-b border-primary outline-none px-0 py-0.5 min-w-[120px] max-w-[300px]"
+                  data-testid="input-edit-title"
+                />
+              ) : (
+                <button
+                  onClick={() => { setEditTitle(idea.title); setIsEditingTitle(true); }}
+                  className="flex items-center gap-1.5 group cursor-pointer"
+                  data-testid="button-edit-title"
+                >
+                  <h1
+                    className="text-sm font-semibold text-foreground truncate"
+                    data-testid="text-idea-title"
+                  >
+                    {idea.title}
+                  </h1>
+                  <Pencil className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                </button>
+              )}
               <Badge
                 variant="outline"
                 className={`shrink-0 text-[10px] ${getStageBadgeClass(idea.stage)}`}

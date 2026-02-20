@@ -206,10 +206,49 @@ export function registerProcessMapRoutes(app: Express): void {
       snapshotJson: snapshot,
     });
 
+    if (viewType === "as-is") {
+      const existingToBe = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
+      if (existingToBe.length === 0) {
+        const idMap: Record<number, number> = {};
+        for (const node of nodes) {
+          const toBeNode = await processMapStorage.createNode({
+            ideaId,
+            name: node.name,
+            role: node.role,
+            system: node.system,
+            nodeType: node.nodeType,
+            description: node.isPainPoint
+              ? `[AUTOMATED] ${node.description || node.name}`
+              : node.description,
+            isGhost: node.isGhost,
+            isPainPoint: false,
+            viewType: "to-be",
+            orderIndex: node.orderIndex,
+            positionX: node.positionX,
+            positionY: node.positionY,
+          });
+          idMap[node.id] = toBeNode.id;
+        }
+        for (const edge of edges) {
+          if (idMap[edge.sourceNodeId] && idMap[edge.targetNodeId]) {
+            await processMapStorage.createEdge({
+              ideaId,
+              sourceNodeId: idMap[edge.sourceNodeId],
+              targetNodeId: idMap[edge.targetNodeId],
+              label: edge.label,
+              viewType: "to-be",
+            });
+          }
+        }
+      }
+    }
+
     await chatStorage.createMessage(
       ideaId,
       "assistant",
-      "Great \u2014 As-Is process map approved. I'll now prepare your Process Design Document."
+      viewType === "as-is"
+        ? "Great \u2014 As-Is process map approved. I've generated a To-Be process map based on your current workflow. You can switch to the To-Be view to review and refine the optimized version. I'll also now prepare your Process Design Document."
+        : "To-Be process map approved. The optimized workflow has been locked in."
     );
 
     return res.status(201).json(approval);

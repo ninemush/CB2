@@ -139,6 +139,29 @@ export async function registerRoutes(
     return res.status(201).json(idea);
   });
 
+  app.patch("/api/ideas/:id", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const idea = await storage.getIdea(req.params.id as string);
+    if (!idea) return res.status(404).json({ message: "Idea not found" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user) return res.status(401).json({ message: "User not found" });
+    if (idea.ownerEmail !== user.email && user.role !== "Admin") {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+    const { title, description, tag } = req.body;
+    const updates: Record<string, string> = {};
+    if (title && typeof title === "string") updates.title = title.trim();
+    if (description && typeof description === "string") updates.description = description.trim();
+    if (tag !== undefined) updates.tag = tag;
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ message: "No valid fields to update" });
+    }
+    const updated = await storage.updateIdea(idea.id, updates);
+    return res.json(updated);
+  });
+
   app.post("/api/ideas/:id/evaluate-transition", async (req: Request, res: Response) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });

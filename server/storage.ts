@@ -13,6 +13,7 @@ export interface IStorage {
   createIdea(idea: InsertIdea): Promise<Idea>;
   getIdeasByOwnerEmail(email: string): Promise<Idea[]>;
   updateIdeaStage(id: string, stage: string): Promise<Idea | undefined>;
+  updateIdea(id: string, updates: Partial<Pick<Idea, "title" | "description" | "tag">>): Promise<Idea | undefined>;
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(ideaId?: string): Promise<AuditLog[]>;
 }
@@ -59,6 +60,15 @@ export class DatabaseStorage implements IStorage {
     const [updated] = await db
       .update(ideas)
       .set({ stage, updatedAt: new Date() })
+      .where(eq(ideas.id, id))
+      .returning();
+    return updated;
+  }
+
+  async updateIdea(id: string, updates: Partial<Pick<Idea, "title" | "description" | "tag">>): Promise<Idea | undefined> {
+    const [updated] = await db
+      .update(ideas)
+      .set({ ...updates, updatedAt: new Date() })
       .where(eq(ideas.id, id))
       .returning();
     return updated;
