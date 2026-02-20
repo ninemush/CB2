@@ -49,6 +49,7 @@ interface ProcessMapData {
 interface ProcessMapPanelProps {
   ideaId: string;
   onStepsChange?: (count: number) => void;
+  onApproved?: () => void;
 }
 
 const NODE_SPACING_X = 300;
@@ -760,7 +761,7 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
   );
 }
 
-export default function ProcessMapPanel({ ideaId, onStepsChange }: ProcessMapPanelProps) {
+export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved }: ProcessMapPanelProps) {
   const [activeView, setActiveView] = useState<"as-is" | "to-be">("as-is");
 
   const { data: mapData } = useQuery<ProcessMapData>({
@@ -797,6 +798,7 @@ export default function ProcessMapPanel({ ideaId, onStepsChange }: ProcessMapPan
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "process-map", activeView] });
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "messages"] });
+      onApproved?.();
     },
   });
 

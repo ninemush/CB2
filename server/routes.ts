@@ -115,7 +115,7 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
-    const idea = await storage.getIdea(req.params.id);
+    const idea = await storage.getIdea(req.params.id as string);
     if (!idea) {
       return res.status(404).json({ message: "Idea not found" });
     }

@@ -12,6 +12,7 @@ import {
   Bot,
   File as FileIcon,
   X,
+  Package,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +26,7 @@ import {
 import { PIPELINE_STAGES, type Idea, type PipelineStage, type ChatMessage as DBChatMessage } from "@shared/schema";
 import ProcessMapPanel from "@/components/process-map-panel";
 import { parseStepsFromText } from "@/lib/step-parser";
+import { DocumentCard, UiPathPackageCard } from "@/components/document-card";
 
 function getStageBadgeClass(stage: string): string {
   const approvalStages = ["CoE Approval", "Governance / Security Scan"];
@@ -194,6 +196,32 @@ interface ChatMsg {
   content: string;
   timestamp: Date;
   isStreaming?: boolean;
+  docType?: "PDD" | "SDD";
+  docId?: number;
+  uipathData?: any;
+}
+
+function parseMessageMeta(content: string): { docType?: "PDD" | "SDD"; docId?: number; uipathData?: any; displayContent: string } {
+  const docMatch = content.match(/^\[DOC:(PDD|SDD):(\d+)\]/);
+  if (docMatch) {
+    return {
+      docType: docMatch[1] as "PDD" | "SDD",
+      docId: parseInt(docMatch[2]),
+      displayContent: content.slice(docMatch[0].length),
+    };
+  }
+  const uipathMatch = content.match(/^\[UIPATH:([\s\S]*)\]$/);
+  if (uipathMatch) {
+    try {
+      return {
+        uipathData: JSON.parse(uipathMatch[1]),
+        displayContent: "",
+      };
+    } catch {
+      return { displayContent: content };
+    }
+  }
+  return { displayContent: content };
 }
 
 const WELCOME_MESSAGE = `Hi, I'm your automation design assistant. Tell me about the process you want to automate. The more detail you give me, the better.\n\nYou can also upload process maps, videos, or documents.`;
@@ -204,10 +232,65 @@ function ChatPanel({ idea }: { idea: Idea }) {
   const [inputValue, setInputValue] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
+  const [generatingDocType, setGeneratingDocType] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const streamingMsgRef = useRef<string>("");
+
+  const generateDocument = useCallback(async (type: "PDD" | "SDD") => {
+    setIsGeneratingDoc(true);
+    setGeneratingDocType(type);
+    try {
+      const res = await fetch(`/api/ideas/${idea.id}/documents/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ type }),
+      });
+      if (!res.ok) {
+        console.error(`Failed to generate ${type}`);
+      }
+    } catch (err) {
+      console.error(`Error generating ${type}:`, err);
+    } finally {
+      setIsGeneratingDoc(false);
+      setGeneratingDocType("");
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+    }
+  }, [idea.id]);
+
+  const generateUiPath = useCallback(async () => {
+    setIsGeneratingDoc(true);
+    setGeneratingDocType("UiPath");
+    try {
+      const res = await fetch(`/api/ideas/${idea.id}/generate-uipath`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      if (!res.ok) {
+        console.error("Failed to generate UiPath package");
+      }
+    } catch (err) {
+      console.error("Error generating UiPath package:", err);
+    } finally {
+      setIsGeneratingDoc(false);
+      setGeneratingDocType("");
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+    }
+  }, [idea.id]);
+
+  const handleDocApproved = useCallback(async (docType: "PDD" | "SDD") => {
+    queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+    if (docType === "PDD") {
+      setTimeout(() => generateDocument("SDD"), 500);
+    }
+  }, [idea.id, generateDocument]);
+
+  const pddTriggeredRef = useRef(false);
+  const sddTriggeredRef = useRef(false);
 
   const guidance = STAGE_GUIDANCE[idea.stage];
 
@@ -225,12 +308,18 @@ function ChatPanel({ idea }: { idea: Idea }) {
 
   const displayMessages: ChatMsg[] = (() => {
     if (savedMessages && savedMessages.length > 0) {
-      const loaded: ChatMsg[] = savedMessages.map((m) => ({
-        id: String(m.id),
-        role: m.role as "user" | "assistant",
-        content: m.content,
-        timestamp: new Date(m.createdAt),
-      }));
+      const loaded: ChatMsg[] = savedMessages.map((m) => {
+        const meta = parseMessageMeta(m.content);
+        return {
+          id: String(m.id),
+          role: m.role as "user" | "assistant",
+          content: meta.displayContent,
+          timestamp: new Date(m.createdAt),
+          docType: meta.docType,
+          docId: meta.docId,
+          uipathData: meta.uipathData,
+        };
+      });
       const result = [...loaded];
       if (pendingUserMsg) result.push(pendingUserMsg);
       if (streamingMsg) result.push(streamingMsg);
@@ -250,6 +339,20 @@ function ChatPanel({ idea }: { idea: Idea }) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [displayMessages]);
+
+  useEffect(() => {
+    if (!savedMessages || savedMessages.length === 0) return;
+    const hasApprovalMsg = savedMessages.some(
+      (m) => m.role === "assistant" && m.content.includes("As-Is process map approved")
+    );
+    const hasPdd = savedMessages.some(
+      (m) => m.content.startsWith("[DOC:PDD:")
+    );
+    if (hasApprovalMsg && !hasPdd && !pddTriggeredRef.current && !isGeneratingDoc) {
+      pddTriggeredRef.current = true;
+      generateDocument("PDD");
+    }
+  }, [savedMessages, isGeneratingDoc, generateDocument]);
 
   const handleSend = useCallback(async () => {
     let text = inputValue.trim();
@@ -466,42 +569,110 @@ function ChatPanel({ idea }: { idea: Idea }) {
       )}
 
       <div className="flex-1 overflow-y-auto scrollbar-thin px-3 py-3 space-y-3" data-testid="chat-messages">
-        {displayMessages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-            data-testid={`chat-message-${msg.id}`}
-          >
+        {displayMessages.map((msg) => {
+          if (msg.docType && msg.docId) {
+            const latestDocOfType = [...displayMessages]
+              .filter((m) => m.docType === msg.docType)
+              .pop();
+            const isLatest = latestDocOfType?.id === msg.id;
+            return (
+              <div key={msg.id} className="flex justify-start" data-testid={`chat-message-${msg.id}`}>
+                <div className="max-w-[95%] w-full">
+                  <DocumentCard
+                    docType={msg.docType}
+                    docId={msg.docId}
+                    content={msg.content}
+                    ideaId={idea.id}
+                    isApproved={!isLatest}
+                    onApproved={() => handleDocApproved(msg.docType!)}
+                  />
+                </div>
+              </div>
+            );
+          }
+
+          if (msg.uipathData) {
+            return (
+              <div key={msg.id} className="flex justify-start" data-testid={`chat-message-${msg.id}`}>
+                <div className="max-w-[95%] w-full">
+                  <UiPathPackageCard packageData={msg.uipathData} ideaId={idea.id} />
+                </div>
+              </div>
+            );
+          }
+
+          return (
             <div
-              className={`max-w-[85%] rounded-lg px-3 py-2.5 ${
-                msg.role === "user"
-                  ? "bg-primary text-primary-foreground rounded-br-sm"
-                  : "bg-card border border-card-border rounded-bl-sm"
-              }`}
+              key={msg.id}
+              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+              data-testid={`chat-message-${msg.id}`}
             >
-              <p className="text-xs leading-relaxed whitespace-pre-wrap">
-                {msg.content}
-                {msg.isStreaming && (
-                  <span className="inline-block w-1.5 h-3.5 bg-primary ml-0.5 animate-pulse rounded-sm" />
+              <div
+                className={`max-w-[85%] rounded-lg px-3 py-2.5 ${
+                  msg.role === "user"
+                    ? "bg-primary text-primary-foreground rounded-br-sm"
+                    : "bg-card border border-card-border rounded-bl-sm"
+                }`}
+              >
+                <p className="text-xs leading-relaxed whitespace-pre-wrap">
+                  {msg.content}
+                  {msg.isStreaming && (
+                    <span className="inline-block w-1.5 h-3.5 bg-primary ml-0.5 animate-pulse rounded-sm" />
+                  )}
+                </p>
+                {!msg.isStreaming && (
+                  <span
+                    className={`text-[9px] mt-1.5 block ${
+                      msg.role === "user"
+                        ? "text-primary-foreground/60"
+                        : "text-muted-foreground/60"
+                    }`}
+                  >
+                    {msg.timestamp.toLocaleTimeString("en-US", {
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </span>
                 )}
-              </p>
-              {!msg.isStreaming && (
-                <span
-                  className={`text-[9px] mt-1.5 block ${
-                    msg.role === "user"
-                      ? "text-primary-foreground/60"
-                      : "text-muted-foreground/60"
-                  }`}
-                >
-                  {msg.timestamp.toLocaleTimeString("en-US", {
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                </span>
-              )}
+              </div>
+            </div>
+          );
+        })}
+        {isGeneratingDoc && (
+          <div className="flex justify-start" data-testid="doc-generation-loading">
+            <div className="max-w-[85%] rounded-lg px-3 py-2.5 bg-card border border-card-border rounded-bl-sm">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-cb-teal" />
+                <p className="text-xs text-muted-foreground">
+                  Generating {generatingDocType}... This may take a moment.
+                </p>
+              </div>
             </div>
           </div>
-        ))}
+        )}
+
+        {(() => {
+          const hasUiPath = displayMessages.some((m) => m.uipathData);
+          const hasSddApproval = displayMessages.some(
+            (m) => m.content.includes("SDD approved") && m.role === "assistant"
+          );
+          if (hasSddApproval && !hasUiPath && !isGeneratingDoc) {
+            return (
+              <div className="flex justify-center py-2" data-testid="uipath-generate-section">
+                <Button
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground text-xs"
+                  onClick={generateUiPath}
+                  data-testid="button-generate-uipath"
+                >
+                  <Package className="h-3.5 w-3.5 mr-1.5" />
+                  Generate UiPath Package
+                </Button>
+              </div>
+            );
+          }
+          return null;
+        })()}
+
         <div ref={messagesEndRef} />
       </div>
 
