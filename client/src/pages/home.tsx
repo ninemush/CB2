@@ -1,14 +1,17 @@
 function CannonBallIcon({ className }: { className?: string }) {
   return (
     <svg
-      viewBox="0 0 32 32"
+      viewBox="0 0 36 36"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
     >
-      <circle cx="16" cy="18" r="11" fill="currentColor" />
-      <line x1="22" y1="10" x2="26" y2="4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <circle cx="27" cy="3" r="1.5" fill="hsl(var(--primary))" />
+      <circle cx="17" cy="20" r="12" fill="currentColor" />
+      <circle cx="17" cy="20" r="12" fill="currentColor" opacity="0.15" />
+      <ellipse cx="13" cy="16" rx="3.5" ry="2.5" fill="white" opacity="0.08" />
+      <path d="M25 12 C27 9, 30 7, 32 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none" />
+      <path d="M31 4 C32.5 3.5, 34 4.5, 33.5 6" stroke="#e8450a" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+      <circle cx="33" cy="3.5" r="1.2" fill="#e8450a" opacity="0.7" />
     </svg>
   );
 }
