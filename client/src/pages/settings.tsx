@@ -365,14 +365,16 @@ function IntegrationsTab() {
   const [orgName, setOrgName] = useState("");
   const [tenantName, setTenantName] = useState("");
   const [clientId, setClientId] = useState("");
-  const [userKey, setUserKey] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [scopes, setScopes] = useState("OR.Default");
 
   const { data: config, isLoading } = useQuery<{
     configured: boolean;
     orgName?: string;
     tenantName?: string;
     clientId?: string;
-    hasUserKey?: boolean;
+    scopes?: string;
+    hasSecret?: boolean;
   }>({
     queryKey: ["/api/settings/uipath"],
   });
@@ -382,6 +384,7 @@ function IntegrationsTab() {
       setOrgName(config.orgName || "");
       setTenantName(config.tenantName || "");
       setClientId(config.clientId || "");
+      setScopes(config.scopes || "OR.Default");
     }
   }, [config]);
 
@@ -391,13 +394,14 @@ function IntegrationsTab() {
         orgName,
         tenantName,
         clientId,
-        userKey,
+        clientSecret,
+        scopes,
       });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/settings/uipath"] });
       toast({ title: "UiPath configuration saved" });
-      setUserKey("");
+      setClientSecret("");
     },
     onError: (error: Error) => {
       toast({ title: "Failed to save", description: error.message, variant: "destructive" });
@@ -431,7 +435,7 @@ function IntegrationsTab() {
     );
   }
 
-  const canSave = orgName.trim() && tenantName.trim() && clientId.trim() && (userKey.trim() || config?.hasUserKey);
+  const canSave = orgName.trim() && tenantName.trim() && clientId.trim() && (clientSecret.trim() || config?.hasSecret);
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -444,6 +448,7 @@ function IntegrationsTab() {
             </div>
             <p className="text-sm text-muted-foreground">
               Connect to UiPath Cloud to push automation packages directly from CannonBall.
+              Set up via Admin &gt; External Applications in UiPath Cloud (Confidential app type).
             </p>
           </div>
           {config?.configured ? (
@@ -486,7 +491,7 @@ function IntegrationsTab() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="clientId">Client ID (App ID)</Label>
+            <Label htmlFor="clientId">App ID (Client ID)</Label>
             <Input
               id="clientId"
               placeholder="e.g. 8DEv1AMN..."
@@ -495,21 +500,21 @@ function IntegrationsTab() {
               data-testid="input-uipath-client-id"
             />
             <p className="text-xs text-muted-foreground">
-              From External Applications in UiPath Admin or your registered OAuth app.
+              From Admin &gt; External Applications in UiPath Cloud.
             </p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="userKey">User Key / Refresh Token</Label>
+            <Label htmlFor="clientSecret">App Secret (Client Secret)</Label>
             <div className="relative">
               <Input
-                id="userKey"
+                id="clientSecret"
                 type={showSecret ? "text" : "password"}
-                placeholder={config?.hasUserKey ? "••••••• (saved)" : "Paste your refresh token"}
-                value={userKey}
-                onChange={(e) => setUserKey(e.target.value)}
+                placeholder={config?.hasSecret ? "••••••• (saved)" : "Paste your app secret"}
+                value={clientSecret}
+                onChange={(e) => setClientSecret(e.target.value)}
                 className="pr-10"
-                data-testid="input-uipath-user-key"
+                data-testid="input-uipath-client-secret"
               />
               <button
                 type="button"
@@ -521,7 +526,21 @@ function IntegrationsTab() {
               </button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Generate under API Access in your UiPath Cloud profile settings.
+              Generated when you create a Confidential External Application in UiPath Cloud.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="scopes">Scopes</Label>
+            <Input
+              id="scopes"
+              placeholder="OR.Default"
+              value={scopes}
+              onChange={(e) => setScopes(e.target.value)}
+              data-testid="input-uipath-scopes"
+            />
+            <p className="text-xs text-muted-foreground">
+              Space-separated OAuth scopes. Default: <code className="text-[10px] bg-muted px-1 py-0.5 rounded">OR.Default</code>. Add more as needed (e.g. OR.Folders OR.Assets).
             </p>
           </div>
         </div>

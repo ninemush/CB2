@@ -2,18 +2,12 @@ import { db } from "./db";
 import { appSettings } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
-const UIPATH_KEYS = [
-  "uipath_org_name",
-  "uipath_tenant_name",
-  "uipath_client_id",
-  "uipath_user_key",
-] as const;
-
 type UiPathConfig = {
   orgName: string;
   tenantName: string;
   clientId: string;
-  userKey: string;
+  clientSecret: string;
+  scopes: string;
 };
 
 export async function getUiPathConfig(): Promise<UiPathConfig | null> {
@@ -28,22 +22,27 @@ export async function getUiPathConfig(): Promise<UiPathConfig | null> {
   const orgName = map.get("uipath_org_name");
   const tenantName = map.get("uipath_tenant_name");
   const clientId = map.get("uipath_client_id");
-  const userKey = map.get("uipath_user_key");
+  const clientSecret = map.get("uipath_client_secret");
+  const scopes = map.get("uipath_scopes") || "OR.Default";
 
-  if (!orgName || !tenantName || !clientId || !userKey) return null;
+  if (!orgName || !tenantName || !clientId || !clientSecret) return null;
 
-  return { orgName, tenantName, clientId, userKey };
+  return { orgName, tenantName, clientId, clientSecret, scopes };
 }
 
-export async function saveUiPathConfig(config: Partial<UiPathConfig> & { orgName: string; tenantName: string; clientId: string }): Promise<void> {
+export async function saveUiPathConfig(config: { orgName: string; tenantName: string; clientId: string; clientSecret?: string; scopes?: string }): Promise<void> {
   const entries: { key: string; value: string }[] = [
     { key: "uipath_org_name", value: config.orgName },
     { key: "uipath_tenant_name", value: config.tenantName },
     { key: "uipath_client_id", value: config.clientId },
   ];
 
-  if (config.userKey) {
-    entries.push({ key: "uipath_user_key", value: config.userKey });
+  if (config.clientSecret) {
+    entries.push({ key: "uipath_client_secret", value: config.clientSecret });
+  }
+
+  if (config.scopes) {
+    entries.push({ key: "uipath_scopes", value: config.scopes });
   }
 
   for (const entry of entries) {
@@ -57,14 +56,17 @@ export async function saveUiPathConfig(config: Partial<UiPathConfig> & { orgName
 }
 
 async function getAccessToken(config: UiPathConfig): Promise<string> {
-  const res = await fetch("https://account.uipath.com/oauth/token", {
+  const params = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    scope: config.scopes,
+  });
+
+  const res = await fetch("https://cloud.uipath.com/identity_/connect/token", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      grant_type: "refresh_token",
-      client_id: config.clientId,
-      refresh_token: config.userKey,
-    }),
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
   });
 
   if (!res.ok) {
@@ -144,7 +146,7 @@ async function buildNuGetPackage(pkg: any): Promise<Buffer> {
     archive.append(nuspecXml, { name: `${projectName}.nuspec` });
 
     archive.finalize();
-  }) as any;
+  });
 }
 
 function escapeXml(str: string): string {
@@ -208,7 +210,7 @@ export async function testUiPathConnection(): Promise<{ success: boolean; messag
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
-      return { success: false, message: `Connection failed (${res.status}). Check your credentials.` };
+      return { success: false, message: `Connection failed (${res.status}). Check your credentials and scopes.` };
     }
     return { success: true, message: "Connected to UiPath Orchestrator successfully." };
   } catch (err: any) {

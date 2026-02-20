@@ -28,21 +28,22 @@ export function registerUiPathRoutes(app: Express): void {
       orgName: config.orgName,
       tenantName: config.tenantName,
       clientId: config.clientId,
-      hasUserKey: !!config.userKey,
+      scopes: config.scopes,
+      hasSecret: !!config.clientSecret,
     });
   });
 
   app.post("/api/settings/uipath", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
-    const { orgName, tenantName, clientId, userKey } = req.body;
+    const { orgName, tenantName, clientId, clientSecret, scopes } = req.body;
     if (!orgName || !tenantName || !clientId) {
       return res.status(400).json({ message: "Organization, tenant, and client ID are required" });
     }
     const existingConfig = await getUiPathConfig();
-    if (!userKey && !existingConfig) {
-      return res.status(400).json({ message: "User key is required for initial configuration" });
+    if (!clientSecret && !existingConfig) {
+      return res.status(400).json({ message: "App Secret is required for initial configuration" });
     }
-    await saveUiPathConfig({ orgName, tenantName, clientId, userKey: userKey || undefined });
+    await saveUiPathConfig({ orgName, tenantName, clientId, clientSecret: clientSecret || undefined, scopes: scopes || undefined });
     return res.json({ success: true, message: "UiPath configuration saved." });
   });
 
