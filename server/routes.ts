@@ -3,8 +3,8 @@ import { createServer, type Server } from "http";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import { storage } from "./storage";
-import { seedDemoUsers } from "./seed";
-import { loginSchema, ROLES, type UserRole } from "@shared/schema";
+import { seedDemoUsers, seedDemoIdeas } from "./seed";
+import { loginSchema, createIdeaSchema, ROLES, type UserRole } from "@shared/schema";
 
 declare module "express-session" {
   interface SessionData {
@@ -37,6 +37,7 @@ export async function registerRoutes(
   );
 
   await seedDemoUsers();
+  await seedDemoIdeas();
 
   app.get("/api/auth/me", async (req: Request, res: Response) => {
     if (!req.session.userId) {
@@ -93,6 +94,41 @@ export async function registerRoutes(
     }
     req.session.activeRole = role;
     return res.json({ activeRole: role });
+  });
+
+  app.get("/api/ideas", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const allIdeas = await storage.getAllIdeas();
+    return res.json(allIdeas);
+  });
+
+  app.get("/api/ideas/:id", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const idea = await storage.getIdea(req.params.id);
+    if (!idea) {
+      return res.status(404).json({ message: "Idea not found" });
+    }
+    return res.json(idea);
+  });
+
+  app.post("/api/ideas", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const parsed = createIdeaSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid idea data", errors: parsed.error.flatten() });
+    }
+    const idea = await storage.createIdea({
+      ...parsed.data,
+      stage: "Idea",
+      tag: parsed.data.tag || null,
+    });
+    return res.status(201).json(idea);
   });
 
   return httpServer;

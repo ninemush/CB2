@@ -1,4 +1,5 @@
-import { Bell, Moon, Sun, ChevronDown, LogOut } from "lucide-react";
+import { useState } from "react";
+import { Bell, Moon, Sun, ChevronDown, LogOut, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -13,6 +14,7 @@ import {
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { useTheme } from "@/components/theme-provider";
 import { useAuth } from "@/hooks/use-auth";
+import { NewIdeaModal } from "@/components/new-idea-modal";
 import { ROLES, type UserRole } from "@shared/schema";
 
 function getRoleColor(role: UserRole): string {
@@ -40,8 +42,11 @@ function getInitials(name: string): string {
 export function TopNav() {
   const { theme, toggleTheme } = useTheme();
   const { user, activeRole, switchRole, logout } = useAuth();
+  const [newIdeaOpen, setNewIdeaOpen] = useState(false);
 
   return (
+    <>
+    <NewIdeaModal open={newIdeaOpen} onOpenChange={setNewIdeaOpen} />
     <header
       className="flex items-center justify-between gap-3 px-4 h-14 bg-card z-50 sticky top-0 border-b border-[#3d3d3d] dark:border-[#3d3d3d]"
       data-testid="top-nav"
@@ -58,6 +63,16 @@ export function TopNav() {
       </div>
 
       <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          onClick={() => setNewIdeaOpen(true)}
+          data-testid="button-new-idea"
+          className="gap-1.5"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">New Idea</span>
+        </Button>
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" data-testid="button-role-switcher">
@@ -158,5 +173,6 @@ export function TopNav() {
         </div>
       </div>
     </header>
+    </>
   );
 }

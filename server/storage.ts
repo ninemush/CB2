@@ -1,12 +1,16 @@
-import { users, type User, type InsertUser } from "@shared/schema";
+import { users, ideas, type User, type InsertUser, type Idea, type InsertIdea } from "@shared/schema";
 import { db } from "./db";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   getAllUsers(): Promise<User[]>;
+  getIdea(id: string): Promise<Idea | undefined>;
+  getAllIdeas(): Promise<Idea[]>;
+  createIdea(idea: InsertIdea): Promise<Idea>;
+  getIdeasByOwnerEmail(email: string): Promise<Idea[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -27,6 +31,24 @@ export class DatabaseStorage implements IStorage {
 
   async getAllUsers(): Promise<User[]> {
     return db.select().from(users);
+  }
+
+  async getIdea(id: string): Promise<Idea | undefined> {
+    const [idea] = await db.select().from(ideas).where(eq(ideas.id, id));
+    return idea;
+  }
+
+  async getAllIdeas(): Promise<Idea[]> {
+    return db.select().from(ideas).orderBy(desc(ideas.createdAt));
+  }
+
+  async createIdea(insertIdea: InsertIdea): Promise<Idea> {
+    const [idea] = await db.insert(ideas).values(insertIdea).returning();
+    return idea;
+  }
+
+  async getIdeasByOwnerEmail(email: string): Promise<Idea[]> {
+    return db.select().from(ideas).where(eq(ideas.ownerEmail, email)).orderBy(desc(ideas.createdAt));
   }
 }
 

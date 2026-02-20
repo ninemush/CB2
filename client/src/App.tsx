@@ -13,6 +13,7 @@ import Home from "@/pages/home";
 import Ideas from "@/pages/ideas";
 import Guide from "@/pages/guide";
 import SettingsPage from "@/pages/settings";
+import Workspace from "@/pages/workspace";
 import Login from "@/pages/login";
 import { Loader2 } from "lucide-react";
 
@@ -23,6 +24,7 @@ function Router() {
       <Route path="/ideas" component={Ideas} />
       <Route path="/guide" component={Guide} />
       <Route path="/settings" component={SettingsPage} />
+      <Route path="/workspace/:id" component={Workspace} />
       <Route component={NotFound} />
     </Switch>
   );
