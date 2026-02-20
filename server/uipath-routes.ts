@@ -103,10 +103,28 @@ export function registerUiPathRoutes(app: Express): void {
     const result = await pushToUiPath(pkg);
 
     if (result.success) {
+      const details = result.details;
+      const chatMsg = [
+        `Package pushed to UiPath Orchestrator successfully.`,
+        ``,
+        `**${details?.packageId || pkg.projectName}** v${details?.version || "1.0.0"}`,
+        `Org: ${details?.orgName || "—"} / Tenant: ${details?.tenantName || "—"}`,
+        ``,
+        `**Where to find it in Orchestrator:**`,
+        `1. Open UiPath Orchestrator`,
+        `2. Go to **Tenant → Packages** (left sidebar)`,
+        `3. Or go to **Automations → Folder Packages** tab`,
+        `4. Search for **"${details?.packageId || pkg.projectName}"**`,
+        ``,
+        `From there you can create a Process and assign it to a Robot to run.`,
+      ].join("\n");
+
+      await chatStorage.createMessage(ideaId, "assistant", chatMsg);
+    } else {
       await chatStorage.createMessage(
         ideaId,
         "assistant",
-        `Package pushed to UiPath Orchestrator successfully. ${result.message}`
+        `Failed to push to UiPath Orchestrator. ${result.message}`
       );
     }
 

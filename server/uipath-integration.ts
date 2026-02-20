@@ -180,18 +180,20 @@ function escapeXml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
-export async function pushToUiPath(pkg: any): Promise<{ success: boolean; message: string }> {
+export async function pushToUiPath(pkg: any): Promise<{ success: boolean; message: string; details?: any }> {
   const config = await getUiPathConfig();
   if (!config) {
     return { success: false, message: "UiPath Orchestrator is not configured. Go to Admin > Integrations to set it up." };
   }
 
+  const projectName = (pkg.projectName || "Automation").replace(/\s+/g, "_");
+
   try {
     const token = await getAccessToken(config);
 
     const nupkgBuffer = await buildNuGetPackage(pkg);
+    console.log(`[UiPath] Built .nupkg for "${projectName}" — ${nupkgBuffer.length} bytes`);
 
-    const projectName = (pkg.projectName || "Automation").replace(/\s+/g, "_");
     const fileName = `${projectName}.1.0.0.nupkg`;
 
     const boundary = `----FormBoundary${Date.now()}`;
@@ -204,6 +206,9 @@ export async function pushToUiPath(pkg: any): Promise<{ success: boolean; messag
 
     const uploadUrl = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_/odata/Processes/UiPath.Server.Configuration.OData.UploadPackage`;
 
+    console.log(`[UiPath] Uploading to: ${uploadUrl}`);
+    console.log(`[UiPath] Package size: ${body.length} bytes, filename: ${fileName}`);
+
     const uploadRes = await fetch(uploadUrl, {
       method: "POST",
       headers: {
@@ -213,14 +218,78 @@ export async function pushToUiPath(pkg: any): Promise<{ success: boolean; messag
       body,
     });
 
+    const responseText = await uploadRes.text();
+    console.log(`[UiPath] Upload response status: ${uploadRes.status}`);
+    console.log(`[UiPath] Upload response body: ${responseText.slice(0, 1000)}`);
+
     if (!uploadRes.ok) {
-      const errText = await uploadRes.text();
-      return { success: false, message: `Upload failed (${uploadRes.status}): ${errText.slice(0, 300)}` };
+      let friendlyMsg = `Upload failed (HTTP ${uploadRes.status}).`;
+
+      if (uploadRes.status === 409) {
+        friendlyMsg = `Package "${projectName}" version 1.0.0 already exists in Orchestrator. The existing package was not overwritten. You can find it in Orchestrator under Tenant > Packages.`;
+      } else if (uploadRes.status === 400) {
+        friendlyMsg = `UiPath rejected the package (invalid format). Response: ${responseText.slice(0, 300)}`;
+      } else if (uploadRes.status === 403) {
+        friendlyMsg = `Access denied. Your External Application may not have the "OR.Execution" or "OR.Default" scope. Check Admin > External Applications in UiPath Cloud.`;
+      } else {
+        friendlyMsg += ` ${responseText.slice(0, 300)}`;
+      }
+
+      return { success: false, message: friendlyMsg };
     }
 
-    return { success: true, message: `Package "${projectName}" uploaded to UiPath Orchestrator (${config.orgName}/${config.tenantName}).` };
+    let responseData: any = null;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch {
+      console.log(`[UiPath] Response was not JSON — raw: ${responseText.slice(0, 500)}`);
+    }
+
+    const uploadedVersion = responseData?.Version || "1.0.0";
+    const uploadedKey = responseData?.Key || `${projectName}:${uploadedVersion}`;
+    const uploadedId = responseData?.Id || projectName;
+    const projectType = responseData?.ProjectType || "Process";
+
+    const orchUrl = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_`;
+
+    const successMsg = [
+      `Package "${uploadedId}" v${uploadedVersion} uploaded successfully to UiPath Orchestrator.`,
+      ``,
+      `Where to find it:`,
+      `• Go to ${orchUrl}`,
+      `• Navigate to Tenant > Packages (or Automations > Folder Packages)`,
+      `• Search for "${uploadedId}"`,
+      ``,
+      `Package key: ${uploadedKey}`,
+      `Type: ${projectType}`,
+      `Org: ${config.orgName} / Tenant: ${config.tenantName}`,
+    ].join("\n");
+
+    return {
+      success: true,
+      message: successMsg,
+      details: {
+        packageId: uploadedId,
+        version: uploadedVersion,
+        key: uploadedKey,
+        projectType,
+        orgName: config.orgName,
+        tenantName: config.tenantName,
+        orchestratorUrl: orchUrl,
+      },
+    };
   } catch (err: any) {
-    return { success: false, message: `Push failed: ${err.message || String(err)}` };
+    const msg = err.message || String(err);
+    console.error(`[UiPath] Push failed for "${projectName}":`, msg);
+
+    let friendlyMsg = `Push failed: ${msg}`;
+    if (msg.includes("invalid_scope")) {
+      friendlyMsg = `Authentication failed — invalid scopes. Make sure your External Application in UiPath Cloud has the required scopes (OR.Default, OR.Execution).`;
+    } else if (msg.includes("invalid_client")) {
+      friendlyMsg = `Authentication failed — invalid App ID or App Secret. Verify your credentials in Admin > Integrations.`;
+    }
+
+    return { success: false, message: friendlyMsg };
   }
 }
 

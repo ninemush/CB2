@@ -301,15 +301,21 @@ export function UiPathPackageCard({ packageData, ideaId }: UiPathPackageCardProp
       const res = await apiRequest("POST", `/api/ideas/${ideaId}/push-uipath`);
       return res.json();
     },
-    onSuccess: (data: { success: boolean; message: string }) => {
+    onSuccess: (data: { success: boolean; message: string; details?: any }) => {
       if (data.success) {
-        toast({ title: "Pushed to UiPath", description: data.message });
+        const d = data.details;
+        const desc = d
+          ? `"${d.packageId}" v${d.version} uploaded to ${d.orgName}/${d.tenantName}. Find it in Tenant → Packages.`
+          : data.message;
+        toast({ title: "Pushed to UiPath Orchestrator", description: desc });
       } else {
         toast({ title: "Push failed", description: data.message, variant: "destructive" });
       }
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "messages"] });
     },
     onError: (error: Error) => {
       toast({ title: "Push failed", description: error.message, variant: "destructive" });
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "messages"] });
     },
   });
 
