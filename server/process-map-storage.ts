@@ -36,6 +36,11 @@ export class ProcessMapStorage {
     return node;
   }
 
+  async getEdgeById(id: number): Promise<ProcessEdge | undefined> {
+    const [edge] = await db.select().from(processEdges).where(eq(processEdges.id, id));
+    return edge;
+  }
+
   async getEdgesByIdeaId(ideaId: string, viewType: string = "as-is"): Promise<ProcessEdge[]> {
     return db.select().from(processEdges)
       .where(and(eq(processEdges.ideaId, ideaId), eq(processEdges.viewType, viewType)));

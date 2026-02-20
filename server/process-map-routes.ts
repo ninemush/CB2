@@ -102,15 +102,35 @@ export function registerProcessMapRoutes(app: Express): void {
   app.patch("/api/process-nodes/:id", async (req: Request, res: Response) => {
     if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const id = parseInt(req.params.id as string);
+    const node = await processMapStorage.getNodeById(id);
+    if (!node) return res.status(404).json({ message: "Node not found" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user) return res.status(401).json({ message: "User not found" });
+    const idea = await storage.getIdea(node.ideaId);
+    if (!idea) return res.status(404).json({ message: "Idea not found" });
+    const activeRole = (req.session.activeRole || user.role) as string;
+    if (idea.ownerEmail !== user.email && activeRole !== "Admin" && activeRole !== "CoE") {
+      return res.status(403).json({ message: "Access denied" });
+    }
     const parsed = updateNodeSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten() });
-    const node = await processMapStorage.updateNode(id, parsed.data);
-    return res.json(node);
+    const updated = await processMapStorage.updateNode(id, parsed.data);
+    return res.json(updated);
   });
 
   app.delete("/api/process-nodes/:id", async (req: Request, res: Response) => {
     if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const id = parseInt(req.params.id as string);
+    const node = await processMapStorage.getNodeById(id);
+    if (!node) return res.status(404).json({ message: "Node not found" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user) return res.status(401).json({ message: "User not found" });
+    const idea = await storage.getIdea(node.ideaId);
+    if (!idea) return res.status(404).json({ message: "Idea not found" });
+    const activeRole = (req.session.activeRole || user.role) as string;
+    if (idea.ownerEmail !== user.email && activeRole !== "Admin" && activeRole !== "CoE") {
+      return res.status(403).json({ message: "Access denied" });
+    }
     await processMapStorage.deleteNode(id);
     return res.json({ success: true });
   });
@@ -127,15 +147,36 @@ export function registerProcessMapRoutes(app: Express): void {
   app.patch("/api/process-edges/:id", async (req: Request, res: Response) => {
     if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const id = parseInt(req.params.id as string);
+    const edge = await processMapStorage.getEdgeById(id);
+    if (!edge) return res.status(404).json({ message: "Edge not found" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user) return res.status(401).json({ message: "User not found" });
+    const idea = await storage.getIdea(edge.ideaId);
+    if (!idea) return res.status(404).json({ message: "Idea not found" });
+    const activeRole = (req.session.activeRole || user.role) as string;
+    if (idea.ownerEmail !== user.email && activeRole !== "Admin" && activeRole !== "CoE") {
+      return res.status(403).json({ message: "Access denied" });
+    }
     const parsed = updateEdgeSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten() });
-    const edge = await processMapStorage.updateEdge(id, parsed.data);
-    return res.json(edge);
+    const updated = await processMapStorage.updateEdge(id, parsed.data);
+    return res.json(updated);
   });
 
   app.delete("/api/process-edges/:id", async (req: Request, res: Response) => {
     if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    await processMapStorage.deleteEdge(parseInt(req.params.id as string));
+    const id = parseInt(req.params.id as string);
+    const edge = await processMapStorage.getEdgeById(id);
+    if (!edge) return res.status(404).json({ message: "Edge not found" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user) return res.status(401).json({ message: "User not found" });
+    const idea = await storage.getIdea(edge.ideaId);
+    if (!idea) return res.status(404).json({ message: "Idea not found" });
+    const activeRole = (req.session.activeRole || user.role) as string;
+    if (idea.ownerEmail !== user.email && activeRole !== "Admin" && activeRole !== "CoE") {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    await processMapStorage.deleteEdge(id);
     return res.json({ success: true });
   });
 

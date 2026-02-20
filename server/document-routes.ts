@@ -21,6 +21,21 @@ Format your response as sections separated by "## " headings. Each section shoul
 
 const UIPATH_PROMPT = `Based on the approved SDD, generate a UiPath automation package structure. Output a JSON object with this shape: { "projectName": "string", "description": "string", "dependencies": ["array of UiPath package names"], "workflows": [{ "name": "string", "description": "string", "steps": [{ "activity": "string", "properties": {}, "notes": "string" }] }] }. Be as specific as possible. Return ONLY the JSON object, no other text.`;
 
+const uipathPackageSchema = z.object({
+  projectName: z.string().default("UiPathPackage"),
+  description: z.string().default(""),
+  dependencies: z.array(z.string()).default([]),
+  workflows: z.array(z.object({
+    name: z.string().default("Main"),
+    description: z.string().default(""),
+    steps: z.array(z.object({
+      activity: z.string().default("Activity"),
+      properties: z.record(z.unknown()).default({}),
+      notes: z.string().default(""),
+    })).default([]),
+  })).default([]),
+});
+
 async function verifyIdeaAccess(req: Request, res: Response): Promise<string | null> {
   if (!req.session.userId) {
     res.status(401).json({ message: "Not authenticated" });
@@ -286,9 +301,10 @@ export function registerDocumentRoutes(app: Express): void {
       let packageJson;
       try {
         const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-        packageJson = JSON.parse(jsonMatch ? jsonMatch[0] : rawText);
+        const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : rawText);
+        packageJson = uipathPackageSchema.parse(parsed);
       } catch {
-        packageJson = { projectName: idea.title.replace(/\s+/g, "_"), description: idea.description, dependencies: [], workflows: [] };
+        packageJson = uipathPackageSchema.parse({ projectName: idea.title.replace(/\s+/g, "_"), description: idea.description });
       }
 
       await chatStorage.createMessage(

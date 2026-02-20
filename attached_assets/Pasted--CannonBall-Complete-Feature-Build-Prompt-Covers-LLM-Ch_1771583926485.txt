@@ -1,0 +1,276 @@
+# CannonBall – Complete Feature Build Prompt
+**Covers: LLM Chat, Live Process Map, Document Generation, Stage Automation, CoE, Admin, User Guide, and Final Polish**
+
+---
+
+## CORE ETHOS — READ THIS FIRST, IT APPLIES TO EVERYTHING BELOW
+
+The AI does the heavy lifting at all times. It never waits passively. It always knows the next step and drives toward it. Humans approve and make decisions — they do not build, write, or figure out what to do next. Every human touchpoint must be explicit: show the human exactly what they are being asked to do, why, and what happens after. The AI leads. Humans decide.
+
+This principle must be enforced in every feature below. If the AI is ever in a state where it is waiting silently for the human to figure out what to do, that is a bug.
+
+---
+
+## PART 1 — LIVE LLM CHAT INTEGRATION
+
+### LLM Setup
+Use the Anthropic Claude API (model: claude-sonnet-4-6) with streaming enabled. The API key is stored in Replit Secrets as ANTHROPIC_API_KEY. Create a backend API route POST /api/chat that accepts the conversation history and current idea context, calls the Claude API with streaming, and streams the response back to the frontend.
+
+### System Prompt
+Send this system prompt to Claude for every conversation:
+
+"You are the CannonBall automation design assistant. Your job is to guide Process SMEs through designing business process automations. You are AI-first — you lead, you draft, you build. The SME's job is to give you information, refine your output, and approve it. They should never have to figure out what to do next — you always tell them.
+
+Current idea: {idea_title}. Current stage: {current_stage}.
+
+BEHAVIORAL RULES (non-negotiable):
+1. Never wait passively. After every SME message, either ask a specific targeted question, produce an output, or tell them exactly what you need next and why.
+2. Never ask open-ended questions like 'tell me more.' Ask one specific question at a time: 'What system does the approver use to review the invoice — is it SAP, an email inbox, or something else?'
+3. When you have enough to act, act. Do not ask for permission to draft something. Draft it and present it.
+4. After any approval or milestone, immediately tell the SME what just happened and what you are doing next. Do not make them ask.
+5. Keep responses concise and purposeful. No filler. No restating what the SME just said back to them.
+
+STAGE BEHAVIOR:
+- Idea: Extract the process with targeted single questions. Identify who does it, what triggers it, what systems are involved, what the pain points are, and what a successful outcome looks like.
+- Feasibility Assessment: Assess automation potential directly. Flag complexity honestly. Give an effort range. Do not hedge excessively.
+- Design: Reconstruct the process step by step. Output each confirmed step using the [STEP] tag format below so the visual map builds in real time.
+
+STEP TAG FORMAT — output one per line for every confirmed process step:
+[STEP: <step name> | ROLE: <who does it> | SYSTEM: <system or 'Manual'> | TYPE: <task/decision/start/end>]
+
+OUTPUT QUALITY: Write like a senior business analyst who has done this a hundred times. Professional, direct, no fluff."
+
+### Proactive Opening Message
+When a new idea workspace is created, immediately fire an opening message from the AI without waiting for the SME to type first:
+
+"I'm your automation design assistant for '{idea_title}'. I'll guide you through this from process description all the way to a UiPath-ready automation package — you won't need to figure out what to do next at any point, I'll drive.
+
+Let's start with the basics: describe the process you want to automate. Don't worry about structure — just tell me what happens, who does it, and what the pain is. I'll ask follow-up questions to fill in the gaps."
+
+If the idea already has conversation history, load it and resume — do not repeat the opening.
+
+### Idle Nudge
+If the SME has not responded within 60 seconds after an AI message that ended with a question, send: "Still with me? Happy to rephrase or approach this differently if it helps."
+
+### Persistence
+Save every message to Supabase: messages table with idea_id, role (user/assistant), content, created_at. On workspace load, fetch and display the full message history so conversations persist across sessions.
+
+### Streaming Display
+Stream LLM response token by token. The bubble appears immediately and fills in as tokens arrive. Use a blinking cursor effect while streaming. Every AI message that ends with a required human action should have a subtle pulsing indicator on the chat input field — a visual cue that the SME's response is needed.
+
+### File Uploads
+Accept file uploads via the paperclip icon. Show as an attachment chip in the chat. Include the filename in the message to the LLM. The AI acknowledges the file and immediately asks a targeted question about its contents rather than making a generic acknowledgment.
+
+---
+
+## PART 2 — LIVE VISUAL PROCESS MAP
+
+### Process Map Engine
+Use React Flow as the base library. If React Flow cannot deliver the visual quality and live-update behavior described below, build a custom canvas component instead. Do not compromise the experience to fit the library.
+
+### Parsing
+After every LLM response, parse the response text for lines matching:
+[STEP: <step name> | ROLE: <role> | SYSTEM: <s> | TYPE: <task/decision/start/end>]
+
+For each parsed step, add or update a node on the process map. Connect nodes in order. Do not duplicate nodes with the same name — update them if they already exist.
+
+### Confidence Scoring
+Each node carries a confidence level based on how much detail the AI has confirmed:
+- Low (< 50%): ghost state — dashed border, 40% opacity, grey fill
+- Medium (50–80%): semi-solid — solid border, 70% opacity
+- High (> 80%): fully solid — fully rendered, color-filled
+
+As the SME provides more detail, nodes visually solidify in real time. Show a "Map Completeness" progress bar at the top of the center panel.
+
+### Node Styles
+- Start/End: Rounded pill, teal fill (#008b9b)
+- Task: Rounded rectangle, dark surface (#242424) with orange left border (#e8450a)
+- Decision: Diamond shape, gold fill (#c8940a)
+- Node label: white text, step name on top, role and system in smaller muted text below
+- Pain point: red indicator dot on top-right corner of node
+
+### Live Update Animation
+When a new node is added: fade in and scale from 0.8 to 1.0 over 300ms. Connecting edge draws from previous node with a path animation over 400ms. Map auto-fits after each addition. This should feel like the process map is painting itself in real time.
+
+### AI-Driven Map Completion
+When completeness reaches 70%, the AI proactively sends: "The process map is taking good shape. I still need a bit more detail on [list low-confidence nodes]. Can you walk me through [specific step]?"
+
+When completeness reaches 90%, the AI sends: "The process map looks comprehensive. Here's a summary of what we've captured: [step list]. Does this accurately reflect the end-to-end process, or is there anything missing?"
+
+The SME never has to decide when the map is ready — the AI tells them.
+
+### Node Editing (optional refinement, not required)
+Clicking a node opens an inline edit panel (not a modal) on the right side of the center panel: edit step name, role, system, type, notes, pain point flag. Save / Cancel.
+
+Right-clicking the canvas opens a context menu: "Add Step Here." When the SME saves a manually added step, automatically send to the LLM: "The SME added a step called '{step name}' performed by '{role}' using '{system}' after '{previous step}'. Integrate this into your understanding and adjust the process narrative. Confirm the addition and identify if this changes any other steps." The AI responds and updates accordingly.
+
+Edges are clickable to add condition labels (Yes / No / Approved / Rejected etc).
+
+### As-Is / To-Be Toggle
+Add a toggle button at the top right of the center panel labeled "As-Is / To-Be". In MVP 1, As-Is is active. To-Be will show the solution design in a future iteration. The toggle is present and styled but the To-Be view can show a placeholder for now.
+
+### Approval Button
+When map completeness reaches 85% or above, show an "Approve As-Is Map" button at the bottom of the center panel with the label: "Ready to approve? The AI will generate your Process Design Document immediately after."
+
+On click: confirmation modal ("By approving, you are formally signing off on this As-Is process map. This is recorded with your name, role, and timestamp and cannot be undone.") → write to Supabase approvals table (idea_id, user_id, role, document_type: 'as-is-map', timestamp, node JSON snapshot) → button changes to "As-Is Approved ✓" with timestamp → stage tracker advances → AI immediately fires in chat: "As-Is map approved and locked. Generating your Process Design Document now..." and begins streaming the PDD without any further SME input.
+
+---
+
+## PART 3 — DOCUMENT GENERATION
+
+### Process Design Document (PDD)
+Triggered automatically the moment As-Is map approval is recorded. No SME action required.
+
+Prompt sent to Claude with full conversation history and node JSON snapshot:
+"The SME has approved the As-Is process map. Generate a comprehensive Process Design Document without waiting for further input. Include: 1) Executive Summary, 2) Process Scope and Boundaries, 3) As-Is Process Description (narrative form referencing the mapped steps), 4) Pain Points and Inefficiencies, 5) Automation Opportunity Assessment with a clear recommendation, 6) Assumptions and Exceptions, 7) Data and System Requirements. Write as a professional business document — prose, not bullet lists. Be specific. Use every detail from the conversation. This document must be complete enough that a developer could understand the process without speaking to the SME."
+
+Render in chat as a distinct document card: elevated surface (#2a2a2a), teal left border, document icon header, collapsible sections. At the top of the card: "I've generated your Process Design Document based on everything we've discussed. Read through it and let me know if anything needs adjusting. When you're satisfied, approve it below and I'll immediately begin the Solution Design." At the bottom: "Approve PDD" button.
+
+Refinement loop: if the SME requests changes, the AI updates and re-renders the PDD as a new version. Old versions stored in Supabase, only latest shown. The AI proactively flags thin sections: "I want to flag that the Exceptions section is light — I only have one documented exception. Do you have others?"
+
+Approval: confirmation modal → approvals table write → AI immediately fires: "PDD approved and locked. Starting your Solution Design Document now..." and begins generating without any SME input.
+
+### Solution Design Document (SDD)
+Triggered automatically after PDD approval.
+
+Prompt sent to Claude:
+"The PDD has been approved. Generate a Solution Design Document for UiPath automation immediately. Include: 1) Automation Architecture Overview, 2) Process Components and Workflow Breakdown, 3) UiPath Activities and Packages Required (name actual UiPath activities), 4) Integration Points and API/System Connections, 5) Exception Handling Strategy, 6) Security Considerations, 7) Test Strategy. Reference UiPath best practices throughout. This document will be used to generate the automation package — it must be precise and technically complete."
+
+Same rendering, same refinement loop, same approval flow as PDD. After SDD approval the AI immediately fires: "SDD approved. Generating your UiPath automation package now — this will be ready to import into UiPath Studio." Then auto-triggers package generation.
+
+### UiPath Package Generation
+Triggered automatically after SDD approval. No SME action required.
+
+Prompt sent to Claude:
+"Based on the approved SDD, generate a UiPath automation package structure. Output a valid JSON object with this exact shape: { projectName, description, dependencies: [array of UiPath package names with versions], workflows: [{ name, description, steps: [{ activity, properties, notes }] }] }. Use real UiPath activity names."
+
+Parse the JSON and render a package summary card in chat with workflow names and dependency list. At the top: "Your UiPath package is ready. Download it below and import it into UiPath Studio using the instructions included in the package."
+
+Generate a downloadable ZIP: project.json (UiPath-formatted), one XAML stub per workflow with comments, README.md with import instructions. Show a prominent orange "Download UiPath Package" button. The SME should never have to ask what to do next at any point in this flow.
+
+All document versions and approval records saved to Supabase.
+
+---
+
+## PART 4 — AUTOMATED STAGE TRANSITIONS
+
+Build a stage engine that evaluates idea state and advances automatically. No manual promotion. Ever.
+
+- **Idea → Feasibility Assessment:** LLM has output at least 3 [STEP] tags and SME has sent at least 4 messages. AI sends: "We have enough to assess feasibility. Let me give you an honest read on this automation."
+- **Feasibility Assessment → Validated Backlog:** LLM has delivered a feasibility assessment (detected by keywords: 'automation potential', 'recommend', 'feasibility') and SME has responded. AI sends: "This is confirmed for the backlog. Moving into Design — let's map the full process now."
+- **Validated Backlog → Design:** Auto-advance immediately with a 1.5 second delay.
+- **Design → Build:** As-Is map approval AND PDD approval both recorded. AI sends: "Design phase complete. All documents approved. Moving to Build."
+- **Build → Test:** SDD approval recorded and UiPath package generated. AI sends: "Your automation package is ready. Moving to Test."
+
+Each transition fires a toast notification and updates the pipeline board in real time.
+
+Stalled ideas (no activity in 48+ hours) show a subtle amber warning chip on the pipeline card: "Needs attention."
+
+---
+
+## PART 5 — COE EXPERIENCE
+
+When active role is CoE, the Pipeline view shows all ideas at stage Test or beyond, sorted by most recent activity. Each card shows a priority indicator: High (flagged risks), Medium (standard review), Low (clean pass).
+
+### AI Review Summary
+Generated automatically when an idea reaches CoE stage. Prompt sent to Claude with full conversation history, all approved documents, and node snapshot:
+"Generate a CoE Review Summary. The reviewer needs to make an approve/reject decision efficiently. Include: 1) Process Overview (2 sentences), 2) Automation Approach, 3) Risk Assessment (flag anything that could cause production issues), 4) Document Quality assessment, 5) Recommendation (Approve / Approve with Conditions / Reject) with reasoning. Be direct. The reviewer should be able to make a decision from this summary alone."
+
+Render at the top of the CoE workspace in a prominent card with a Recommendation chip (green = Approve, amber = Approve with Conditions, red = Reject).
+
+### CoE Workspace Layout
+- Center: process map read-only, As-Is / To-Be toggle, document tabs (PDD, SDD, Approval History)
+- Right: CoE Chat panel
+
+### CoE Chat System Prompt
+"You are assisting a CoE reviewer for '{idea_title}'. You have full context of the SME conversation, all approved documents, and the process map. Answer the reviewer's questions precisely and surface risks clearly. Reference specific document sections when relevant. Do not summarize what the reviewer can already see — answer what they actually ask."
+
+### Approve / Reject
+Two buttons always visible at the top of the CoE workspace — never buried.
+- Approve: confirmation modal, optional comment, writes to approvals table with coe role tag, notifies idea owner, advances stage to Deploy.
+- Reject: requires a comment, writes to approvals table, notifies idea owner with rejection reason, idea returns to Build stage on pipeline board.
+
+---
+
+## PART 6 — ADMIN PANEL
+
+When Admin role is active, Settings opens the Admin Panel with three tabs:
+
+**Users tab:** table of all users — name, email, role, last login, idea count. Inline role change dropdown. Deactivate toggle. No delete.
+
+**Audit Log tab:** full chronological log — timestamp, user, role, event type, idea title. Filterable by user, event type, date range. Each row expandable for full detail. Export to CSV button.
+
+**System tab:** current LLM model (claude-sonnet-4-6), API status indicator (green/red based on lightweight ping), total ideas by stage summary chart.
+
+**Prioritized Action List at top of Admin Panel:** "3 ideas awaiting CoE approval", "1 idea stalled in Design for 5+ days", "2 users have not logged in for 30+ days." Each is clickable and takes the Admin directly to the relevant item. Admin should never have to hunt.
+
+---
+
+## PART 7 — BUILT-IN USER GUIDE
+
+Accessible from the left sidebar. Left sub-nav for sections, reading pane on the right. Well-written prose throughout — no bullet lists. Role-filtered by default (SME sees SME sections, CoE sees CoE sections, Admin sees all). "Show All" toggle overrides.
+
+Sections:
+
+1. **Welcome to CannonBall** — What this app does, why it exists, and the core principle: the AI does the heavy lifting so you can focus on what only you can do — making decisions and providing context.
+
+2. **How the Pipeline Works** — The 10 stages, what happens in each, what triggers progression (automatic — you never move ideas manually), what to expect at each stage.
+
+3. **Your Role: Process SME** — Capturing an idea, what to expect when the workspace opens (the AI greets you and takes the lead), how to describe your process, how to read and interact with the live process map, what each approval means, how to download your package. Emphasis: the AI will tell you what to do next — you do not need to figure it out.
+
+4. **Your Role: CoE** — How ideas arrive in your queue, what the AI Review Summary is and how to use it, how to use the CoE chat, what Approve and Reject mean, what happens after your decision.
+
+5. **Your Role: Admin** — User management, reading the audit log, understanding the action list.
+
+6. **Getting the Best Results from the AI** — Be specific about systems, roles, volumes, and exceptions. The more context you give, the more complete the output. You can always refine — nothing is locked until you approve it.
+
+7. **Understanding the Process Map** — Node types, confidence levels, ghost nodes, how to edit, how to add a step, how edges work.
+
+8. **Document Approvals — Why They Matter** — What each approval captures, why it is formal and timestamped, why the AI generates everything so the human is reviewing rather than creating.
+
+9. **Frequently Asked Questions**
+
+---
+
+## PART 8 — FINAL POLISH
+
+- Consistent spacing, typography, and color usage across every screen per the design system (background #0a0a0a, surface #1a1a1a, orange #e8450a, teal #008b9b, gold #c8940a, magenta #d4006a, purple #7b1fa2)
+- Empty states have a helpful message and a clear call to action. No blank screens anywhere.
+- Loading states use skeleton screens, not spinners.
+- All buttons have hover and active states.
+- Error messages are human — no raw error codes or stack traces visible to users.
+- Browser tab title: "CannonBall"
+- Bottom left of sidebar: "MVP 1 · Internal Build"
+- Stalled pipeline cards (48+ hours no activity) show an amber "Needs attention" chip.
+
+---
+
+## END-TO-END VERIFICATION CHECKLIST
+
+Confirm all of the following before marking this build complete:
+
+- All three demo logins work (sme@cannonball.demo, coe@cannonball.demo, admin@cannonball.demo / CannonBall2026!) and role switching works
+- Seeded ideas appear on the pipeline board
+- New idea creation works and opens the workspace
+- AI opens the conversation immediately without SME typing first
+- Chat streams responses in real time with blinking cursor
+- Process map builds as [STEP] tags are parsed from LLM responses
+- Nodes solidify as confidence increases, ghost nodes render for incomplete steps
+- Map Completeness progress bar updates in real time
+- AI proactively prompts at 70% and 90% completeness
+- Node editing and manual step addition work, AI integrates manual additions
+- Approve As-Is button appears at 85% completeness
+- As-Is approval triggers PDD generation automatically with no SME input
+- PDD approval triggers SDD generation automatically with no SME input
+- SDD approval triggers UiPath package generation automatically with no SME input
+- Package ZIP is downloadable with project.json, XAML stubs, and README
+- Stage transitions happen automatically and update the pipeline board
+- Stalled ideas show amber warning chip
+- CoE Review Summary auto-generates when idea reaches CoE stage
+- CoE chat works with full idea context
+- CoE approve/reject writes to audit log and notifies owner
+- Admin action list surfaces stalled ideas and pending approvals
+- Admin audit log shows all events and is filterable
+- User Guide is populated, readable, and role-filtered
+- Dark mode is default, light mode toggle works
+- No blank screens, no raw error messages, no broken states anywhere

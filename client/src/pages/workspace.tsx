@@ -342,15 +342,27 @@ function ChatPanel({ idea }: { idea: Idea }) {
 
   useEffect(() => {
     if (!savedMessages || savedMessages.length === 0) return;
-    const hasApprovalMsg = savedMessages.some(
+    const hasMapApproval = savedMessages.some(
       (m) => m.role === "assistant" && m.content.includes("As-Is process map approved")
     );
     const hasPdd = savedMessages.some(
       (m) => m.content.startsWith("[DOC:PDD:")
     );
-    if (hasApprovalMsg && !hasPdd && !pddTriggeredRef.current && !isGeneratingDoc) {
+    if (hasMapApproval && !hasPdd && !pddTriggeredRef.current && !isGeneratingDoc) {
       pddTriggeredRef.current = true;
       generateDocument("PDD");
+      return;
+    }
+
+    const hasPddApproval = savedMessages.some(
+      (m) => m.role === "assistant" && m.content.includes("PDD approved")
+    );
+    const hasSdd = savedMessages.some(
+      (m) => m.content.startsWith("[DOC:SDD:")
+    );
+    if (hasPddApproval && !hasSdd && !sddTriggeredRef.current && !isGeneratingDoc) {
+      sddTriggeredRef.current = true;
+      generateDocument("SDD");
     }
   }, [savedMessages, isGeneratingDoc, generateDocument]);
 
@@ -869,7 +881,9 @@ export default function Workspace() {
           <ResizableHandle withHandle />
 
           <ResizablePanel defaultSize={50} minSize={30}>
-            <ProcessMapPanel ideaId={idea.id} />
+            <ProcessMapPanel ideaId={idea.id} onApproved={() => {
+              queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+            }} />
           </ResizablePanel>
 
           <ResizableHandle withHandle />
