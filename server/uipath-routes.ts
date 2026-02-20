@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { getUiPathConfig, saveUiPathConfig, testUiPathConnection, pushToUiPath } from "./uipath-integration";
+import { getUiPathConfig, saveUiPathConfig, testUiPathConnection, pushToUiPath, getLastTestedAt } from "./uipath-integration";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
 
@@ -20,8 +20,9 @@ export function registerUiPathRoutes(app: Express): void {
   app.get("/api/settings/uipath", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
     const config = await getUiPathConfig();
+    const lastTestedAt = await getLastTestedAt();
     if (!config) {
-      return res.json({ configured: false });
+      return res.json({ configured: false, lastTestedAt });
     }
     return res.json({
       configured: true,
@@ -30,6 +31,7 @@ export function registerUiPathRoutes(app: Express): void {
       clientId: config.clientId,
       scopes: config.scopes,
       hasSecret: !!config.clientSecret,
+      lastTestedAt,
     });
   });
 
@@ -44,7 +46,13 @@ export function registerUiPathRoutes(app: Express): void {
       return res.status(400).json({ message: "App Secret is required for initial configuration" });
     }
     await saveUiPathConfig({ orgName, tenantName, clientId, clientSecret: clientSecret || undefined, scopes: scopes || undefined });
-    return res.json({ success: true, message: "UiPath configuration saved." });
+
+    const testResult = await testUiPathConnection();
+    return res.json({
+      success: true,
+      message: "UiPath configuration saved.",
+      testResult,
+    });
   });
 
   app.post("/api/settings/uipath/test", async (req: Request, res: Response) => {

@@ -30,19 +30,28 @@ export async function getUiPathConfig(): Promise<UiPathConfig | null> {
   return { orgName, tenantName, clientId, clientSecret, scopes };
 }
 
+function extractOrgName(input: string): string {
+  let val = input.trim();
+  val = val.replace(/^https?:\/\//, "");
+  val = val.replace(/^cloud\.uipath\.com\//, "");
+  val = val.replace(/\/+$/, "");
+  val = val.split("/")[0];
+  return val.trim();
+}
+
 export async function saveUiPathConfig(config: { orgName: string; tenantName: string; clientId: string; clientSecret?: string; scopes?: string }): Promise<void> {
   const entries: { key: string; value: string }[] = [
-    { key: "uipath_org_name", value: config.orgName },
-    { key: "uipath_tenant_name", value: config.tenantName },
-    { key: "uipath_client_id", value: config.clientId },
+    { key: "uipath_org_name", value: extractOrgName(config.orgName) },
+    { key: "uipath_tenant_name", value: config.tenantName.trim() },
+    { key: "uipath_client_id", value: config.clientId.trim() },
   ];
 
   if (config.clientSecret) {
-    entries.push({ key: "uipath_client_secret", value: config.clientSecret });
+    entries.push({ key: "uipath_client_secret", value: config.clientSecret.trim() });
   }
 
   if (config.scopes) {
-    entries.push({ key: "uipath_scopes", value: config.scopes });
+    entries.push({ key: "uipath_scopes", value: config.scopes.trim() });
   }
 
   for (const entry of entries) {
@@ -53,6 +62,24 @@ export async function saveUiPathConfig(config: { orgName: string; tenantName: st
       await db.insert(appSettings).values(entry);
     }
   }
+}
+
+async function upsertSetting(key: string, value: string): Promise<void> {
+  const existing = await db.select().from(appSettings).where(eq(appSettings.key, key));
+  if (existing.length > 0) {
+    await db.update(appSettings).set({ value, updatedAt: new Date() }).where(eq(appSettings.key, key));
+  } else {
+    await db.insert(appSettings).values({ key, value });
+  }
+}
+
+export async function recordLastTestedAt(): Promise<void> {
+  await upsertSetting("uipath_last_tested", new Date().toISOString());
+}
+
+export async function getLastTestedAt(): Promise<string | null> {
+  const rows = await db.select().from(appSettings).where(eq(appSettings.key, "uipath_last_tested"));
+  return rows.length > 0 ? rows[0].value : null;
 }
 
 async function getAccessToken(config: UiPathConfig): Promise<string> {
@@ -197,10 +224,10 @@ export async function pushToUiPath(pkg: any): Promise<{ success: boolean; messag
   }
 }
 
-export async function testUiPathConnection(): Promise<{ success: boolean; message: string }> {
+export async function testUiPathConnection(): Promise<{ success: boolean; message: string; errorType?: string }> {
   const config = await getUiPathConfig();
   if (!config) {
-    return { success: false, message: "UiPath Orchestrator is not configured." };
+    return { success: false, message: "UiPath Orchestrator is not configured.", errorType: "not_configured" };
   }
 
   try {
@@ -210,10 +237,25 @@ export async function testUiPathConnection(): Promise<{ success: boolean; messag
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
-      return { success: false, message: `Connection failed (${res.status}). Check your credentials and scopes.` };
+      const errText = await res.text();
+      if (res.status === 403) {
+        return { success: false, message: "Access denied. The App ID may not have the required scopes granted. Check your External Application settings in UiPath Cloud and ensure the correct scopes are selected.", errorType: "forbidden" };
+      }
+      if (res.status === 404) {
+        return { success: false, message: "Organization or Tenant not found. Double-check the Organization Name and Tenant Name match your UiPath Cloud URL exactly.", errorType: "not_found" };
+      }
+      return { success: false, message: `Connection failed (${res.status}): ${errText.slice(0, 200)}`, errorType: "unknown" };
     }
+    await recordLastTestedAt();
     return { success: true, message: "Connected to UiPath Orchestrator successfully." };
   } catch (err: any) {
-    return { success: false, message: `Connection failed: ${err.message || String(err)}` };
+    const msg = err.message || String(err);
+    if (msg.includes("invalid_scope")) {
+      return { success: false, message: "Invalid scopes. The scopes you selected must match the scopes granted to your External Application in UiPath Cloud. Go to Admin > External Applications, edit your app, and verify the selected scopes.", errorType: "invalid_scope" };
+    }
+    if (msg.includes("invalid_client")) {
+      return { success: false, message: "Invalid App ID or App Secret. Verify your credentials are correct. You may need to regenerate the App Secret in UiPath Cloud.", errorType: "invalid_client" };
+    }
+    return { success: false, message: `Connection failed: ${msg}`, errorType: "unknown" };
   }
 }

@@ -31,6 +31,8 @@ import {
   Loader2,
   Eye,
   EyeOff,
+  ExternalLink,
+  Clock,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -359,14 +361,43 @@ function SystemTab() {
   );
 }
 
+const UIPATH_SCOPES = [
+  { id: "OR.Default", label: "Default", description: "General Orchestrator access (package upload, folder listing)" },
+  { id: "OR.Folders", label: "Folders", description: "List and manage Orchestrator folders" },
+  { id: "OR.Execution", label: "Execution", description: "Start and manage process executions" },
+  { id: "OR.Assets", label: "Assets", description: "Read and manage Orchestrator assets" },
+  { id: "OR.Queues", label: "Queues", description: "Manage transaction queues and items" },
+  { id: "OR.Jobs", label: "Jobs", description: "Monitor and manage running jobs" },
+  { id: "OR.Robots", label: "Robots", description: "View and manage robots" },
+  { id: "OR.Machines", label: "Machines", description: "View and manage machines" },
+  { id: "OR.Settings", label: "Settings", description: "Read and update Orchestrator settings" },
+  { id: "OR.Users", label: "Users", description: "Manage Orchestrator users" },
+  { id: "OR.Monitoring", label: "Monitoring", description: "Access monitoring and alerting" },
+  { id: "OR.Administration", label: "Administration", description: "Full administrative access" },
+  { id: "OR.BackgroundTasks", label: "Background Tasks", description: "Manage background task processing" },
+] as const;
+
+function extractOrgSlug(input: string): string {
+  let val = input.trim();
+  val = val.replace(/^https?:\/\//, "");
+  val = val.replace(/^cloud\.uipath\.com\//, "");
+  val = val.replace(/\/+$/, "");
+  val = val.split("/")[0];
+  return val.trim();
+}
+
 function IntegrationsTab() {
   const { toast } = useToast();
+  const [step, setStep] = useState(0);
   const [showSecret, setShowSecret] = useState(false);
   const [orgName, setOrgName] = useState("");
-  const [tenantName, setTenantName] = useState("");
+  const [tenantName, setTenantName] = useState("DefaultTenant");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
-  const [scopes, setScopes] = useState("OR.Default");
+  const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set(["OR.Default"]));
+  const [testResultMsg, setTestResultMsg] = useState<{ success: boolean; message: string } | null>(null);
+
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const { data: config, isLoading } = useQuery<{
     configured: boolean;
@@ -375,6 +406,7 @@ function IntegrationsTab() {
     clientId?: string;
     scopes?: string;
     hasSecret?: boolean;
+    lastTestedAt?: string | null;
   }>({
     queryKey: ["/api/settings/uipath"],
   });
@@ -382,26 +414,88 @@ function IntegrationsTab() {
   useEffect(() => {
     if (config?.configured) {
       setOrgName(config.orgName || "");
-      setTenantName(config.tenantName || "");
+      setTenantName(config.tenantName || "DefaultTenant");
       setClientId(config.clientId || "");
-      setScopes(config.scopes || "OR.Default");
+      const scopeSet = new Set((config.scopes || "OR.Default").split(" ").filter(Boolean));
+      setSelectedScopes(scopeSet);
+      setStep(3);
     }
   }, [config]);
 
+  const toggleScope = (scopeId: string) => {
+    setSelectedScopes((prev) => {
+      const next = new Set(prev);
+      if (next.has(scopeId)) {
+        if (scopeId === "OR.Default" && next.size === 1) return next;
+        next.delete(scopeId);
+      } else {
+        next.add(scopeId);
+      }
+      return next;
+    });
+  };
+
+  const validateStep = (s: number): boolean => {
+    const newErrors: Record<string, string> = {};
+    if (s === 0) {
+      const org = extractOrgSlug(orgName);
+      if (!org) newErrors.orgName = "Organization name is required";
+      if (!tenantName.trim()) newErrors.tenantName = "Tenant name is required";
+    }
+    if (s === 1) {
+      if (!clientId.trim()) newErrors.clientId = "App ID is required";
+      else {
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(clientId.trim())) {
+          newErrors.clientId = "App ID should be a UUID (e.g. 04c8163f-77fc-4547-86e3-dba0844844fe)";
+        }
+      }
+      if (!clientSecret.trim() && !config?.hasSecret) newErrors.clientSecret = "App Secret is required";
+    }
+    if (s === 2) {
+      if (selectedScopes.size === 0) newErrors.scopes = "Select at least one scope";
+    }
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const goNext = () => {
+    if (validateStep(step)) {
+      setErrors({});
+      setStep((s) => Math.min(s + 1, 3));
+    }
+  };
+
+  const goBack = () => {
+    setErrors({});
+    setStep((s) => Math.max(s - 1, 0));
+  };
+
   const saveMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/settings/uipath", {
-        orgName,
-        tenantName,
-        clientId,
-        clientSecret,
-        scopes,
+      const res = await apiRequest("POST", "/api/settings/uipath", {
+        orgName: extractOrgSlug(orgName),
+        tenantName: tenantName.trim(),
+        clientId: clientId.trim(),
+        clientSecret: clientSecret.trim() || undefined,
+        scopes: Array.from(selectedScopes).join(" "),
       });
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: { success: boolean; message: string; testResult?: { success: boolean; message: string } }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/settings/uipath"] });
-      toast({ title: "UiPath configuration saved" });
       setClientSecret("");
+      if (data.testResult) {
+        setTestResultMsg(data.testResult);
+        if (data.testResult.success) {
+          toast({ title: "Saved & connected", description: "Configuration saved and connection verified." });
+        } else {
+          toast({ title: "Saved but connection failed", description: data.testResult.message, variant: "destructive" });
+        }
+      } else {
+        toast({ title: "UiPath configuration saved" });
+      }
+      setStep(3);
     },
     onError: (error: Error) => {
       toast({ title: "Failed to save", description: error.message, variant: "destructive" });
@@ -414,6 +508,8 @@ function IntegrationsTab() {
       return res.json();
     },
     onSuccess: (data: { success: boolean; message: string }) => {
+      setTestResultMsg(data);
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/uipath"] });
       if (data.success) {
         toast({ title: "Connection successful", description: data.message });
       } else {
@@ -435,7 +531,7 @@ function IntegrationsTab() {
     );
   }
 
-  const canSave = orgName.trim() && tenantName.trim() && clientId.trim() && (clientSecret.trim() || config?.hasSecret);
+  const stepLabels = ["Organization", "Credentials", "Scopes", "Confirm"];
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -447,137 +543,299 @@ function IntegrationsTab() {
               <h3 className="text-lg font-semibold text-foreground">UiPath Orchestrator</h3>
             </div>
             <p className="text-sm text-muted-foreground">
-              Connect to UiPath Cloud to push automation packages directly from CannonBall.
-              Set up via Admin &gt; External Applications in UiPath Cloud (Confidential app type).
+              Connect to UiPath Cloud to push automation packages directly.{" "}
+              <a
+                href="https://cloud.uipath.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#e8450a] hover:underline"
+                data-testid="link-uipath-cloud"
+              >
+                Open UiPath Cloud
+              </a>
             </p>
           </div>
           {config?.configured ? (
-            <Badge variant="outline" className="border-green-600 text-green-500 gap-1">
+            <Badge variant="outline" className="border-green-600 text-green-500 gap-1" data-testid="badge-connected">
               <CheckCircle2 className="h-3 w-3" />
               Connected
             </Badge>
           ) : (
-            <Badge variant="outline" className="border-muted-foreground text-muted-foreground gap-1">
+            <Badge variant="outline" className="border-muted-foreground text-muted-foreground gap-1" data-testid="badge-not-configured">
               <XCircle className="h-3 w-3" />
               Not configured
             </Badge>
           )}
         </div>
 
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="orgName">Organization Name</Label>
-            <Input
-              id="orgName"
-              placeholder="e.g. mycompany"
-              value={orgName}
-              onChange={(e) => setOrgName(e.target.value)}
-              data-testid="input-uipath-org"
-            />
-            <p className="text-xs text-muted-foreground">
-              Found in your UiPath Cloud URL: cloud.uipath.com/<strong>orgName</strong>/tenantName
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="tenantName">Tenant Name</Label>
-            <Input
-              id="tenantName"
-              placeholder="e.g. DefaultTenant"
-              value={tenantName}
-              onChange={(e) => setTenantName(e.target.value)}
-              data-testid="input-uipath-tenant"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="clientId">App ID (Client ID)</Label>
-            <Input
-              id="clientId"
-              placeholder="e.g. 8DEv1AMN..."
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              data-testid="input-uipath-client-id"
-            />
-            <p className="text-xs text-muted-foreground">
-              From Admin &gt; External Applications in UiPath Cloud.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="clientSecret">App Secret (Client Secret)</Label>
-            <div className="relative">
-              <Input
-                id="clientSecret"
-                type={showSecret ? "text" : "password"}
-                placeholder={config?.hasSecret ? "••••••• (saved)" : "Paste your app secret"}
-                value={clientSecret}
-                onChange={(e) => setClientSecret(e.target.value)}
-                className="pr-10"
-                data-testid="input-uipath-client-secret"
-              />
+        <div className="flex items-center gap-1" data-testid="wizard-steps">
+          {stepLabels.map((label, i) => (
+            <div key={label} className="flex items-center gap-1 flex-1">
               <button
-                type="button"
-                onClick={() => setShowSecret(!showSecret)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                data-testid="button-toggle-secret"
+                onClick={() => {
+                  if (i <= step || config?.configured) {
+                    setErrors({});
+                    setStep(i);
+                  }
+                }}
+                className={`flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded transition-colors ${
+                  i === step
+                    ? "bg-[#e8450a] text-white"
+                    : i < step
+                      ? "bg-[#e8450a]/20 text-[#e8450a] hover:bg-[#e8450a]/30 cursor-pointer"
+                      : "bg-muted text-muted-foreground"
+                }`}
+                data-testid={`wizard-step-${i}`}
               >
-                {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold border border-current">
+                  {i < step ? "✓" : i + 1}
+                </span>
+                {label}
               </button>
+              {i < stepLabels.length - 1 && (
+                <div className={`flex-1 h-px ${i < step ? "bg-[#e8450a]/40" : "bg-border"}`} />
+              )}
+            </div>
+          ))}
+        </div>
+
+        {step === 0 && (
+          <div className="space-y-4" data-testid="wizard-panel-org">
+            <div className="p-3 rounded-md bg-muted/50 border border-border text-xs text-muted-foreground space-y-1">
+              <p className="font-medium text-foreground text-sm">Step 1: Organization & Tenant</p>
+              <p>Find these in your UiPath Cloud URL: <code className="bg-muted px-1 py-0.5 rounded text-[10px]">cloud.uipath.com/<strong>orgName</strong>/<strong>tenantName</strong></code></p>
+              <p>You can paste the full URL — the organization name will be extracted automatically.</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="orgName">Organization Name <span className="text-destructive">*</span></Label>
+              <Input
+                id="orgName"
+                placeholder="e.g. mycompany or https://cloud.uipath.com/mycompany/"
+                value={orgName}
+                onChange={(e) => { setOrgName(e.target.value); setErrors((p) => ({ ...p, orgName: "" })); }}
+                className={errors.orgName ? "border-destructive" : ""}
+                data-testid="input-uipath-org"
+              />
+              {errors.orgName && <p className="text-xs text-destructive" data-testid="error-org">{errors.orgName}</p>}
+              {orgName && orgName.includes("cloud.uipath.com") && (
+                <p className="text-xs text-green-500">
+                  Will use: <strong>{extractOrgSlug(orgName)}</strong>
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="tenantName">Tenant Name <span className="text-destructive">*</span></Label>
+              <Input
+                id="tenantName"
+                placeholder="e.g. DefaultTenant"
+                value={tenantName}
+                onChange={(e) => { setTenantName(e.target.value); setErrors((p) => ({ ...p, tenantName: "" })); }}
+                className={errors.tenantName ? "border-destructive" : ""}
+                data-testid="input-uipath-tenant"
+              />
+              {errors.tenantName && <p className="text-xs text-destructive" data-testid="error-tenant">{errors.tenantName}</p>}
+              <p className="text-xs text-muted-foreground">Usually "DefaultTenant" unless you renamed it.</p>
+            </div>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="space-y-4" data-testid="wizard-panel-creds">
+            <div className="p-3 rounded-md bg-muted/50 border border-border text-xs text-muted-foreground space-y-1">
+              <p className="font-medium text-foreground text-sm">Step 2: App Credentials</p>
+              <p>Create a <strong>Confidential</strong> External Application in UiPath Cloud:</p>
+              <p>Admin → External Applications → Add Application → Type: Confidential</p>
+              <a
+                href="https://cloud.uipath.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#e8450a] hover:underline inline-flex items-center gap-1"
+              >
+                Open UiPath Cloud Admin
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="clientId">App ID (Client ID) <span className="text-destructive">*</span></Label>
+              <Input
+                id="clientId"
+                placeholder="e.g. 04c8163f-77fc-4547-86e3-dba0844844fe"
+                value={clientId}
+                onChange={(e) => { setClientId(e.target.value); setErrors((p) => ({ ...p, clientId: "" })); }}
+                className={errors.clientId ? "border-destructive" : ""}
+                data-testid="input-uipath-client-id"
+              />
+              {errors.clientId && <p className="text-xs text-destructive" data-testid="error-client-id">{errors.clientId}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="clientSecret">App Secret (Client Secret) <span className="text-destructive">*</span></Label>
+              <div className="relative">
+                <Input
+                  id="clientSecret"
+                  type={showSecret ? "text" : "password"}
+                  placeholder={config?.hasSecret ? "••••••• (saved — leave blank to keep)" : "Paste your app secret"}
+                  value={clientSecret}
+                  onChange={(e) => { setClientSecret(e.target.value); setErrors((p) => ({ ...p, clientSecret: "" })); }}
+                  className={`pr-10 ${errors.clientSecret ? "border-destructive" : ""}`}
+                  data-testid="input-uipath-client-secret"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSecret(!showSecret)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  data-testid="button-toggle-secret"
+                >
+                  {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              {errors.clientSecret && <p className="text-xs text-destructive" data-testid="error-client-secret">{errors.clientSecret}</p>}
+              <p className="text-xs text-muted-foreground">
+                The secret is shown only once when you create the app. Copy it before closing the dialog.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="space-y-4" data-testid="wizard-panel-scopes">
+            <div className="p-3 rounded-md bg-muted/50 border border-border text-xs text-muted-foreground space-y-1">
+              <p className="font-medium text-foreground text-sm">Step 3: Select Scopes</p>
+              <p>Choose the permissions your app needs. These must match the scopes you granted when creating the External Application in UiPath Cloud.</p>
+              <p className="text-[#e8450a]">Mismatched scopes will cause "invalid_scope" errors.</p>
+            </div>
+            {errors.scopes && <p className="text-xs text-destructive" data-testid="error-scopes">{errors.scopes}</p>}
+            <div className="grid grid-cols-1 gap-2 max-h-[340px] overflow-y-auto pr-1" data-testid="scope-list">
+              {UIPATH_SCOPES.map((scope) => {
+                const checked = selectedScopes.has(scope.id);
+                return (
+                  <label
+                    key={scope.id}
+                    className={`flex items-start gap-3 p-3 rounded-md border cursor-pointer transition-colors ${
+                      checked ? "border-[#e8450a]/50 bg-[#e8450a]/5" : "border-border hover:border-muted-foreground/30"
+                    }`}
+                    data-testid={`scope-item-${scope.id}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleScope(scope.id)}
+                      className="mt-0.5 accent-[#e8450a] h-4 w-4"
+                      data-testid={`scope-checkbox-${scope.id}`}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-foreground">{scope.label}</span>
+                        <code className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">{scope.id}</code>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">{scope.description}</p>
+                    </div>
+                  </label>
+                );
+              })}
             </div>
             <p className="text-xs text-muted-foreground">
-              Generated when you create a Confidential External Application in UiPath Cloud.
+              Selected: <strong>{Array.from(selectedScopes).join(", ")}</strong>
             </p>
           </div>
+        )}
 
-          <div className="space-y-2">
-            <Label htmlFor="scopes">Scopes</Label>
-            <Input
-              id="scopes"
-              placeholder="OR.Default"
-              value={scopes}
-              onChange={(e) => setScopes(e.target.value)}
-              data-testid="input-uipath-scopes"
-            />
-            <p className="text-xs text-muted-foreground">
-              Space-separated OAuth scopes. Default: <code className="text-[10px] bg-muted px-1 py-0.5 rounded">OR.Default</code>. Add more as needed (e.g. OR.Folders OR.Assets).
-            </p>
-          </div>
-        </div>
+        {step === 3 && (
+          <div className="space-y-4" data-testid="wizard-panel-confirm">
+            <div className="p-3 rounded-md bg-muted/50 border border-border text-xs text-muted-foreground space-y-1">
+              <p className="font-medium text-foreground text-sm">Step 4: Review & Connect</p>
+              <p>Review your settings below, then save and test the connection.</p>
+            </div>
 
-        <div className="flex items-center gap-3 pt-2">
-          <Button
-            onClick={() => saveMutation.mutate()}
-            disabled={!canSave || saveMutation.isPending}
-            data-testid="button-save-uipath"
-          >
-            {saveMutation.isPending ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              "Save Configuration"
-            )}
-          </Button>
-          {config?.configured && (
-            <Button
-              variant="outline"
-              onClick={() => testMutation.mutate()}
-              disabled={testMutation.isPending}
-              data-testid="button-test-uipath"
-            >
-              {testMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Testing...
-                </>
-              ) : (
-                "Test Connection"
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                <span className="text-muted-foreground">Organization</span>
+                <span className="font-medium text-foreground" data-testid="confirm-org">{extractOrgSlug(orgName) || "—"}</span>
+                <span className="text-muted-foreground">Tenant</span>
+                <span className="font-medium text-foreground" data-testid="confirm-tenant">{tenantName || "—"}</span>
+                <span className="text-muted-foreground">App ID</span>
+                <span className="font-mono text-xs text-foreground truncate" data-testid="confirm-client-id">{clientId || "—"}</span>
+                <span className="text-muted-foreground">App Secret</span>
+                <span className="text-foreground" data-testid="confirm-secret">
+                  {config?.hasSecret || clientSecret ? "••••••• (set)" : "Not set"}
+                </span>
+                <span className="text-muted-foreground">Scopes</span>
+                <span className="text-foreground text-xs" data-testid="confirm-scopes">
+                  {Array.from(selectedScopes).join(", ") || "None"}
+                </span>
+              </div>
+
+              {config?.lastTestedAt && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1" data-testid="last-tested">
+                  <Clock className="h-3 w-3" />
+                  Last tested: {new Date(config.lastTestedAt).toLocaleString()}
+                </div>
               )}
+
+              {testResultMsg && (
+                <div
+                  className={`p-3 rounded-md border text-sm ${
+                    testResultMsg.success
+                      ? "border-green-600/30 bg-green-500/10 text-green-400"
+                      : "border-destructive/30 bg-destructive/10 text-destructive"
+                  }`}
+                  data-testid="test-result-msg"
+                >
+                  <div className="flex items-start gap-2">
+                    {testResultMsg.success ? <CheckCircle2 className="h-4 w-4 mt-0.5 flex-shrink-0" /> : <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />}
+                    <span>{testResultMsg.message}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <Button
+                onClick={() => saveMutation.mutate()}
+                disabled={saveMutation.isPending}
+                data-testid="button-save-uipath"
+              >
+                {saveMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Saving & Testing...
+                  </>
+                ) : (
+                  "Save & Test Connection"
+                )}
+              </Button>
+              {config?.configured && (
+                <Button
+                  variant="outline"
+                  onClick={() => testMutation.mutate()}
+                  disabled={testMutation.isPending}
+                  data-testid="button-test-uipath"
+                >
+                  {testMutation.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Testing...
+                    </>
+                  ) : (
+                    "Re-test Connection"
+                  )}
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {step < 3 && (
+          <div className="flex items-center gap-3 pt-2">
+            {step > 0 && (
+              <Button variant="outline" onClick={goBack} data-testid="button-wizard-back">
+                Back
+              </Button>
+            )}
+            <Button onClick={goNext} data-testid="button-wizard-next">
+              Next
             </Button>
-          )}
-        </div>
+          </div>
+        )}
       </Card>
     </div>
   );
