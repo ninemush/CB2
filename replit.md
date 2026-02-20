@@ -12,6 +12,11 @@ CannonBall is a full-stack web application for automation pipeline management. I
 - Process map engine: custom nodes (start/end pill, task rectangle, decision diamond), auto-layout, inline editing, right-click context menu, edge labels, approval workflow
 - Chat parses [STEP:] tags from LLM responses and auto-creates process map nodes
 - Process map approval with snapshot recording
+- Document generation: PDD auto-generated after As-Is map approval, SDD after PDD approval
+- DocumentCard component in chat with collapsible sections, approve/revise buttons, version tracking
+- UiPath package generation: ZIP with project.json, XAML workflow stubs, README after SDD approval
+- Auto-trigger chain: Map approval → PDD → PDD approval → SDD → SDD approval → UiPath export
+- Authorization on all process-map and document routes (ownership + Admin/CoE role check)
 - Three demo users and seed ideas on startup
 
 ## Architecture
