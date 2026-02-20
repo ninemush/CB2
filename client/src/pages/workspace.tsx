@@ -15,6 +15,7 @@ import {
   X,
   Package,
   Pencil,
+  FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -238,6 +239,7 @@ function ChatPanel({ idea }: { idea: Idea }) {
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
   const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
   const [generatingDocType, setGeneratingDocType] = useState<string>("");
+  const docAbortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -256,11 +258,22 @@ function ChatPanel({ idea }: { idea: Idea }) {
     }).catch(() => {});
   }, [idea.id]);
 
+  const cancelDocGeneration = useCallback(() => {
+    if (docAbortRef.current) {
+      docAbortRef.current.abort();
+      docAbortRef.current = null;
+    }
+    setIsGeneratingDoc(false);
+    setGeneratingDocType("");
+  }, []);
+
   const generateDocument = useCallback(async (type: "PDD" | "SDD") => {
+    if (isGeneratingDoc) return;
     setIsGeneratingDoc(true);
     setGeneratingDocType(type);
+    const controller = new AbortController();
+    docAbortRef.current = controller;
     try {
-      const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 120000);
       const res = await fetch(`/api/ideas/${idea.id}/documents/generate`, {
         method: "POST",
@@ -276,16 +289,17 @@ function ChatPanel({ idea }: { idea: Idea }) {
       }
     } catch (err: any) {
       if (err?.name === "AbortError") {
-        console.error(`${type} generation timed out`);
+        console.log(`${type} generation cancelled`);
       } else {
         console.error(`Error generating ${type}:`, err);
       }
     } finally {
+      docAbortRef.current = null;
       setIsGeneratingDoc(false);
       setGeneratingDocType("");
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
     }
-  }, [idea.id]);
+  }, [idea.id, isGeneratingDoc]);
 
   const generateUiPath = useCallback(async () => {
     setIsGeneratingDoc(true);
@@ -757,10 +771,42 @@ function ChatPanel({ idea }: { idea: Idea }) {
                 <p className="text-xs text-muted-foreground">
                   Generating {generatingDocType}... This may take a moment.
                 </p>
+                <button
+                  onClick={cancelDocGeneration}
+                  className="text-[10px] text-muted-foreground hover:text-foreground underline ml-1"
+                  data-testid="button-cancel-doc-gen"
+                >
+                  Cancel
+                </button>
               </div>
             </div>
           </div>
         )}
+
+        {(() => {
+          const hasSdd = displayMessages.some((m) => m.docType === "SDD");
+          const hasPddApprovalMsg = displayMessages.some(
+            (m) => m.content.includes("PDD approved") && m.role === "assistant"
+          );
+          if (hasPddApprovalMsg && !hasSdd && !isGeneratingDoc) {
+            return (
+              <div className="flex justify-center py-2" data-testid="sdd-generate-section">
+                <Button
+                  className="bg-cb-teal hover:bg-cb-teal/90 text-white text-xs"
+                  onClick={() => {
+                    sddTriggeredRef.current = true;
+                    generateDocument("SDD");
+                  }}
+                  data-testid="button-generate-sdd"
+                >
+                  <FileText className="h-3.5 w-3.5 mr-1.5" />
+                  Generate SDD
+                </Button>
+              </div>
+            );
+          }
+          return null;
+        })()}
 
         {(() => {
           const hasUiPath = displayMessages.some((m) => m.uipathData);

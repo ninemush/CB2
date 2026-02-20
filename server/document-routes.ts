@@ -61,20 +61,30 @@ async function verifyIdeaAccess(req: Request, res: Response): Promise<string | n
 }
 
 function trimChatForDocGen(messages: { role: string; content: string }[]): { role: "user" | "assistant"; content: string }[] {
-  const trimmed = messages
-    .filter((m) => !m.content.startsWith("[DOC:") && !m.content.startsWith("[UIPATH:"))
-    .map((m) => {
-      let content = m.content;
-      if (content.length > 2000) {
-        content = content.slice(0, 2000) + "\n...[truncated]";
-      }
-      return { role: m.role as "user" | "assistant", content };
-    });
-  const MAX_MSGS = 30;
-  if (trimmed.length > MAX_MSGS) {
-    return trimmed.slice(trimmed.length - MAX_MSGS);
+  const filtered = messages
+    .filter((m) => !m.content.startsWith("[DOC:") && !m.content.startsWith("[UIPATH:"));
+
+  const deduped: { role: "user" | "assistant"; content: string }[] = [];
+  for (const m of filtered) {
+    let content = m.content;
+    if (content.length > 2000) {
+      content = content.slice(0, 2000) + "\n...[truncated]";
+    }
+    const role = m.role as "user" | "assistant";
+    if (deduped.length > 0 && deduped[deduped.length - 1].role === role) {
+      deduped[deduped.length - 1].content += "\n" + content;
+    } else {
+      deduped.push({ role, content });
+    }
   }
-  return trimmed;
+
+  const MAX_MSGS = 30;
+  let result = deduped.length > MAX_MSGS ? deduped.slice(deduped.length - MAX_MSGS) : deduped;
+
+  if (result.length > 0 && result[0].role !== "user") {
+    result = result.slice(1);
+  }
+  return result;
 }
 
 async function generateDocument(ideaId: string, docType: string): Promise<string> {
