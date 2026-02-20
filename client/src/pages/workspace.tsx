@@ -1,5 +1,6 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
 import { useRoute, Link } from "wouter";
 import {
   ArrowLeft,
@@ -12,6 +13,8 @@ import {
   ToggleLeft,
   Bot,
   ChevronRight,
+  File as FileIcon,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +25,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
-import { PIPELINE_STAGES, type Idea, type PipelineStage } from "@shared/schema";
+import { PIPELINE_STAGES, type Idea, type PipelineStage, type ChatMessage as DBChatMessage } from "@shared/schema";
 
 function getStageBadgeClass(stage: string): string {
   const approvalStages = ["CoE Approval", "Governance / Security Scan"];
@@ -186,62 +189,185 @@ function StageTracker({
   );
 }
 
-interface ChatMessage {
+interface ChatMsg {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  isStreaming?: boolean;
 }
 
+const WELCOME_MESSAGE = `Hi, I'm your automation design assistant. Tell me about the process you want to automate. The more detail you give me, the better.\n\nYou can also upload process maps, videos, or documents.`;
+
 function ChatPanel({ idea }: { idea: Idea }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content: `Hi, I'm your automation design assistant. Tell me about the process you want to automate. The more detail you give me, the better.\n\nYou can also upload process maps, videos, or documents.`,
-      timestamp: new Date(),
-    },
-  ]);
+  const [streamingMsg, setStreamingMsg] = useState<ChatMsg | null>(null);
+  const [pendingUserMsg, setPendingUserMsg] = useState<ChatMsg | null>(null);
   const [inputValue, setInputValue] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const guidance = STAGE_GUIDANCE[idea.stage];
 
+  const { data: savedMessages, isLoading: loadingHistory } = useQuery<DBChatMessage[]>({
+    queryKey: ["/api/ideas", idea.id, "messages"],
+    queryFn: async () => {
+      const res = await fetch(`/api/ideas/${idea.id}/messages`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load messages");
+      return res.json();
+    },
+    enabled: !!idea.id,
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+
+  const displayMessages: ChatMsg[] = (() => {
+    if (savedMessages && savedMessages.length > 0) {
+      const loaded: ChatMsg[] = savedMessages.map((m) => ({
+        id: String(m.id),
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        timestamp: new Date(m.createdAt),
+      }));
+      const result = [...loaded];
+      if (pendingUserMsg) result.push(pendingUserMsg);
+      if (streamingMsg) result.push(streamingMsg);
+      return result;
+    }
+    if (!loadingHistory) {
+      const result: ChatMsg[] = [
+        { id: "welcome", role: "assistant", content: WELCOME_MESSAGE, timestamp: new Date() },
+      ];
+      if (pendingUserMsg) result.push(pendingUserMsg);
+      if (streamingMsg) result.push(streamingMsg);
+      return result;
+    }
+    return [];
+  })();
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [displayMessages]);
 
-  function handleSend() {
-    const text = inputValue.trim();
-    if (!text) return;
+  const handleSend = useCallback(async () => {
+    let text = inputValue.trim();
+    if (!text && !attachedFile) return;
+    if (isStreaming) return;
 
-    const userMsg: ChatMessage = {
+    if (attachedFile) {
+      const fileNote = `(User uploaded a file: ${attachedFile.name}. Acknowledge it and ask them to describe its contents since you cannot read it directly yet.)`;
+      text = text ? `${text}\n\n${fileNote}` : fileNote;
+    }
+
+    const userMsg: ChatMsg = {
       id: `user-${Date.now()}`,
       role: "user",
       content: text,
       timestamp: new Date(),
     };
-    setMessages((prev) => [...prev, userMsg]);
+    setPendingUserMsg(userMsg);
     setInputValue("");
+    setAttachedFile(null);
+    setIsStreaming(true);
 
-    setTimeout(() => {
-      const assistantMsg: ChatMessage = {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        content:
-          "Thanks for sharing that. I'm processing the details you've provided. In a future update, I'll analyze your process and help design the automation workflow. For now, keep adding details about the steps, people involved, and any pain points.",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
-    }, 1200);
-  }
+    const streamMsg: ChatMsg = {
+      id: `assistant-${Date.now()}`,
+      role: "assistant",
+      content: "",
+      timestamp: new Date(),
+      isStreaming: true,
+    };
+    setStreamingMsg(streamMsg);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ideaId: idea.id, content: text }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Chat request failed");
+      }
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) throw new Error("No stream reader");
+
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.token) {
+                setStreamingMsg((prev) =>
+                  prev ? { ...prev, content: prev.content + data.token } : prev
+                );
+              }
+              if (data.done) {
+                setStreamingMsg((prev) =>
+                  prev ? { ...prev, isStreaming: false } : prev
+                );
+              }
+              if (data.error) {
+                setStreamingMsg((prev) =>
+                  prev
+                    ? { ...prev, content: "Sorry, something went wrong. Please try again.", isStreaming: false }
+                    : prev
+                );
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch {
+      setStreamingMsg((prev) =>
+        prev
+          ? { ...prev, content: "Sorry, I couldn't connect to the server. Please try again.", isStreaming: false }
+          : prev
+      );
+    } finally {
+      setIsStreaming(false);
+      setPendingUserMsg(null);
+      setStreamingMsg(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+    }
+  }, [inputValue, attachedFile, isStreaming, idea.id]);
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
+  }
+
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) {
+      setAttachedFile(file);
+    }
+    e.target.value = "";
+  }
+
+  if (loadingHistory) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center" data-testid="panel-chat">
+        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+        <p className="text-xs text-muted-foreground mt-2">Loading conversation...</p>
+      </div>
+    );
   }
 
   return (
@@ -288,7 +414,7 @@ function ChatPanel({ idea }: { idea: Idea }) {
       )}
 
       <div className="flex-1 overflow-y-auto scrollbar-thin px-3 py-3 space-y-3" data-testid="chat-messages">
-        {messages.map((msg) => (
+        {displayMessages.map((msg) => (
           <div
             key={msg.id}
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
@@ -303,19 +429,24 @@ function ChatPanel({ idea }: { idea: Idea }) {
             >
               <p className="text-xs leading-relaxed whitespace-pre-wrap">
                 {msg.content}
+                {msg.isStreaming && (
+                  <span className="inline-block w-1.5 h-3.5 bg-primary ml-0.5 animate-pulse rounded-sm" />
+                )}
               </p>
-              <span
-                className={`text-[9px] mt-1.5 block ${
-                  msg.role === "user"
-                    ? "text-primary-foreground/60"
-                    : "text-muted-foreground/60"
-                }`}
-              >
-                {msg.timestamp.toLocaleTimeString("en-US", {
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
-              </span>
+              {!msg.isStreaming && (
+                <span
+                  className={`text-[9px] mt-1.5 block ${
+                    msg.role === "user"
+                      ? "text-primary-foreground/60"
+                      : "text-muted-foreground/60"
+                  }`}
+                >
+                  {msg.timestamp.toLocaleTimeString("en-US", {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </span>
+              )}
             </div>
           </div>
         ))}
@@ -323,11 +454,33 @@ function ChatPanel({ idea }: { idea: Idea }) {
       </div>
 
       <div className="p-3 border-t border-border">
+        {attachedFile && (
+          <div className="flex items-center gap-2 mb-2 px-2 py-1.5 rounded-md bg-secondary/50 border border-border text-xs" data-testid="chip-attached-file">
+            <FileIcon className="h-3 w-3 text-muted-foreground shrink-0" />
+            <span className="truncate text-foreground/80">{attachedFile.name}</span>
+            <button
+              onClick={() => setAttachedFile(null)}
+              className="ml-auto shrink-0 text-muted-foreground hover:text-foreground"
+              data-testid="button-remove-file"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
         <div className="flex items-end gap-2 rounded-lg bg-card border border-card-border p-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            onChange={handleFileSelect}
+            data-testid="input-file-upload"
+          />
           <Button
             variant="ghost"
             size="icon"
             className="shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isStreaming}
             data-testid="button-attach-file"
           >
             <Paperclip className="h-4 w-4" />
@@ -340,16 +493,21 @@ function ChatPanel({ idea }: { idea: Idea }) {
             placeholder="Describe your process..."
             className="min-h-[36px] max-h-[120px] resize-none border-0 bg-transparent focus-visible:ring-0 p-0 text-xs placeholder:text-muted-foreground/50"
             rows={1}
+            disabled={isStreaming}
             data-testid="input-chat-message"
           />
           <Button
             size="icon"
             className="shrink-0"
             onClick={handleSend}
-            disabled={!inputValue.trim()}
+            disabled={isStreaming || (!inputValue.trim() && !attachedFile)}
             data-testid="button-send-message"
           >
-            <Send className="h-3.5 w-3.5" />
+            {isStreaming ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Send className="h-3.5 w-3.5" />
+            )}
           </Button>
         </div>
       </div>

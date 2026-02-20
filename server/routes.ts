@@ -5,6 +5,7 @@ import connectPgSimple from "connect-pg-simple";
 import { storage } from "./storage";
 import { seedDemoUsers, seedDemoIdeas } from "./seed";
 import { loginSchema, createIdeaSchema, ROLES, type UserRole } from "@shared/schema";
+import { registerChatRoutes } from "./replit_integrations/chat";
 
 declare module "express-session" {
   interface SessionData {
@@ -38,6 +39,8 @@ export async function registerRoutes(
 
   await seedDemoUsers();
   await seedDemoIdeas();
+
+  registerChatRoutes(app);
 
   app.get("/api/auth/me", async (req: Request, res: Response) => {
     if (!req.session.userId) {

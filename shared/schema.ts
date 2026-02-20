@@ -70,3 +70,5 @@ export const createIdeaSchema = z.object({
   ownerEmail: z.string().email(),
   tag: z.string().optional().nullable(),
 });
+
+export * from "./models/chat";
