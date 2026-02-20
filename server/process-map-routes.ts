@@ -4,6 +4,8 @@ import { storage } from "./storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { z } from "zod";
 
+const toBeGenerationLocks = new Set<string>();
+
 const createNodeSchema = z.object({
   viewType: z.string().default("as-is"),
   name: z.string().min(1),
@@ -71,11 +73,65 @@ export function registerProcessMapRoutes(app: Express): void {
     const ideaId = await verifyIdeaAccess(req, res);
     if (!ideaId) return;
     const viewType = (req.query.view as string) || "as-is";
-    const [nodes, edges, approval] = await Promise.all([
+    let [nodes, edges, approval] = await Promise.all([
       processMapStorage.getNodesByIdeaId(ideaId, viewType),
       processMapStorage.getEdgesByIdeaId(ideaId, viewType),
       processMapStorage.getApproval(ideaId, viewType),
     ]);
+
+    if (viewType === "to-be" && nodes.length === 0) {
+      const asIsApproval = await processMapStorage.getApproval(ideaId, "as-is");
+      if (asIsApproval) {
+        const recheck = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
+        if (recheck.length === 0) {
+          if (!toBeGenerationLocks.has(ideaId)) {
+            toBeGenerationLocks.add(ideaId);
+            try {
+              const asIsNodes = await processMapStorage.getNodesByIdeaId(ideaId, "as-is");
+              const asIsEdges = await processMapStorage.getEdgesByIdeaId(ideaId, "as-is");
+              if (asIsNodes.length > 0) {
+                const idMap: Record<number, number> = {};
+                for (const node of asIsNodes) {
+                  const toBeNode = await processMapStorage.createNode({
+                    ideaId,
+                    name: node.name,
+                    role: node.role,
+                    system: node.system,
+                    nodeType: node.nodeType,
+                    description: node.isPainPoint
+                      ? `[AUTOMATED] ${node.description || node.name}`
+                      : node.description,
+                    isGhost: node.isGhost,
+                    isPainPoint: false,
+                    viewType: "to-be",
+                    orderIndex: node.orderIndex,
+                    positionX: node.positionX,
+                    positionY: node.positionY,
+                  });
+                  idMap[node.id] = toBeNode.id;
+                }
+                for (const edge of asIsEdges) {
+                  if (idMap[edge.sourceNodeId] && idMap[edge.targetNodeId]) {
+                    await processMapStorage.createEdge({
+                      ideaId,
+                      sourceNodeId: idMap[edge.sourceNodeId],
+                      targetNodeId: idMap[edge.targetNodeId],
+                      label: edge.label,
+                      viewType: "to-be",
+                    });
+                  }
+                }
+              }
+            } finally {
+              toBeGenerationLocks.delete(ideaId);
+            }
+          }
+          nodes = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
+          edges = await processMapStorage.getEdgesByIdeaId(ideaId, "to-be");
+        }
+      }
+    }
+
     return res.json({ nodes, edges, approval });
   });
 

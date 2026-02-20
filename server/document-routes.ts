@@ -11,7 +11,7 @@ const anthropic = new Anthropic({
   baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
 });
 
-const PDD_PROMPT = `The SME has approved the As-Is process map. Now generate a Process Design Document. The PDD must include: 1) Executive Summary, 2) Process Scope, 3) As-Is Process Description (narrative form, referencing the steps in the map), 4) Pain Points and Inefficiencies, 5) Automation Opportunity Assessment, 6) Assumptions and Exceptions, 7) Data and System Requirements. Write this as a professional document, not a bullet list. Be specific and use the details from our conversation.
+const PDD_PROMPT = `The SME has approved the As-Is process map. Now generate a Process Design Document. The PDD must include: 1) Executive Summary, 2) Process Scope, 3) As-Is Process Description (narrative form, referencing the steps in the map), 4) To-Be Process Description (describe the optimised automated process — how the workflow will operate once automation is applied, referencing the To-Be map steps), 5) Pain Points and Inefficiencies, 6) Automation Opportunity Assessment, 7) Assumptions and Exceptions, 8) Data and System Requirements. Write this as a professional document, not a bullet list. Be specific and use the details from our conversation.
 
 Format your response as sections separated by "## " headings. Each section should start with "## 1. Executive Summary", "## 2. Process Scope", etc.`;
 
@@ -72,9 +72,14 @@ async function generateDocument(ideaId: string, docType: string): Promise<string
 
   let contextPrompt = "";
   if (docType === "PDD") {
-    const nodes = await processMapStorage.getNodesByIdeaId(ideaId, "as-is");
-    const edges = await processMapStorage.getEdgesByIdeaId(ideaId, "as-is");
-    contextPrompt = `\n\nHere is the approved As-Is process map:\n${JSON.stringify({ nodes, edges }, null, 2)}`;
+    const asIsNodes = await processMapStorage.getNodesByIdeaId(ideaId, "as-is");
+    const asIsEdges = await processMapStorage.getEdgesByIdeaId(ideaId, "as-is");
+    const toBeNodes = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
+    const toBeEdges = await processMapStorage.getEdgesByIdeaId(ideaId, "to-be");
+    contextPrompt = `\n\nHere is the approved As-Is process map:\n${JSON.stringify({ nodes: asIsNodes, edges: asIsEdges }, null, 2)}`;
+    if (toBeNodes.length > 0) {
+      contextPrompt += `\n\nHere is the To-Be (optimised/automated) process map:\n${JSON.stringify({ nodes: toBeNodes, edges: toBeEdges }, null, 2)}`;
+    }
   } else if (docType === "SDD") {
     const pdd = await documentStorage.getLatestDocument(ideaId, "PDD");
     if (pdd) {
