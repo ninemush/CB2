@@ -75,3 +75,4 @@ export * from "./models/chat";
 export * from "./models/process-map";
 export * from "./models/document";
 export * from "./models/audit-log";
+export * from "./models/settings";

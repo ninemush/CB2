@@ -164,6 +164,13 @@ Automated transitions evaluated after each chat exchange:
 - `PATCH /api/users/:id` - Update user role/name (Admin only)
 - `GET /api/audit-logs` - Get audit logs (optional ?ideaId filter)
 
+### UiPath Orchestrator Integration
+- `GET /api/settings/uipath` - Get UiPath config (Admin only, secrets masked)
+- `POST /api/settings/uipath` - Save UiPath config (Admin only)
+- `POST /api/settings/uipath/test` - Test UiPath connection (Admin only)
+- `GET /api/settings/uipath/status` - Check if UiPath is configured (any user)
+- `POST /api/ideas/:ideaId/push-uipath` - Push package to UiPath Orchestrator
+
 ## Design System
 - Dark mode default (#0a0a0a background)
 - Light mode toggle (#f5f5f5 background)
@@ -179,6 +186,7 @@ Automated transitions evaluated after each chat exchange:
 - Skeleton loaders for loading states
 
 ## Recent Changes
+- 2026-02-20: Added UiPath Orchestrator integration: Admin Integrations tab for credentials, Push to UiPath button on package cards, OAuth token exchange + NuGet upload
 - 2026-02-20: Added confidence scoring, map completeness bar, automated stage transitions, audit logging
 - 2026-02-20: Built CoE review page, Admin panel (Users/Audit/System), User Guide (9 sections)
 - 2026-02-20: Added stalled idea detection, My Ideas page, skeleton loaders

@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { queryClient } from "@/lib/queryClient";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import {
   FileText,
   ChevronDown,
@@ -10,6 +11,8 @@ import {
   Download,
   Package,
   X,
+  Upload,
+  Cloud,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -287,6 +290,28 @@ interface UiPathPackageCardProps {
 
 export function UiPathPackageCard({ packageData, ideaId }: UiPathPackageCardProps) {
   const [expanded, setExpanded] = useState(true);
+  const { toast } = useToast();
+
+  const { data: orchestratorStatus } = useQuery<{ configured: boolean }>({
+    queryKey: ["/api/settings/uipath/status"],
+  });
+
+  const pushMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/ideas/${ideaId}/push-uipath`);
+      return res.json();
+    },
+    onSuccess: (data: { success: boolean; message: string }) => {
+      if (data.success) {
+        toast({ title: "Pushed to UiPath", description: data.message });
+      } else {
+        toast({ title: "Push failed", description: data.message, variant: "destructive" });
+      }
+    },
+    onError: (error: Error) => {
+      toast({ title: "Push failed", description: error.message, variant: "destructive" });
+    },
+  });
 
   return (
     <div
@@ -349,15 +374,35 @@ export function UiPathPackageCard({ packageData, ideaId }: UiPathPackageCardProp
         )}
       </div>
 
-      <div className="px-4 py-3 border-t border-border/30">
+      <div className="px-4 py-3 border-t border-border/30 space-y-2">
         <a
           href={`/api/ideas/${ideaId}/download-uipath`}
           className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-medium transition-colors w-full justify-center"
           data-testid="button-download-uipath"
         >
           <Download className="h-3.5 w-3.5" />
-          Download UiPath Package
+          Download Package
         </a>
+        {orchestratorStatus?.configured && (
+          <button
+            onClick={() => pushMutation.mutate()}
+            disabled={pushMutation.isPending}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-[#0067b8] hover:bg-[#005a9e] text-white text-xs font-medium transition-colors w-full justify-center disabled:opacity-50"
+            data-testid="button-push-uipath"
+          >
+            {pushMutation.isPending ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Pushing to Orchestrator...
+              </>
+            ) : (
+              <>
+                <Cloud className="h-3.5 w-3.5" />
+                Push to UiPath Orchestrator
+              </>
+            )}
+          </button>
+        )}
       </div>
     </div>
   );

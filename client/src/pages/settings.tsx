@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Label } from "@/components/ui/label";
 import {
   ShieldAlert,
   Users,
@@ -24,6 +25,12 @@ import {
   Brain,
   UserCheck,
   Lightbulb,
+  Plug,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -352,6 +359,211 @@ function SystemTab() {
   );
 }
 
+function IntegrationsTab() {
+  const { toast } = useToast();
+  const [showSecret, setShowSecret] = useState(false);
+  const [orgName, setOrgName] = useState("");
+  const [tenantName, setTenantName] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [userKey, setUserKey] = useState("");
+
+  const { data: config, isLoading } = useQuery<{
+    configured: boolean;
+    orgName?: string;
+    tenantName?: string;
+    clientId?: string;
+    hasUserKey?: boolean;
+  }>({
+    queryKey: ["/api/settings/uipath"],
+  });
+
+  useEffect(() => {
+    if (config?.configured) {
+      setOrgName(config.orgName || "");
+      setTenantName(config.tenantName || "");
+      setClientId(config.clientId || "");
+    }
+  }, [config]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/settings/uipath", {
+        orgName,
+        tenantName,
+        clientId,
+        userKey,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/uipath"] });
+      toast({ title: "UiPath configuration saved" });
+      setUserKey("");
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to save", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/settings/uipath/test");
+      return res.json();
+    },
+    onSuccess: (data: { success: boolean; message: string }) => {
+      if (data.success) {
+        toast({ title: "Connection successful", description: data.message });
+      } else {
+        toast({ title: "Connection failed", description: data.message, variant: "destructive" });
+      }
+    },
+    onError: (error: Error) => {
+      toast({ title: "Test failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3 p-4">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-12 w-full" />
+        ))}
+      </div>
+    );
+  }
+
+  const canSave = orgName.trim() && tenantName.trim() && clientId.trim() && (userKey.trim() || config?.hasUserKey);
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <Card className="p-6 space-y-6" data-testid="card-uipath-config">
+        <div className="flex items-start justify-between">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Plug className="h-5 w-5 text-[#e8450a]" />
+              <h3 className="text-lg font-semibold text-foreground">UiPath Orchestrator</h3>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Connect to UiPath Cloud to push automation packages directly from CannonBall.
+            </p>
+          </div>
+          {config?.configured ? (
+            <Badge variant="outline" className="border-green-600 text-green-500 gap-1">
+              <CheckCircle2 className="h-3 w-3" />
+              Connected
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="border-muted-foreground text-muted-foreground gap-1">
+              <XCircle className="h-3 w-3" />
+              Not configured
+            </Badge>
+          )}
+        </div>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="orgName">Organization Name</Label>
+            <Input
+              id="orgName"
+              placeholder="e.g. mycompany"
+              value={orgName}
+              onChange={(e) => setOrgName(e.target.value)}
+              data-testid="input-uipath-org"
+            />
+            <p className="text-xs text-muted-foreground">
+              Found in your UiPath Cloud URL: cloud.uipath.com/<strong>orgName</strong>/tenantName
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="tenantName">Tenant Name</Label>
+            <Input
+              id="tenantName"
+              placeholder="e.g. DefaultTenant"
+              value={tenantName}
+              onChange={(e) => setTenantName(e.target.value)}
+              data-testid="input-uipath-tenant"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="clientId">Client ID (App ID)</Label>
+            <Input
+              id="clientId"
+              placeholder="e.g. 8DEv1AMN..."
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              data-testid="input-uipath-client-id"
+            />
+            <p className="text-xs text-muted-foreground">
+              From External Applications in UiPath Admin or your registered OAuth app.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="userKey">User Key / Refresh Token</Label>
+            <div className="relative">
+              <Input
+                id="userKey"
+                type={showSecret ? "text" : "password"}
+                placeholder={config?.hasUserKey ? "••••••• (saved)" : "Paste your refresh token"}
+                value={userKey}
+                onChange={(e) => setUserKey(e.target.value)}
+                className="pr-10"
+                data-testid="input-uipath-user-key"
+              />
+              <button
+                type="button"
+                onClick={() => setShowSecret(!showSecret)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                data-testid="button-toggle-secret"
+              >
+                {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Generate under API Access in your UiPath Cloud profile settings.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 pt-2">
+          <Button
+            onClick={() => saveMutation.mutate()}
+            disabled={!canSave || saveMutation.isPending}
+            data-testid="button-save-uipath"
+          >
+            {saveMutation.isPending ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              "Save Configuration"
+            )}
+          </Button>
+          {config?.configured && (
+            <Button
+              variant="outline"
+              onClick={() => testMutation.mutate()}
+              disabled={testMutation.isPending}
+              data-testid="button-test-uipath"
+            >
+              {testMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Testing...
+                </>
+              ) : (
+                "Test Connection"
+              )}
+            </Button>
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { activeRole } = useAuth();
 
@@ -397,6 +609,10 @@ export default function SettingsPage() {
             <Monitor className="mr-2 h-4 w-4" />
             System
           </TabsTrigger>
+          <TabsTrigger value="integrations" data-testid="tab-integrations">
+            <Plug className="mr-2 h-4 w-4" />
+            Integrations
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="users" className="mt-4">
@@ -407,6 +623,9 @@ export default function SettingsPage() {
         </TabsContent>
         <TabsContent value="system" className="mt-4">
           <SystemTab />
+        </TabsContent>
+        <TabsContent value="integrations" className="mt-4">
+          <IntegrationsTab />
         </TabsContent>
       </Tabs>
     </div>
