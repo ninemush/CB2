@@ -769,7 +769,11 @@ function ChatPanel({ idea }: { idea: Idea }) {
               <div className="flex items-center gap-2">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-cb-teal" />
                 <p className="text-xs text-muted-foreground">
-                  Generating {generatingDocType}... This may take a moment.
+                  Generating {generatingDocType}...{" "}
+                  {generatingDocType === "UiPath" ? "Building package structure (~30–60s)." :
+                   generatingDocType === "SDD" ? "Writing technical spec (~30–60s)." :
+                   generatingDocType === "PDD" ? "Writing process document (~30–60s)." :
+                   "This may take a moment."}
                 </p>
                 <button
                   onClick={cancelDocGeneration}

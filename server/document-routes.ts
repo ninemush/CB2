@@ -317,17 +317,25 @@ export function registerDocumentRoutes(app: Express): void {
       const idea = await storage.getIdea(ideaId);
       if (!idea) return res.status(404).json({ message: "Idea not found" });
 
-      const history = await chatStorage.getMessagesByIdeaId(ideaId);
-      const chatMessages = history.map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-      }));
+      const pdd = await documentStorage.getLatestDocument(ideaId, "PDD");
+      const toBeNodes = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
+      const asIsNodes = await processMapStorage.getNodesByIdeaId(ideaId, "as-is");
+      const mapNodes = toBeNodes.length > 0 ? toBeNodes : asIsNodes;
+      const mapSummary = mapNodes.map((n) => ({ name: n.name, type: n.nodeType, role: n.role, system: n.system, description: n.description }));
+
+      let systemCtx = `You are a UiPath automation architect generating a production-ready package structure for "${idea.title}".\n\nApproved SDD:\n${sdd.content}`;
+      if (pdd) {
+        systemCtx += `\n\nApproved PDD:\n${pdd.content}`;
+      }
+      if (mapSummary.length > 0) {
+        systemCtx += `\n\nProcess Map Steps:\n${JSON.stringify(mapSummary)}`;
+      }
 
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 8192,
-        system: `You are a UiPath automation architect. Generate a detailed package structure based on the approved SDD.\n\nSDD:\n${sdd.content}`,
-        messages: [...chatMessages, { role: "user", content: UIPATH_PROMPT }],
+        system: systemCtx,
+        messages: [{ role: "user", content: UIPATH_PROMPT }],
       });
 
       const textBlock = response.content.find((b) => b.type === "text");
