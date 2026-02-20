@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { getUiPathConfig, saveUiPathConfig, testUiPathConnection, pushToUiPath, getLastTestedAt } from "./uipath-integration";
+import { getUiPathConfig, saveUiPathConfig, testUiPathConnection, pushToUiPath, getLastTestedAt, fetchUiPathFolders, saveUiPathFolder } from "./uipath-integration";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
 
@@ -32,7 +32,22 @@ export function registerUiPathRoutes(app: Express): void {
       scopes: config.scopes,
       hasSecret: !!config.clientSecret,
       lastTestedAt,
+      folderId: config.folderId || null,
+      folderName: config.folderName || null,
     });
+  });
+
+  app.get("/api/settings/uipath/folders", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const result = await fetchUiPathFolders();
+    return res.json(result);
+  });
+
+  app.post("/api/settings/uipath/folder", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const { folderId, folderName } = req.body;
+    await saveUiPathFolder(folderId || null, folderName || null);
+    return res.json({ success: true });
   });
 
   app.post("/api/settings/uipath", async (req: Request, res: Response) => {
@@ -104,17 +119,30 @@ export function registerUiPathRoutes(app: Express): void {
 
     if (result.success) {
       const details = result.details;
+      const folderLine = details?.folderName
+        ? `Folder: **${details.folderName}**`
+        : `Location: Tenant feed`;
+      const findSteps = details?.folderName
+        ? [
+            `1. Open UiPath Orchestrator`,
+            `2. Select folder **"${details.folderName}"** in the left sidebar`,
+            `3. Click the **Packages** tab`,
+            `4. Search for **"${details?.packageId || pkg.projectName}"**`,
+          ]
+        : [
+            `1. Open UiPath Orchestrator`,
+            `2. Go to **Tenant → Packages** (left sidebar)`,
+            `3. Search for **"${details?.packageId || pkg.projectName}"**`,
+          ];
       const chatMsg = [
         `Package pushed to UiPath Orchestrator successfully.`,
         ``,
         `**${details?.packageId || pkg.projectName}** v${details?.version || "1.0.0"}`,
         `Org: ${details?.orgName || "—"} / Tenant: ${details?.tenantName || "—"}`,
+        folderLine,
         ``,
         `**Where to find it in Orchestrator:**`,
-        `1. Open UiPath Orchestrator`,
-        `2. Go to **Tenant → Packages** (left sidebar)`,
-        `3. Or go to **Automations → Folder Packages** tab`,
-        `4. Search for **"${details?.packageId || pkg.projectName}"**`,
+        ...findSteps,
         ``,
         `From there you can create a Process and assign it to a Robot to run.`,
       ].join("\n");

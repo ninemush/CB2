@@ -33,6 +33,8 @@ import {
   EyeOff,
   ExternalLink,
   Clock,
+  FolderOpen,
+  RefreshCw,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -396,6 +398,8 @@ function IntegrationsTab() {
   const [clientSecret, setClientSecret] = useState("");
   const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set(["OR.Default"]));
   const [testResultMsg, setTestResultMsg] = useState<{ success: boolean; message: string } | null>(null);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [selectedFolderName, setSelectedFolderName] = useState<string | null>(null);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -407,8 +411,33 @@ function IntegrationsTab() {
     scopes?: string;
     hasSecret?: boolean;
     lastTestedAt?: string | null;
+    folderId?: string | null;
+    folderName?: string | null;
   }>({
     queryKey: ["/api/settings/uipath"],
+  });
+
+  const { data: foldersData, isLoading: foldersLoading, refetch: refetchFolders } = useQuery<{
+    success: boolean;
+    folders?: { id: number; displayName: string; fullyQualifiedName: string }[];
+    message?: string;
+  }>({
+    queryKey: ["/api/settings/uipath/folders"],
+    enabled: !!config?.configured,
+  });
+
+  const folderMutation = useMutation({
+    mutationFn: async (data: { folderId: string | null; folderName: string | null }) => {
+      const res = await apiRequest("POST", "/api/settings/uipath/folder", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/uipath"] });
+      toast({ title: "Target folder updated" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to save folder", description: error.message, variant: "destructive" });
+    },
   });
 
   useEffect(() => {
@@ -418,6 +447,8 @@ function IntegrationsTab() {
       setClientId(config.clientId || "");
       const scopeSet = new Set((config.scopes || "OR.Default").split(" ").filter(Boolean));
       setSelectedScopes(scopeSet);
+      setSelectedFolderId(config.folderId || null);
+      setSelectedFolderName(config.folderName || null);
       setStep(3);
     }
   }, [config]);
@@ -821,6 +852,86 @@ function IntegrationsTab() {
                 </Button>
               )}
             </div>
+
+            {config?.configured && (
+              <div className="border-t border-border pt-4 mt-4 space-y-3" data-testid="folder-picker-section">
+                <div className="flex items-center gap-2">
+                  <FolderOpen className="h-4 w-4 text-[#e8450a]" />
+                  <h4 className="text-sm font-semibold text-foreground">Target Folder</h4>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Choose which Orchestrator folder packages are uploaded to. If no folder is selected, packages go to the tenant-level feed.
+                </p>
+
+                {foldersData && !foldersData.success && (
+                  <div className="p-3 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs space-y-1" data-testid="folders-error">
+                    <p className="font-medium">Could not load folders</p>
+                    <p>{foldersData.message || "Check that your External Application has the OR.Folders scope, then click refresh."}</p>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={selectedFolderId || "__tenant__"}
+                    disabled={foldersLoading || (foldersData !== undefined && !foldersData?.success)}
+                    onValueChange={(val) => {
+                      if (val === "__tenant__") {
+                        setSelectedFolderId(null);
+                        setSelectedFolderName(null);
+                        folderMutation.mutate({ folderId: null, folderName: null });
+                      } else {
+                        const folder = foldersData?.folders?.find((f) => String(f.id) === val);
+                        if (folder) {
+                          setSelectedFolderId(String(folder.id));
+                          setSelectedFolderName(folder.displayName);
+                          folderMutation.mutate({ folderId: String(folder.id), folderName: folder.displayName });
+                        }
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-[280px]" data-testid="select-uipath-folder">
+                      <SelectValue placeholder={foldersLoading ? "Loading folders..." : "Select a folder..."} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__tenant__" data-testid="folder-option-tenant">
+                        <span className="text-muted-foreground">Tenant feed (no folder)</span>
+                      </SelectItem>
+                      {foldersData?.folders?.map((folder) => (
+                        <SelectItem
+                          key={folder.id}
+                          value={String(folder.id)}
+                          data-testid={`folder-option-${folder.id}`}
+                        >
+                          {folder.fullyQualifiedName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => refetchFolders()}
+                    disabled={foldersLoading}
+                    data-testid="button-refresh-folders"
+                    title="Refresh folder list"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${foldersLoading ? "animate-spin" : ""}`} />
+                  </Button>
+                  {folderMutation.isPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                </div>
+
+                {selectedFolderName && (
+                  <p className="text-xs text-green-500" data-testid="text-selected-folder">
+                    Packages will be uploaded to: <strong>{selectedFolderName}</strong>
+                  </p>
+                )}
+                {!selectedFolderId && (
+                  <p className="text-xs text-muted-foreground">
+                    Packages will appear under Tenant &gt; Packages (tenant-level feed).
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 

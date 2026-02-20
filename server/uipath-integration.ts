@@ -10,6 +10,8 @@ type UiPathConfig = {
   clientId: string;
   clientSecret: string;
   scopes: string;
+  folderId?: string;
+  folderName?: string;
 };
 
 export async function getUiPathConfig(): Promise<UiPathConfig | null> {
@@ -26,10 +28,12 @@ export async function getUiPathConfig(): Promise<UiPathConfig | null> {
   const clientId = map.get("uipath_client_id");
   const clientSecret = map.get("uipath_client_secret");
   const scopes = map.get("uipath_scopes") || "OR.Default";
+  const folderId = map.get("uipath_folder_id") || undefined;
+  const folderName = map.get("uipath_folder_name") || undefined;
 
   if (!orgName || !tenantName || !clientId || !clientSecret) return null;
 
-  return { orgName, tenantName, clientId, clientSecret, scopes };
+  return { orgName, tenantName, clientId, clientSecret, scopes, folderId, folderName };
 }
 
 function extractOrgName(input: string): string {
@@ -72,6 +76,50 @@ async function upsertSetting(key: string, value: string): Promise<void> {
     await db.update(appSettings).set({ value, updatedAt: new Date() }).where(eq(appSettings.key, key));
   } else {
     await db.insert(appSettings).values({ key, value });
+  }
+}
+
+export async function saveUiPathFolder(folderId: string | null, folderName: string | null): Promise<void> {
+  if (folderId && folderName) {
+    await upsertSetting("uipath_folder_id", folderId);
+    await upsertSetting("uipath_folder_name", folderName);
+  } else {
+    const existing1 = await db.select().from(appSettings).where(eq(appSettings.key, "uipath_folder_id"));
+    if (existing1.length > 0) {
+      await db.delete(appSettings).where(eq(appSettings.key, "uipath_folder_id"));
+    }
+    const existing2 = await db.select().from(appSettings).where(eq(appSettings.key, "uipath_folder_name"));
+    if (existing2.length > 0) {
+      await db.delete(appSettings).where(eq(appSettings.key, "uipath_folder_name"));
+    }
+  }
+}
+
+export async function fetchUiPathFolders(): Promise<{ success: boolean; folders?: { id: number; displayName: string; fullyQualifiedName: string }[]; message?: string }> {
+  const config = await getUiPathConfig();
+  if (!config) {
+    return { success: false, message: "UiPath is not configured." };
+  }
+
+  try {
+    const token = await getAccessToken(config);
+    const url = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_/odata/Folders?$orderby=DisplayName&$top=100`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      return { success: false, message: `Failed to fetch folders (${res.status}): ${errText.slice(0, 200)}` };
+    }
+    const data = await res.json();
+    const folders = (data.value || []).map((f: any) => ({
+      id: f.Id,
+      displayName: f.DisplayName,
+      fullyQualifiedName: f.FullyQualifiedName || f.DisplayName,
+    }));
+    return { success: true, folders };
+  } catch (err: any) {
+    return { success: false, message: `Failed to fetch folders: ${err.message}` };
   }
 }
 
@@ -273,12 +321,19 @@ async function uploadToOrchestrator(
   console.log(`[UiPath] Uploading to: ${uploadUrl}`);
   console.log(`[UiPath] Package size: ${body.length} bytes, filename: ${fileName}`);
 
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": `multipart/form-data; boundary=${boundary}`,
+  };
+
+  if (config.folderId) {
+    headers["X-UIPATH-OrganizationUnitId"] = config.folderId;
+    console.log(`[UiPath] Targeting folder: ${config.folderName || config.folderId} (ID: ${config.folderId})`);
+  }
+
   const uploadRes = await fetch(uploadUrl, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": `multipart/form-data; boundary=${boundary}`,
-    },
+    headers,
     body,
   });
 
@@ -354,18 +409,31 @@ export async function pushToUiPath(pkg: any): Promise<{ success: boolean; messag
     }
 
     const orchUrl = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_`;
+    const folderInfo = config.folderName ? ` into folder "${config.folderName}"` : " to the tenant feed";
+
+    const locationSteps = config.folderName
+      ? [
+          `• Go to ${orchUrl}`,
+          `• Open folder "${config.folderName}" in the left sidebar`,
+          `• Click "Packages" tab`,
+          `• Search for "${uploadedId}"`,
+        ]
+      : [
+          `• Go to ${orchUrl}`,
+          `• Navigate to Tenant > Packages`,
+          `• Search for "${uploadedId}"`,
+        ];
 
     const successMsg = [
-      `Package "${uploadedId}" v${uploadedVersion} uploaded successfully to UiPath Orchestrator.`,
+      `Package "${uploadedId}" v${uploadedVersion} uploaded successfully${folderInfo}.`,
       ``,
       `Where to find it:`,
-      `• Go to ${orchUrl}`,
-      `• Navigate to Tenant > Packages (or Automations > Folder Packages)`,
-      `• Search for "${uploadedId}"`,
+      ...locationSteps,
       ``,
       `Package key: ${uploadedKey}`,
       `Type: ${projectType}`,
       `Org: ${config.orgName} / Tenant: ${config.tenantName}`,
+      ...(config.folderName ? [`Folder: ${config.folderName}`] : []),
     ].join("\n");
 
     return {
@@ -379,6 +447,8 @@ export async function pushToUiPath(pkg: any): Promise<{ success: boolean; messag
         orgName: config.orgName,
         tenantName: config.tenantName,
         orchestratorUrl: orchUrl,
+        folderName: config.folderName || null,
+        folderId: config.folderId || null,
       },
     };
   } catch (err: any) {
