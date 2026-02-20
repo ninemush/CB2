@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface DocumentSection {
   title: string;
@@ -173,8 +175,10 @@ export function DocumentCard({ docType, docId, content, ideaId, isApproved, vers
             </button>
             {expandedSections.has(idx) && (
               <div className="px-4 pb-3 pl-9">
-                <div className="text-[11px] text-muted-foreground/90 leading-relaxed whitespace-pre-wrap">
-                  {section.content}
+                <div className="text-[11px] text-muted-foreground/90 leading-relaxed prose-doc">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {section.content}
+                  </ReactMarkdown>
                 </div>
               </div>
             )}

@@ -464,3 +464,84 @@
   color: hsl(var(--primary));
   text-decoration: underline;
 }
+
+.prose-doc p {
+  margin-bottom: 0.5rem;
+  line-height: 1.6;
+}
+.prose-doc p:last-child {
+  margin-bottom: 0;
+}
+.prose-doc strong {
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+.prose-doc em {
+  font-style: italic;
+}
+.prose-doc h1, .prose-doc h2, .prose-doc h3, .prose-doc h4 {
+  font-weight: 700;
+  color: hsl(var(--foreground));
+  margin-top: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+.prose-doc h3 { font-size: 0.75rem; }
+.prose-doc h4 { font-size: 0.6875rem; }
+.prose-doc ul, .prose-doc ol {
+  padding-left: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+.prose-doc ul {
+  list-style-type: disc;
+}
+.prose-doc ol {
+  list-style-type: decimal;
+}
+.prose-doc li {
+  margin-bottom: 0.15rem;
+}
+.prose-doc li > p {
+  margin-bottom: 0.15rem;
+}
+.prose-doc hr {
+  border-color: hsl(var(--border));
+  margin: 0.75rem 0;
+}
+.prose-doc code {
+  background: hsl(var(--muted));
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.625rem;
+  font-family: ui-monospace, monospace;
+}
+.prose-doc blockquote {
+  border-left: 3px solid hsl(var(--primary));
+  padding-left: 0.75rem;
+  margin: 0.5rem 0;
+  color: hsl(var(--muted-foreground));
+}
+.prose-doc table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  font-size: 0.625rem;
+}
+.prose-doc thead th {
+  background: hsl(var(--muted));
+  font-weight: 600;
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--foreground));
+}
+.prose-doc tbody td {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid hsl(var(--border));
+}
+.prose-doc tbody tr:nth-child(even) {
+  background: hsl(var(--muted) / 0.3);
+}
+.prose-doc a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+}
