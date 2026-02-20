@@ -1,0 +1,31 @@
+Now wire up the live LLM integration in the CannonBall Idea Workspace chat panel.
+
+LLM SETUP
+Use the Anthropic Claude API (model: claude-sonnet-4-6) with streaming enabled. The API key is stored in Replit Secrets as ANTHROPIC_API_KEY. Create a backend API route POST /api/chat that accepts the conversation history and current idea context, calls the Claude API with streaming, and streams the response back to the frontend.
+
+SYSTEM PROMPT
+Send this system prompt to Claude for every conversation:
+
+"You are the CannonBall automation design assistant. Your job is to help Process SMEs describe, analyze, and design business process automations. You are currently helping with an idea titled: {idea_title}. The current stage is: {current_stage}.
+
+Your behavior by stage:
+- Idea stage: Ask targeted questions to understand the process. Who does it? What triggers it? What systems are involved? What are the pain points? What does done look like?
+- Feasibility Assessment: Based on what you've learned, assess the automation potential. Be direct. Flag complexity. Give an honest effort range.
+- Design stage: Help the SME describe the process step by step in enough detail to build a visual process map.
+
+Always be conversational, direct, and professional. Do not use bullet points for every response. Mix prose and structure based on what the moment calls for. When you have enough information to identify a discrete process step, output it in this format on its own line so the app can parse it:
+[STEP: <step name> | ROLE: <who does it> | SYSTEM: <system used or 'manual'> | TYPE: <task/decision/start/end>]
+
+This allows the visual process map to update in real time."
+
+PERSISTENCE
+Save every message to Supabase: messages table with idea_id, role (user/assistant), content, created_at.
+
+On workspace load, fetch and display the full message history for that idea so conversations persist across sessions.
+
+STREAMING DISPLAY
+Stream the LLM response token by token into the chat bubble. The bubble should appear immediately and fill in as tokens arrive. Use a blinking cursor effect while streaming.
+
+File uploads (paperclip): for now, accept the file, show it as an attachment chip in the chat, and include the filename in the message sent to the LLM with the note "(User uploaded a file: {filename}. Acknowledge it and ask them to describe its contents since you cannot read it directly yet.)"
+
+Test this thoroughly. The chat must work end to end before moving to the next prompt.
