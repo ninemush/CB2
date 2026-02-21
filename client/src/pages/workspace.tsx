@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useRoute, Link } from "wouter";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
   ArrowLeft,
   Send,
@@ -16,6 +17,9 @@ import {
   Package,
   Pencil,
   FileText,
+  ListChecks,
+  Map,
+  MessageSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -499,12 +503,22 @@ function ChatPanel({ idea }: { idea: Idea }) {
                   prev ? { ...prev, isStreaming: false } : prev
                 );
               }
+              if (data.deployStatus) {
+                setStreamingMsg((prev) =>
+                  prev ? { ...prev, content: prev.content + "\n\n[Deploy] " + data.deployStatus } : prev
+                );
+                if (data.deployComplete) {
+                  queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+                }
+              }
               if (data.transition) {
                 queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
                 queryClient.invalidateQueries({ queryKey: ["/api/ideas"] });
                 const { fromStage, toStage, reason } = data.transition;
                 toast({
-                  title: `Stage Advanced: ${toStage}`,
+                  title: fromStage && toStage && PIPELINE_STAGES.indexOf(fromStage) > PIPELINE_STAGES.indexOf(toStage)
+                    ? `Stage Moved Back: ${toStage}`
+                    : `Stage Advanced: ${toStage}`,
                   description: reason || `Moved from ${fromStage}`,
                 });
               }
@@ -909,6 +923,8 @@ function ChatPanel({ idea }: { idea: Idea }) {
 }
 
 
+type MobileTab = "stages" | "map" | "chat";
+
 export default function Workspace() {
   const [, params] = useRoute("/workspace/:id");
   const ideaId = params?.id;
@@ -919,6 +935,8 @@ export default function Workspace() {
   const [editTitle, setEditTitle] = useState("");
   const titleInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const isMobile = useIsMobile();
+  const [mobileTab, setMobileTab] = useState<MobileTab>("chat");
 
   const { data: idea, isLoading } = useQuery<Idea>({
     queryKey: ["/api/ideas", ideaId],
@@ -985,14 +1003,73 @@ export default function Workspace() {
     setSelectedCompletedStage((prev) => (prev === stage ? null : stage));
   }
 
+  const stagePanel = (
+    <div className="relative h-full">
+      <StageTracker idea={idea} onStageClick={handleStageClick} />
+      {selectedCompletedStage && (
+        <div className="absolute inset-0 bg-card z-20 flex flex-col" data-testid="drawer-stage-summary">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            <h4 className="text-xs font-semibold text-foreground">
+              {selectedCompletedStage}
+            </h4>
+            <button
+              onClick={() => setSelectedCompletedStage(null)}
+              className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+              data-testid="button-close-drawer"
+            >
+              Close
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <Check className="h-3 w-3 text-cb-teal" />
+              <span className="text-xs text-muted-foreground">
+                Completed {completedStages[selectedCompletedStage]}
+              </span>
+            </div>
+            <div className="p-3 rounded-md bg-muted/20 border border-border/40">
+              <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
+                Stage summary and artifacts will appear here
+                once the AI assistant is connected.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const mapPanel = (
+    <ProcessMapPanel
+      ideaId={idea.id}
+      onApproved={() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+      }}
+      onCompletenessChange={(pct) => {
+        if (pct >= 85) {
+          queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "process-map"] });
+        }
+      }}
+    />
+  );
+
+  const chatPanel = <ChatPanel idea={idea} />;
+
+  const mobileTabs = [
+    { id: "stages" as MobileTab, label: "Stages", icon: ListChecks },
+    { id: "map" as MobileTab, label: "Map", icon: Map },
+    { id: "chat" as MobileTab, label: "Chat", icon: MessageSquare },
+  ];
+
   return (
     <div className="flex flex-col h-full" data-testid="page-workspace">
-      <div className="px-4 py-2.5 border-b border-border bg-card/30">
-        <div className="flex items-center gap-3">
+      <div className="px-3 sm:px-4 py-2 sm:py-2.5 border-b border-border bg-card/30">
+        <div className="flex items-center gap-2 sm:gap-3">
           <Link href="/">
             <Button
               variant="ghost"
               size="icon"
+              className="h-8 w-8 sm:h-9 sm:w-9"
               data-testid="button-back-pipeline"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
@@ -1010,34 +1087,34 @@ export default function Workspace() {
                     if (e.key === "Enter") handleTitleSave();
                     if (e.key === "Escape") { setEditTitle(idea.title); setIsEditingTitle(false); }
                   }}
-                  className="text-sm font-semibold text-foreground bg-transparent border-b border-primary outline-none px-0 py-0.5 min-w-[120px] max-w-[300px]"
+                  className="text-xs sm:text-sm font-semibold text-foreground bg-transparent border-b border-primary outline-none px-0 py-0.5 min-w-[100px] max-w-[200px] sm:max-w-[300px]"
                   data-testid="input-edit-title"
                 />
               ) : (
                 <button
                   onClick={() => { setEditTitle(idea.title); setIsEditingTitle(true); }}
-                  className="flex items-center gap-1.5 group cursor-pointer"
+                  className="flex items-center gap-1.5 group cursor-pointer min-w-0"
                   data-testid="button-edit-title"
                 >
                   <h1
-                    className="text-sm font-semibold text-foreground truncate"
+                    className="text-xs sm:text-sm font-semibold text-foreground truncate"
                     data-testid="text-idea-title"
                   >
                     {idea.title}
                   </h1>
-                  <Pencil className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <Pencil className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                 </button>
               )}
               <Badge
                 variant="outline"
-                className={`shrink-0 text-[10px] ${getStageBadgeClass(idea.stage)}`}
+                className={`shrink-0 text-[10px] ${getStageBadgeClass(idea.stage)} hidden sm:inline-flex`}
                 data-testid="badge-idea-stage"
               >
                 {idea.stage}
               </Badge>
             </div>
           </div>
-          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground shrink-0">
+          <div className="hidden sm:flex items-center gap-1.5 text-[10px] text-muted-foreground shrink-0">
             <span>{idea.owner}</span>
             {idea.tag && (
               <>
@@ -1049,78 +1126,65 @@ export default function Workspace() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0">
-        <ResizablePanelGroup
-          direction="horizontal"
-          className="h-full"
-          data-testid="workspace-panels"
-        >
-          <ResizablePanel
-            defaultSize={15}
-            minSize={12}
-            maxSize={25}
-            className="bg-card/20 relative"
+      {isMobile ? (
+        <>
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {mobileTab === "stages" && stagePanel}
+            {mobileTab === "map" && <div className="h-full">{mapPanel}</div>}
+            {mobileTab === "chat" && chatPanel}
+          </div>
+          <div className="flex items-center border-t border-border bg-card shrink-0" data-testid="mobile-tab-bar">
+            {mobileTabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setMobileTab(tab.id)}
+                className={`flex-1 flex flex-col items-center gap-0.5 py-2 px-1 transition-colors ${
+                  mobileTab === tab.id
+                    ? "text-primary"
+                    : "text-muted-foreground"
+                }`}
+                data-testid={`tab-${tab.id}`}
+              >
+                <tab.icon className="h-4 w-4" />
+                <span className="text-[10px] font-medium">{tab.label}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="flex-1 min-h-0">
+          <ResizablePanelGroup
+            direction="horizontal"
+            className="h-full"
+            data-testid="workspace-panels"
           >
-            <StageTracker idea={idea} onStageClick={handleStageClick} />
-            {selectedCompletedStage && (
-              <div className="absolute inset-0 bg-card z-20 flex flex-col" data-testid="drawer-stage-summary">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                  <h4 className="text-xs font-semibold text-foreground">
-                    {selectedCompletedStage}
-                  </h4>
-                  <button
-                    onClick={() => setSelectedCompletedStage(null)}
-                    className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                    data-testid="button-close-drawer"
-                  >
-                    Close
-                  </button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Check className="h-3 w-3 text-cb-teal" />
-                    <span className="text-xs text-muted-foreground">
-                      Completed {completedStages[selectedCompletedStage]}
-                    </span>
-                  </div>
-                  <div className="p-3 rounded-md bg-muted/20 border border-border/40">
-                    <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
-                      Stage summary and artifacts will appear here
-                      once the AI assistant is connected.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </ResizablePanel>
+            <ResizablePanel
+              defaultSize={15}
+              minSize={12}
+              maxSize={25}
+              className="bg-card/20"
+            >
+              {stagePanel}
+            </ResizablePanel>
 
-          <ResizableHandle withHandle />
+            <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize={50} minSize={30}>
-            <ProcessMapPanel
-              ideaId={idea.id}
-              onApproved={() => {
-                queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
-              }}
-              onCompletenessChange={(pct) => {
-                if (pct >= 85) {
-                  queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "process-map"] });
-                }
-              }}
-            />
-          </ResizablePanel>
+            <ResizablePanel defaultSize={50} minSize={30}>
+              {mapPanel}
+            </ResizablePanel>
 
-          <ResizableHandle withHandle />
+            <ResizableHandle withHandle />
 
-          <ResizablePanel
-            defaultSize={35}
-            minSize={25}
-            maxSize={50}
-          >
-            <ChatPanel idea={idea} />
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      </div>
+            <ResizablePanel
+              defaultSize={35}
+              minSize={25}
+              maxSize={50}
+            >
+              {chatPanel}
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </div>
+      )}
     </div>
   );
 }

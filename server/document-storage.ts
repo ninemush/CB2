@@ -6,6 +6,7 @@ export interface IDocumentStorage {
   getLatestDocument(ideaId: string, type: string): Promise<Document | undefined>;
   getDocument(id: number): Promise<Document | undefined>;
   getDocumentsByIdea(ideaId: string): Promise<Document[]>;
+  getDocumentVersions(ideaId: string, type: string): Promise<Document[]>;
   createDocument(doc: InsertDocument): Promise<Document>;
   updateDocument(id: number, updates: Partial<InsertDocument>): Promise<Document>;
   getApproval(ideaId: string, docType: string): Promise<DocumentApproval | undefined>;
@@ -30,6 +31,12 @@ export const documentStorage: IDocumentStorage = {
     return db.select().from(documents)
       .where(eq(documents.ideaId, ideaId))
       .orderBy(desc(documents.createdAt));
+  },
+
+  async getDocumentVersions(ideaId: string, type: string) {
+    return db.select().from(documents)
+      .where(and(eq(documents.ideaId, ideaId), eq(documents.type, type)))
+      .orderBy(desc(documents.version));
   },
 
   async createDocument(doc: InsertDocument) {

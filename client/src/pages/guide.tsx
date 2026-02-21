@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Rocket,
@@ -35,7 +36,7 @@ const sections: GuideSection[] = [
     roles: "all",
     content: () => (
       <>
-        <h2 className="text-2xl font-bold text-foreground mb-4">Getting Started</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-foreground mb-3 sm:mb-4">Getting Started</h2>
         <p className="text-muted-foreground leading-relaxed mb-4">
           CannonBall is an AI-powered automation pipeline that takes a raw process idea and transforms it into a fully documented, export-ready robotic process automation (RPA) package. The platform guides you through every stage of the journey\u2014from initial idea submission through AI-assisted discovery, process mapping, document generation, and finally UiPath export\u2014so that your team can move from concept to deployment with minimal friction.
         </p>
@@ -55,7 +56,7 @@ const sections: GuideSection[] = [
     roles: "all",
     content: () => (
       <>
-        <h2 className="text-2xl font-bold text-foreground mb-4">Creating an Idea</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-foreground mb-3 sm:mb-4">Creating an Idea</h2>
         <p className="text-muted-foreground leading-relaxed mb-4">
           To create a new automation idea, click the &ldquo;New Idea&rdquo; button found on the Ideas dashboard. A modal will appear prompting you to enter a title, a description of the process you want to automate, and one or more tags to categorize the idea. The title should be concise yet descriptive\u2014something like &ldquo;Invoice Processing Automation&rdquo; or &ldquo;Employee Onboarding Workflow.&rdquo; The description field is where you provide context about the current manual process, the pain points, and the expected outcome of automating it.
         </p>
@@ -75,7 +76,7 @@ const sections: GuideSection[] = [
     roles: "all",
     content: () => (
       <>
-        <h2 className="text-2xl font-bold text-foreground mb-4">The Workspace</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-foreground mb-3 sm:mb-4">The Workspace</h2>
         <p className="text-muted-foreground leading-relaxed mb-4">
           The Workspace is the primary environment where you develop your automation idea. It uses a three-panel layout designed for maximum productivity. On the left is the Stage Tracker, which shows the current pipeline stage and provides a visual indicator of progress through the automation lifecycle. In the center is the Process Map panel, where a live visual diagram of your process is built and refined in real time. On the right is the AI Chat panel, where you converse with the AI assistant to discover and document your process steps.
         </p>
@@ -95,7 +96,7 @@ const sections: GuideSection[] = [
     roles: "all",
     content: () => (
       <>
-        <h2 className="text-2xl font-bold text-foreground mb-4">Working with the AI Assistant</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-foreground mb-3 sm:mb-4">Working with the AI Assistant</h2>
         <p className="text-muted-foreground leading-relaxed mb-4">
           The AI assistant is at the heart of the CannonBall discovery process. It leads the conversation by asking targeted questions about your manual process, guiding you through each step systematically. You do not need to know the &ldquo;right&rdquo; way to describe a process\u2014simply answer the AI&rsquo;s questions in plain language, and it will extract the structured information needed to build your process map and documentation.
         </p>
@@ -115,7 +116,7 @@ const sections: GuideSection[] = [
     roles: "all",
     content: () => (
       <>
-        <h2 className="text-2xl font-bold text-foreground mb-4">Process Maps</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-foreground mb-3 sm:mb-4">Process Maps</h2>
         <p className="text-muted-foreground leading-relaxed mb-4">
           Process maps in CannonBall use standard flowchart conventions to represent your automation workflow. Start and End nodes are displayed as rounded pills, task steps appear as rectangles, and decision points are rendered as diamond shapes. Edges (arrows) connect nodes to show the flow of execution, and each edge can carry a label such as &ldquo;Yes&rdquo; or &ldquo;No&rdquo; to indicate the outcome of a decision. The map is built automatically from the AI conversation but can be manually refined at any time.
         </p>
@@ -135,7 +136,7 @@ const sections: GuideSection[] = [
     roles: "all",
     content: () => (
       <>
-        <h2 className="text-2xl font-bold text-foreground mb-4">Documents (PDD &amp; SDD)</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-foreground mb-3 sm:mb-4">Documents (PDD &amp; SDD)</h2>
         <p className="text-muted-foreground leading-relaxed mb-4">
           CannonBall automatically generates two key documents for every automation idea: the Process Design Document (PDD) and the Solution Design Document (SDD). The PDD is created after the process map is approved and describes the business process in detail\u2014including the scope, stakeholders, process steps, business rules, and exceptions. It serves as the functional specification that business analysts and process owners review and sign off on.
         </p>
@@ -155,7 +156,7 @@ const sections: GuideSection[] = [
     roles: "all",
     content: () => (
       <>
-        <h2 className="text-2xl font-bold text-foreground mb-4">UiPath Export</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-foreground mb-3 sm:mb-4">UiPath Export</h2>
         <p className="text-muted-foreground leading-relaxed mb-4">
           After the SDD is approved, CannonBall can generate a UiPath-compatible export package. This package contains a <code className="text-cb-teal bg-card px-1.5 py-0.5 rounded-md text-sm">project.json</code> file that defines the UiPath project structure, XAML stub files for each automation sequence identified in the process map, and a README file with setup instructions and context about the process being automated.
         </p>
@@ -175,7 +176,7 @@ const sections: GuideSection[] = [
     roles: ["CoE", "Admin"],
     content: () => (
       <>
-        <h2 className="text-2xl font-bold text-foreground mb-4">CoE Review Workflow</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-foreground mb-3 sm:mb-4">CoE Review Workflow</h2>
         <p className="text-muted-foreground leading-relaxed mb-4">
           As a Centre of Excellence (CoE) member, you play a critical role in ensuring the quality and accuracy of automation deliverables. When a Process SME submits a process map, PDD, or SDD for approval, it appears in your review queue. You can access pending reviews from the Ideas dashboard by filtering for items awaiting CoE review, or through notification alerts that appear when new items are submitted.
         </p>
@@ -195,7 +196,7 @@ const sections: GuideSection[] = [
     roles: ["Admin"],
     content: () => (
       <>
-        <h2 className="text-2xl font-bold text-foreground mb-4">Administration</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-foreground mb-3 sm:mb-4">Administration</h2>
         <p className="text-muted-foreground leading-relaxed mb-4">
           The Administration section is available exclusively to users with the Admin role. From here, you can manage user accounts, including creating new users, deactivating existing accounts, and assigning or changing roles. Role assignments determine what each user can see and do within CannonBall\u2014Process SMEs can create and develop ideas, CoE members can review and approve deliverables, and Administrators have full system access.
         </p>
@@ -212,20 +213,27 @@ const sections: GuideSection[] = [
 
 export default function Guide() {
   const { activeRole } = useAuth();
+  const isMobile = useIsMobile();
   const visibleSections = sections.filter((s) => canView(s, activeRole));
   const [activeId, setActiveId] = useState(visibleSections[0]?.id ?? "getting-started");
 
   const activeSection = visibleSections.find((s) => s.id === activeId) ?? visibleSections[0];
 
   return (
-    <div className="flex h-full" data-testid="page-guide">
+    <div className="flex flex-col sm:flex-row h-full" data-testid="page-guide">
       <nav
-        className="w-[200px] shrink-0 border-r border-border flex flex-col gap-1 p-3 overflow-y-auto"
+        className={`shrink-0 border-b sm:border-b-0 sm:border-r border-border ${
+          isMobile
+            ? "flex gap-1 p-2 overflow-x-auto"
+            : "w-[200px] flex flex-col gap-1 p-3 overflow-y-auto"
+        }`}
         data-testid="guide-nav"
       >
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-2">
-          User Guide
-        </h3>
+        {!isMobile && (
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-2">
+            User Guide
+          </h3>
+        )}
         {visibleSections.map((section) => {
           const Icon = section.icon;
           const isActive = section.id === activeId;
@@ -234,13 +242,15 @@ export default function Guide() {
               key={section.id}
               onClick={() => setActiveId(section.id)}
               data-testid={`guide-nav-${section.id}`}
-              className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-left transition-colors w-full ${
+              className={`flex items-center gap-1.5 sm:gap-2 px-2 py-1.5 rounded-md text-xs sm:text-sm text-left transition-colors whitespace-nowrap ${
+                isMobile ? "" : "w-full"
+              } ${
                 isActive
                   ? "bg-cb-gold/15 text-cb-gold font-medium"
                   : "text-muted-foreground hover-elevate"
               }`}
             >
-              <Icon className={`h-4 w-4 shrink-0 ${isActive ? "text-cb-gold" : ""}`} />
+              <Icon className={`h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0 ${isActive ? "text-cb-gold" : ""}`} />
               <span className="truncate">{section.title}</span>
             </button>
           );
@@ -249,7 +259,7 @@ export default function Guide() {
 
       <ScrollArea className="flex-1">
         <div
-          className="max-w-3xl p-8"
+          className="max-w-3xl p-4 sm:p-8"
           data-testid={`guide-content-${activeSection?.id}`}
         >
           {activeSection?.content()}

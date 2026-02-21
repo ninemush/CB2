@@ -4,6 +4,7 @@ import { PIPELINE_STAGES, type Idea, type PipelineStage } from "@shared/schema";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Clock, AlertTriangle } from "lucide-react";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 function getStatusChip(stage: string): { label: string; className: string } {
   const approvalStages = ["CoE Approval", "Governance / Security Scan"];
@@ -89,11 +90,11 @@ function StageColumn({ stage, ideas }: { stage: PipelineStage; ideas: Idea[] }) 
 
   return (
     <div
-      className="flex flex-col min-w-[220px] max-w-[220px] h-full"
+      className="flex flex-col min-w-[180px] sm:min-w-[220px] max-w-[180px] sm:max-w-[220px] h-full snap-start"
       data-testid={`column-${stage.toLowerCase().replace(/[\s\/]/g, "-")}`}
     >
       <div className="flex items-center gap-2 px-2 pb-3 border-b border-border">
-        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider truncate">
+        <h3 className="text-[10px] sm:text-xs font-semibold text-muted-foreground uppercase tracking-wider truncate">
           {stage}
         </h3>
         {stageIdeas.length > 0 && (
@@ -115,17 +116,18 @@ export default function Home() {
   const { data: ideas, isLoading } = useQuery<Idea[]>({
     queryKey: ["/api/ideas"],
   });
+  const isMobile = useIsMobile();
 
   if (isLoading) {
     return (
       <div className="flex flex-col h-full" data-testid="page-pipeline-loading">
-        <div className="px-6 py-4 border-b border-border">
+        <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-border">
           <Skeleton className="h-5 w-24" />
           <Skeleton className="h-3 w-40 mt-1.5" />
         </div>
-        <div className="flex gap-4 p-6">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="min-w-[220px] space-y-3">
+        <div className="flex gap-3 sm:gap-4 p-4 sm:p-6">
+          {Array.from({ length: isMobile ? 2 : 5 }).map((_, i) => (
+            <div key={i} className="min-w-[180px] sm:min-w-[220px] space-y-3">
               <Skeleton className="h-4 w-28" />
               <Skeleton className="h-24 w-full rounded-lg" />
               <Skeleton className="h-24 w-full rounded-lg" />
@@ -140,14 +142,14 @@ export default function Home() {
 
   return (
     <div className="flex flex-col h-full" data-testid="page-pipeline">
-      <div className="px-6 py-4 border-b border-border">
-        <h1 className="text-lg font-semibold text-foreground">Pipeline</h1>
-        <p className="text-xs text-muted-foreground mt-0.5">
+      <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-border">
+        <h1 className="text-base sm:text-lg font-semibold text-foreground">Pipeline</h1>
+        <p className="text-[10px] sm:text-xs text-muted-foreground mt-0.5">
           {allIdeas.length} idea{allIdeas.length !== 1 ? "s" : ""} across {PIPELINE_STAGES.length} stages
         </p>
       </div>
       <ScrollArea className="flex-1">
-        <div className="flex gap-4 p-6 h-[calc(100vh-8.5rem)]">
+        <div className="flex gap-3 sm:gap-4 p-4 sm:p-6 h-[calc(100vh-7.5rem)] sm:h-[calc(100vh-8.5rem)] snap-x snap-mandatory sm:snap-none overflow-x-auto">
           {PIPELINE_STAGES.map((stage) => (
             <StageColumn key={stage} stage={stage} ideas={allIdeas} />
           ))}

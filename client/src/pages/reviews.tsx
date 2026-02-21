@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Link } from "wouter";
 import { type Idea, PIPELINE_STAGES } from "@shared/schema";
 import { Button } from "@/components/ui/button";
@@ -142,10 +143,10 @@ function ReviewDetail({ idea }: { idea: ReviewIdea }) {
 
   return (
     <div className="flex flex-col h-full" data-testid="review-detail">
-      <div className="p-4 border-b border-border">
-        <div className="flex items-start justify-between">
-          <div>
-            <h3 className="text-base font-semibold text-foreground">
+      <div className="p-3 sm:p-4 border-b border-border">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-sm sm:text-base font-semibold text-foreground truncate">
               {idea.title}
             </h3>
             <p className="text-xs text-muted-foreground mt-0.5">
@@ -165,7 +166,7 @@ function ReviewDetail({ idea }: { idea: ReviewIdea }) {
 
       <ScrollArea className="flex-1">
         <div className="p-4 space-y-4">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
             <div className="p-3 rounded-lg bg-muted/20 border border-border/40">
               <div className="flex items-center gap-2 mb-1">
                 <Map className="h-3.5 w-3.5 text-cb-teal" />
@@ -356,19 +357,19 @@ export default function Reviews() {
 
   return (
     <div className="flex flex-col h-full" data-testid="page-reviews">
-      <div className="px-6 py-4 border-b border-border">
-        <h1 className="text-lg font-semibold text-foreground">CoE Reviews</h1>
-        <p className="text-xs text-muted-foreground mt-0.5">
+      <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-border">
+        <h1 className="text-base sm:text-lg font-semibold text-foreground">CoE Reviews</h1>
+        <p className="text-[10px] sm:text-xs text-muted-foreground mt-0.5">
           {reviewableIdeas.length} idea{reviewableIdeas.length !== 1 ? "s" : ""}{" "}
           pending review
         </p>
       </div>
-      <div className="flex flex-1 min-h-0">
-        <div className="w-[320px] border-r border-border">
-          <ScrollArea className="h-full">
-            <div className="p-3 space-y-2">
+      <div className="flex flex-col sm:flex-row flex-1 min-h-0">
+        <div className="w-full sm:w-[320px] border-b sm:border-b-0 sm:border-r border-border shrink-0">
+          <ScrollArea className="h-auto max-h-[40vh] sm:max-h-none sm:h-full">
+            <div className="p-2 sm:p-3 space-y-2">
               {reviewableIdeas.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="flex flex-col items-center justify-center py-8 sm:py-12 text-center">
                   <ShieldCheck className="h-8 w-8 text-muted-foreground/40 mb-2" />
                   <p className="text-xs text-muted-foreground">
                     No ideas awaiting review.
@@ -387,11 +388,11 @@ export default function Reviews() {
             </div>
           </ScrollArea>
         </div>
-        <div className="flex-1">
+        <div className="flex-1 min-h-0">
           {selectedIdea ? (
             <ReviewDetail idea={selectedIdea} />
           ) : (
-            <div className="flex items-center justify-center h-full">
+            <div className="flex items-center justify-center h-full py-8 sm:py-0">
               <div className="text-center">
                 <ChevronRight className="h-6 w-6 text-muted-foreground/30 mx-auto mb-2" />
                 <p className="text-xs text-muted-foreground">

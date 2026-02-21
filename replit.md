@@ -8,16 +8,20 @@ CannonBall is a full-stack web application for automation pipeline management. I
 - Pipeline board with 10-stage Kanban view + stalled idea detection (amber "Needs attention" chip)
 - Idea capture modal with auto-redirect to workspace
 - Three-panel workspace: stage tracker, live process map (React Flow), AI chat interface
+- Mobile-responsive/adaptive UI: device detection via useIsMobile hook, workspace switches to bottom tab bar (Stages/Map/Chat), pipeline snap-scrolls horizontally, top nav condenses, modals go full-width, all pages adapt
 - AI-first chat: proactive opening message, idle nudge timer (60s), pulsing input indicator
 - Live AI chat using Anthropic Claude (Replit AI Integrations) with streaming SSE
 - Process map engine: custom nodes, confidence scoring, map completeness bar, auto-layout, inline editing, context menu, edge labels, approval workflow
 - Chat parses [STEP:] tags from LLM responses and auto-creates process map nodes
 - Process map approval with snapshot recording
 - Document generation: PDD auto-generated after As-Is map approval, SDD after PDD approval
+- Document version control: version history dropdown in DocumentCard, view older versions inline, versions API endpoint
 - DocumentCard component in chat with collapsible sections, approve/revise buttons, version tracking
 - UiPath package generation: ZIP with project.json, XAML workflow stubs, README after SDD approval
 - Auto-trigger chain: Map approval → PDD → PDD approval → SDD → SDD approval → UiPath export
 - Automated stage transition engine with audit logging
+- Backward stage movement: AI can issue [STAGE_BACK:] tag to move idea to earlier stage when requirements change; auto-transition skipped after backward move
+- Conversational deployment: AI asks user if ready to deploy, [DEPLOY_UIPATH] tag triggers deployment with live status streamed into chat
 - CoE review page with idea list, review detail, approve/reject buttons
 - Admin panel with Users tab (role management), Audit Log tab (filterable + CSV export), System tab (model info, stage chart)
 - User Guide with 9 sections, role-filtered display, left sub-nav + reading pane
@@ -186,6 +190,10 @@ Automated transitions evaluated after each chat exchange:
 - Skeleton loaders for loading states
 
 ## Recent Changes
+- 2026-02-21: Mobile-responsive/adaptive UI: all pages adapt to mobile viewports, workspace uses bottom tab bar (Stages/Map/Chat), pipeline snap-scrolls, top nav condenses, modals full-width, guide uses horizontal tabs
+- 2026-02-21: Document version control: version history dropdown in DocumentCard, versions API endpoint, view older versions inline
+- 2026-02-21: Conversational deployment: AI asks if ready to push, [DEPLOY_UIPATH] tag triggers deployment with live status streamed into chat
+- 2026-02-21: Backward stage movement: [STAGE_BACK:] tag moves idea to earlier stage when requirements change, auto-transition skipped after backward move
 - 2026-02-20: Full Orchestrator deployment pipeline: push-to-UiPath now auto-provisions all SDD artifacts (queues, assets, machines, storage buckets, triggers) via API with deployment report. Action Center flagged for manual setup.
 - 2026-02-20: SDD generation now outputs structured `orchestrator_artifacts` JSON block for parseable artifact definitions
 - 2026-02-20: New server/uipath-deploy.ts module: artifact parser, provisioning functions for all artifact types, deployment orchestrator with dependency ordering

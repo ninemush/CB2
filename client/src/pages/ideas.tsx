@@ -33,11 +33,11 @@ export default function Ideas() {
   if (isLoading) {
     return (
       <div className="flex flex-col h-full" data-testid="page-ideas">
-        <div className="px-6 py-4 border-b border-border">
+        <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-border">
           <Skeleton className="h-5 w-24" />
           <Skeleton className="h-3 w-40 mt-1.5" />
         </div>
-        <div className="p-6 space-y-3">
+        <div className="p-4 sm:p-6 space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <Skeleton key={i} className="h-20 w-full rounded-lg" />
           ))}
@@ -48,8 +48,8 @@ export default function Ideas() {
 
   return (
     <div className="flex flex-col h-full" data-testid="page-ideas">
-      <div className="px-6 py-4 border-b border-border">
-        <h1 className="text-lg font-semibold text-foreground">My Ideas</h1>
+      <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-border">
+        <h1 className="text-base sm:text-lg font-semibold text-foreground">My Ideas</h1>
         <p className="text-xs text-muted-foreground mt-0.5">
           {myIdeas.length} idea{myIdeas.length !== 1 ? "s" : ""} submitted
         </p>
@@ -68,12 +68,12 @@ export default function Ideas() {
           </div>
         </div>
       ) : (
-        <div className="p-6 space-y-3 overflow-y-auto">
+        <div className="p-3 sm:p-6 space-y-2 sm:space-y-3 overflow-y-auto">
           {myIdeas.map((idea) => (
             <Link
               key={idea.id}
               href={`/workspace/${idea.id}`}
-              className="block p-4 rounded-lg bg-card border border-card-border hover:border-primary/30 transition-colors cursor-pointer group"
+              className="block p-3 sm:p-4 rounded-lg bg-card border border-card-border hover:border-primary/30 transition-colors cursor-pointer group"
               data-testid={`idea-card-${idea.id}`}
             >
               <div className="flex items-start justify-between gap-3">

@@ -172,6 +172,14 @@ export function registerDocumentRoutes(app: Express): void {
     return res.json(docs);
   });
 
+  app.get("/api/ideas/:ideaId/documents/versions/:type", async (req: Request, res: Response) => {
+    const ideaId = await verifyIdeaAccess(req, res);
+    if (!ideaId) return;
+    const docType = req.params.type as string;
+    const versions = await documentStorage.getDocumentVersions(ideaId, docType);
+    return res.json(versions);
+  });
+
   app.get("/api/ideas/:ideaId/documents/latest/:type", async (req: Request, res: Response) => {
     const ideaId = await verifyIdeaAccess(req, res);
     if (!ideaId) return;

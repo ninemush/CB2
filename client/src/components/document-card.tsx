@@ -18,9 +18,18 @@ import {
   XCircle,
   Clock,
   RefreshCw,
+  History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -74,8 +83,15 @@ export function DocumentCard({ docType, docId, content, ideaId, isApproved, vers
   const [showApproveConfirm, setShowApproveConfirm] = useState(false);
   const [showReviseInput, setShowReviseInput] = useState(false);
   const [revisionText, setRevisionText] = useState("");
+  const [viewingVersion, setViewingVersion] = useState<{ id: number; version: number; content: string; status: string } | null>(null);
 
-  const sections = parseDocumentSections(content);
+  const { data: versionHistory } = useQuery<{ id: number; version: number; status: string; createdAt: string }[]>({
+    queryKey: ["/api/ideas", ideaId, "documents", "versions", docType],
+  });
+
+  const activeContent = viewingVersion ? viewingVersion.content : content;
+  const activeVersion = viewingVersion ? viewingVersion.version : (version || 1);
+  const sections = parseDocumentSections(activeContent);
 
   const approveMutation = useMutation({
     mutationFn: async () => {
@@ -140,14 +156,87 @@ export function DocumentCard({ docType, docId, content, ideaId, isApproved, vers
         <FileText className="h-4 w-4 text-cb-teal shrink-0" />
         <div className="flex-1 min-w-0">
           <h4 className="text-xs font-semibold text-foreground">{docTitle}</h4>
-          <span className="text-[10px] text-muted-foreground">
-            Version {version || 1}
-            {isApproved && (
-              <span className="ml-2 text-cb-teal">
-                <Check className="inline h-3 w-3 mr-0.5" />Approved
-              </span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-muted-foreground">
+              Version {activeVersion}
+              {isApproved && !viewingVersion && (
+                <span className="ml-2 text-cb-teal">
+                  <Check className="inline h-3 w-3 mr-0.5" />Approved
+                </span>
+              )}
+              {viewingVersion && (
+                <span className="ml-2 text-amber-400">
+                  (viewing older version)
+                </span>
+              )}
+            </span>
+            {versionHistory && versionHistory.length > 1 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                    data-testid={`button-version-history-${docType.toLowerCase()}`}
+                  >
+                    <History className="h-3 w-3" />
+                    <ChevronDown className="h-2.5 w-2.5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-52">
+                  <DropdownMenuLabel className="text-[10px] text-muted-foreground">
+                    Version History
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {versionHistory.map((v) => (
+                    <DropdownMenuItem
+                      key={v.id}
+                      onClick={() => {
+                        if (v.id === docId) {
+                          setViewingVersion(null);
+                        } else {
+                          fetch(`/api/ideas/${ideaId}/documents/versions/${docType}`, { credentials: "include" })
+                            .then((r) => r.json())
+                            .then((versions: any[]) => {
+                              const doc = versions.find((d: any) => d.id === v.id);
+                              if (doc) {
+                                setViewingVersion({ id: doc.id, version: doc.version, content: doc.content, status: doc.status });
+                              }
+                            });
+                        }
+                      }}
+                      data-testid={`menu-version-${v.version}`}
+                    >
+                      <span className="flex items-center gap-2 w-full text-xs">
+                        <span className={v.id === docId && !viewingVersion ? "font-medium text-foreground" : ""}>
+                          v{v.version}
+                        </span>
+                        <span className={`text-[10px] px-1 py-0.5 rounded ${
+                          v.status === "approved" ? "bg-cb-teal/20 text-cb-teal" :
+                          v.status === "superseded" ? "bg-muted text-muted-foreground" :
+                          "bg-primary/20 text-primary"
+                        }`}>
+                          {v.status}
+                        </span>
+                        {v.id === docId && !viewingVersion && (
+                          <span className="text-[10px] text-primary ml-auto">current</span>
+                        )}
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                  {viewingVersion && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => setViewingVersion(null)}
+                        className="text-xs text-primary"
+                      >
+                        Back to current version
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
-          </span>
+          </div>
         </div>
         <Button
           variant="ghost"

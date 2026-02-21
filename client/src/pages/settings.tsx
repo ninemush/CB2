@@ -87,7 +87,7 @@ function UsersTab() {
   }
 
   return (
-    <div className="rounded-md border border-border">
+    <div className="rounded-md border border-border overflow-x-auto">
       <Table data-testid="table-users">
         <TableHeader>
           <TableRow>
@@ -217,7 +217,7 @@ function AuditLogTab() {
           Export CSV
         </Button>
       </div>
-      <div className="rounded-md border border-border">
+      <div className="rounded-md border border-border overflow-x-auto">
         <Table data-testid="table-audit-logs">
           <TableHeader>
             <TableRow>
@@ -797,14 +797,14 @@ function IntegrationsTab() {
 
   return (
     <div className="space-y-6 max-w-2xl">
-      <Card className="p-6 space-y-6" data-testid="card-uipath-config">
-        <div className="flex items-start justify-between">
+      <Card className="p-4 sm:p-6 space-y-4 sm:space-y-6" data-testid="card-uipath-config">
+        <div className="flex flex-col sm:flex-row items-start justify-between gap-2">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <Plug className="h-5 w-5 text-[#e8450a]" />
-              <h3 className="text-lg font-semibold text-foreground">UiPath Orchestrator</h3>
+              <h3 className="text-base sm:text-lg font-semibold text-foreground">UiPath Orchestrator</h3>
             </div>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-xs sm:text-sm text-muted-foreground">
               Connect to UiPath Cloud to push automation packages directly.{" "}
               <a
                 href="https://cloud.uipath.com"
@@ -1009,7 +1009,7 @@ function IntegrationsTab() {
             </div>
 
             <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
                 <span className="text-muted-foreground">Organization</span>
                 <span className="font-medium text-foreground" data-testid="confirm-org">{extractOrgSlug(orgName) || "—"}</span>
                 <span className="text-muted-foreground">Tenant</span>
@@ -1101,7 +1101,7 @@ function IntegrationsTab() {
                   </div>
                 )}
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                   <Select
                     value={selectedFolderId || "__tenant__"}
                     disabled={foldersLoading || (foldersData !== undefined && !foldersData?.success)}
@@ -1120,7 +1120,7 @@ function IntegrationsTab() {
                       }
                     }}
                   >
-                    <SelectTrigger className="w-[280px]" data-testid="select-uipath-folder">
+                    <SelectTrigger className="w-full sm:w-[280px]" data-testid="select-uipath-folder">
                       <SelectValue placeholder={foldersLoading ? "Loading folders..." : "Select a folder..."} />
                     </SelectTrigger>
                     <SelectContent>
@@ -1208,33 +1208,35 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6" data-testid="page-settings">
+    <div className="px-4 sm:px-6 py-4 sm:py-6 max-w-6xl mx-auto space-y-4 sm:space-y-6" data-testid="page-settings">
       <div className="space-y-1">
-        <h1 className="text-2xl font-bold text-foreground">Admin Panel</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1 className="text-xl sm:text-2xl font-bold text-foreground">Admin Panel</h1>
+        <p className="text-xs sm:text-sm text-muted-foreground">
           Manage users, view audit logs, and monitor system status.
         </p>
       </div>
 
       <Tabs defaultValue="users" data-testid="tabs-admin">
-        <TabsList data-testid="tablist-admin">
-          <TabsTrigger value="users" data-testid="tab-users">
-            <Users className="mr-2 h-4 w-4" />
-            Users
-          </TabsTrigger>
-          <TabsTrigger value="audit" data-testid="tab-audit">
-            <ScrollText className="mr-2 h-4 w-4" />
-            Audit Log
-          </TabsTrigger>
-          <TabsTrigger value="system" data-testid="tab-system">
-            <Monitor className="mr-2 h-4 w-4" />
-            System
-          </TabsTrigger>
-          <TabsTrigger value="integrations" data-testid="tab-integrations">
-            <Plug className="mr-2 h-4 w-4" />
-            Integrations
-          </TabsTrigger>
-        </TabsList>
+        <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+          <TabsList data-testid="tablist-admin" className="w-max sm:w-auto">
+            <TabsTrigger value="users" data-testid="tab-users">
+              <Users className="mr-1.5 sm:mr-2 h-4 w-4" />
+              <span className="text-xs sm:text-sm">Users</span>
+            </TabsTrigger>
+            <TabsTrigger value="audit" data-testid="tab-audit">
+              <ScrollText className="mr-1.5 sm:mr-2 h-4 w-4" />
+              <span className="text-xs sm:text-sm">Audit Log</span>
+            </TabsTrigger>
+            <TabsTrigger value="system" data-testid="tab-system">
+              <Monitor className="mr-1.5 sm:mr-2 h-4 w-4" />
+              <span className="text-xs sm:text-sm">System</span>
+            </TabsTrigger>
+            <TabsTrigger value="integrations" data-testid="tab-integrations">
+              <Plug className="mr-1.5 sm:mr-2 h-4 w-4" />
+              <span className="text-xs sm:text-sm">Integrations</span>
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="users" className="mt-4">
           <UsersTab />

@@ -68,7 +68,7 @@ export function NewIdeaModal({ open, onOpenChange }: NewIdeaModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle>New Idea</DialogTitle>
         </DialogHeader>
