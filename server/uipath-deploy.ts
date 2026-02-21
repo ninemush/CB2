@@ -23,25 +23,50 @@ export type DeploymentResult = {
 };
 
 export function parseArtifactsFromSDD(sddContent: string): OrchestratorArtifacts | null {
-  const match = sddContent.match(/```orchestrator_artifacts\s*\n([\s\S]*?)\n```/);
-  if (!match) {
-    const jsonMatch = sddContent.match(/"queues"\s*:\s*\[[\s\S]*?"triggers"\s*:\s*\[[\s\S]*?\]\s*\}/);
-    if (jsonMatch) {
-      try {
-        const startIdx = sddContent.lastIndexOf("{", sddContent.indexOf(jsonMatch[0]));
-        const jsonStr = sddContent.slice(startIdx, sddContent.indexOf("}", sddContent.indexOf(jsonMatch[0]) + jsonMatch[0].length) + 1);
-        return JSON.parse(jsonStr);
-      } catch {
-        return null;
-      }
+  const exactMatch = sddContent.match(/```orchestrator_artifacts\s*\n([\s\S]*?)\n```/);
+  if (exactMatch) {
+    try {
+      return JSON.parse(exactMatch[1].trim());
+    } catch (e) {
+      console.warn("[parseArtifacts] orchestrator_artifacts fence found but JSON parse failed:", (e as Error).message);
     }
-    return null;
   }
-  try {
-    return JSON.parse(match[1]);
-  } catch {
-    return null;
+
+  const jsonFenceMatch = sddContent.match(/```json\s*\n([\s\S]*?)\n```/g);
+  if (jsonFenceMatch) {
+    for (const fence of jsonFenceMatch) {
+      const inner = fence.replace(/```json\s*\n/, "").replace(/\n```$/, "").trim();
+      try {
+        const parsed = JSON.parse(inner);
+        if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers) {
+          console.log("[parseArtifacts] Found artifacts in json fence block");
+          return parsed;
+        }
+      } catch { /* not the right block */ }
+    }
   }
+
+  const rawMatch = sddContent.match(/\{\s*"queues"\s*:\s*\[[\s\S]*?\}\s*\]\s*\}/);
+  if (rawMatch) {
+    try {
+      const braceStart = rawMatch.index!;
+      let depth = 0;
+      let end = braceStart;
+      for (let i = braceStart; i < sddContent.length; i++) {
+        if (sddContent[i] === "{") depth++;
+        if (sddContent[i] === "}") depth--;
+        if (depth === 0) { end = i + 1; break; }
+      }
+      const jsonStr = sddContent.slice(braceStart, end);
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers) {
+        console.log("[parseArtifacts] Found artifacts in raw JSON");
+        return parsed;
+      }
+    } catch { /* not valid JSON */ }
+  }
+
+  return null;
 }
 
 export async function extractArtifactsWithLLM(sddContent: string): Promise<OrchestratorArtifacts | null> {
@@ -104,12 +129,13 @@ ${sddContent.slice(0, 12000)}`
       (validated.storageBuckets?.length || 0) + (validated.actionCenter?.length || 0);
 
     if (hasContent > 0) {
-      console.log(`[UiPath Deploy] LLM extracted ${hasContent} validated artifacts`);
+      console.log(`[UiPath Deploy] LLM extracted ${hasContent} validated artifacts (queues:${validated.queues?.length||0}, assets:${validated.assets?.length||0}, machines:${validated.machines?.length||0}, triggers:${validated.triggers?.length||0}, buckets:${validated.storageBuckets?.length||0}, actionCenter:${validated.actionCenter?.length||0})`);
       return validated;
     }
+    console.warn("[UiPath Deploy] LLM returned JSON but no valid artifacts after validation. Raw keys:", Object.keys(raw));
     return null;
   } catch (err: any) {
-    console.error("[UiPath Deploy] LLM artifact extraction failed:", err?.message);
+    console.error("[UiPath Deploy] LLM artifact extraction failed:", err?.message, "| Raw text start:", (err?.rawText || "").slice(0, 200));
     return null;
   }
 }

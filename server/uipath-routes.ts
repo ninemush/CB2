@@ -280,8 +280,8 @@ export function registerUiPathRoutes(app: Express): void {
               deploymentSummary: deployResult.summary,
             };
           } else {
-            console.warn("[UiPath] No artifacts could be extracted from SDD");
-            deploymentReport = "\n\nNo Orchestrator artifacts (queues, assets, triggers) were found in the SDD to provision. To provision artifacts, regenerate the SDD to include the Orchestrator Deployment Specification section.";
+            console.warn("[UiPath] No artifacts could be extracted from SDD (content length:", sdd.content.length, ")");
+            deploymentReport = "\n\n⚠️ No Orchestrator artifacts (queues, assets, triggers) could be extracted from the SDD. The SDD may be missing the deployment specification section. Ask me to **revise the SDD** and I will regenerate it with the full Orchestrator Deployment Specification including all artifacts.";
           }
         } else {
           console.warn("[UiPath] No SDD found for idea, skipping artifact provisioning");

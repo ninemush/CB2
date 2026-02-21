@@ -48,16 +48,16 @@ function IdeaCard({ idea }: { idea: Idea }) {
   return (
     <Link
       href={`/workspace/${idea.id}`}
-      className={`block p-3 rounded-lg bg-card border transition-colors cursor-pointer group ${
+      className={`block p-2 rounded-lg bg-card border transition-colors cursor-pointer group ${
         stalled ? "border-amber-500/40 hover:border-amber-500/60" : "border-card-border hover:border-primary/30"
       }`}
       data-testid={`card-idea-${idea.id}`}
     >
-      <div className="space-y-2.5">
-        <h4 className="text-sm font-medium text-foreground leading-snug group-hover:text-primary transition-colors line-clamp-2">
+      <div className="space-y-1.5">
+        <h4 className="text-xs font-medium text-foreground leading-snug group-hover:text-primary transition-colors line-clamp-2">
           {idea.title}
         </h4>
-        <p className="text-xs text-muted-foreground truncate">
+        <p className="text-[10px] text-muted-foreground truncate">
           {idea.owner}
         </p>
         {stalled && (
@@ -85,25 +85,25 @@ function IdeaCard({ idea }: { idea: Idea }) {
   );
 }
 
-function StageColumn({ stage, ideas }: { stage: PipelineStage; ideas: Idea[] }) {
+function StageColumn({ stage, ideas, isMobile }: { stage: PipelineStage; ideas: Idea[]; isMobile: boolean }) {
   const stageIdeas = ideas.filter((idea) => idea.stage === stage);
 
   return (
     <div
-      className="flex flex-col min-w-[180px] sm:min-w-[220px] max-w-[180px] sm:max-w-[220px] h-full snap-start"
+      className={`flex flex-col h-full ${isMobile ? "min-w-[160px] max-w-[160px] snap-start" : "flex-1 min-w-0"}`}
       data-testid={`column-${stage.toLowerCase().replace(/[\s\/]/g, "-")}`}
     >
-      <div className="flex items-center gap-2 px-2 pb-3 border-b border-border">
-        <h3 className="text-[10px] sm:text-xs font-semibold text-muted-foreground uppercase tracking-wider truncate">
+      <div className="flex items-center gap-1 px-1.5 pb-2 border-b border-border">
+        <h3 className="text-[9px] sm:text-[10px] font-semibold text-muted-foreground uppercase tracking-wider truncate leading-tight">
           {stage}
         </h3>
         {stageIdeas.length > 0 && (
-          <span className="flex items-center justify-center min-w-[18px] h-[18px] rounded-full bg-secondary text-[10px] font-medium text-secondary-foreground px-1">
+          <span className="flex items-center justify-center min-w-[16px] h-[16px] rounded-full bg-secondary text-[9px] font-medium text-secondary-foreground px-0.5 shrink-0">
             {stageIdeas.length}
           </span>
         )}
       </div>
-      <div className="flex-1 pt-3 space-y-2 overflow-y-auto">
+      <div className="flex-1 pt-2 space-y-1.5 overflow-y-auto">
         {stageIdeas.map((idea) => (
           <IdeaCard key={idea.id} idea={idea} />
         ))}
@@ -125,12 +125,11 @@ export default function Home() {
           <Skeleton className="h-5 w-24" />
           <Skeleton className="h-3 w-40 mt-1.5" />
         </div>
-        <div className="flex gap-3 sm:gap-4 p-4 sm:p-6">
-          {Array.from({ length: isMobile ? 2 : 5 }).map((_, i) => (
-            <div key={i} className="min-w-[180px] sm:min-w-[220px] space-y-3">
-              <Skeleton className="h-4 w-28" />
-              <Skeleton className="h-24 w-full rounded-lg" />
-              <Skeleton className="h-24 w-full rounded-lg" />
+        <div className="flex gap-2 p-3 sm:p-4">
+          {Array.from({ length: isMobile ? 2 : 10 }).map((_, i) => (
+            <div key={i} className={isMobile ? "min-w-[160px] space-y-3" : "flex-1 min-w-0 space-y-3"}>
+              <Skeleton className="h-4 w-full max-w-[80px]" />
+              <Skeleton className="h-20 w-full rounded-lg" />
             </div>
           ))}
         </div>
@@ -148,14 +147,22 @@ export default function Home() {
           {allIdeas.length} idea{allIdeas.length !== 1 ? "s" : ""} across {PIPELINE_STAGES.length} stages
         </p>
       </div>
-      <ScrollArea className="flex-1">
-        <div className="flex gap-3 sm:gap-4 p-4 sm:p-6 h-[calc(100vh-7.5rem)] sm:h-[calc(100vh-8.5rem)] snap-x snap-mandatory sm:snap-none overflow-x-auto">
+      {isMobile ? (
+        <ScrollArea className="flex-1">
+          <div className="flex gap-2 p-3 h-[calc(100vh-7.5rem)] snap-x snap-mandatory overflow-x-auto">
+            {PIPELINE_STAGES.map((stage) => (
+              <StageColumn key={stage} stage={stage} ideas={allIdeas} isMobile={true} />
+            ))}
+          </div>
+          <ScrollBar orientation="horizontal" />
+        </ScrollArea>
+      ) : (
+        <div className="flex gap-2 p-3 sm:p-4 h-[calc(100vh-8.5rem)] overflow-hidden">
           {PIPELINE_STAGES.map((stage) => (
-            <StageColumn key={stage} stage={stage} ideas={allIdeas} />
+            <StageColumn key={stage} stage={stage} ideas={allIdeas} isMobile={false} />
           ))}
         </div>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
+      )}
     </div>
   );
 }

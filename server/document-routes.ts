@@ -26,7 +26,9 @@ const SDD_PROMPT = `The SME has approved the PDD. Now generate a Solution Design
 7) Test Strategy
 8) Orchestrator Deployment Specification
 
-For section 8 "Orchestrator Deployment Specification", you MUST output a fenced JSON block tagged as orchestrator_artifacts. This block defines every Orchestrator artifact needed to run this automation end-to-end. Use this exact format:
+CRITICAL REQUIREMENT — Section 8 MUST contain a fenced code block tagged \`\`\`orchestrator_artifacts with a complete JSON object defining EVERY Orchestrator artifact needed. This block is machine-parsed and used to auto-provision artifacts in UiPath Orchestrator. Without it, deployment will fail. Do NOT skip this block. Do NOT describe artifacts in prose only — you MUST include the fenced JSON block.
+
+Here is the EXACT format you must use in Section 8. Copy this structure and fill in real values based on the automation:
 
 \`\`\`orchestrator_artifacts
 {
@@ -51,7 +53,13 @@ For section 8 "Orchestrator Deployment Specification", you MUST output a fenced 
 }
 \`\`\`
 
-Include ALL artifacts the automation needs. For credential assets, set value to "" (empty) since the user must fill in real credentials. For text/integer/bool assets, provide sensible defaults. For queue triggers, reference the queue name defined above. For time triggers, use UiPath 7-field cron expressions. Be comprehensive — this specification will be used to auto-provision everything in Orchestrator.
+Rules for the artifacts block:
+- Include ALL artifacts. Every automation needs at least one queue, credentials, and a machine template.
+- For credential assets, set value to "" (empty).
+- For text/integer/bool assets, provide sensible defaults.
+- For queue triggers, reference the queue name defined above.
+- For time triggers, use UiPath 7-field cron expressions.
+- This specification will be used to auto-provision everything in Orchestrator so be comprehensive.
 
 Format your response as sections separated by "## " headings. Each section should start with "## 1. Automation Architecture Overview", etc.`;
 
@@ -153,9 +161,10 @@ async function generateDocument(ideaId: string, docType: string): Promise<string
 
   const prompt = docType === "PDD" ? PDD_PROMPT : docType === "SDD" ? SDD_PROMPT : UIPATH_PROMPT;
 
+  const maxTokens = docType === "SDD" ? 8192 : 4096;
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 4096,
+    max_tokens: maxTokens,
     system: `You are a professional automation consultant generating formal documents for the "${idea.title}" project. Be specific and use details from the conversation.${contextPrompt}`,
     messages: [...chatMessages, { role: "user", content: prompt }],
   });
@@ -207,19 +216,44 @@ ${content}`
         });
         const extractBlock = extractionResponse.content.find((b) => b.type === "text");
         const extractedText = extractBlock?.text || "";
-        const artifactMatch = extractedText.match(/```orchestrator_artifacts\s*\n[\s\S]*?\n```/);
-        if (artifactMatch) {
+        let artifactBlock: string | null = null;
+        const exactMatch = extractedText.match(/```orchestrator_artifacts\s*\n([\s\S]*?)\n```/);
+        if (exactMatch) {
+          artifactBlock = exactMatch[0];
+        } else {
+          const jsonFenceMatch = extractedText.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
+          if (jsonFenceMatch) {
+            try {
+              const parsed = JSON.parse(jsonFenceMatch[1].trim());
+              if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers) {
+                artifactBlock = "```orchestrator_artifacts\n" + JSON.stringify(parsed, null, 2) + "\n```";
+              }
+            } catch { /* not valid JSON */ }
+          }
+          if (!artifactBlock) {
+            const rawJsonMatch = extractedText.match(/\{[\s\S]*"queues"[\s\S]*\}/);
+            if (rawJsonMatch) {
+              try {
+                const parsed = JSON.parse(rawJsonMatch[0]);
+                if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers) {
+                  artifactBlock = "```orchestrator_artifacts\n" + JSON.stringify(parsed, null, 2) + "\n```";
+                }
+              } catch { /* not valid JSON */ }
+            }
+          }
+        }
+        if (artifactBlock) {
           const section8Regex = /## 8[\.\s][^\n]*/i;
           const section8Match = content.match(section8Regex);
           if (section8Match) {
             const insertPos = content.indexOf(section8Match[0]) + section8Match[0].length;
-            content = content.slice(0, insertPos) + `\n\n${artifactMatch[0]}` + content.slice(insertPos);
+            content = content.slice(0, insertPos) + `\n\n${artifactBlock}` + content.slice(insertPos);
           } else {
-            content += `\n\n## 8. Orchestrator Deployment Specification\n\n${artifactMatch[0]}`;
+            content += `\n\n## 8. Orchestrator Deployment Specification\n\n${artifactBlock}`;
           }
           console.log("[SDD] Successfully appended orchestrator_artifacts block");
         } else {
-          console.warn("[SDD] Follow-up extraction did not produce a valid artifacts block");
+          console.warn("[SDD] Follow-up extraction did not produce a valid artifacts block. Raw response:", extractedText.slice(0, 500));
         }
       } catch (extractErr: any) {
         console.error("[SDD] Artifact extraction failed:", extractErr?.message);
@@ -420,17 +454,44 @@ ${content}`
             });
             const extractBlock = extractionResponse.content.find((b) => b.type === "text");
             const extractedText = extractBlock?.text || "";
-            const artifactMatch = extractedText.match(/```orchestrator_artifacts\s*\n[\s\S]*?\n```/);
-            if (artifactMatch) {
+            let artifactBlock: string | null = null;
+            const exactMatch = extractedText.match(/```orchestrator_artifacts\s*\n([\s\S]*?)\n```/);
+            if (exactMatch) {
+              artifactBlock = exactMatch[0];
+            } else {
+              const jsonFenceMatch = extractedText.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
+              if (jsonFenceMatch) {
+                try {
+                  const parsed = JSON.parse(jsonFenceMatch[1].trim());
+                  if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers) {
+                    artifactBlock = "```orchestrator_artifacts\n" + JSON.stringify(parsed, null, 2) + "\n```";
+                  }
+                } catch { /* not valid JSON */ }
+              }
+              if (!artifactBlock) {
+                const rawJsonMatch = extractedText.match(/\{[\s\S]*"queues"[\s\S]*\}/);
+                if (rawJsonMatch) {
+                  try {
+                    const parsed = JSON.parse(rawJsonMatch[0]);
+                    if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers) {
+                      artifactBlock = "```orchestrator_artifacts\n" + JSON.stringify(parsed, null, 2) + "\n```";
+                    }
+                  } catch { /* not valid JSON */ }
+                }
+              }
+            }
+            if (artifactBlock) {
               const section8Regex = /## 8[\.\s][^\n]*/i;
               const section8Match = content.match(section8Regex);
               if (section8Match) {
                 const insertPos = content.indexOf(section8Match[0]) + section8Match[0].length;
-                content = content.slice(0, insertPos) + `\n\n${artifactMatch[0]}` + content.slice(insertPos);
+                content = content.slice(0, insertPos) + `\n\n${artifactBlock}` + content.slice(insertPos);
               } else {
-                content += `\n\n## 8. Orchestrator Deployment Specification\n\n${artifactMatch[0]}`;
+                content += `\n\n## 8. Orchestrator Deployment Specification\n\n${artifactBlock}`;
               }
               console.log("[SDD Revision] Successfully appended orchestrator_artifacts block");
+            } else {
+              console.warn("[SDD Revision] Follow-up extraction failed. Raw:", extractedText.slice(0, 500));
             }
           } catch (extractErr: any) {
             console.error("[SDD Revision] Artifact extraction failed:", extractErr?.message);
