@@ -357,17 +357,47 @@
   animation: nodeIn 300ms ease-out;
 }
 
+.process-map-canvas {
+  background: #0a0a0f;
+}
+
 .react-flow__node {
-  transition: transform 200ms ease, opacity 200ms ease;
+  transition: transform 200ms ease, opacity 200ms ease, box-shadow 200ms ease;
+}
+
+.react-flow__node:hover {
+  z-index: 10 !important;
 }
 
 .react-flow__edge path {
-  transition: stroke 200ms ease;
+  transition: stroke 200ms ease, stroke-width 200ms ease;
+}
+
+.react-flow__edge:hover path {
+  stroke-width: 3 !important;
 }
 
 .react-flow__controls {
-  bottom: 10px !important;
-  left: 10px !important;
+  bottom: 12px !important;
+  left: 12px !important;
+}
+
+.react-flow__minimap {
+  bottom: 12px !important;
+  right: 12px !important;
+}
+
+.react-flow__handle {
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.react-flow__node:hover .react-flow__handle {
+  opacity: 1;
+  background: #3b82f6 !important;
+  border-color: #60a5fa !important;
+  width: 8px !important;
+  height: 8px !important;
 }
 
 .prose-chat p {

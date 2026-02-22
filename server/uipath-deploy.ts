@@ -488,11 +488,14 @@ async function provisionTriggers(
         const body: Record<string, any> = {
           Enabled: true,
           Name: t.name,
+          ProcessKey: releaseKey,
           ReleaseId: releaseId,
           QueueDefinitionId: queueId,
-          MinimumJobCount: 1,
-          MaximumJobCount: 5,
+          MinimumNumberOfItems: 1,
+          MaximumNumberOfItems: 100,
           Strategy: "ModernJobsCount",
+          NoOfRobots: 1,
+          Priority: "Normal",
         };
 
         const res = await fetch(`${base}/odata/QueueTriggers`, {
@@ -527,6 +530,7 @@ async function provisionTriggers(
           Enabled: true,
           Name: t.name,
           ReleaseId: releaseId,
+          ReleaseKey: releaseKey,
           StartProcessCron: cron,
           StartProcessCronDetails: cronDetails,
           StartProcessCronSummary: t.description || "Scheduled trigger",

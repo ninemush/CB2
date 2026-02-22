@@ -37,6 +37,34 @@ import ProcessMapPanel from "@/components/process-map-panel";
 import { parseStepsFromText } from "@/lib/step-parser";
 import { DocumentCard, UiPathPackageCard } from "@/components/document-card";
 
+function ThinkingIndicator() {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setElapsed((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const getMessage = () => {
+    if (elapsed >= 15) return "This is taking longer than usual, hang tight...";
+    if (elapsed >= 5) return "Still working on this...";
+    return "Thinking";
+  };
+
+  return (
+    <div className="flex items-center gap-2.5" data-testid="thinking-indicator">
+      <div className="flex items-center gap-1">
+        <span className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce" style={{ animationDelay: "0ms", animationDuration: "1.2s" }} />
+        <span className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce" style={{ animationDelay: "200ms", animationDuration: "1.2s" }} />
+        <span className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce" style={{ animationDelay: "400ms", animationDuration: "1.2s" }} />
+      </div>
+      <span className="text-[11px] text-muted-foreground/70 font-medium">{getMessage()}</span>
+    </div>
+  );
+}
+
 function getStageBadgeClass(stage: string): string {
   const approvalStages = ["CoE Approval", "Governance / Security Scan"];
   const actionStages = ["Idea", "Feasibility Assessment"];
@@ -797,11 +825,17 @@ function ChatPanel({ idea }: { idea: Idea }) {
               >
                 {msg.role === "assistant" ? (
                   <div className="text-xs leading-relaxed prose-chat overflow-hidden break-words">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {msg.content}
-                    </ReactMarkdown>
-                    {msg.isStreaming && (
-                      <span className="inline-block w-1.5 h-3.5 bg-primary ml-0.5 animate-pulse rounded-sm" />
+                    {msg.isStreaming && !msg.content ? (
+                      <ThinkingIndicator />
+                    ) : (
+                      <>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {msg.content}
+                        </ReactMarkdown>
+                        {msg.isStreaming && (
+                          <span className="inline-block w-1.5 h-3.5 bg-primary ml-0.5 animate-pulse rounded-sm" />
+                        )}
+                      </>
                     )}
                   </div>
                 ) : (
