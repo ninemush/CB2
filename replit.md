@@ -47,6 +47,7 @@ The application employs a modern web stack:
 - Steps without FROM fall back to sequential connection
 
 ## Recent Changes
+- 2026-02-22: Interactive process map editor: positions persist to DB, dagre only runs on first load or explicit re-layout, no auto-reset on data changes. Right-click node context menu (Edit/Add Child/Delete), edge selection with Delete key, double-click to edit nodes/edge labels, Re-layout toolbar button, connection handles visible on hover, edge selection action bar
 - 2026-02-22: Intelligent branching process maps: dagre DAG layout, FROM/LABEL fields in [STEP:] tags, decision node forking with labeled Yes/No edges, smooth-step edge paths, color-coded branch labels (green=Yes, red=No)
 - 2026-02-22: Fixed SDD/PDD Confirm button: backend now allows re-approval of newer document versions (deletes old approval, supersedes old doc); frontend shows error toast on failure
 - 2026-02-22: Fixed UiPath trigger provisioning: StartStrategy now uses proper object format { Type: 0 } instead of raw integer

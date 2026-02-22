@@ -21,6 +21,7 @@ import {
   ReactFlowProvider,
   MarkerType,
   BackgroundVariant,
+  ConnectionLineType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import dagre from "@dagrejs/dagre";
@@ -47,6 +48,7 @@ import {
   Diamond,
   GitBranch,
   CircleDot,
+  LayoutGrid,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -588,17 +590,70 @@ function ContextMenu({
   );
 }
 
-function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "as-is" | "to-be"; }) {
+function NodeContextMenu({
+  position,
+  nodeData,
+  onEdit,
+  onAddChild,
+  onDelete,
+  onClose,
+}: {
+  position: { x: number; y: number };
+  nodeData: { dbId: number; label: string; nodeType: string };
+  onEdit: () => void;
+  onAddChild: () => void;
+  onDelete: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="absolute z-50 bg-zinc-950/95 backdrop-blur-md border border-zinc-700 rounded-xl py-1.5 shadow-2xl min-w-[180px]"
+      style={{ left: position.x, top: position.y }}
+      data-testid="node-context-menu"
+    >
+      <button
+        className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2.5 transition-colors"
+        onClick={onEdit}
+        data-testid="button-edit-node-context"
+      >
+        <Pencil className="h-3.5 w-3.5 text-primary" /> Edit Step
+      </button>
+      <button
+        className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2.5 transition-colors"
+        onClick={onAddChild}
+        data-testid="button-add-child-context"
+      >
+        <Plus className="h-3.5 w-3.5 text-cb-teal" />
+        {nodeData.nodeType === "decision" ? "Add Branch" : "Add Child Step"}
+      </button>
+      <div className="h-px bg-zinc-800 my-1" />
+      <button
+        className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 flex items-center gap-2.5 transition-colors"
+        onClick={onDelete}
+        data-testid="button-delete-node-context"
+      >
+        <Trash2 className="h-3.5 w-3.5" /> Delete Step
+      </button>
+    </div>
+  );
+}
+
+function ProcessMapFlow({ ideaId, activeView, onRelayout }: { ideaId: string; activeView: "as-is" | "to-be"; onRelayout?: (fn: () => void) => void; }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [editingNode, setEditingNode] = useState<NodeEditData | null>(null);
   const [editingEdge, setEditingEdge] = useState<EdgeEditData | null>(null);
   const [edgeEditPos, setEdgeEditPos] = useState({ x: 0, y: 0 });
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; flowX: number; flowY: number } | null>(null);
+  const [nodeContextMenu, setNodeContextMenu] = useState<{ x: number; y: number; nodeData: { dbId: number; label: string; nodeType: string } } | null>(null);
   const [isNewNode, setIsNewNode] = useState(false);
   const [newNodeFlowPos, setNewNodeFlowPos] = useState<{ x: number; y: number } | null>(null);
-  const prevNodeCountRef = useRef(0);
-  const { fitView } = useReactFlow();
+  const [selectedEdgeIds, setSelectedEdgeIds] = useState<Set<string>>(new Set());
+  const [parentNodeIdForChild, setParentNodeIdForChild] = useState<number | null>(null);
+  const hasInitialFitRef = useRef(false);
+  const dataVersionRef = useRef(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { fitView, screenToFlowPosition } = useReactFlow();
 
   const { data: mapData, isLoading } = useQuery<ProcessMapData>({
     queryKey: ["/api/ideas", ideaId, "process-map", activeView],
@@ -611,31 +666,69 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
     staleTime: 0,
   });
 
+  const doRelayout = useCallback(() => {
+    if (!mapData) return;
+    const dbNodes = mapData.nodes;
+    const dbEdges = mapData.edges;
+    const rawNodes: Node[] = dbNodes.map((n) => ({
+      id: String(n.id),
+      type: "processNode",
+      position: { x: 0, y: 0 },
+      data: {
+        label: n.name, role: n.role, system: n.system, nodeType: n.nodeType,
+        isGhost: n.isGhost, isPainPoint: n.isPainPoint, description: n.description,
+        dbId: n.id, viewType: activeView,
+      },
+    }));
+    const rawEdges: Edge[] = dbEdges.map((e) => ({
+      id: String(e.id), source: String(e.sourceNodeId), target: String(e.targetNodeId),
+      type: "custom", data: { label: e.label, dbId: e.id, viewType: activeView },
+    }));
+    let layoutNodes: Node[];
+    if (rawEdges.length > 0) {
+      layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB");
+    } else {
+      layoutNodes = rawNodes.map((node, i) => ({ ...node, position: getNodePosition(i, rawNodes.length) }));
+    }
+    setNodes(layoutNodes);
+    layoutNodes.forEach((n) => {
+      const d = n.data as any;
+      if (d.dbId) {
+        updateNodeMutation.mutate({ id: d.dbId, data: { positionX: n.position.x, positionY: n.position.y } });
+      }
+    });
+    setTimeout(() => fitView({ padding: 0.3, duration: 400, maxZoom: 1.2 }), 150);
+  }, [mapData, activeView, setNodes, fitView]);
+
+  useEffect(() => {
+    if (onRelayout) onRelayout(doRelayout);
+  }, [onRelayout, doRelayout]);
+
   useEffect(() => {
     if (!mapData) return;
     const dbNodes = mapData.nodes;
     const dbEdges = mapData.edges;
 
-    const rawNodes: Node[] = dbNodes.map((n, i) => {
-      const isNew = i >= prevNodeCountRef.current;
-      return {
-        id: String(n.id),
-        type: "processNode",
-        position: { x: 0, y: 0 },
-        data: {
-          label: n.name,
-          role: n.role,
-          system: n.system,
-          nodeType: n.nodeType,
-          isGhost: n.isGhost,
-          isPainPoint: n.isPainPoint,
-          description: n.description,
-          dbId: n.id,
-          viewType: activeView,
-        },
-        className: isNew ? "animate-node-in" : "",
-      };
-    });
+    const savedCount = dbNodes.filter((n) => n.positionX !== 0 || n.positionY !== 0).length;
+    const hasSavedPositions = savedCount > 0;
+    const allHaveSavedPositions = savedCount === dbNodes.length;
+
+    const rawNodes: Node[] = dbNodes.map((n) => ({
+      id: String(n.id),
+      type: "processNode",
+      position: { x: n.positionX, y: n.positionY },
+      data: {
+        label: n.name,
+        role: n.role,
+        system: n.system,
+        nodeType: n.nodeType,
+        isGhost: n.isGhost,
+        isPainPoint: n.isPainPoint,
+        description: n.description,
+        dbId: n.id,
+        viewType: activeView,
+      },
+    }));
 
     const rawEdges: Edge[] = dbEdges.map((e) => ({
       id: String(e.id),
@@ -654,23 +747,69 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
 
     let layoutNodes: Node[];
 
-    if (rawEdges.length > 0) {
-      layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB");
-    } else if (rawNodes.length > 0) {
-      layoutNodes = rawNodes.map((node, i) => ({
-        ...node,
-        position: getNodePosition(i, rawNodes.length),
-      }));
-    } else {
+    if (allHaveSavedPositions) {
       layoutNodes = rawNodes;
+    } else if (!hasSavedPositions) {
+      if (rawEdges.length > 0) {
+        layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB");
+      } else if (rawNodes.length > 0) {
+        layoutNodes = rawNodes.map((node, i) => ({
+          ...node,
+          position: getNodePosition(i, rawNodes.length),
+        }));
+      } else {
+        layoutNodes = rawNodes;
+      }
+      layoutNodes.forEach((n) => {
+        const d = n.data as any;
+        if (d.dbId) {
+          updateNodeMutation.mutate({ id: d.dbId, data: { positionX: n.position.x, positionY: n.position.y } });
+        }
+      });
+    } else {
+      if (rawEdges.length > 0) {
+        const unsavedNodes = rawNodes.filter((n) => n.position.x === 0 && n.position.y === 0);
+        if (unsavedNodes.length > 0) {
+          const layoutAll = applyDagreLayout(rawNodes, rawEdges, "TB");
+          layoutNodes = rawNodes.map((n) => {
+            if (n.position.x === 0 && n.position.y === 0) {
+              const laid = layoutAll.find((l) => l.id === n.id);
+              const pos = laid ? laid.position : { x: 0, y: 0 };
+              const d = n.data as any;
+              if (d.dbId) {
+                updateNodeMutation.mutate({ id: d.dbId, data: { positionX: pos.x, positionY: pos.y } });
+              }
+              return { ...n, position: pos };
+            }
+            return n;
+          });
+        } else {
+          layoutNodes = rawNodes;
+        }
+      } else {
+        layoutNodes = rawNodes.map((node, i) => {
+          if (node.position.x === 0 && node.position.y === 0) {
+            const pos = getNodePosition(i, rawNodes.length);
+            const d = node.data as any;
+            if (d.dbId) {
+              updateNodeMutation.mutate({ id: d.dbId, data: { positionX: pos.x, positionY: pos.y } });
+            }
+            return { ...node, position: pos };
+          }
+          return node;
+        });
+      }
     }
 
     setNodes(layoutNodes);
     setEdges(rawEdges);
-    prevNodeCountRef.current = dbNodes.length;
+    dataVersionRef.current += 1;
 
-    setTimeout(() => fitView({ padding: 0.3, duration: 400, maxZoom: 1.2 }), 150);
-  }, [mapData, setNodes, setEdges, fitView]);
+    if (!hasInitialFitRef.current && layoutNodes.length > 0) {
+      hasInitialFitRef.current = true;
+      setTimeout(() => fitView({ padding: 0.3, duration: 400, maxZoom: 1.2 }), 150);
+    }
+  }, [mapData, setNodes, setEdges]);
 
   const updateNodeMutation = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: any }) => {
@@ -681,9 +820,6 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
         body: JSON.stringify(data),
       });
       return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "process-map", activeView] });
     },
   });
 
@@ -697,7 +833,22 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
       });
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: async (newNode: any) => {
+      if (parentNodeIdForChild && newNode?.id) {
+        await fetch(`/api/ideas/${ideaId}/process-edges`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            viewType: activeView,
+            sourceNodeId: parentNodeIdForChild,
+            targetNodeId: newNode.id,
+            label: "",
+          }),
+        });
+        setParentNodeIdForChild(null);
+      }
+      hasInitialFitRef.current = true;
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "process-map", activeView] });
     },
   });
@@ -707,6 +858,7 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
       await fetch(`/api/process-nodes/${id}`, { method: "DELETE", credentials: "include" });
     },
     onSuccess: () => {
+      hasInitialFitRef.current = true;
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "process-map", activeView] });
     },
   });
@@ -722,6 +874,7 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
       return res.json();
     },
     onSuccess: () => {
+      hasInitialFitRef.current = true;
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "process-map", activeView] });
     },
   });
@@ -737,6 +890,17 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
       return res.json();
     },
     onSuccess: () => {
+      hasInitialFitRef.current = true;
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "process-map", activeView] });
+    },
+  });
+
+  const deleteEdgeMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await fetch(`/api/process-edges/${id}`, { method: "DELETE", credentials: "include" });
+    },
+    onSuccess: () => {
+      hasInitialFitRef.current = true;
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "process-map", activeView] });
     },
   });
@@ -755,7 +919,7 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
     [createEdgeMutation, activeView]
   );
 
-  const onNodeClick = useCallback((_: any, node: Node) => {
+  const onNodeDoubleClick = useCallback((_: any, node: Node) => {
     const d = node.data as any;
     setEditingNode({
       nodeId: d.dbId,
@@ -768,13 +932,35 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
     });
     setIsNewNode(false);
     setContextMenu(null);
+    setNodeContextMenu(null);
+  }, []);
+
+  const onNodeContextMenu = useCallback((event: any, node: Node) => {
+    event.preventDefault();
+    const bounds = (event.target as HTMLElement).closest('.react-flow')?.getBoundingClientRect();
+    if (bounds) {
+      const d = node.data as any;
+      setNodeContextMenu({
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
+        nodeData: { dbId: d.dbId, label: d.label || "", nodeType: d.nodeType || "task" },
+      });
+      setContextMenu(null);
+    }
   }, []);
 
   const onEdgeClick = useCallback((_: any, edge: Edge) => {
+    setSelectedEdgeIds(new Set([edge.id]));
+    setContextMenu(null);
+    setNodeContextMenu(null);
+  }, []);
+
+  const onEdgeDoubleClick = useCallback((_: any, edge: Edge) => {
     const d = edge.data as any;
     setEditingEdge({ edgeId: d.dbId, label: d.label || "" });
     setEdgeEditPos({ x: 200, y: 100 });
     setContextMenu(null);
+    setNodeContextMenu(null);
   }, []);
 
   const onPaneContextMenu = useCallback((event: any) => {
@@ -787,12 +973,40 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
         flowX: event.clientX - bounds.left,
         flowY: event.clientY - bounds.top,
       });
+      setNodeContextMenu(null);
     }
   }, []);
 
   const onPaneClick = useCallback(() => {
     setContextMenu(null);
+    setNodeContextMenu(null);
+    setSelectedEdgeIds(new Set());
   }, []);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (editingNode || editingEdge) return;
+        if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).tagName === "TEXTAREA") return;
+
+        if (selectedEdgeIds.size > 0) {
+          selectedEdgeIds.forEach((edgeId) => {
+            const edge = edges.find((ed) => ed.id === edgeId);
+            if (edge) {
+              const d = edge.data as any;
+              if (d?.dbId) {
+                deleteEdgeMutation.mutate(d.dbId);
+              }
+            }
+          });
+          setSelectedEdgeIds(new Set());
+          e.preventDefault();
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedEdgeIds, edges, editingNode, editingEdge, deleteEdgeMutation]);
 
   function handleSaveNode() {
     if (!editingNode) return;
@@ -822,6 +1036,7 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
           isPainPoint: editingNode.isPainPoint,
         },
       });
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "process-map", activeView] });
     }
     setEditingNode(null);
     setNewNodeFlowPos(null);
@@ -858,6 +1073,51 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
     setContextMenu(null);
   }
 
+  function handleNodeContextEdit() {
+    if (!nodeContextMenu) return;
+    const nd = nodeContextMenu.nodeData;
+    const dbNode = mapData?.nodes.find((n) => n.id === nd.dbId);
+    if (dbNode) {
+      setEditingNode({
+        nodeId: dbNode.id,
+        name: dbNode.name || "",
+        role: dbNode.role || "",
+        system: dbNode.system || "",
+        nodeType: (dbNode.nodeType || "task") as any,
+        description: dbNode.description || "",
+        isPainPoint: dbNode.isPainPoint || false,
+      });
+      setIsNewNode(false);
+    }
+    setNodeContextMenu(null);
+  }
+
+  function handleNodeContextAddChild() {
+    if (!nodeContextMenu) return;
+    const parentNode = nodes.find((n) => String((n.data as any).dbId) === String(nodeContextMenu.nodeData.dbId));
+    const px = parentNode?.position?.x || 0;
+    const py = parentNode?.position?.y || 0;
+    setParentNodeIdForChild(nodeContextMenu.nodeData.dbId);
+    setNewNodeFlowPos({ x: px, y: py + 120 });
+    setEditingNode({
+      nodeId: 0,
+      name: "",
+      role: "",
+      system: "",
+      nodeType: "task",
+      description: "",
+      isPainPoint: false,
+    });
+    setIsNewNode(true);
+    setNodeContextMenu(null);
+  }
+
+  function handleNodeContextDelete() {
+    if (!nodeContextMenu) return;
+    deleteNodeMutation.mutate(nodeContextMenu.nodeData.dbId);
+    setNodeContextMenu(null);
+  }
+
   const onNodeDragStop = useCallback((_: any, node: Node) => {
     const d = node.data as any;
     if (d.dbId) {
@@ -867,6 +1127,18 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
       });
     }
   }, [updateNodeMutation]);
+
+  const styledEdges = useMemo(() => {
+    return edges.map((e) => ({
+      ...e,
+      selected: selectedEdgeIds.has(e.id),
+      style: {
+        ...e.style,
+        strokeWidth: selectedEdgeIds.has(e.id) ? 3 : (e.style?.strokeWidth || 1.5),
+        filter: selectedEdgeIds.has(e.id) ? "drop-shadow(0 0 4px rgba(251,146,60,0.6))" : undefined,
+      },
+    }));
+  }, [edges, selectedEdgeIds]);
 
   const hasNodes = (mapData?.nodes?.length || 0) > 0;
 
@@ -908,22 +1180,22 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
   }
 
   return (
-    <div className="flex-1 relative" data-testid="process-map-canvas">
+    <div className="flex-1 relative" data-testid="process-map-canvas" ref={containerRef}>
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={styledEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
-        onNodeClick={onNodeClick}
+        onNodeDoubleClick={onNodeDoubleClick}
+        onNodeContextMenu={onNodeContextMenu}
         onEdgeClick={onEdgeClick}
+        onEdgeDoubleClick={onEdgeDoubleClick}
         onNodeDragStop={onNodeDragStop}
         onPaneClick={onPaneClick}
         onPaneContextMenu={onPaneContextMenu}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        fitView
-        fitViewOptions={{ padding: 0.3, maxZoom: 1.2 }}
         defaultEdgeOptions={{
           type: "custom",
           markerEnd: {
@@ -932,12 +1204,16 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
             height: 16,
           },
         }}
+        connectionLineStyle={{ stroke: "rgba(251,146,60,0.6)", strokeWidth: 2 }}
+        connectionLineType={ConnectionLineType.SmoothStep}
         proOptions={{ hideAttribution: true }}
         className="process-map-canvas"
         minZoom={0.2}
         maxZoom={2}
         snapToGrid
         snapGrid={[10, 10]}
+        deleteKeyCode={null}
+        selectionKeyCode={null}
       >
         <Background
           variant={BackgroundVariant.Dots}
@@ -965,11 +1241,63 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
         />
       </ReactFlow>
 
+      {selectedEdgeIds.size > 0 && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-zinc-900/95 backdrop-blur-md border border-zinc-700 rounded-lg px-3 py-1.5 flex items-center gap-2 shadow-lg z-40" data-testid="edge-selection-hint">
+          <span className="text-[10px] text-zinc-400">Edge selected</span>
+          <span className="text-[10px] text-zinc-600">|</span>
+          <button
+            className="text-[10px] text-red-400 hover:text-red-300 flex items-center gap-1"
+            onClick={() => {
+              selectedEdgeIds.forEach((edgeId) => {
+                const edge = edges.find((ed) => ed.id === edgeId);
+                if (edge) {
+                  const d = edge.data as any;
+                  if (d?.dbId) deleteEdgeMutation.mutate(d.dbId);
+                }
+              });
+              setSelectedEdgeIds(new Set());
+            }}
+            data-testid="button-delete-edge"
+          >
+            <Trash2 className="h-3 w-3" /> Delete
+          </button>
+          <span className="text-[10px] text-zinc-600">|</span>
+          <button
+            className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-1"
+            onClick={() => {
+              const edgeId = Array.from(selectedEdgeIds)[0];
+              const edge = edges.find((ed) => ed.id === edgeId);
+              if (edge) {
+                const d = edge.data as any;
+                setEditingEdge({ edgeId: d.dbId, label: d.label || "" });
+                setEdgeEditPos({ x: 200, y: 100 });
+              }
+              setSelectedEdgeIds(new Set());
+            }}
+            data-testid="button-edit-edge-label"
+          >
+            <Pencil className="h-3 w-3" /> Label
+          </button>
+          <span className="text-[10px] text-zinc-500 ml-1">(or press Delete)</span>
+        </div>
+      )}
+
       {contextMenu && (
         <ContextMenu
           position={contextMenu}
           onAddStep={handleAddStepFromContext}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {nodeContextMenu && (
+        <NodeContextMenu
+          position={{ x: nodeContextMenu.x, y: nodeContextMenu.y }}
+          nodeData={nodeContextMenu.nodeData}
+          onEdit={handleNodeContextEdit}
+          onAddChild={handleNodeContextAddChild}
+          onDelete={handleNodeContextDelete}
+          onClose={() => setNodeContextMenu(null)}
         />
       )}
 
@@ -988,7 +1316,7 @@ function ProcessMapFlow({ ideaId, activeView }: { ideaId: string; activeView: "a
           editData={editingNode}
           onChange={setEditingNode}
           onSave={handleSaveNode}
-          onCancel={() => { setEditingNode(null); setNewNodeFlowPos(null); }}
+          onCancel={() => { setEditingNode(null); setNewNodeFlowPos(null); setParentNodeIdForChild(null); }}
           onDelete={isNewNode ? undefined : handleDeleteNode}
           isNew={isNewNode}
         />
@@ -1058,6 +1386,7 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
   });
 
   const [showApprovalConfirm, setShowApprovalConfirm] = useState(false);
+  const relayoutRef = useRef<(() => void) | null>(null);
 
   return (
     <div className="flex flex-col h-full" data-testid="panel-process-map">
@@ -1075,24 +1404,37 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
             </Badge>
           )}
         </div>
-        <div
-          className="flex items-center rounded-full bg-zinc-900 border border-zinc-800 p-0.5"
-          data-testid="button-toggle-view"
-        >
-          <button
-            onClick={() => setActiveView("as-is")}
-            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${activeView === "as-is" ? "bg-cb-teal text-white shadow-sm shadow-cb-teal/20" : "text-zinc-500 hover:text-zinc-300"}`}
-            data-testid="button-view-as-is"
+        <div className="flex items-center gap-2">
+          {nodeCount > 0 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-[10px] h-7 px-2 text-zinc-400 hover:text-white border border-zinc-800 rounded-lg"
+              onClick={() => relayoutRef.current?.()}
+              data-testid="button-relayout"
+            >
+              <LayoutGrid className="h-3 w-3 mr-1" /> Re-layout
+            </Button>
+          )}
+          <div
+            className="flex items-center rounded-full bg-zinc-900 border border-zinc-800 p-0.5"
+            data-testid="button-toggle-view"
           >
-            As-Is
-          </button>
-          <button
-            onClick={() => setActiveView("to-be")}
-            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${activeView === "to-be" ? "bg-cb-teal text-white shadow-sm shadow-cb-teal/20" : "text-zinc-500 hover:text-zinc-300"}`}
-            data-testid="button-view-to-be"
-          >
-            To-Be
-          </button>
+            <button
+              onClick={() => setActiveView("as-is")}
+              className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${activeView === "as-is" ? "bg-cb-teal text-white shadow-sm shadow-cb-teal/20" : "text-zinc-500 hover:text-zinc-300"}`}
+              data-testid="button-view-as-is"
+            >
+              As-Is
+            </button>
+            <button
+              onClick={() => setActiveView("to-be")}
+              className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${activeView === "to-be" ? "bg-cb-teal text-white shadow-sm shadow-cb-teal/20" : "text-zinc-500 hover:text-zinc-300"}`}
+              data-testid="button-view-to-be"
+            >
+              To-Be
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1147,7 +1489,7 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
       )}
 
       <ReactFlowProvider>
-        <ProcessMapFlow ideaId={ideaId} activeView={activeView} />
+        <ProcessMapFlow ideaId={ideaId} activeView={activeView} onRelayout={(fn) => { relayoutRef.current = fn; }} />
       </ReactFlowProvider>
 
       {nodeCount >= 3 && !approval && (
