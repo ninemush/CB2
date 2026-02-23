@@ -43,6 +43,7 @@ import {
   Activity,
   ChevronDown,
   ChevronRight,
+  Pencil,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -1118,21 +1119,46 @@ function IntegrationsTab() {
             </div>
 
             <div className="space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                <span className="text-muted-foreground">Organization</span>
-                <span className="font-medium text-foreground" data-testid="confirm-org">{extractOrgSlug(orgName) || "—"}</span>
-                <span className="text-muted-foreground">Tenant</span>
-                <span className="font-medium text-foreground" data-testid="confirm-tenant">{tenantName || "—"}</span>
-                <span className="text-muted-foreground">App ID</span>
-                <span className="font-mono text-xs text-foreground truncate" data-testid="confirm-client-id">{clientId || "—"}</span>
-                <span className="text-muted-foreground">App Secret</span>
-                <span className="text-foreground" data-testid="confirm-secret">
-                  {config?.hasSecret || clientSecret ? "••••••• (set)" : "Not set"}
-                </span>
-                <span className="text-muted-foreground">Scopes</span>
-                <span className="text-foreground text-xs" data-testid="confirm-scopes">
-                  {Array.from(selectedScopes).join(", ") || "None"}
-                </span>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-baseline gap-2 min-w-0">
+                    <span className="text-muted-foreground shrink-0">Organization</span>
+                    <span className="font-medium text-foreground" data-testid="confirm-org">{extractOrgSlug(orgName) || "—"}</span>
+                  </div>
+                  <button onClick={() => { setErrors({}); setStep(0); }} className="text-[#e8450a] hover:text-[#e8450a]/80 p-1 rounded transition-colors" data-testid="edit-org" title="Edit organization"><Pencil className="h-3 w-3" /></button>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-baseline gap-2 min-w-0">
+                    <span className="text-muted-foreground shrink-0">Tenant</span>
+                    <span className="font-medium text-foreground" data-testid="confirm-tenant">{tenantName || "—"}</span>
+                  </div>
+                  <button onClick={() => { setErrors({}); setStep(0); }} className="text-[#e8450a] hover:text-[#e8450a]/80 p-1 rounded transition-colors" data-testid="edit-tenant" title="Edit tenant"><Pencil className="h-3 w-3" /></button>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-baseline gap-2 min-w-0">
+                    <span className="text-muted-foreground shrink-0">App ID</span>
+                    <span className="font-mono text-xs text-foreground truncate" data-testid="confirm-client-id">{clientId || "—"}</span>
+                  </div>
+                  <button onClick={() => { setErrors({}); setStep(1); }} className="text-[#e8450a] hover:text-[#e8450a]/80 p-1 rounded transition-colors" data-testid="edit-credentials" title="Edit credentials"><Pencil className="h-3 w-3" /></button>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-baseline gap-2 min-w-0">
+                    <span className="text-muted-foreground shrink-0">App Secret</span>
+                    <span className="text-foreground" data-testid="confirm-secret">
+                      {config?.hasSecret || clientSecret ? "••••••• (set)" : "Not set"}
+                    </span>
+                  </div>
+                  <button onClick={() => { setErrors({}); setStep(1); }} className="text-[#e8450a] hover:text-[#e8450a]/80 p-1 rounded transition-colors" data-testid="edit-secret" title="Edit credentials"><Pencil className="h-3 w-3" /></button>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-baseline gap-2 min-w-0 flex-1">
+                    <span className="text-muted-foreground shrink-0">Scopes</span>
+                    <span className="text-foreground text-xs break-all" data-testid="confirm-scopes">
+                      {Array.from(selectedScopes).join(", ") || "None"}
+                    </span>
+                  </div>
+                  <button onClick={() => { setErrors({}); setStep(2); }} className="text-[#e8450a] hover:text-[#e8450a]/80 p-1 rounded transition-colors" data-testid="edit-scopes" title="Edit scopes"><Pencil className="h-3 w-3" /></button>
+                </div>
               </div>
 
               {config?.lastTestedAt && (
@@ -1155,6 +1181,19 @@ function IntegrationsTab() {
                     {testResultMsg.success ? <CheckCircle2 className="h-4 w-4 mt-0.5 flex-shrink-0" /> : <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />}
                     <span>{testResultMsg.message}</span>
                   </div>
+                  {!testResultMsg.success && /invalid_scope/i.test(testResultMsg.message) && (
+                    <div className="mt-2 p-2 rounded bg-destructive/5 border border-destructive/20 text-xs space-y-2" data-testid="scope-mismatch-help">
+                      <p>Invalid scopes. The scopes you selected must match the scopes granted to your External Application in UiPath Cloud. Go to Admin &gt; External Applications, edit your app, and verify the selected scopes.</p>
+                      <button
+                        onClick={() => { setErrors({}); setTestResultMsg(null); setStep(2); }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#e8450a] text-white text-xs font-medium hover:bg-[#e8450a]/90 transition-colors"
+                        data-testid="button-edit-scopes-from-error"
+                      >
+                        <Pencil className="h-3 w-3" />
+                        Edit Scopes
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
