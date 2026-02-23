@@ -183,6 +183,108 @@ function headers(config: UiPathConfig, token: string): Record<string, string> {
   return h;
 }
 
+function parseOrchestratorResponse(text: string): { data: any; error: string | null } {
+  try {
+    const data = JSON.parse(text);
+    if (data.errorCode || data.ErrorCode) {
+      return { data, error: `${data.errorCode || data.ErrorCode}: ${data.message || data.Message || data.ErrorMessage || "Unknown error"}` };
+    }
+    if (data.error) {
+      return { data, error: typeof data.error === "string" ? data.error : JSON.stringify(data.error) };
+    }
+    if (data.Response?.ErrorCode || data.Response?.errorCode) {
+      const r = data.Response;
+      return { data, error: `${r.ErrorCode || r.errorCode}: ${r.Message || r.message || "Nested error"}` };
+    }
+    if (data["odata.error"]) {
+      const oe = data["odata.error"];
+      return { data, error: `${oe.code || "ODataError"}: ${oe.message?.value || oe.message || "Unknown OData error"}` };
+    }
+    if (data.message && !data.Id && !data.id && !data.Key && !data.value) {
+      if (typeof data.message === "string" && (data.message.toLowerCase().includes("error") || data.message.toLowerCase().includes("fail") || data.message.toLowerCase().includes("invalid") || data.message.toLowerCase().includes("not found"))) {
+        return { data, error: data.message };
+      }
+    }
+    return { data, error: null };
+  } catch {
+    return { data: null, error: `Invalid JSON response: ${text.slice(0, 200)}` };
+  }
+}
+
+async function verifyArtifactExists(
+  base: string, hdrs: Record<string, string>,
+  endpoint: string, filterField: string, name: string, label: string,
+  createdId?: number | null
+): Promise<{ exists: boolean; id?: number; detail?: string }> {
+  try {
+    if (createdId) {
+      const directUrl = `${base}/odata/${endpoint}(${createdId})`;
+      const directRes = await fetch(directUrl, { headers: hdrs });
+      if (directRes.ok) {
+        const directData = await directRes.json();
+        if (directData && (directData.Id || directData.id)) {
+          console.log(`[UiPath Deploy] ${label} "${name}" verified by ID ${createdId}`);
+          return { exists: true, id: directData.Id || directData.id };
+        }
+      }
+    }
+
+    const url = `${base}/odata/${endpoint}?$filter=${filterField} eq '${odataEscape(name)}'&$top=1`;
+    const res = await fetch(url, { headers: hdrs });
+    if (!res.ok) {
+      return { exists: false, detail: `Verification GET returned ${res.status}` };
+    }
+    const data = await res.json();
+    const items = data.value || [];
+    if (items.length > 0) {
+      const item = items[0];
+      console.log(`[UiPath Deploy] ${label} "${name}" verified by name filter (ID: ${item.Id || item.id})`);
+      return { exists: true, id: item.Id || item.id };
+    }
+    return { exists: false, detail: `${label} "${name}" not found after creation — API may have silently rejected it` };
+  } catch (err: any) {
+    return { exists: false, detail: `Verification failed: ${err.message}` };
+  }
+}
+
+async function verifyFolderAndRelease(
+  base: string, hdrs: Record<string, string>,
+  releaseId: number | null, folderId: string | undefined
+): Promise<{ valid: boolean; releaseKey?: string; releaseName?: string; message?: string }> {
+  if (folderId) {
+    try {
+      const folderRes = await fetch(`${base}/odata/Folders?$filter=Id eq ${folderId}&$top=1`, { headers: hdrs });
+      if (folderRes.ok) {
+        const folderData = await folderRes.json();
+        if (!folderData.value?.length) {
+          console.warn(`[UiPath Deploy] Folder ID ${folderId} not found via Folders API — may still work via OrganizationUnitId header`);
+        } else {
+          console.log(`[UiPath Deploy] Folder verified: ${folderData.value[0].DisplayName} (ID: ${folderId})`);
+        }
+      }
+    } catch { /* non-blocking */ }
+  }
+
+  if (releaseId) {
+    try {
+      const relRes = await fetch(`${base}/odata/Releases(${releaseId})`, { headers: hdrs });
+      if (relRes.ok) {
+        const relData = await relRes.json();
+        console.log(`[UiPath Deploy] Release verified: ${relData.Name} (ID: ${releaseId}, Key: ${relData.Key})`);
+        return { valid: true, releaseKey: relData.Key, releaseName: relData.Name };
+      } else {
+        const text = await relRes.text();
+        console.error(`[UiPath Deploy] Release ${releaseId} verification failed: ${relRes.status} — ${text.slice(0, 200)}`);
+        return { valid: false, message: `Release ID ${releaseId} not accessible (HTTP ${relRes.status}). Triggers require a valid process release.` };
+      }
+    } catch (err: any) {
+      return { valid: false, message: `Release verification error: ${err.message}` };
+    }
+  }
+
+  return { valid: true };
+}
+
 async function provisionQueues(
   base: string, hdrs: Record<string, string>,
   queues: OrchestratorArtifacts["queues"]
@@ -218,15 +320,24 @@ async function provisionQueues(
         body: JSON.stringify(body),
       });
       const text = await res.text();
-      console.log(`[UiPath Deploy] Queue "${q.name}" -> ${res.status}: ${text.slice(0, 300)}`);
+      console.log(`[UiPath Deploy] Queue "${q.name}" -> ${res.status}: ${text.slice(0, 500)}`);
 
       if (res.ok || res.status === 201) {
-        const data = JSON.parse(text);
-        results.push({ artifact: "Queue", name: q.name, status: "created", message: `Created (ID: ${data.Id})`, id: data.Id });
+        const parsed = parseOrchestratorResponse(text);
+        if (parsed.error) {
+          results.push({ artifact: "Queue", name: q.name, status: "failed", message: `API returned ${res.status} but body contains error: ${parsed.error}` });
+          continue;
+        }
+        const verify = await verifyArtifactExists(base, hdrs, "QueueDefinitions", "Name", q.name, "Queue");
+        if (verify.exists) {
+          results.push({ artifact: "Queue", name: q.name, status: "created", message: `Created and verified (ID: ${verify.id})`, id: verify.id });
+        } else {
+          results.push({ artifact: "Queue", name: q.name, status: "failed", message: `API returned ${res.status} but verification failed. ${verify.detail || ""}` });
+        }
       } else if (res.status === 409 || text.includes("already exists")) {
         results.push({ artifact: "Queue", name: q.name, status: "exists", message: "Already exists" });
       } else {
-        results.push({ artifact: "Queue", name: q.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 200)}` });
+        results.push({ artifact: "Queue", name: q.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 300)}` });
       }
     } catch (err: any) {
       results.push({ artifact: "Queue", name: q.name, status: "failed", message: err.message });
@@ -267,64 +378,38 @@ async function provisionAssets(
         body.ValueType = "Credential";
         body.CredentialUsername = a.value || "REPLACE_ME";
         body.CredentialPassword = "REPLACE_ME";
-        const res = await fetch(`${base}/odata/Assets`, {
-          method: "POST",
-          headers: hdrs,
-          body: JSON.stringify(body),
-        });
-        const text = await res.text();
-        console.log(`[UiPath Deploy] Asset "${a.name}" (Credential) -> ${res.status}: ${text.slice(0, 300)}`);
-
-        if (res.ok || res.status === 201) {
-          const data = JSON.parse(text);
-          results.push({ artifact: "Asset", name: a.name, status: "created", message: `Created as Credential placeholder (ID: ${data.Id}). UPDATE credentials in Orchestrator > Assets.`, id: data.Id });
-        } else if (res.status === 409 || text.includes("already exists")) {
-          results.push({ artifact: "Asset", name: a.name, status: "exists", message: "Already exists" });
-        } else {
-          results.push({ artifact: "Asset", name: a.name, status: "failed", message: `Credential asset creation failed (HTTP ${res.status}): ${text.slice(0, 150)}` });
-        }
       } else if (assetType === "integer") {
         body.ValueType = "Integer";
         body.IntValue = parseInt(a.value || "0") || 0;
-        const res = await fetch(`${base}/odata/Assets`, { method: "POST", headers: hdrs, body: JSON.stringify(body) });
-        const text = await res.text();
-        console.log(`[UiPath Deploy] Asset "${a.name}" (Integer) -> ${res.status}: ${text.slice(0, 300)}`);
-        if (res.ok || res.status === 201) {
-          const data = JSON.parse(text);
-          results.push({ artifact: "Asset", name: a.name, status: "created", message: `Created with value ${body.IntValue} (ID: ${data.Id})`, id: data.Id });
-        } else if (res.status === 409 || text.includes("already exists")) {
-          results.push({ artifact: "Asset", name: a.name, status: "exists", message: "Already exists" });
-        } else {
-          results.push({ artifact: "Asset", name: a.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 200)}` });
-        }
       } else if (assetType === "bool" || assetType === "boolean") {
         body.ValueType = "Bool";
         body.BoolValue = a.value === "true" || a.value === "True" || a.value === "1";
-        const res = await fetch(`${base}/odata/Assets`, { method: "POST", headers: hdrs, body: JSON.stringify(body) });
-        const text = await res.text();
-        console.log(`[UiPath Deploy] Asset "${a.name}" (Bool) -> ${res.status}: ${text.slice(0, 300)}`);
-        if (res.ok || res.status === 201) {
-          const data = JSON.parse(text);
-          results.push({ artifact: "Asset", name: a.name, status: "created", message: `Created with value ${body.BoolValue} (ID: ${data.Id})`, id: data.Id });
-        } else if (res.status === 409 || text.includes("already exists")) {
-          results.push({ artifact: "Asset", name: a.name, status: "exists", message: "Already exists" });
-        } else {
-          results.push({ artifact: "Asset", name: a.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 200)}` });
-        }
       } else {
         body.ValueType = "Text";
         body.StringValue = a.value || "";
-        const res = await fetch(`${base}/odata/Assets`, { method: "POST", headers: hdrs, body: JSON.stringify(body) });
-        const text = await res.text();
-        console.log(`[UiPath Deploy] Asset "${a.name}" (Text) -> ${res.status}: ${text.slice(0, 300)}`);
-        if (res.ok || res.status === 201) {
-          const data = JSON.parse(text);
-          results.push({ artifact: "Asset", name: a.name, status: "created", message: `Created with value "${(a.value || "").slice(0, 50)}" (ID: ${data.Id})`, id: data.Id });
-        } else if (res.status === 409 || text.includes("already exists")) {
-          results.push({ artifact: "Asset", name: a.name, status: "exists", message: "Already exists" });
-        } else {
-          results.push({ artifact: "Asset", name: a.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 200)}` });
+      }
+
+      const res = await fetch(`${base}/odata/Assets`, { method: "POST", headers: hdrs, body: JSON.stringify(body) });
+      const text = await res.text();
+      console.log(`[UiPath Deploy] Asset "${a.name}" (${body.ValueType}) -> ${res.status}: ${text.slice(0, 500)}`);
+
+      if (res.ok || res.status === 201) {
+        const parsed = parseOrchestratorResponse(text);
+        if (parsed.error) {
+          results.push({ artifact: "Asset", name: a.name, status: "failed", message: `API returned ${res.status} but body contains error: ${parsed.error}` });
+          continue;
         }
+        const verify = await verifyArtifactExists(base, hdrs, "Assets", "Name", a.name, "Asset");
+        if (verify.exists) {
+          const extra = assetType === "credential" ? ". UPDATE credentials in Orchestrator > Assets." : "";
+          results.push({ artifact: "Asset", name: a.name, status: "created", message: `Created and verified (ID: ${verify.id}, Type: ${body.ValueType})${extra}`, id: verify.id });
+        } else {
+          results.push({ artifact: "Asset", name: a.name, status: "failed", message: `API returned ${res.status} but verification failed. ${verify.detail || ""}` });
+        }
+      } else if (res.status === 409 || text.includes("already exists")) {
+        results.push({ artifact: "Asset", name: a.name, status: "exists", message: "Already exists" });
+      } else {
+        results.push({ artifact: "Asset", name: a.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 300)}` });
       }
     } catch (err: any) {
       results.push({ artifact: "Asset", name: a.name, status: "failed", message: err.message });
@@ -375,15 +460,24 @@ async function provisionMachines(
         body: JSON.stringify(body),
       });
       const text = await res.text();
-      console.log(`[UiPath Deploy] Machine "${m.name}" -> ${res.status}: ${text.slice(0, 300)}`);
+      console.log(`[UiPath Deploy] Machine "${m.name}" -> ${res.status}: ${text.slice(0, 500)}`);
 
       if (res.ok || res.status === 201) {
-        const data = JSON.parse(text);
-        results.push({ artifact: "Machine", name: m.name, status: "created", message: `Created (ID: ${data.Id}, Type: Template)`, id: data.Id });
+        const parsed = parseOrchestratorResponse(text);
+        if (parsed.error) {
+          results.push({ artifact: "Machine", name: m.name, status: "failed", message: `API returned ${res.status} but body contains error: ${parsed.error}` });
+          continue;
+        }
+        const verify = await verifyArtifactExists(base, hdrs, "Machines", "Name", m.name, "Machine");
+        if (verify.exists) {
+          results.push({ artifact: "Machine", name: m.name, status: "created", message: `Created and verified (ID: ${verify.id}, Type: Template)`, id: verify.id });
+        } else {
+          results.push({ artifact: "Machine", name: m.name, status: "failed", message: `API returned ${res.status} but verification failed. ${verify.detail || ""}` });
+        }
       } else if (res.status === 409 || text.includes("already exists")) {
         results.push({ artifact: "Machine", name: m.name, status: "exists", message: "Already exists" });
       } else {
-        results.push({ artifact: "Machine", name: m.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 200)}` });
+        results.push({ artifact: "Machine", name: m.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 300)}` });
       }
     } catch (err: any) {
       results.push({ artifact: "Machine", name: m.name, status: "failed", message: err.message });
@@ -432,8 +526,18 @@ async function provisionStorageBuckets(
         console.log(`[UiPath Deploy] Bucket "${b.name}" (Provider=${provider}) -> ${res.status}: ${text.slice(0, 300)}`);
 
         if (res.ok || res.status === 201) {
-          const data = JSON.parse(text);
-          results.push({ artifact: "Storage Bucket", name: b.name, status: "created", message: `Created (ID: ${data.Id}, Provider: ${provider})`, id: data.Id });
+          const parsed = parseOrchestratorResponse(text);
+          if (parsed.error) {
+            results.push({ artifact: "Storage Bucket", name: b.name, status: "failed", message: `API returned ${res.status} but body contains error: ${parsed.error}` });
+            bucketCreated = true;
+            break;
+          }
+          const verify = await verifyArtifactExists(base, hdrs, "Buckets", "Name", b.name, "Storage Bucket");
+          if (verify.exists) {
+            results.push({ artifact: "Storage Bucket", name: b.name, status: "created", message: `Created and verified (ID: ${verify.id}, Provider: ${provider})`, id: verify.id });
+          } else {
+            results.push({ artifact: "Storage Bucket", name: b.name, status: "failed", message: `API returned ${res.status} but verification failed. ${verify.detail || ""}` });
+          }
           bucketCreated = true;
           break;
         } else if (res.status === 409 || text.includes("already exists")) {
@@ -536,15 +640,24 @@ async function provisionTriggers(
           body: JSON.stringify(body),
         });
         const text = await res.text();
-        console.log(`[UiPath Deploy] Queue Trigger "${t.name}" -> ${res.status}: ${text.slice(0, 500)}`);
+        console.log(`[UiPath Deploy] Queue Trigger "${t.name}" -> ${res.status}: ${text}`);
 
         if (res.ok || res.status === 201) {
-          const data = JSON.parse(text);
-          results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Queue trigger created (ID: ${data.Id}), linked to queue "${t.queueName}"`, id: data.Id });
+          const parsed = parseOrchestratorResponse(text);
+          if (parsed.error) {
+            results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `API returned ${res.status} but body contains error: ${parsed.error}` });
+            continue;
+          }
+          const returnedId = parsed.data?.Id || parsed.data?.id;
+          const verify = await verifyArtifactExists(base, hdrs, "QueueTriggers", "Name", t.name, "Queue Trigger", returnedId);
+          if (verify.exists) {
+            results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Queue trigger created and verified (ID: ${verify.id}), linked to queue "${t.queueName}"`, id: verify.id });
+          } else {
+            results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `API returned ${res.status} with ID ${returnedId} but verification failed — trigger not found in Orchestrator. ${verify.detail || ""}. Response: ${text.slice(0, 300)}` });
+          }
         } else if (res.status === 409 || text.includes("already exists")) {
           results.push({ artifact: "Trigger", name: t.name, status: "exists", message: "Already exists" });
         } else if (res.status === 405) {
-          // Try creating as a ProcessSchedule with queue reference instead
           const schedBody: Record<string, any> = {
             Enabled: true,
             Name: t.name,
@@ -561,15 +674,25 @@ async function provisionTriggers(
           };
           const schedRes = await fetch(`${base}/odata/ProcessSchedules`, { method: "POST", headers: hdrs, body: JSON.stringify(schedBody) });
           const schedText = await schedRes.text();
-          console.log(`[UiPath Deploy] Queue Trigger "${t.name}" fallback to ProcessSchedule -> ${schedRes.status}: ${schedText.slice(0, 300)}`);
+          console.log(`[UiPath Deploy] Queue Trigger "${t.name}" fallback to ProcessSchedule -> ${schedRes.status}: ${schedText}`);
           if (schedRes.ok || schedRes.status === 201) {
-            const data = JSON.parse(schedText);
-            results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Created as scheduled trigger (ID: ${data.Id}) polling queue "${t.queueName}" every 5 min`, id: data.Id });
+            const parsed = parseOrchestratorResponse(schedText);
+            if (parsed.error) {
+              results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `ProcessSchedule fallback API returned ${schedRes.status} but body contains error: ${parsed.error}` });
+              continue;
+            }
+            const schedReturnedId = parsed.data?.Id || parsed.data?.id;
+            const verify = await verifyArtifactExists(base, hdrs, "ProcessSchedules", "Name", t.name, "Scheduled Trigger", schedReturnedId);
+            if (verify.exists) {
+              results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Created as scheduled trigger and verified (ID: ${verify.id}) polling queue "${t.queueName}" every 5 min`, id: verify.id });
+            } else {
+              results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `ProcessSchedule fallback returned ${schedRes.status} but verification failed — trigger not found. ${verify.detail || ""}` });
+            }
           } else {
-            results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `QueueTriggers API returned 405, ProcessSchedule fallback also failed (${schedRes.status}): ${schedText.slice(0, 150)}` });
+            results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `QueueTriggers API returned 405, ProcessSchedule fallback also failed (${schedRes.status}): ${schedText.slice(0, 300)}` });
           }
         } else {
-          results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 200)}` });
+          results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 300)}` });
         }
       } else {
         const checkRes = await fetch(
@@ -614,7 +737,7 @@ async function provisionTriggers(
         let created = false;
         for (const strategy of strategies) {
           const body = { ...baseBody, StartStrategy: strategy };
-          console.log(`[UiPath Deploy] Time Trigger "${t.name}" trying StartStrategy=${JSON.stringify(strategy)}`);
+          console.log(`[UiPath Deploy] Time Trigger "${t.name}" trying StartStrategy=${JSON.stringify(strategy)}, payload: ${JSON.stringify(body)}`);
 
           const res = await fetch(`${base}/odata/ProcessSchedules`, {
             method: "POST",
@@ -622,11 +745,22 @@ async function provisionTriggers(
             body: JSON.stringify(body),
           });
           const text = await res.text();
-          console.log(`[UiPath Deploy] Time Trigger "${t.name}" -> ${res.status}: ${text.slice(0, 300)}`);
+          console.log(`[UiPath Deploy] Time Trigger "${t.name}" -> ${res.status}: ${text}`);
 
           if (res.ok || res.status === 201) {
-            const data = JSON.parse(text);
-            results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Time trigger created (ID: ${data.Id}), cron: ${cron}`, id: data.Id });
+            const parsed = parseOrchestratorResponse(text);
+            if (parsed.error) {
+              results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `API returned ${res.status} but body contains error: ${parsed.error}` });
+              created = true;
+              break;
+            }
+            const timeReturnedId = parsed.data?.Id || parsed.data?.id;
+            const verify = await verifyArtifactExists(base, hdrs, "ProcessSchedules", "Name", t.name, "Time Trigger", timeReturnedId);
+            if (verify.exists) {
+              results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Time trigger created and verified (ID: ${verify.id}), cron: ${cron}`, id: verify.id });
+            } else {
+              results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `API returned ${res.status} with ID ${timeReturnedId} but verification failed — trigger not found in Orchestrator. ${verify.detail || ""}. Response: ${text.slice(0, 300)}` });
+            }
             created = true;
             break;
           } else if (res.status === 405) {
@@ -640,7 +774,7 @@ async function provisionTriggers(
           } else if (text.includes("StartStrategy")) {
             continue;
           } else {
-            results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 200)}` });
+            results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 300)}` });
             created = true;
             break;
           }
@@ -698,8 +832,18 @@ async function provisionEnvironments(
         console.log(`[UiPath Deploy] Environment "${env.name}" (body keys: ${Object.keys(body).join(",")}) -> ${res.status}: ${text.slice(0, 300)}`);
 
         if (res.ok || res.status === 201) {
-          const data = JSON.parse(text);
-          results.push({ artifact: "Environment", name: env.name, status: "created", message: `Created (ID: ${data.Id}, Type: ${typeValue})`, id: data.Id });
+          const parsed = parseOrchestratorResponse(text);
+          if (parsed.error) {
+            results.push({ artifact: "Environment", name: env.name, status: "failed", message: `API returned ${res.status} but body contains error: ${parsed.error}` });
+            envCreated = true;
+            break;
+          }
+          const verify = await verifyArtifactExists(base, hdrs, "Environments", "Name", env.name, "Environment");
+          if (verify.exists) {
+            results.push({ artifact: "Environment", name: env.name, status: "created", message: `Created and verified (ID: ${verify.id}, Type: ${typeValue})`, id: verify.id });
+          } else {
+            results.push({ artifact: "Environment", name: env.name, status: "failed", message: `API returned ${res.status} but verification failed. ${verify.detail || ""}` });
+          }
           envCreated = true;
           break;
         } else if (res.status === 409 || text.includes("already exists")) {
@@ -1025,6 +1169,14 @@ export async function deployAllArtifacts(
     const hdrs = headers(config, token);
 
     console.log(`[UiPath Deploy] Starting full deployment...`);
+
+    const validation = await verifyFolderAndRelease(base, hdrs, releaseId, config.folderId);
+    if (!validation.valid) {
+      console.error(`[UiPath Deploy] Pre-deployment validation failed: ${validation.message}`);
+      return { results: [], summary: `Pre-deployment validation failed: ${validation.message}` };
+    }
+    if (validation.releaseKey) releaseKey = validation.releaseKey;
+    if (validation.releaseName) releaseName = validation.releaseName;
 
     const queueResults = await provisionQueues(base, hdrs, artifacts.queues);
     allResults.push(...queueResults);

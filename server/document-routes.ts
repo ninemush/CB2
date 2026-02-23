@@ -383,11 +383,35 @@ export function registerDocumentRoutes(app: Express): void {
         "PDD approved. I'll now generate the Solution Design Document (SDD)."
       );
     } else if (doc.type === "SDD") {
-      await chatStorage.createMessage(
-        ideaId,
-        "assistant",
-        "SDD approved. You can now generate the UiPath automation package."
-      );
+      let deployPrompt = "SDD approved. You can now generate the UiPath automation package.";
+      try {
+        const idea = await storage.getIdea(ideaId);
+        const sddDoc = await documentStorage.getDocument(docId);
+        let artifactSummary = "";
+        if (sddDoc?.content) {
+          const artifactMatch = sddDoc.content.match(/```orchestrator_artifacts\s*([\s\S]*?)```/);
+          if (artifactMatch) {
+            try {
+              const artifacts = JSON.parse(artifactMatch[1]);
+              const parts: string[] = [];
+              if (artifacts.queues?.length) parts.push(`${artifacts.queues.length} queue(s)`);
+              if (artifacts.assets?.length) parts.push(`${artifacts.assets.length} asset(s)`);
+              if (artifacts.machines?.length) parts.push(`${artifacts.machines.length} machine template(s)`);
+              if (artifacts.triggers?.length) parts.push(`${artifacts.triggers.length} trigger(s)`);
+              if (artifacts.actionCenter?.length) parts.push(`${artifacts.actionCenter.length} Action Center catalog(s)`);
+              if (artifacts.documentUnderstanding?.length) parts.push(`${artifacts.documentUnderstanding.length} DU project(s)`);
+              if (artifacts.testCases?.length) parts.push(`${artifacts.testCases.length} test case(s)`);
+              if (artifacts.folder) artifactSummary += `Target folder: **${artifacts.folder}**\n`;
+              if (parts.length) artifactSummary += `Artifacts to provision: ${parts.join(", ")}`;
+            } catch {}
+          }
+        }
+        const ideaName = idea?.title || "this automation";
+        deployPrompt = `**SDD approved** for **${ideaName}**.\n\nThe Solution Design Document has been approved and the automation is ready for deployment to UiPath Orchestrator.\n\n${artifactSummary ? artifactSummary + "\n\n" : ""}This will:\n1. Generate a UiPath NuGet package\n2. Upload it to Orchestrator\n3. Create the process\n4. Auto-provision all orchestrator artifacts (queues, assets, machine templates, triggers, and more)\n\nWould you like me to **push this to UiPath now**? Just say "Push to UiPath" or "Deploy" and I'll start the deployment immediately.`;
+      } catch (promptErr: any) {
+        console.error("[Document Routes] Failed to build SDD deploy prompt:", promptErr.message);
+      }
+      await chatStorage.createMessage(ideaId, "assistant", deployPrompt);
     }
 
     return res.json({ approval, document: { ...doc, status: "approved" } });
@@ -665,6 +689,135 @@ ${content}`
       if (!res.headersSent) {
         return res.status(500).json({ message: "Failed to generate ZIP" });
       }
+    }
+  });
+
+  app.get("/api/ideas/:ideaId/export", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const ideaId = req.params.ideaId as string;
+
+    const types = ((req.query.types as string) || "").split(",").filter(Boolean);
+    const validTypes = ["as-is", "to-be", "pdd", "sdd"];
+    const requestedTypes = types.length ? types.filter(t => validTypes.includes(t.toLowerCase())) : validTypes;
+
+    if (!requestedTypes.length) {
+      return res.status(400).json({ message: "No valid document types specified. Use: as-is, to-be, pdd, sdd" });
+    }
+
+    try {
+      const idea = await storage.getIdea(ideaId);
+      const ideaTitle = idea?.title || "Untitled Idea";
+      const sections: string[] = [];
+
+      sections.push(`# Document Export: ${ideaTitle}`);
+      sections.push(`**Exported:** ${new Date().toISOString()}`);
+      sections.push(`**Idea ID:** ${ideaId}`);
+      sections.push("");
+
+      for (const t of requestedTypes) {
+        const typeLower = t.toLowerCase();
+
+        if (typeLower === "as-is" || typeLower === "to-be") {
+          const viewType = typeLower;
+          const label = typeLower === "as-is" ? "As-Is Process Map" : "To-Be Process Map";
+          sections.push(`---\n\n## ${label}\n`);
+
+          const nodes = await processMapStorage.getNodesByIdeaId(ideaId, viewType);
+          const edges = await processMapStorage.getEdgesByIdeaId(ideaId, viewType);
+
+          if (!nodes.length) {
+            sections.push(`*No ${label.toLowerCase()} data available.*\n`);
+            continue;
+          }
+
+          sections.push(`**Steps (${nodes.length}):**\n`);
+          const sortedNodes = [...nodes].sort((a, b) => {
+            return (a.positionY || 0) - (b.positionY || 0) || (a.positionX || 0) - (b.positionX || 0);
+          });
+          for (const node of sortedNodes) {
+            const nodeType = node.nodeType || "task";
+            const typeTag = nodeType !== "task" ? ` [${nodeType.toUpperCase()}]` : "";
+            sections.push(`- **${node.name || "Unnamed Step"}**${typeTag}`);
+            if (node.role) sections.push(`  - Role: ${node.role}`);
+            if (node.system) sections.push(`  - System: ${node.system}`);
+          }
+          sections.push("");
+
+          if (edges.length) {
+            sections.push(`**Connections (${edges.length}):**\n`);
+            for (const edge of edges) {
+              const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
+              const targetNode = nodes.find(n => n.id === edge.targetNodeId);
+              const sourceName = sourceNode?.name || String(edge.sourceNodeId);
+              const targetName = targetNode?.name || String(edge.targetNodeId);
+              const edgeLabel = edge.label ? ` [${edge.label}]` : "";
+              sections.push(`- ${sourceName} → ${targetName}${edgeLabel}`);
+            }
+            sections.push("");
+          }
+
+          const mapApproval = await documentStorage.getApproval(ideaId, typeLower === "as-is" ? "as-is-map" : "to-be-map");
+          if (mapApproval) {
+            sections.push(`**Approval Status:** Approved`);
+            sections.push(`- Approved by: ${mapApproval.userName} (${mapApproval.userRole})`);
+            sections.push(`- Approved at: ${mapApproval.approvedAt ? new Date(mapApproval.approvedAt).toISOString() : "N/A"}`);
+          } else {
+            sections.push(`**Approval Status:** Not yet approved`);
+          }
+          sections.push("");
+
+        } else {
+          const docType = typeLower.toUpperCase();
+          const label = docType === "PDD" ? "Process Design Document" : "Solution Design Document";
+          sections.push(`---\n\n## ${label} (${docType})\n`);
+
+          const allVersions = await documentStorage.getDocumentVersions(ideaId, docType);
+          const latest = allVersions[0];
+
+          if (!latest) {
+            sections.push(`*No ${docType} has been generated yet.*\n`);
+            continue;
+          }
+
+          sections.push(`**Current Version:** v${latest.version} | **Status:** ${latest.status}`);
+          sections.push(`**Created:** ${latest.createdAt ? new Date(latest.createdAt).toISOString() : "N/A"}\n`);
+
+          const approval = await documentStorage.getApproval(ideaId, docType);
+          if (approval) {
+            sections.push(`**Approval Status:** Approved`);
+            sections.push(`- Approved by: ${approval.userName} (${approval.userRole})`);
+            sections.push(`- Approved at: ${approval.approvedAt ? new Date(approval.approvedAt).toISOString() : "N/A"}\n`);
+          } else {
+            sections.push(`**Approval Status:** Not yet approved\n`);
+          }
+
+          sections.push(`### Document Content\n`);
+          sections.push(latest.content || "*No content*");
+          sections.push("");
+
+          if (allVersions.length > 1) {
+            sections.push(`### Version History\n`);
+            sections.push(`| Version | Status | Created |`);
+            sections.push(`|---------|--------|---------|`);
+            for (const v of allVersions) {
+              sections.push(`| v${v.version} | ${v.status} | ${v.createdAt ? new Date(v.createdAt).toISOString() : "N/A"} |`);
+            }
+            sections.push("");
+          }
+        }
+      }
+
+      const markdown = sections.join("\n");
+      const filename = `${ideaTitle.replace(/[^a-zA-Z0-9_-]/g, "_")}_export_${new Date().toISOString().slice(0, 10)}.md`;
+
+      res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.send(markdown);
+    } catch (err: any) {
+      console.error("[Document Export] Error:", err.message);
+      return res.status(500).json({ message: "Export failed" });
     }
   });
 }

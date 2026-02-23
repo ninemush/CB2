@@ -21,6 +21,7 @@ import {
   Map,
   MessageSquare,
   ListPlus,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1093,6 +1094,86 @@ function ChatPanel({ idea }: { idea: Idea }) {
 }
 
 
+function ExportDropdown({ ideaId, ideaTitle }: { ideaId: string; ideaTitle: string }) {
+  const [open, setOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    if (open) document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  async function doExport(types: string[]) {
+    setExporting(true);
+    setOpen(false);
+    try {
+      const query = types.length ? `?types=${types.join(",")}` : "";
+      const resp = await fetch(`/api/ideas/${ideaId}/export${query}`, { credentials: "include" });
+      if (!resp.ok) throw new Error("Export failed");
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${ideaTitle.replace(/[^a-zA-Z0-9_-]/g, "_")}_export.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast({ title: "Export downloaded" });
+    } catch {
+      toast({ title: "Export failed", variant: "destructive" });
+    }
+    setExporting(false);
+  }
+
+  const options = [
+    { label: "All Documents", types: [] as string[] },
+    { label: "As-Is Map", types: ["as-is"] },
+    { label: "To-Be Map", types: ["to-be"] },
+    { label: "PDD", types: ["pdd"] },
+    { label: "SDD", types: ["sdd"] },
+    { label: "Maps + PDD", types: ["as-is", "to-be", "pdd"] },
+    { label: "Full Package (All)", types: ["as-is", "to-be", "pdd", "sdd"] },
+  ];
+
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8"
+        onClick={() => setOpen(!open)}
+        disabled={exporting}
+        data-testid="button-export-documents"
+      >
+        {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+      </Button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[180px]" data-testid="export-dropdown-menu">
+          <div className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+            Export Documents
+          </div>
+          {options.map((opt) => (
+            <button
+              key={opt.label}
+              className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-accent/50 transition-colors"
+              onClick={() => doExport(opt.types)}
+              data-testid={`export-option-${opt.label.toLowerCase().replace(/\s+/g, "-")}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 type MobileTab = "stages" | "map" | "chat";
 
 export default function Workspace() {
@@ -1294,6 +1375,7 @@ export default function Workspace() {
               </>
             )}
           </div>
+          <ExportDropdown ideaId={idea.id} ideaTitle={idea.title} />
         </div>
       </div>
 

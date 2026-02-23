@@ -47,6 +47,9 @@ The application employs a modern web stack:
 - Steps without FROM fall back to sequential connection
 
 ## Recent Changes
+- 2026-02-23: Post-creation verification: all Orchestrator artifact provisioning (queues, assets, machines, triggers, storage buckets, environments) now reads back created artifacts via GET to confirm they actually exist; response body error detection catches hidden UiPath errors in 200/201 responses (ErrorCode, odata.error, nested Response errors); pre-deployment folder and release validation
+- 2026-02-23: Document export system: GET /api/ideas/:ideaId/export endpoint generates markdown with As-Is/To-Be maps, PDD, SDD, version history, and approval timestamps; supports individual or combined export via ?types= query param; download UI in workspace header via ExportDropdown component
+- 2026-02-23: SDD approval deployment hook: approving SDD now triggers context-aware deployment prompt in chat with artifact summary (queues, assets, machines, triggers count), target folder, and clear call-to-action for user to deploy
 - 2026-02-23: Zero-manual deployment: removed manual_required status entirely — all artifact provisioning now uses aggressive multi-path retry logic (DU API + AI Fabric API, multiple Test Manager URLs, cloud Action Center paths) and reports only created/exists/failed
 - 2026-02-23: SDD inline viewer: SDD view in process map panel now shows actual Solution Design Document content with collapsible sections, markdown rendering, version badge, and approval status instead of duplicate process map
 - 2026-02-23: SDD empty state: clear guided prompt when no SDD exists showing the progression path (Approve To-Be Map → Approve PDD → SDD Generated)
