@@ -607,9 +607,13 @@ function ChatPanel({ idea }: { idea: Idea }) {
         for (const { viewType, steps } of viewStepSets) {
           if (steps.length === 0) continue;
 
+          const hasStartNode = steps.some(s => s.nodeType === "start");
+          const hasEndNode = steps.some(s => s.nodeType === "end");
+          const isFullRegeneration = hasStartNode && hasEndNode && steps.length >= 5;
+
           const existingMap = await fetch(`/api/ideas/${idea.id}/process-map?view=${viewType}`, { credentials: "include" })
             .then((r) => r.json());
-          const existingNodes = existingMap.nodes || [];
+          const existingNodes: any[] = existingMap.nodes || [];
 
           const normalizeName = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
           const stripPrefixes = (s: string) =>
@@ -637,20 +641,47 @@ function ChatPanel({ idea }: { idea: Idea }) {
             return shared / Math.max(tokA.size, tokB.size);
           };
 
+          const seenStepNames = new Set<string>();
+          const dedupedSteps = steps.filter(step => {
+            const norm = normalizeName(step.name);
+            if (seenStepNames.has(norm)) return false;
+
+            let isDuplicate = false;
+            seenStepNames.forEach(existing => {
+              if (similarity(step.name, existing) >= 0.85) isDuplicate = true;
+            });
+            if (isDuplicate) return false;
+
+            seenStepNames.add(norm);
+            return true;
+          });
+
+          const dedupedHasStart = dedupedSteps.some(s => s.nodeType === "start");
+          const dedupedHasEnd = dedupedSteps.some(s => s.nodeType === "end");
+          const safeToRegenerate = isFullRegeneration && dedupedHasStart && dedupedHasEnd && dedupedSteps.length >= 3;
+
+          if (safeToRegenerate && existingNodes.length > 0) {
+            console.log(`[ProcessMap] Full regeneration detected (${dedupedSteps.length} deduped steps with start+end). Clearing existing ${existingNodes.length} nodes for view=${viewType}`);
+            await fetch(`/api/ideas/${idea.id}/process-map/clear?view=${viewType}`, {
+              method: "DELETE",
+              credentials: "include",
+            });
+          }
+
+          const remainingNodes = safeToRegenerate ? [] : existingNodes;
+
           const nameToId: Record<string, number> = {};
-          const existingNamesList: string[] = [];
-          for (const n of existingNodes) {
-            const norm = normalizeName(n.name);
-            nameToId[norm] = n.id;
-            existingNamesList.push(norm);
+          for (const n of remainingNodes) {
+            nameToId[normalizeName(n.name)] = n.id;
           }
 
           const findMatch = (stepName: string, stepType: string): number | null => {
+            if (safeToRegenerate) return null;
             const norm = normalizeName(stepName);
             if (nameToId[norm]) return nameToId[norm];
             let bestScore = 0;
             let bestId: number | null = null;
-            for (const n of existingNodes) {
+            for (const n of remainingNodes) {
               if (n.nodeType !== stepType) continue;
               const score = similarity(stepName, n.name);
               if (score > bestScore && score >= 0.8) {
@@ -663,8 +694,8 @@ function ChatPanel({ idea }: { idea: Idea }) {
 
           const createdNodes: { name: string; id: number; from?: string; edgeLabel?: string }[] = [];
 
-          for (let i = 0; i < steps.length; i++) {
-            const step = steps[i];
+          for (let i = 0; i < dedupedSteps.length; i++) {
+            const step = dedupedSteps[i];
             const existingId = findMatch(step.name, step.nodeType);
 
             if (existingId) {
@@ -696,7 +727,7 @@ function ChatPanel({ idea }: { idea: Idea }) {
                   role: step.role,
                   system: step.system,
                   nodeType: step.nodeType,
-                  orderIndex: existingNodes.length + i,
+                  orderIndex: i,
                 }),
               });
               const created = await res.json();
@@ -710,12 +741,21 @@ function ChatPanel({ idea }: { idea: Idea }) {
             }
           }
 
-          const updatedMap = await fetch(`/api/ideas/${idea.id}/process-map?view=${viewType}`, { credentials: "include" }).then((r) => r.json());
-          const existingEdges = updatedMap.edges || [];
+          const seenEdgePairs = new Set<string>();
 
           const resolveFrom = (fromName: string): number | null => {
             const normalized = normalizeName(fromName);
             if (nameToId[normalized]) return nameToId[normalized];
+            let bestScore = 0;
+            let bestId: number | null = null;
+            for (const [key, id] of Object.entries(nameToId)) {
+              const score = similarity(fromName, key);
+              if (score > bestScore && score >= 0.7) {
+                bestScore = score;
+                bestId = id;
+              }
+            }
+            if (bestId) return bestId;
             const keys = Object.keys(nameToId);
             const partial = keys.find(k => k.includes(normalized) || normalized.includes(k));
             if (partial) return nameToId[partial];
@@ -736,28 +776,25 @@ function ChatPanel({ idea }: { idea: Idea }) {
             } else {
               if (i > 0) {
                 sourceId = createdNodes[i - 1].id;
-              } else if (existingNodes.length > 0) {
-                sourceId = existingNodes[existingNodes.length - 1].id;
               }
             }
 
             if (sourceId) {
-              const edgeExists = existingEdges.some(
-                (e: any) => e.sourceNodeId === sourceId && e.targetNodeId === node.id
-              );
-              if (!edgeExists) {
-                await fetch(`/api/ideas/${idea.id}/process-edges`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  credentials: "include",
-                  body: JSON.stringify({
-                    viewType,
-                    sourceNodeId: sourceId,
-                    targetNodeId: node.id,
-                    label,
-                  }),
-                });
-              }
+              const edgePairKey = `${sourceId}->${node.id}`;
+              if (seenEdgePairs.has(edgePairKey)) continue;
+              seenEdgePairs.add(edgePairKey);
+
+              await fetch(`/api/ideas/${idea.id}/process-edges`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({
+                  viewType,
+                  sourceNodeId: sourceId,
+                  targetNodeId: node.id,
+                  label,
+                }),
+              });
             }
           }
 

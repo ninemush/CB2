@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, Component, type ReactNode, type ErrorInfo } from "react";
 import {
   ReactFlow,
   Background,
@@ -17,6 +17,7 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getSmoothStepPath,
+  getBezierPath,
   useReactFlow,
   ReactFlowProvider,
   MarkerType,
@@ -64,6 +65,35 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+class ReactFlowErrorBoundary extends Component<{ children: ReactNode; onRetry?: () => void }, { hasError: boolean }> {
+  constructor(props: { children: ReactNode; onRetry?: () => void }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.warn("[ProcessMap] Error boundary caught:", error.message);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-500">
+          <AlertCircle className="h-8 w-8 text-amber-500/60" />
+          <p className="text-xs text-zinc-400">Process map encountered an error</p>
+          <button
+            className="text-xs px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors"
+            onClick={() => this.setState({ hasError: false })}
+            data-testid="button-retry-map"
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 interface HistorySnapshot {
   nodes: Node[];
@@ -251,32 +281,44 @@ function filterNodesForLevel(
     adjacency[e.sourceNodeId].push({ target: e.targetNodeId, edgeLabel: e.label });
   });
 
+  const outDegree: Record<number, number> = {};
+  allEdges.forEach(e => {
+    outDegree[e.sourceNodeId] = (outDegree[e.sourceNodeId] || 0) + 1;
+  });
+
   if (level === "L0") {
     let syntheticId = -1;
     let edgeId = -1;
 
     const nodeById: Record<number, ProcessMapData["nodes"][0]> = {};
     allNodes.forEach(n => { nodeById[n.id] = n; });
+
     const phaseGroupForNode: Record<number, number> = {};
     phaseGroups.forEach((group, gi) => {
       group.nodes.forEach(n => {
-        if (n.nodeType !== "start" && n.nodeType !== "end" && n.nodeType !== "decision") {
+        if (n.nodeType !== "start" && n.nodeType !== "end") {
           phaseGroupForNode[n.id] = gi;
         }
       });
     });
 
+    const startNodes = allNodes.filter(n => n.nodeType === "start");
+    const endNodes = allNodes.filter(n => n.nodeType === "end");
+
     const phaseSyntheticNodes: ProcessMapData["nodes"] = [];
     const phaseSyntheticIdMap: Record<number, number> = {};
     phaseGroups.forEach((group, gi) => {
-      const actionable = group.nodes.filter(n => n.nodeType !== "start" && n.nodeType !== "end" && n.nodeType !== "decision");
+      const actionable = group.nodes.filter(n => n.nodeType !== "start" && n.nodeType !== "end");
       if (actionable.length === 0) return;
+      const totalSteps = actionable.length;
+      const decisions = actionable.filter(n => n.nodeType === "decision").length;
+      const desc = decisions > 0 ? `${totalSteps} steps, ${decisions} decision${decisions > 1 ? "s" : ""}` : `${totalSteps} steps`;
       const phaseNode = {
         ...actionable[0],
         id: syntheticId,
         name: group.name,
         nodeType: "task" as const,
-        description: `${actionable.length} steps`,
+        description: desc,
         role: "",
         system: "",
         positionX: 0,
@@ -287,46 +329,89 @@ function filterNodesForLevel(
       syntheticId--;
     });
 
-    const l0Ids = new Set<number>();
-    allNodes.forEach(n => {
-      if (n.nodeType === "start" || n.nodeType === "end" || n.nodeType === "decision") l0Ids.add(n.id);
-    });
-    phaseSyntheticNodes.forEach(n => l0Ids.add(n.id));
-
-    const mapRealToL0 = (realId: number): number | null => {
-      const node = nodeById[realId];
-      if (!node) return null;
-      if (node.nodeType === "start" || node.nodeType === "end" || node.nodeType === "decision") return realId;
-      const gi = phaseGroupForNode[realId];
-      if (gi !== undefined && phaseSyntheticIdMap[gi] !== undefined) return phaseSyntheticIdMap[gi];
-      return null;
-    };
-
     const l0Edges: ProcessMapData["edges"] = [];
     const seenL0Pairs = new Set<string>();
 
-    allEdges.forEach(e => {
-      const src = mapRealToL0(e.sourceNodeId);
-      const tgt = mapRealToL0(e.targetNodeId);
-      if (src !== null && tgt !== null && src !== tgt) {
-        const key = `${src}->${tgt}`;
+    for (const s of startNodes) {
+      const children = adjacency[s.id] || [];
+      for (const { target } of children) {
+        const tgtNode = nodeById[target];
+        if (!tgtNode) continue;
+        let targetL0Id: number;
+        if (tgtNode.nodeType === "end") {
+          targetL0Id = tgtNode.id;
+        } else {
+          const gi = phaseGroupForNode[target];
+          if (gi !== undefined && phaseSyntheticIdMap[gi] !== undefined) {
+            targetL0Id = phaseSyntheticIdMap[gi];
+          } else continue;
+        }
+        const key = `${s.id}->${targetL0Id}`;
         if (!seenL0Pairs.has(key)) {
           seenL0Pairs.add(key);
           l0Edges.push({
             id: edgeId--,
-            ideaId: e.ideaId,
-            viewType: e.viewType,
-            sourceNodeId: src,
-            targetNodeId: tgt,
-            label: e.label,
+            ideaId: allEdges[0]?.ideaId || s.ideaId,
+            viewType: allEdges[0]?.viewType || "as-is",
+            sourceNodeId: s.id,
+            targetNodeId: targetL0Id,
+            label: "",
             createdAt: new Date().toISOString(),
           });
         }
       }
-    });
+    }
+
+    for (let gi = 0; gi < phaseGroups.length; gi++) {
+      const srcPhaseId = phaseSyntheticIdMap[gi];
+      if (srcPhaseId === undefined) continue;
+
+      const group = phaseGroups[gi];
+      const groupNodeIds = new Set(group.nodes.map(n => n.id));
+
+      const externalTargets = new Set<number>();
+      group.nodes.forEach(n => {
+        (adjacency[n.id] || []).forEach(({ target }) => {
+          if (!groupNodeIds.has(target)) {
+            externalTargets.add(target);
+          }
+        });
+      });
+
+      externalTargets.forEach(targetId => {
+        const tgtNode = nodeById[targetId];
+        if (!tgtNode) return;
+        let targetL0Id: number;
+        if (tgtNode.nodeType === "end") {
+          targetL0Id = tgtNode.id;
+        } else if (tgtNode.nodeType === "start") {
+          return;
+        } else {
+          const tgi = phaseGroupForNode[targetId];
+          if (tgi !== undefined && phaseSyntheticIdMap[tgi] !== undefined) {
+            targetL0Id = phaseSyntheticIdMap[tgi];
+          } else return;
+        }
+        if (srcPhaseId === targetL0Id) return;
+        const key = `${srcPhaseId}->${targetL0Id}`;
+        if (!seenL0Pairs.has(key)) {
+          seenL0Pairs.add(key);
+          l0Edges.push({
+            id: edgeId--,
+            ideaId: allEdges[0]?.ideaId || "",
+            viewType: allEdges[0]?.viewType || "as-is",
+            sourceNodeId: srcPhaseId,
+            targetNodeId: targetL0Id,
+            label: "",
+            createdAt: new Date().toISOString(),
+          });
+        }
+      });
+    }
 
     const resultNodes: ProcessMapData["nodes"] = [
-      ...allNodes.filter(n => n.nodeType === "start" || n.nodeType === "end" || n.nodeType === "decision"),
+      ...startNodes,
+      ...endNodes,
       ...phaseSyntheticNodes,
     ];
 
@@ -335,7 +420,13 @@ function filterNodesForLevel(
 
   const keepIds = new Set<number>();
   allNodes.forEach(n => {
-    if (n.nodeType === "start" || n.nodeType === "end" || n.nodeType === "decision") {
+    if (n.nodeType === "start" || n.nodeType === "end") {
+      keepIds.add(n.id);
+    }
+  });
+
+  allNodes.forEach(n => {
+    if (n.nodeType === "decision" && (outDegree[n.id] || 0) >= 3) {
       keepIds.add(n.id);
     }
   });
@@ -413,12 +504,26 @@ function applyDagreLayout(
   const edgeCount = edges.length;
 
   const density = edgeCount / Math.max(nodeCount, 1);
-  const scaleFactor = nodeCount > 60 ? 1.8 : nodeCount > 30 ? 1.4 : nodeCount > 15 ? 1.2 : 1;
-  const densityBonus = density > 2 ? 1.2 : density > 1.5 ? 1.1 : 1;
+  const isLarge = nodeCount > 30;
+  const isVeryLarge = nodeCount > 60;
 
-  const nodesep = Math.min(Math.round(140 * scaleFactor * densityBonus), 280);
-  const ranksep = Math.min(Math.round(180 * scaleFactor * densityBonus), 340);
-  const edgesep = Math.min(Math.round(60 * scaleFactor * densityBonus), 120);
+  let nodesep: number;
+  let ranksep: number;
+  let edgesep: number;
+
+  if (isVeryLarge) {
+    nodesep = Math.round(80 + density * 20);
+    ranksep = Math.round(120 + density * 15);
+    edgesep = Math.round(30 + density * 10);
+  } else if (isLarge) {
+    nodesep = Math.round(100 + density * 25);
+    ranksep = Math.round(140 + density * 20);
+    edgesep = Math.round(40 + density * 15);
+  } else {
+    nodesep = 140;
+    ranksep = 180;
+    edgesep = 60;
+  }
 
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
@@ -427,8 +532,11 @@ function applyDagreLayout(
     nodesep,
     ranksep,
     edgesep,
-    marginx: 80,
-    marginy: 80,
+    marginx: 60,
+    marginy: 60,
+    acyclicer: "greedy",
+    ranker: isLarge ? "tight-tree" : "network-simplex",
+    align: isLarge ? "UL" : undefined,
   });
 
   nodes.forEach((node) => {
@@ -437,16 +545,27 @@ function applyDagreLayout(
     g.setNode(node.id, { width: dims.width, height: dims.height });
   });
 
-  const outDegree: Record<string, number> = {};
+  const outDeg: Record<string, number> = {};
+  const inDeg: Record<string, number> = {};
   edges.forEach((edge) => {
-    outDegree[edge.source] = (outDegree[edge.source] || 0) + 1;
+    outDeg[edge.source] = (outDeg[edge.source] || 0) + 1;
+    inDeg[edge.target] = (inDeg[edge.target] || 0) + 1;
   });
 
-  edges.forEach((edge) => {
-    const fanout = outDegree[edge.source] || 1;
+  const sortedEdges = [...edges].sort((a, b) => {
+    const aFanout = outDeg[a.source] || 1;
+    const bFanout = outDeg[b.source] || 1;
+    return bFanout - aFanout;
+  });
+
+  sortedEdges.forEach((edge) => {
+    const fanout = outDeg[edge.source] || 1;
+    const fanin = inDeg[edge.target] || 1;
+    const isHighFanout = fanout > 2;
+    const isHighFanin = fanin > 2;
     g.setEdge(edge.source, edge.target, {
-      minlen: fanout > 2 ? 2 : 1,
-      weight: fanout > 2 ? 0.5 : 1,
+      minlen: isHighFanout ? 2 : 1,
+      weight: isHighFanout || isHighFanin ? 0.5 : 1,
     });
   });
 
@@ -690,20 +809,32 @@ function CustomEdge({
   const sourceSiblings = data?.sourceSiblings || 1;
   const targetIndex = data?.targetIndex || 0;
   const targetSiblings = data?.targetSiblings || 1;
+  const totalNodes = data?.totalNodes || 0;
 
-  const sourceOffset = sourceSiblings > 1 ? (sourceIndex - (sourceSiblings - 1) / 2) * 20 : 0;
-  const targetOffset = targetSiblings > 1 ? (targetIndex - (targetSiblings - 1) / 2) * 20 : 0;
+  const useBezier = totalNodes > 25;
 
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
-    sourceX: sourceX + sourceOffset,
-    sourceY,
-    sourcePosition,
-    targetX: targetX + targetOffset,
-    targetY,
-    targetPosition,
-    borderRadius: 16,
-    offset: (Math.abs(sourceOffset) > 0 || Math.abs(targetOffset) > 0) ? 25 + Math.max(Math.abs(sourceOffset), Math.abs(targetOffset)) : 20,
-  });
+  const sourceOffset = sourceSiblings > 1 ? (sourceIndex - (sourceSiblings - 1) / 2) * (useBezier ? 12 : 20) : 0;
+  const targetOffset = targetSiblings > 1 ? (targetIndex - (targetSiblings - 1) / 2) * (useBezier ? 12 : 20) : 0;
+
+  const [edgePath, labelX, labelY] = useBezier
+    ? getBezierPath({
+        sourceX: sourceX + sourceOffset,
+        sourceY,
+        sourcePosition,
+        targetX: targetX + targetOffset,
+        targetY,
+        targetPosition,
+      })
+    : getSmoothStepPath({
+        sourceX: sourceX + sourceOffset,
+        sourceY,
+        sourcePosition,
+        targetX: targetX + targetOffset,
+        targetY,
+        targetPosition,
+        borderRadius: 16,
+        offset: (Math.abs(sourceOffset) > 0 || Math.abs(targetOffset) > 0) ? 25 + Math.max(Math.abs(sourceOffset), Math.abs(targetOffset)) : 20,
+      });
 
   const label = data?.label || "";
   const isYes = /^(yes|approved|pass|valid|complete|true|within|below|stp|auto)/i.test(label);
@@ -720,7 +851,8 @@ function CustomEdge({
   else if (isPartial) edgeColor = "rgba(245,158,11,0.7)";
   else if (label) edgeColor = "rgba(148,163,184,0.5)";
 
-  const strokeWidth = label ? 1.5 : 1;
+  const strokeWidth = useBezier ? (label ? 1.2 : 0.8) : (label ? 1.5 : 1);
+  const edgeOpacity = useBezier ? 0.7 : 1;
 
   return (
     <>
@@ -732,6 +864,7 @@ function CustomEdge({
           stroke: edgeColor,
           strokeWidth,
           strokeLinecap: "round" as const,
+          opacity: edgeOpacity,
         }}
         className="transition-all duration-200 hover:!stroke-[3px] hover:!opacity-100"
       />
@@ -1107,6 +1240,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       if (!relTgtGrp[tk]) relTgtGrp[tk] = [];
       relTgtGrp[tk].push(e);
     });
+    const relNodeCount = dbNodes.length;
     const rawEdges: Edge[] = dbEdges.map((e) => {
       const srcS = relSrcGrp[String(e.sourceNodeId)] || [e];
       const tgtS = relTgtGrp[String(e.targetNodeId)] || [e];
@@ -1116,6 +1250,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
           label: e.label, dbId: e.id, viewType: activeView,
           sourceIndex: srcS.indexOf(e), sourceSiblings: srcS.length,
           targetIndex: tgtS.indexOf(e), targetSiblings: tgtS.length,
+          totalNodes: relNodeCount,
         },
       };
     });
@@ -1171,10 +1306,12 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       targetGroups[tk].push(e);
     });
 
+    const nodeCount = dbNodes.length;
     const rawEdges: Edge[] = dbEdges.map((e) => {
       const srcSiblings = sourceGroups[String(e.sourceNodeId)] || [e];
       const tgtSiblings = targetGroups[String(e.targetNodeId)] || [e];
       const markerColor = activeView === "sdd" ? "rgba(249,115,22,0.5)" : activeView === "to-be" ? "rgba(34,197,94,0.5)" : "rgba(120,120,145,0.4)";
+      const markerSize = nodeCount > 25 ? 10 : 14;
 
       return {
         id: String(e.id),
@@ -1185,12 +1322,13 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
           label: e.label, dbId: e.id, viewType: activeView,
           sourceIndex: srcSiblings.indexOf(e), sourceSiblings: srcSiblings.length,
           targetIndex: tgtSiblings.indexOf(e), targetSiblings: tgtSiblings.length,
+          totalNodes: nodeCount,
         },
         animated: activeView === "to-be" || activeView === "sdd",
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          width: 14,
-          height: 14,
+          width: markerSize,
+          height: markerSize,
           color: markerColor,
         },
       };
@@ -2431,9 +2569,11 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
       {activeView === "sdd" ? (
         <SDDInlineViewer ideaId={ideaId} />
       ) : (
-        <ReactFlowProvider>
-          <ProcessMapFlow ideaId={ideaId} activeView={activeView} detailLevel={detailLevel} onRelayout={(fn) => { relayoutRef.current = fn; }} onUndoRedoReady={setUndoRedoControls} />
-        </ReactFlowProvider>
+        <ReactFlowErrorBoundary>
+          <ReactFlowProvider>
+            <ProcessMapFlow ideaId={ideaId} activeView={activeView} detailLevel={detailLevel} onRelayout={(fn) => { relayoutRef.current = fn; }} onUndoRedoReady={setUndoRedoControls} />
+          </ReactFlowProvider>
+        </ReactFlowErrorBoundary>
       )}
 
       {activeView !== "sdd" && nodeCount >= 3 && !approval && (

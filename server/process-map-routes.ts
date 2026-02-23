@@ -242,6 +242,19 @@ export function registerProcessMapRoutes(app: Express): void {
     return res.json({ success: true });
   });
 
+  app.delete("/api/ideas/:ideaId/process-map/clear", async (req: Request, res: Response) => {
+    const ideaId = await verifyIdeaAccess(req, res);
+    if (!ideaId) return;
+    const viewType = (req.query.view as string) || "as-is";
+    try {
+      const result = await processMapStorage.clearAllForView(ideaId, viewType);
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error(`[ProcessMap] Clear failed:`, err?.message);
+      return res.status(500).json({ message: "Failed to clear process map" });
+    }
+  });
+
   app.post("/api/ideas/:ideaId/process-edges", async (req: Request, res: Response) => {
     const ideaId = await verifyIdeaAccess(req, res);
     if (!ideaId) return;

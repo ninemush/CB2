@@ -60,6 +60,41 @@ export class ProcessMapStorage {
     await db.delete(processEdges).where(eq(processEdges.id, id));
   }
 
+  async clearAllForView(ideaId: string, viewType: string): Promise<{ deletedNodes: number; deletedEdges: number }> {
+    const nodes = await db.select().from(processNodes)
+      .where(and(eq(processNodes.ideaId, ideaId), eq(processNodes.viewType, viewType)));
+    const nodeIds = nodes.map(n => n.id);
+
+    let deletedEdges = 0;
+    if (nodeIds.length > 0) {
+      for (const nodeId of nodeIds) {
+        const r1 = await db.delete(processEdges).where(eq(processEdges.sourceNodeId, nodeId));
+        const r2 = await db.delete(processEdges).where(eq(processEdges.targetNodeId, nodeId));
+        deletedEdges += (r1?.rowCount || 0) + (r2?.rowCount || 0);
+      }
+    }
+
+    const edgesForView = await db.select().from(processEdges)
+      .where(and(eq(processEdges.ideaId, ideaId), eq(processEdges.viewType, viewType)));
+    if (edgesForView.length > 0) {
+      for (const e of edgesForView) {
+        await db.delete(processEdges).where(eq(processEdges.id, e.id));
+        deletedEdges++;
+      }
+    }
+
+    let deletedNodes = 0;
+    if (nodeIds.length > 0) {
+      for (const nodeId of nodeIds) {
+        await db.delete(processNodes).where(eq(processNodes.id, nodeId));
+        deletedNodes++;
+      }
+    }
+
+    console.log(`[ProcessMap] Cleared ${deletedNodes} nodes and ${deletedEdges} edges for idea=${ideaId} view=${viewType}`);
+    return { deletedNodes, deletedEdges };
+  }
+
   async getApproval(ideaId: string, viewType: string = "as-is"): Promise<ProcessApproval | undefined> {
     const [approval] = await db.select().from(processApprovals)
       .where(and(eq(processApprovals.ideaId, ideaId), eq(processApprovals.viewType, viewType)));
