@@ -629,6 +629,13 @@ function IntegrationsTab() {
   const [clientSecret, setClientSecret] = useState("");
   const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set(["OR.Default"]));
   const [testResultMsg, setTestResultMsg] = useState<{ success: boolean; message: string } | null>(null);
+  const [scopeVerification, setScopeVerification] = useState<{
+    success: boolean;
+    requestedScopes: string[];
+    grantedScopes: string[];
+    message: string;
+    services?: Record<string, { available: boolean; message: string }>;
+  } | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [selectedFolderName, setSelectedFolderName] = useState<string | null>(null);
 
@@ -780,6 +787,24 @@ function IntegrationsTab() {
     },
     onError: (error: Error) => {
       toast({ title: "Test failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const verifyScopesMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/settings/uipath/verify-scopes", { credentials: "include" });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      setScopeVerification(data);
+      if (data.success) {
+        toast({ title: "Scope verification complete", description: data.message });
+      } else {
+        toast({ title: "Scope verification failed", description: data.message, variant: "destructive" });
+      }
+    },
+    onError: (error: Error) => {
+      toast({ title: "Verification failed", description: error.message, variant: "destructive" });
     },
   });
 
@@ -1082,7 +1107,79 @@ function IntegrationsTab() {
                   )}
                 </Button>
               )}
+              {config?.configured && (
+                <Button
+                  variant="outline"
+                  onClick={() => verifyScopesMutation.mutate()}
+                  disabled={verifyScopesMutation.isPending}
+                  data-testid="button-verify-scopes"
+                >
+                  {verifyScopesMutation.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Verifying...
+                    </>
+                  ) : (
+                    "Verify Scopes & Services"
+                  )}
+                </Button>
+              )}
             </div>
+
+            {scopeVerification && (
+              <div className="border border-border rounded-lg p-4 space-y-3 mt-4" data-testid="scope-verification-results">
+                <div className="flex items-center gap-2">
+                  {scopeVerification.success ? (
+                    <CheckCircle2 className="h-4 w-4 text-green-400" />
+                  ) : (
+                    <XCircle className="h-4 w-4 text-red-400" />
+                  )}
+                  <span className="text-sm font-medium text-foreground">{scopeVerification.message}</span>
+                </div>
+
+                {scopeVerification.services && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Service Availability</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {Object.entries(scopeVerification.services).map(([name, info]) => (
+                        <div
+                          key={name}
+                          className={`flex items-center gap-2 px-3 py-2 rounded-md text-xs ${
+                            info.available
+                              ? "bg-green-500/10 text-green-400"
+                              : "bg-amber-500/10 text-amber-400"
+                          }`}
+                          data-testid={`service-status-${name.toLowerCase().replace(/\s+/g, "-")}`}
+                        >
+                          {info.available ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                          ) : (
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                          )}
+                          <div className="min-w-0">
+                            <span className="font-medium">{name}</span>
+                            <span className="ml-1 text-muted-foreground">— {info.message}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {scopeVerification.grantedScopes.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Granted Scopes ({scopeVerification.grantedScopes.length})</p>
+                    <div className="flex flex-wrap gap-1">
+                      {scopeVerification.grantedScopes.map((scope) => (
+                        <span key={scope} className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-mono">
+                          {scope}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {config?.configured && (
               <div className="border-t border-border pt-4 mt-4 space-y-3" data-testid="folder-picker-section">

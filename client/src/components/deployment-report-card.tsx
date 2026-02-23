@@ -53,6 +53,7 @@ const artifactIcon = (artifact: string) => {
 const statusConfig: Record<string, { icon: typeof CheckCircle2; color: string; bg: string; label: string }> = {
   created: { icon: CheckCircle2, color: "text-green-400", bg: "bg-green-500/10", label: "Created" },
   exists: { icon: Info, color: "text-blue-400", bg: "bg-blue-500/10", label: "Exists" },
+  skipped: { icon: AlertTriangle, color: "text-amber-400", bg: "bg-amber-500/10", label: "Skipped" },
   failed: { icon: XCircle, color: "text-red-400", bg: "bg-red-500/10", label: "Failed" },
 };
 
@@ -69,10 +70,12 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
   const counts = {
     created: report.results.filter((r) => r.status === "created").length,
     exists: report.results.filter((r) => r.status === "exists").length,
+    skipped: report.results.filter((r) => r.status === "skipped").length,
     failed: report.results.filter((r) => r.status === "failed").length,
   };
 
-  const allSuccess = counts.failed === 0;
+  const allSuccess = counts.failed === 0 && counts.skipped === 0;
+  const partialSuccess = counts.failed === 0 && counts.skipped > 0;
 
   const toggleGroup = (key: string) => {
     setExpandedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -135,6 +138,12 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
             {counts.exists} existing
           </span>
         )}
+        {counts.skipped > 0 && (
+          <span className="flex items-center gap-1 text-xs text-amber-400">
+            <AlertTriangle className="h-3 w-3" />
+            {counts.skipped} skipped
+          </span>
+        )}
         {counts.failed > 0 && (
           <span className="flex items-center gap-1 text-xs text-red-400">
             <XCircle className="h-3 w-3" />
@@ -147,7 +156,7 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
         {Object.entries(grouped).map(([artifactType, items]) => {
           const isExpanded = expandedGroups[artifactType] !== false;
           const groupCreated = items.filter((i) => i.status === "created").length;
-          const groupIssues = items.filter((i) => i.status === "failed").length;
+          const groupIssues = items.filter((i) => i.status === "failed" || i.status === "skipped").length;
 
           return (
             <div key={artifactType}>
@@ -200,16 +209,21 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
         })}
       </div>
 
-      <div className={`px-4 py-2 text-xs border-t border-border/50 ${allSuccess ? "text-green-400" : "text-muted-foreground"}`}>
+      <div className={`px-4 py-2 text-xs border-t border-border/50 ${allSuccess ? "text-green-400" : partialSuccess ? "text-amber-400" : "text-muted-foreground"}`}>
         {allSuccess ? (
           <span className="flex items-center gap-1">
             <CheckCircle2 className="h-3.5 w-3.5" />
             All artifacts provisioned successfully
           </span>
+        ) : partialSuccess ? (
+          <span className="flex items-center gap-1">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Core artifacts provisioned. {counts.skipped} item{counts.skipped > 1 ? "s" : ""} skipped (service not available on tenant)
+          </span>
         ) : (
           <span className="flex items-center gap-1">
             <AlertTriangle className="h-3.5 w-3.5" />
-            {counts.failed} item{counts.failed > 1 ? "s" : ""} failed — check details above
+            {counts.failed} item{counts.failed > 1 ? "s" : ""} failed{counts.skipped > 0 ? `, ${counts.skipped} skipped` : ""} — check details above
           </span>
         )}
       </div>

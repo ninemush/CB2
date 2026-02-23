@@ -27,7 +27,7 @@ export async function getUiPathConfig(): Promise<UiPathConfig | null> {
   const tenantName = map.get("uipath_tenant_name");
   const clientId = map.get("uipath_client_id");
   const clientSecret = map.get("uipath_client_secret");
-  const scopes = map.get("uipath_scopes") || "OR.Default";
+  const scopes = map.get("uipath_scopes") || "OR.Default OR.Folders OR.Execution OR.Assets OR.Queues OR.Jobs OR.Robots OR.Machines OR.BackgroundTasks OR.Blobs OR.Tasks OR.TestSets OR.TestSetExecutions OR.TestSetSchedules OR.Monitoring OR.Settings OR.ML OR.Administration OR.Audit OR.Webhooks";
   const folderId = map.get("uipath_folder_id") || undefined;
   const folderName = map.get("uipath_folder_name") || undefined;
 
@@ -1033,6 +1033,102 @@ export async function runHealthCheck(packageId?: string): Promise<{
   }
 
   return { checks, summary };
+}
+
+export async function verifyUiPathScopes(): Promise<{ success: boolean; requestedScopes: string[]; grantedScopes: string[]; message: string; services?: Record<string, { available: boolean; message: string }> }> {
+  const config = await getUiPathConfig();
+  if (!config) {
+    return { success: false, requestedScopes: [], grantedScopes: [], message: "UiPath is not configured." };
+  }
+
+  try {
+    const token = await getAccessToken(config);
+    const requestedScopes = config.scopes.split(/\s+/).filter(Boolean);
+
+    let grantedScopes: string[] = [];
+    try {
+      const parts = token.split(".");
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf-8"));
+        if (payload.scope) {
+          grantedScopes = Array.isArray(payload.scope) ? payload.scope : payload.scope.split(/\s+/);
+        } else if (payload.scp) {
+          grantedScopes = Array.isArray(payload.scp) ? payload.scp : payload.scp.split(/\s+/);
+        }
+      }
+    } catch {
+      grantedScopes = [...requestedScopes];
+    }
+
+    const base = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
+    const orchBase = `${base}/orchestrator_`;
+    const hdrs: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+    if (config.folderId) hdrs["X-UIPATH-OrganizationUnitId"] = config.folderId;
+
+    const serviceChecks: Record<string, { available: boolean; message: string }> = {};
+
+    const orchRes = await fetch(`${orchBase}/odata/Folders?$top=1`, { headers: hdrs });
+    serviceChecks["Orchestrator"] = orchRes.ok
+      ? { available: true, message: "Connected" }
+      : { available: false, message: `HTTP ${orchRes.status}` };
+
+    const blobRes = await fetch(`${orchBase}/odata/Buckets?$top=1`, { headers: hdrs });
+    serviceChecks["Storage Buckets"] = blobRes.ok
+      ? { available: true, message: "Accessible" }
+      : { available: false, message: `HTTP ${blobRes.status} — may need OR.Blobs scope` };
+
+    const taskCatRes = await fetch(`${orchBase}/odata/TaskCatalogs?$top=1`, { headers: hdrs });
+    serviceChecks["Action Center"] = taskCatRes.ok
+      ? { available: true, message: "Accessible" }
+      : { available: false, message: `HTTP ${taskCatRes.status} — Action Center may not be enabled or needs OR.Tasks scope` };
+
+    const tmBases = [
+      `${base}/testmanager_/api/v2/projects?$top=1`,
+      `${base}/tmapi_/api/v2/projects?$top=1`,
+    ];
+    let tmAvailable = false;
+    let tmMsg = "";
+    for (const tmUrl of tmBases) {
+      try {
+        const tmRes = await fetch(tmUrl, { headers: hdrs });
+        if (tmRes.ok) {
+          tmAvailable = true;
+          tmMsg = "Accessible";
+          break;
+        } else {
+          tmMsg = `HTTP ${tmRes.status}`;
+        }
+      } catch { tmMsg = "Not reachable"; }
+    }
+    serviceChecks["Test Manager"] = { available: tmAvailable, message: tmAvailable ? tmMsg : `Not available on this tenant (${tmMsg})` };
+
+    const duRes = await fetch(`${base}/du_/api/framework/projects?$top=1`, { headers: hdrs });
+    if (duRes.ok) {
+      serviceChecks["Document Understanding"] = { available: true, message: "Accessible" };
+    } else {
+      const aiRes = await fetch(`${base}/aifabric_/ai-deployer/v1/projects?$top=1`, { headers: hdrs });
+      serviceChecks["Document Understanding"] = aiRes.ok
+        ? { available: true, message: "Accessible via AI Center" }
+        : { available: false, message: `Not reachable (DU: ${duRes.status}, AI Center: ${aiRes.status})` };
+    }
+
+    const availableCount = Object.values(serviceChecks).filter(s => s.available).length;
+    const totalCount = Object.keys(serviceChecks).length;
+
+    return {
+      success: true,
+      requestedScopes,
+      grantedScopes,
+      message: `Token obtained successfully. ${availableCount}/${totalCount} services accessible.`,
+      services: serviceChecks,
+    };
+  } catch (err: any) {
+    const msg = err.message || String(err);
+    return { success: false, requestedScopes: config.scopes.split(/\s+/), grantedScopes: [], message: `Authentication failed: ${msg}` };
+  }
 }
 
 export async function testUiPathConnection(): Promise<{ success: boolean; message: string; errorType?: string }> {

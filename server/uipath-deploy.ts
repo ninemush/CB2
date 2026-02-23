@@ -20,7 +20,7 @@ export type OrchestratorArtifacts = {
 export type DeploymentResult = {
   artifact: string;
   name: string;
-  status: "created" | "exists" | "failed";
+  status: "created" | "exists" | "failed" | "skipped";
   message: string;
   id?: number;
 };
@@ -876,72 +876,103 @@ async function provisionActionCenter(
   if (!actionCenter?.length) return [];
   const results: DeploymentResult[] = [];
 
-  const cloudTasksBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/tasks_`;
+  const cloudBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
   const endpoints = [
-    `${base}/odata/TaskCatalogs`,
-    `${cloudTasksBase}/api/tasks/v1/task-catalogs`,
+    { url: `${base}/odata/TaskCatalogs`, label: "Orchestrator OData", isOdata: true },
+    { url: `${cloudBase}/actions_/api/v1/task-catalogs`, label: "Actions API v1", isOdata: false },
+    { url: `${cloudBase}/tasks_/api/tasks/v1/task-catalogs`, label: "Tasks API v1", isOdata: false },
+    { url: `${cloudBase}/maestro_/api/v1/task-catalogs`, label: "Maestro API", isOdata: false },
   ];
+
+  let serviceAvailable = false;
+  for (const ep of endpoints) {
+    try {
+      const probeUrl = ep.isOdata ? `${ep.url}?$top=1` : `${ep.url}?top=1`;
+      const probeRes = await fetch(probeUrl, { headers: hdrs });
+      if (probeRes.ok || probeRes.status === 200) {
+        serviceAvailable = true;
+        break;
+      }
+      if (probeRes.status === 400) {
+        const probeText = await probeRes.text();
+        if (probeText.includes("ServiceType is not onboarded") || probeText.includes("not onboarded")) {
+          continue;
+        }
+        serviceAvailable = true;
+        break;
+      }
+      if (probeRes.status === 401 || probeRes.status === 403) {
+        serviceAvailable = true;
+        break;
+      }
+    } catch { continue; }
+  }
+
+  if (!serviceAvailable) {
+    return actionCenter.map(ac => ({
+      artifact: "Action Center",
+      name: ac.taskCatalog,
+      status: "skipped" as const,
+      message: "Action Center API not available on this tenant. Enable it in Admin > Tenant > Services, then assign it to the target folder.",
+    }));
+  }
 
   for (const ac of actionCenter) {
     try {
-      for (const checkEndpoint of endpoints) {
+      let found = false;
+      for (const ep of endpoints) {
         try {
-          const filterUrl = checkEndpoint.includes("/odata/")
-            ? `${checkEndpoint}?$filter=Name eq '${odataEscape(ac.taskCatalog)}'&$top=1`
-            : `${checkEndpoint}?name=${encodeURIComponent(ac.taskCatalog)}&top=1`;
+          const filterUrl = ep.isOdata
+            ? `${ep.url}?$filter=Name eq '${odataEscape(ac.taskCatalog)}'&$top=1`
+            : `${ep.url}?name=${encodeURIComponent(ac.taskCatalog)}&top=1`;
           const checkRes = await fetch(filterUrl, { headers: hdrs });
           if (checkRes.ok) {
             const checkData = await checkRes.json();
-            const items = checkData.value || checkData.items || checkData;
-            if (Array.isArray(items) && items.length > 0) {
+            const items = checkData.value || checkData.items || (Array.isArray(checkData) ? checkData : []);
+            if (items.length > 0) {
               results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "exists", message: `Already exists (ID: ${items[0].Id || items[0].id})`, id: items[0].Id || items[0].id });
+              found = true;
               break;
             }
           }
-        } catch { /* try next endpoint */ }
+        } catch { continue; }
       }
+      if (found) continue;
 
-      if (results.some(r => r.name === ac.taskCatalog)) continue;
-
-      const body: Record<string, any> = {
-        Name: ac.taskCatalog,
-        Description: ac.description || "",
-      };
-
+      const body: Record<string, any> = { Name: ac.taskCatalog, Description: ac.description || "" };
       let acCreated = false;
-      for (const endpoint of endpoints) {
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: hdrs,
-          body: JSON.stringify(body),
-        });
-        const text = await res.text();
-        console.log(`[UiPath Deploy] Action Center "${ac.taskCatalog}" via ${endpoint.includes("tasks_") ? "cloud tasks API" : "odata"} -> ${res.status}: ${text.slice(0, 300)}`);
+      for (const ep of endpoints) {
+        try {
+          const res = await fetch(ep.url, { method: "POST", headers: hdrs, body: JSON.stringify(body) });
+          const text = await res.text();
+          console.log(`[UiPath Deploy] Action Center "${ac.taskCatalog}" via ${ep.label} -> ${res.status}: ${text.slice(0, 300)}`);
 
-        if (res.ok || res.status === 201) {
-          let data: any;
-          try { data = JSON.parse(text); } catch { data = {}; }
-          let msg = `Created (ID: ${data.Id || data.id || "N/A"})`;
-          if (ac.assignedRole) msg += `. Assign to role: ${ac.assignedRole}`;
-          if (ac.sla) msg += `. SLA: ${ac.sla}`;
-          if (ac.escalation) msg += `. Escalation: ${ac.escalation}`;
-          results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg, id: data.Id || data.id });
-          acCreated = true;
-          break;
-        } else if (res.status === 409 || text.includes("already exists")) {
-          results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "exists", message: "Already exists" });
-          acCreated = true;
-          break;
-        } else if (res.status === 404 || res.status === 405) {
-          continue;
-        } else {
-          results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 200)}` });
-          acCreated = true;
-          break;
-        }
+          if (res.ok || res.status === 201) {
+            let data: any;
+            try { data = JSON.parse(text); } catch { data = {}; }
+            let msg = `Created (ID: ${data.Id || data.id || "N/A"})`;
+            if (ac.assignedRole) msg += `. Assign to role: ${ac.assignedRole}`;
+            if (ac.sla) msg += `. SLA: ${ac.sla}`;
+            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg, id: data.Id || data.id });
+            acCreated = true;
+            break;
+          } else if (res.status === 409 || text.includes("already exists")) {
+            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "exists", message: "Already exists" });
+            acCreated = true;
+            break;
+          } else if (res.status === 404 || res.status === 405) {
+            continue;
+          } else if (res.status === 400 && text.includes("not onboarded")) {
+            continue;
+          } else {
+            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 200)}` });
+            acCreated = true;
+            break;
+          }
+        } catch { continue; }
       }
       if (!acCreated) {
-        results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: `All API endpoints returned 404/405 — Action Center may not be enabled for this tenant.` });
+        results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "skipped", message: `Action Center API endpoints not responding. The service may need to be enabled for this folder in Orchestrator settings.` });
       }
     } catch (err: any) {
       results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: `API error: ${err.message}` });
@@ -958,37 +989,70 @@ async function provisionDocUnderstanding(
   if (!du?.length) return [];
   const results: DeploymentResult[] = [];
 
-  const duBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/du_`;
-  const aiBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/aifabric_`;
+  const cloudBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
   const hdrs: Record<string, string> = {
     "Authorization": `Bearer ${token}`,
     "Content-Type": "application/json",
     "Accept": "application/json",
   };
 
+  const endpoints = [
+    { url: `${cloudBase}/du_/api/framework/projects`, label: "DU Framework API" },
+    { url: `${cloudBase}/du_/api/v1/projects`, label: "DU API v1" },
+    { url: `${cloudBase}/aifabric_/ai-deployer/v1/projects`, label: "AI Center Deployer" },
+    { url: `${cloudBase}/aifabric_/api/v1/projects`, label: "AI Fabric API" },
+  ];
+
+  let serviceAvailable = false;
+  let activeEndpoint: typeof endpoints[0] | null = null;
+  for (const ep of endpoints) {
+    try {
+      const probeRes = await fetch(`${ep.url}?$top=1`, { headers: hdrs });
+      console.log(`[UiPath Deploy] DU probe ${ep.label} -> ${probeRes.status}`);
+      if (probeRes.ok) {
+        serviceAvailable = true;
+        activeEndpoint = ep;
+        break;
+      }
+      if (probeRes.status === 401 || probeRes.status === 403) {
+        serviceAvailable = true;
+        activeEndpoint = ep;
+        break;
+      }
+    } catch { continue; }
+  }
+
+  if (!serviceAvailable) {
+    return du.map(project => ({
+      artifact: "Document Understanding",
+      name: project.name,
+      status: "skipped" as const,
+      message: `DU API not reachable. Document types needed: ${project.documentTypes?.join(", ") || "N/A"}. Create the DU project manually in Document Understanding service.`,
+    }));
+  }
+
   for (const project of du) {
     try {
-      const endpoints = [
-        { url: `${duBase}/api/v1/projects`, label: "DU API" },
-        { url: `${aiBase}/api/v1/projects`, label: "AI Fabric API" },
-      ];
-
-      let created = false;
-      for (const ep of endpoints) {
+      let found = false;
+      if (activeEndpoint) {
         try {
-          const checkRes = await fetch(`${ep.url}?name=${encodeURIComponent(project.name)}&top=10`, { headers: hdrs });
+          const checkRes = await fetch(`${activeEndpoint.url}?$top=50`, { headers: hdrs });
           if (checkRes.ok) {
             const checkData = await checkRes.json();
             const items = checkData.value || checkData.items || (Array.isArray(checkData) ? checkData : []);
             const existing = items.find((p: any) => (p.Name || p.name) === project.name);
             if (existing) {
               results.push({ artifact: "Document Understanding", name: project.name, status: "exists", message: `Already exists (ID: ${existing.Id || existing.id}). Doc types: ${project.documentTypes?.join(", ") || "N/A"}`, id: existing.Id || existing.id });
-              created = true;
-              break;
+              found = true;
             }
           }
-        } catch { /* try next */ }
+        } catch { /* continue to create */ }
+      }
+      if (found) continue;
 
+      let created = false;
+      const tryEndpoints = activeEndpoint ? [activeEndpoint, ...endpoints.filter(e => e !== activeEndpoint)] : endpoints;
+      for (const ep of tryEndpoints) {
         try {
           const body = {
             Name: project.name,
@@ -1002,7 +1066,7 @@ async function provisionDocUnderstanding(
           if (res.ok || res.status === 201) {
             let data: any;
             try { data = JSON.parse(text); } catch { data = {}; }
-            results.push({ artifact: "Document Understanding", name: project.name, status: "created", message: `Created (ID: ${data.Id || data.id || "N/A"}). Doc types: ${project.documentTypes?.join(", ") || "N/A"}`, id: data.Id || data.id });
+            results.push({ artifact: "Document Understanding", name: project.name, status: "created", message: `Created via ${ep.label} (ID: ${data.Id || data.id || "N/A"}). Doc types: ${project.documentTypes?.join(", ") || "N/A"}`, id: data.Id || data.id });
             created = true;
             break;
           } else if (res.status === 409 || text.includes("already exists")) {
@@ -1012,7 +1076,7 @@ async function provisionDocUnderstanding(
           } else if (res.status === 404 || res.status === 405) {
             continue;
           } else {
-            results.push({ artifact: "Document Understanding", name: project.name, status: "failed", message: `${ep.label} returned HTTP ${res.status}: ${text.slice(0, 150)}` });
+            results.push({ artifact: "Document Understanding", name: project.name, status: "skipped", message: `${ep.label} returned HTTP ${res.status}. Doc types needed: ${project.documentTypes?.join(", ") || "N/A"}. Create the DU project manually.` });
             created = true;
             break;
           }
@@ -1020,7 +1084,7 @@ async function provisionDocUnderstanding(
       }
 
       if (!created) {
-        results.push({ artifact: "Document Understanding", name: project.name, status: "failed", message: `DU API not available on this tenant. Doc types: ${project.documentTypes?.join(", ") || "N/A"}` });
+        results.push({ artifact: "Document Understanding", name: project.name, status: "skipped", message: `Could not create DU project via API. Doc types needed: ${project.documentTypes?.join(", ") || "N/A"}. Create manually in Document Understanding service.` });
       }
     } catch (err: any) {
       results.push({ artifact: "Document Understanding", name: project.name, status: "failed", message: `API error: ${err.message}` });
@@ -1072,12 +1136,12 @@ async function provisionTestCases(
   }
 
   if (!activeTmBase) {
-    return testCases.map(tc => ({
+    return [{
       artifact: "Test Case",
-      name: tc.name,
-      status: "failed" as const,
-      message: `Test Manager API not reachable — tried ${tmBases.length} endpoints. Check tenant has Test Manager enabled.`,
-    }));
+      name: `${testCases.length} test case(s)`,
+      status: "skipped" as const,
+      message: `Test Manager not available on this tenant. ${testCases.length} test cases were defined but cannot be provisioned. Test Manager requires an Enterprise license.`,
+    }];
   }
 
   if (!projectId) {
@@ -1208,8 +1272,10 @@ export async function deployAllArtifacts(
     const created = allResults.filter(r => r.status === "created").length;
     const existed = allResults.filter(r => r.status === "exists").length;
     const failed = allResults.filter(r => r.status === "failed").length;
+    const skipped = allResults.filter(r => r.status === "skipped").length;
 
     let summary = `Deployment complete: ${created} created, ${existed} already existed`;
+    if (skipped > 0) summary += `, ${skipped} skipped (service unavailable)`;
     if (failed > 0) summary += `, ${failed} failed`;
 
     console.log(`[UiPath Deploy] ${summary}`);
@@ -1235,6 +1301,7 @@ export function formatDeploymentReport(results: DeploymentResult[]): string {
     switch (s) {
       case "created": return "✅";
       case "exists": return "🔵";
+      case "skipped": return "⚠️";
       case "failed": return "❌";
       default: return "•";
     }
@@ -1250,12 +1317,18 @@ export function formatDeploymentReport(results: DeploymentResult[]): string {
 
   const created = results.filter(r => r.status === "created").length;
   const failed = results.filter(r => r.status === "failed").length;
+  const skipped = results.filter(r => r.status === "skipped").length;
 
   if (failed > 0) {
     lines.push(`**${failed} item(s) failed** — check permissions and retry from Orchestrator.`);
   }
-  if (created > 0 && failed === 0) {
+  if (skipped > 0) {
+    lines.push(`**${skipped} item(s) skipped** — these services are not available on your tenant or require manual setup.`);
+  }
+  if (created > 0 && failed === 0 && skipped === 0) {
     lines.push("All artifacts provisioned successfully. The automation is fully deployed.");
+  } else if (created > 0 && failed === 0 && skipped > 0) {
+    lines.push("Core artifacts provisioned successfully. Skipped items require manual setup or are not available on your tenant.");
   }
 
   return lines.join("\n");
