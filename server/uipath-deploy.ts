@@ -639,37 +639,131 @@ async function provisionStorageBuckets(
   return results;
 }
 
-async function detectAvailableRuntimeType(base: string, hdrs: Record<string, string>): Promise<string> {
+type RuntimeDetectionResult = {
+  runtimeType: string;
+  verified: boolean;
+  hasUnattendedSlots: boolean;
+  availableTypes: string[];
+  warning?: string;
+};
+
+async function detectAvailableRuntimeType(base: string, hdrs: Record<string, string>): Promise<RuntimeDetectionResult> {
+  const result: RuntimeDetectionResult = {
+    runtimeType: "Unattended",
+    verified: false,
+    hasUnattendedSlots: false,
+    availableTypes: [],
+  };
+
   try {
-    const sessRes = await fetch(`${base}/odata/Sessions?$top=5&$select=RuntimeType`, { headers: hdrs });
+    const machRes = await fetch(`${base}/odata/Machines?$top=50&$select=Id,Name,Type,UnattendedSlots,NonProductionSlots,TestAutomationSlots,HeadlessSlots`, { headers: hdrs });
+    if (machRes.ok) {
+      const machData = await machRes.json();
+      const machines = machData.value || [];
+      if (machines.length > 0) {
+        const hasUnattended = machines.some((m: any) => (m.UnattendedSlots || 0) > 0);
+        const hasNonProd = machines.some((m: any) => (m.NonProductionSlots || 0) > 0);
+        const hasTestAuto = machines.some((m: any) => (m.TestAutomationSlots || 0) > 0);
+        const hasHeadless = machines.some((m: any) => (m.HeadlessSlots || 0) > 0);
+
+        result.hasUnattendedSlots = hasUnattended;
+        if (hasUnattended) result.availableTypes.push("Unattended");
+        if (hasNonProd) result.availableTypes.push("NonProduction");
+        if (hasTestAuto) result.availableTypes.push("TestAutomation");
+        if (hasHeadless) result.availableTypes.push("Headless");
+
+        if (hasUnattended) {
+          result.runtimeType = "Unattended";
+          result.verified = true;
+          console.log(`[UiPath Deploy] Runtime detection: Found ${machines.length} machine template(s) with Unattended slots`);
+          return result;
+        }
+        if (hasNonProd) {
+          result.runtimeType = "NonProduction";
+          result.verified = true;
+          console.log(`[UiPath Deploy] Runtime detection: No Unattended slots, using NonProduction`);
+          return result;
+        }
+
+        console.warn(`[UiPath Deploy] Runtime detection: ${machines.length} machine template(s) found but NONE have Unattended or NonProduction slots`);
+        result.warning = `${machines.length} machine template(s) found in folder but none have Unattended runtime slots configured. Triggers will fail until an Unattended runtime is assigned to a machine template in this folder.`;
+      } else {
+        console.warn(`[UiPath Deploy] Runtime detection: No machine templates found in folder`);
+        result.warning = "No machine templates found in this folder. Triggers require at least one machine template with Unattended runtime slots.";
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[UiPath Deploy] Machine template check failed: ${err.message}`);
+  }
+
+  try {
+    const sessRes = await fetch(`${base}/odata/Sessions?$top=10&$select=RuntimeType,MachineId,MachineName`, { headers: hdrs });
     if (sessRes.ok) {
       const sessData = await sessRes.json();
       if (sessData.value?.length > 0) {
         const types = sessData.value.map((s: any) => s.RuntimeType).filter(Boolean);
-        if (types.includes("Unattended")) return "Unattended";
-        if (types.includes("Production")) return "Production";
-        if (types.includes("NonProduction")) return "NonProduction";
-        if (types.includes("Development")) return "Development";
-        if (types.length > 0) return types[0];
+        const uniqueTypes = Array.from(new Set(types as string[]));
+        result.availableTypes = Array.from(new Set([...result.availableTypes, ...uniqueTypes]));
+
+        if (types.includes("Unattended")) {
+          result.runtimeType = "Unattended";
+          result.verified = true;
+          result.hasUnattendedSlots = true;
+          result.warning = undefined;
+          console.log(`[UiPath Deploy] Runtime detection: Found active Unattended session(s)`);
+          return result;
+        }
+        if (types.includes("Production")) {
+          result.runtimeType = "Production";
+          result.verified = true;
+          result.warning = undefined;
+          return result;
+        }
+        if (uniqueTypes.length > 0) {
+          result.runtimeType = uniqueTypes[0];
+          result.verified = true;
+          if (!result.warning) {
+            result.warning = `No Unattended sessions found. Using "${uniqueTypes[0]}" runtime. Triggers may fail if this runtime type cannot execute scheduled jobs.`;
+          }
+          return result;
+        }
       }
     }
   } catch { /* ignore */ }
 
   try {
-    const robotRes = await fetch(`${base}/odata/Robots?$top=5&$select=Type`, { headers: hdrs });
+    const robotRes = await fetch(`${base}/odata/Robots?$top=10&$select=Type,MachineName`, { headers: hdrs });
     if (robotRes.ok) {
       const robotData = await robotRes.json();
       if (robotData.value?.length > 0) {
         const types = robotData.value.map((r: any) => r.Type).filter(Boolean);
-        if (types.includes("Unattended")) return "Unattended";
-        if (types.includes("Production")) return "Production";
-        if (types.includes("Development")) return "Development";
-        if (types.length > 0) return types[0];
+        const uniqueTypes = Array.from(new Set(types as string[]));
+        result.availableTypes = Array.from(new Set([...result.availableTypes, ...uniqueTypes]));
+
+        if (types.includes("Unattended")) {
+          result.runtimeType = "Unattended";
+          result.verified = true;
+          result.hasUnattendedSlots = true;
+          result.warning = undefined;
+          return result;
+        }
+        if (uniqueTypes.length > 0) {
+          result.runtimeType = uniqueTypes[0];
+          result.verified = true;
+          if (!result.warning) {
+            result.warning = `No Unattended robots found. Using "${uniqueTypes[0]}" runtime.`;
+          }
+          return result;
+        }
       }
     }
   } catch { /* ignore */ }
 
-  return "Unattended";
+  if (!result.verified) {
+    result.warning = result.warning || "Could not detect any runtime types in this folder. No machine templates, active sessions, or robots were found. Triggers will be created DISABLED — enable them after configuring an Unattended runtime in Orchestrator > Folder > Machine Templates.";
+  }
+
+  return result;
 }
 
 async function provisionTriggers(
@@ -690,8 +784,13 @@ async function provisionTriggers(
     }));
   }
 
-  const runtimeType = await detectAvailableRuntimeType(base, hdrs);
-  console.log(`[UiPath Deploy] Using RuntimeType: ${runtimeType}`);
+  const runtimeDetection = await detectAvailableRuntimeType(base, hdrs);
+  const runtimeType = runtimeDetection.runtimeType;
+  const createDisabled = !runtimeDetection.verified || !runtimeDetection.hasUnattendedSlots;
+  console.log(`[UiPath Deploy] Using RuntimeType: ${runtimeType}, verified: ${runtimeDetection.verified}, hasUnattendedSlots: ${runtimeDetection.hasUnattendedSlots}, createDisabled: ${createDisabled}`);
+  if (runtimeDetection.warning) {
+    console.warn(`[UiPath Deploy] Runtime warning: ${runtimeDetection.warning}`);
+  }
 
   const results: DeploymentResult[] = [];
 
@@ -734,7 +833,7 @@ async function provisionTriggers(
 
         const body: Record<string, any> = {
           Name: t.name,
-          Enabled: true,
+          Enabled: !createDisabled,
           ReleaseId: releaseId,
           ReleaseName: releaseName || "",
           QueueDefinitionId: queueId,
@@ -764,7 +863,8 @@ async function provisionTriggers(
           const returnedId = parsed.data?.Id || parsed.data?.id;
           const verify = await verifyArtifactExists(base, hdrs, "QueueTriggers", "Name", t.name, "Queue Trigger", returnedId);
           if (verify.exists) {
-            results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Queue trigger created and verified (ID: ${verify.id}), linked to queue "${t.queueName}"`, id: verify.id });
+            const disabledNote = createDisabled ? ` [CREATED DISABLED — ${runtimeDetection.warning || "No Unattended runtime verified"}. Enable in Orchestrator after configuring runtimes.]` : "";
+            results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Queue trigger created and verified (ID: ${verify.id}), linked to queue "${t.queueName}"${disabledNote}`, id: verify.id });
           } else {
             results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `API returned ${res.status} with ID ${returnedId} but verification failed — trigger not found in Orchestrator. ${verify.detail || ""}. Response: ${text.slice(0, 300)}` });
           }
@@ -772,7 +872,7 @@ async function provisionTriggers(
           results.push({ artifact: "Trigger", name: t.name, status: "exists", message: "Already exists" });
         } else if (res.status === 405) {
           const schedBody: Record<string, any> = {
-            Enabled: true,
+            Enabled: !createDisabled,
             Name: t.name,
             ReleaseId: releaseId,
             ReleaseName: releaseName || "",
@@ -797,7 +897,8 @@ async function provisionTriggers(
             const schedReturnedId = parsed.data?.Id || parsed.data?.id;
             const verify = await verifyArtifactExists(base, hdrs, "ProcessSchedules", "Name", t.name, "Scheduled Trigger", schedReturnedId);
             if (verify.exists) {
-              results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Created as scheduled trigger and verified (ID: ${verify.id}) polling queue "${t.queueName}" every 5 min`, id: verify.id });
+              const disabledNote = createDisabled ? ` [CREATED DISABLED — ${runtimeDetection.warning || "No Unattended runtime verified"}. Enable after configuring runtimes.]` : "";
+              results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Created as scheduled trigger and verified (ID: ${verify.id}) polling queue "${t.queueName}" every 5 min${disabledNote}`, id: verify.id });
             } else {
               results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `ProcessSchedule fallback returned ${schedRes.status} but verification failed — trigger not found. ${verify.detail || ""}` });
             }
@@ -832,7 +933,7 @@ async function provisionTriggers(
         });
 
         const baseBody: Record<string, any> = {
-          Enabled: true,
+          Enabled: !createDisabled,
           Name: t.name,
           ReleaseId: releaseId,
           ReleaseName: releaseName || "",
@@ -870,7 +971,8 @@ async function provisionTriggers(
             const timeReturnedId = parsed.data?.Id || parsed.data?.id;
             const verify = await verifyArtifactExists(base, hdrs, "ProcessSchedules", "Name", t.name, "Time Trigger", timeReturnedId);
             if (verify.exists) {
-              results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Time trigger created and verified (ID: ${verify.id}), cron: ${cron}`, id: verify.id });
+              const disabledNote = createDisabled ? ` [CREATED DISABLED — ${runtimeDetection.warning || "No Unattended runtime verified"}. Enable in Orchestrator after configuring runtimes.]` : "";
+              results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Time trigger created and verified (ID: ${verify.id}), cron: ${cron}${disabledNote}`, id: verify.id });
             } else {
               results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `API returned ${res.status} with ID ${timeReturnedId} but verification failed — trigger not found in Orchestrator. ${verify.detail || ""}. Response: ${text.slice(0, 300)}` });
             }
@@ -1516,6 +1618,16 @@ export async function deployAllArtifacts(
     const envResults = await provisionEnvironments(base, hdrs, artifacts.environments);
     allResults.push(...envResults);
 
+    const runtimeCheck = await detectAvailableRuntimeType(base, hdrs);
+    if (runtimeCheck.warning && (artifacts.triggers?.length || 0) > 0) {
+      allResults.push({
+        artifact: "Runtime Check",
+        name: "Unattended Runtime",
+        status: runtimeCheck.verified && runtimeCheck.hasUnattendedSlots ? "exists" : "failed",
+        message: runtimeCheck.warning || (runtimeCheck.verified ? `Runtime type "${runtimeCheck.runtimeType}" verified` : "No runtimes detected"),
+      });
+    }
+
     const triggerResults = await provisionTriggers(base, hdrs, artifacts.triggers, releaseId, releaseKey, releaseName, queueResults);
     allResults.push(...triggerResults);
 
@@ -1550,8 +1662,24 @@ export function formatDeploymentReport(results: DeploymentResult[]): string {
 
   const lines: string[] = ["\n---\n**Orchestrator Deployment Report**\n"];
 
+  const runtimeChecks = results.filter(r => r.artifact === "Runtime Check");
+  const deployResults = results.filter(r => r.artifact !== "Runtime Check");
+
+  if (runtimeChecks.length > 0) {
+    for (const rc of runtimeChecks) {
+      if (rc.status === "failed") {
+        lines.push(`⚠️ **Runtime Configuration Issue:** ${rc.message}`);
+        lines.push(`> Triggers have been created in a DISABLED state to prevent Orchestrator errors. To fix:`);
+        lines.push(`> 1. Go to Orchestrator > your folder > Machine Templates`);
+        lines.push(`> 2. Assign an Unattended runtime to a machine template`);
+        lines.push(`> 3. Enable the triggers in Orchestrator > Triggers`);
+        lines.push("");
+      }
+    }
+  }
+
   const grouped: Record<string, DeploymentResult[]> = {};
-  for (const r of results) {
+  for (const r of deployResults) {
     if (!grouped[r.artifact]) grouped[r.artifact] = [];
     grouped[r.artifact].push(r);
   }
@@ -1574,9 +1702,10 @@ export function formatDeploymentReport(results: DeploymentResult[]): string {
     lines.push("");
   }
 
-  const created = results.filter(r => r.status === "created").length;
-  const failed = results.filter(r => r.status === "failed").length;
-  const skipped = results.filter(r => r.status === "skipped").length;
+  const created = deployResults.filter(r => r.status === "created").length;
+  const failed = deployResults.filter(r => r.status === "failed").length;
+  const skipped = deployResults.filter(r => r.status === "skipped").length;
+  const hasRuntimeIssue = runtimeChecks.some(r => r.status === "failed");
 
   if (failed > 0) {
     lines.push(`**${failed} item(s) failed** — check permissions and retry from Orchestrator.`);
@@ -1584,9 +1713,12 @@ export function formatDeploymentReport(results: DeploymentResult[]): string {
   if (skipped > 0) {
     lines.push(`**${skipped} item(s) skipped** — these services are not available on your tenant or require manual setup.`);
   }
-  if (created > 0 && failed === 0 && skipped === 0) {
+  if (hasRuntimeIssue) {
+    lines.push("**Action Required:** Configure an Unattended runtime in your Orchestrator folder before enabling triggers.");
+  }
+  if (created > 0 && failed === 0 && skipped === 0 && !hasRuntimeIssue) {
     lines.push("All artifacts provisioned successfully. The automation is fully deployed.");
-  } else if (created > 0 && failed === 0 && skipped > 0) {
+  } else if (created > 0 && failed === 0 && skipped > 0 && !hasRuntimeIssue) {
     lines.push("Core artifacts provisioned successfully. Skipped items require manual setup or are not available on your tenant.");
   }
 
