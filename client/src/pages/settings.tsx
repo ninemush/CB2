@@ -868,14 +868,31 @@ function IntegrationsTab() {
     }
   }, [config]);
 
+  const [autoDetectResult, setAutoDetectResult] = useState<{
+    status: "synced" | "auth_failed" | "not_configured" | "no_scopes_found";
+    detectedScopes: string[];
+    previousScopes: string[];
+    message: string;
+  } | null>(null);
+  const [autoDetecting, setAutoDetecting] = useState(false);
+
   useEffect(() => {
-    if (step === 3 && config?.configured && !scopeProbe && !scopeProbeLoading) {
-      setScopeProbeLoading(true);
-      fetch("/api/settings/uipath/probe-scopes", { credentials: "include" })
+    if (step === 3 && config?.configured && !scopeProbe && !scopeProbeLoading && !autoDetecting && !autoDetectResult) {
+      setAutoDetecting(true);
+      fetch("/api/settings/uipath/auto-detect-scopes", { method: "POST", credentials: "include" })
         .then(r => r.json())
-        .then(data => setScopeProbe(data))
+        .then((data: any) => {
+          setAutoDetectResult(data);
+          if (data.status === "synced" && data.detectedScopes.length > 0) {
+            setSelectedScopes(new Set(data.detectedScopes));
+          }
+          setScopeProbeLoading(true);
+          return fetch("/api/settings/uipath/probe-scopes", { credentials: "include" });
+        })
+        .then(r => r?.json())
+        .then(data => { if (data) setScopeProbe(data); })
         .catch(() => {})
-        .finally(() => setScopeProbeLoading(false));
+        .finally(() => { setAutoDetecting(false); setScopeProbeLoading(false); });
     }
   }, [step, config?.configured]);
 
@@ -943,6 +960,7 @@ function IntegrationsTab() {
       queryClient.invalidateQueries({ queryKey: ["/api/settings/uipath"] });
       setClientSecret("");
       setScopeProbe(null);
+      setAutoDetectResult(null);
       if (data.testResult) {
         setTestResultMsg(data.testResult);
         if (data.testResult.success) {
@@ -1175,9 +1193,9 @@ function IntegrationsTab() {
         {step === 2 && (
           <div className="space-y-4" data-testid="wizard-panel-scopes">
             <div className="p-3 rounded-md bg-muted/50 border border-border text-xs text-muted-foreground space-y-1">
-              <p className="font-medium text-foreground text-sm">Step 3: Select Scopes</p>
-              <p>Choose the permissions your app needs. These must match the scopes you granted when creating the External Application in UiPath Cloud.</p>
-              <p className="text-[#e8450a]">Tip: Paste your scope list from UiPath below to auto-select matching scopes.</p>
+              <p className="font-medium text-foreground text-sm">Step 3: Scopes (Optional)</p>
+              <p>Scopes are <strong className="text-foreground">auto-detected</strong> at Step 4 using your UiPath credentials. You can skip this step.</p>
+              <p className="text-muted-foreground">If auto-detection fails, you can manually select scopes here or paste them from UiPath below.</p>
             </div>
             {errors.scopes && <p className="text-xs text-destructive" data-testid="error-scopes">{errors.scopes}</p>}
 
@@ -1364,10 +1382,32 @@ function IntegrationsTab() {
                 </div>
               </div>
 
-              {scopeProbeLoading && (
+              {(autoDetecting || scopeProbeLoading) && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground p-2 rounded border border-border bg-muted/30" data-testid="scope-probe-loading">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  Checking scope sync with UiPath Cloud...
+                  {autoDetecting ? "Auto-detecting scopes from UiPath Cloud..." : "Verifying scope sync..."}
+                </div>
+              )}
+
+              {autoDetectResult && autoDetectResult.status === "synced" && (
+                <div className="flex items-start gap-2 text-xs text-green-400 p-2 rounded border border-green-600/30 bg-green-500/10" data-testid="scope-autodetect-synced">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium">Scopes auto-detected and synced</p>
+                    <p className="text-green-400/80">{autoDetectResult.detectedScopes.length} scopes loaded from UiPath Cloud automatically.</p>
+                  </div>
+                </div>
+              )}
+
+              {autoDetectResult && autoDetectResult.status === "auth_failed" && !scopeProbe && (
+                <div className="p-3 rounded-md border border-destructive/30 bg-destructive/10 text-destructive text-xs space-y-2" data-testid="scope-autodetect-failed">
+                  <div className="flex items-start gap-2">
+                    <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="font-medium">Scope auto-detection failed</p>
+                      <p>{autoDetectResult.message}</p>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1385,26 +1425,10 @@ function IntegrationsTab() {
                     <div className="space-y-1">
                       <p className="font-medium">Scope mismatch detected</p>
                       <p>{scopeProbe.message}</p>
-                      {scopeProbe.missingInApp.length > 0 && (
-                        <div>
-                          <span className="text-muted-foreground">New in UiPath (not in app): </span>
-                          {scopeProbe.missingInApp.map(s => (
-                            <span key={s} className="inline-block px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-mono mr-1 mb-1">{s}</span>
-                          ))}
-                        </div>
-                      )}
-                      {scopeProbe.extraInApp.length > 0 && (
-                        <div>
-                          <span className="text-muted-foreground">In app but not in UiPath: </span>
-                          {scopeProbe.extraInApp.map(s => (
-                            <span key={s} className="inline-block px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 text-[10px] font-mono mr-1 mb-1">{s}</span>
-                          ))}
-                        </div>
-                      )}
                     </div>
                   </div>
                   <button
-                    onClick={() => { setErrors({}); setScopeProbe(null); setStep(2); }}
+                    onClick={() => { setErrors({}); setScopeProbe(null); setAutoDetectResult(null); setStep(2); }}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#e8450a] text-white text-xs font-medium hover:bg-[#e8450a]/90 transition-colors"
                     data-testid="button-fix-scopes-mismatch"
                   >
@@ -1424,7 +1448,7 @@ function IntegrationsTab() {
                     </div>
                   </div>
                   <button
-                    onClick={() => { setErrors({}); setScopeProbe(null); setStep(2); }}
+                    onClick={() => { setErrors({}); setScopeProbe(null); setAutoDetectResult(null); setStep(2); }}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#e8450a] text-white text-xs font-medium hover:bg-[#e8450a]/90 transition-colors"
                     data-testid="button-fix-scopes-auth-failed"
                   >

@@ -1197,6 +1197,88 @@ export async function probeUiPathScopes(): Promise<{
   }
 }
 
+function decodeJwtScopes(token: string): string[] {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return [];
+    const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf-8"));
+    const scopeVal = payload.scope || payload.scp;
+    if (!scopeVal) return [];
+    return Array.isArray(scopeVal) ? scopeVal : scopeVal.split(/\s+/).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export async function autoDetectUiPathScopes(): Promise<{
+  status: "synced" | "auth_failed" | "not_configured" | "no_scopes_found";
+  detectedScopes: string[];
+  previousScopes: string[];
+  message: string;
+}> {
+  const config = await getUiPathConfig();
+  if (!config) {
+    return { status: "not_configured", detectedScopes: [], previousScopes: [], message: "UiPath is not configured." };
+  }
+
+  const previousScopes = config.scopes.split(/\s+/).filter(Boolean);
+
+  const discoveryScopes = ["OR.Administration", "OR.Default"];
+  let token: string | null = null;
+  let usedScope = "";
+
+  for (const tryScope of discoveryScopes) {
+    try {
+      const params = new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        scope: tryScope,
+      });
+      const res = await fetch("https://cloud.uipath.com/identity_/connect/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        token = data.access_token;
+        usedScope = tryScope;
+        break;
+      }
+    } catch {}
+  }
+
+  if (!token) {
+    return {
+      status: "auth_failed",
+      detectedScopes: [],
+      previousScopes,
+      message: "Could not authenticate with UiPath using discovery scopes. Verify your App ID and Secret are correct.",
+    };
+  }
+
+  const detectedScopes = decodeJwtScopes(token);
+  if (detectedScopes.length === 0) {
+    return {
+      status: "no_scopes_found",
+      detectedScopes: [],
+      previousScopes,
+      message: `Authenticated with ${usedScope} but could not extract scopes from the JWT token.`,
+    };
+  }
+
+  const scopeString = detectedScopes.join(" ");
+  await upsertSetting("uipath_scopes", scopeString);
+
+  return {
+    status: "synced",
+    detectedScopes,
+    previousScopes,
+    message: `Auto-detected and saved ${detectedScopes.length} scopes from UiPath.`,
+  };
+}
+
 export async function verifyUiPathScopes(): Promise<{ success: boolean; requestedScopes: string[]; grantedScopes: string[]; message: string; services?: Record<string, { available: boolean; message: string }> }> {
   const config = await getUiPathConfig();
   if (!config) {
