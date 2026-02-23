@@ -47,8 +47,12 @@ The application employs a modern web stack:
 - Steps without FROM fall back to sequential connection
 
 ## Recent Changes
+- 2026-02-23: Zero-manual deployment: removed manual_required status entirely — all artifact provisioning now uses aggressive multi-path retry logic (DU API + AI Fabric API, multiple Test Manager URLs, cloud Action Center paths) and reports only created/exists/failed
+- 2026-02-23: SDD inline viewer: SDD view in process map panel now shows actual Solution Design Document content with collapsible sections, markdown rendering, version badge, and approval status instead of duplicate process map
+- 2026-02-23: SDD empty state: clear guided prompt when no SDD exists showing the progression path (Approve To-Be Map → Approve PDD → SDD Generated)
+- 2026-02-23: Deployment report card cleanup: removed manual_required styling, only shows created/exists/failed statuses with updated counts and messaging
 - 2026-02-23: Deployment report card UI: structured collapsible card component replacing raw markdown dump, grouped by artifact type with status icons and summary counts
-- 2026-02-23: Deployment error handling: StartStrategy fallback chain (15→0→{Type:0}), 405 graceful fallback across all artifact provisioning (triggers, environments, storage buckets, action center), cleaner manual-required messages
+- 2026-02-23: Deployment error handling: StartStrategy fallback chain (15→0→{Type:0}), 405 graceful fallback across all artifact provisioning (triggers, environments, storage buckets, action center)
 - 2026-02-23: Message queue system: users can type and queue messages while AI processes, queued messages shown with cancel buttons, auto-sends next message when streaming AND doc generation complete
 - 2026-02-23: Fullscreen process map mode: maximize/minimize button in toolbar, fixed overlay at z-50, Escape key to exit, preserves all editing tools
 - 2026-02-23: Three-way view toggle: SDD view added to process map panel alongside As-Is/To-Be, distinct orange styling, auto-copy from To-Be, full backend support with process-map-routes
