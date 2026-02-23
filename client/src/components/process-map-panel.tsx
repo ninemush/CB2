@@ -245,59 +245,92 @@ function filterNodesForLevel(
 
   const phaseGroups = detectPhaseGroups(allNodes, allEdges);
 
+  const adjacency: Record<number, { target: number; edgeLabel: string }[]> = {};
+  allEdges.forEach(e => {
+    if (!adjacency[e.sourceNodeId]) adjacency[e.sourceNodeId] = [];
+    adjacency[e.sourceNodeId].push({ target: e.targetNodeId, edgeLabel: e.label });
+  });
+
   if (level === "L0") {
-    const startEnd = allNodes.filter(n => n.nodeType === "start" || n.nodeType === "end");
-    const syntheticNodes: ProcessMapData["nodes"] = [...startEnd];
-    const syntheticEdges: ProcessMapData["edges"] = [];
-
     let syntheticId = -1;
-    const phaseNodeIds: number[] = [];
+    let edgeId = -1;
 
-    phaseGroups.forEach((group) => {
-      const actionableInGroup = group.nodes.filter(n => n.nodeType !== "start" && n.nodeType !== "end");
-      if (actionableInGroup.length === 0) return;
+    const nodeById: Record<number, ProcessMapData["nodes"][0]> = {};
+    allNodes.forEach(n => { nodeById[n.id] = n; });
+    const phaseGroupForNode: Record<number, number> = {};
+    phaseGroups.forEach((group, gi) => {
+      group.nodes.forEach(n => {
+        if (n.nodeType !== "start" && n.nodeType !== "end" && n.nodeType !== "decision") {
+          phaseGroupForNode[n.id] = gi;
+        }
+      });
+    });
+
+    const phaseSyntheticNodes: ProcessMapData["nodes"] = [];
+    const phaseSyntheticIdMap: Record<number, number> = {};
+    phaseGroups.forEach((group, gi) => {
+      const actionable = group.nodes.filter(n => n.nodeType !== "start" && n.nodeType !== "end" && n.nodeType !== "decision");
+      if (actionable.length === 0) return;
       const phaseNode = {
-        ...actionableInGroup[0],
+        ...actionable[0],
         id: syntheticId,
         name: group.name,
         nodeType: "task" as const,
-        description: `${actionableInGroup.length} steps`,
+        description: `${actionable.length} steps`,
         role: "",
         system: "",
         positionX: 0,
         positionY: 0,
       };
-      syntheticNodes.push(phaseNode);
-      phaseNodeIds.push(syntheticId);
+      phaseSyntheticNodes.push(phaseNode);
+      phaseSyntheticIdMap[gi] = syntheticId;
       syntheticId--;
     });
 
-    const startNode = startEnd.find(n => n.nodeType === "start");
-    const endNode = startEnd.find(n => n.nodeType === "end");
-    let edgeId = -1;
+    const l0Ids = new Set<number>();
+    allNodes.forEach(n => {
+      if (n.nodeType === "start" || n.nodeType === "end" || n.nodeType === "decision") l0Ids.add(n.id);
+    });
+    phaseSyntheticNodes.forEach(n => l0Ids.add(n.id));
 
-    if (startNode && phaseNodeIds.length > 0) {
-      syntheticEdges.push({
-        id: edgeId--, ideaId: allEdges[0]?.ideaId || "", viewType: allEdges[0]?.viewType || "as-is",
-        sourceNodeId: startNode.id, targetNodeId: phaseNodeIds[0], label: "", createdAt: new Date().toISOString(),
-      });
-    }
+    const mapRealToL0 = (realId: number): number | null => {
+      const node = nodeById[realId];
+      if (!node) return null;
+      if (node.nodeType === "start" || node.nodeType === "end" || node.nodeType === "decision") return realId;
+      const gi = phaseGroupForNode[realId];
+      if (gi !== undefined && phaseSyntheticIdMap[gi] !== undefined) return phaseSyntheticIdMap[gi];
+      return null;
+    };
 
-    for (let i = 0; i < phaseNodeIds.length - 1; i++) {
-      syntheticEdges.push({
-        id: edgeId--, ideaId: allEdges[0]?.ideaId || "", viewType: allEdges[0]?.viewType || "as-is",
-        sourceNodeId: phaseNodeIds[i], targetNodeId: phaseNodeIds[i + 1], label: "", createdAt: new Date().toISOString(),
-      });
-    }
+    const l0Edges: ProcessMapData["edges"] = [];
+    const seenL0Pairs = new Set<string>();
 
-    if (endNode && phaseNodeIds.length > 0) {
-      syntheticEdges.push({
-        id: edgeId--, ideaId: allEdges[0]?.ideaId || "", viewType: allEdges[0]?.viewType || "as-is",
-        sourceNodeId: phaseNodeIds[phaseNodeIds.length - 1], targetNodeId: endNode.id, label: "", createdAt: new Date().toISOString(),
-      });
-    }
+    allEdges.forEach(e => {
+      const src = mapRealToL0(e.sourceNodeId);
+      const tgt = mapRealToL0(e.targetNodeId);
+      if (src !== null && tgt !== null && src !== tgt) {
+        const key = `${src}->${tgt}`;
+        if (!seenL0Pairs.has(key)) {
+          seenL0Pairs.add(key);
+          l0Edges.push({
+            id: edgeId--,
+            ideaId: e.ideaId,
+            viewType: e.viewType,
+            sourceNodeId: src,
+            targetNodeId: tgt,
+            label: e.label,
+            createdAt: new Date().toISOString(),
+          });
+        }
+      }
+    });
 
-    return { nodes: syntheticNodes, edges: syntheticEdges };
+    const resultNodes: ProcessMapData["nodes"] = [
+      ...allNodes.filter(n => n.nodeType === "start" || n.nodeType === "end" || n.nodeType === "decision"),
+      ...phaseSyntheticNodes,
+    ];
+
+    return { nodes: resultNodes, edges: l0Edges };
   }
 
   const keepIds = new Set<number>();
@@ -317,19 +350,13 @@ function filterNodesForLevel(
 
   const filteredNodes = allNodes.filter(n => keepIds.has(n.id));
 
-  const adjacency: Record<number, { target: number; edgeLabel: string }[]> = {};
-  allEdges.forEach(e => {
-    if (!adjacency[e.sourceNodeId]) adjacency[e.sourceNodeId] = [];
-    adjacency[e.sourceNodeId].push({ target: e.targetNodeId, edgeLabel: e.label });
-  });
-
   const bridgeEdges: ProcessMapData["edges"] = [];
   let bridgeEdgeId = -1;
+  const seenEdgePairs = new Set<string>();
 
   keepIds.forEach(sourceId => {
     const visited = new Set<number>();
-    const queue = adjacency[sourceId] || [];
-    const toVisit = [...queue];
+    const toVisit = [...(adjacency[sourceId] || [])];
 
     while (toVisit.length > 0) {
       const { target, edgeLabel } = toVisit.shift()!;
@@ -337,10 +364,19 @@ function filterNodesForLevel(
       visited.add(target);
 
       if (keepIds.has(target)) {
-        bridgeEdges.push({
-          id: bridgeEdgeId--, ideaId: allEdges[0]?.ideaId || "", viewType: allEdges[0]?.viewType || "as-is",
-          sourceNodeId: sourceId, targetNodeId: target, label: edgeLabel, createdAt: new Date().toISOString(),
-        });
+        const pairKey = `${sourceId}->${target}`;
+        if (!seenEdgePairs.has(pairKey)) {
+          seenEdgePairs.add(pairKey);
+          bridgeEdges.push({
+            id: bridgeEdgeId--,
+            ideaId: allEdges[0]?.ideaId || "",
+            viewType: allEdges[0]?.viewType || "as-is",
+            sourceNodeId: sourceId,
+            targetNodeId: target,
+            label: edgeLabel,
+            createdAt: new Date().toISOString(),
+          });
+        }
       } else {
         const nextEdges = adjacency[target] || [];
         nextEdges.forEach(ne => {
@@ -377,8 +413,8 @@ function applyDagreLayout(
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({
     rankdir: direction,
-    nodesep: 100,
-    ranksep: 120,
+    nodesep: 120,
+    ranksep: 150,
     edgesep: 40,
     marginx: 60,
     marginy: 60,
@@ -947,6 +983,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
   const [parentNodeIdForChild, setParentNodeIdForChild] = useState<number | null>(null);
   const [reconnectingEdge, setReconnectingEdge] = useState(false);
   const hasInitialFitRef = useRef(false);
+  const prevDetailLevelRef = useRef<string>(detailLevel);
   const dataVersionRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const skipNextHistoryRef = useRef(false);
@@ -1048,10 +1085,6 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
     if (!mapData) return;
     const { nodes: dbNodes, edges: dbEdges } = filterNodesForLevel(mapData.nodes, mapData.edges, detailLevel);
 
-    const savedCount = dbNodes.filter((n) => n.positionX !== 0 || n.positionY !== 0).length;
-    const hasSavedPositions = savedCount > 0;
-    const allHaveSavedPositions = savedCount === dbNodes.length;
-
     const rawNodes: Node[] = dbNodes.map((n) => ({
       id: String(n.id),
       type: "processNode",
@@ -1085,58 +1118,45 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
     }));
 
     let layoutNodes: Node[];
+    const levelChanged = prevDetailLevelRef.current !== detailLevel;
+    prevDetailLevelRef.current = detailLevel;
 
-    if (allHaveSavedPositions) {
-      layoutNodes = rawNodes;
-    } else if (!hasSavedPositions) {
+    const forceLayout = levelChanged;
+
+    if (detailLevel !== "L2" || forceLayout) {
       if (rawEdges.length > 0) {
         layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB");
+        if (detailLevel === "L2") {
+          layoutNodes.forEach((n) => {
+            const d = n.data as any;
+            if (d.dbId && d.dbId > 0) {
+              updateNodeMutation.mutate({ id: d.dbId, data: { positionX: n.position.x, positionY: n.position.y } });
+            }
+          });
+        }
       } else if (rawNodes.length > 0) {
-        layoutNodes = rawNodes.map((node, i) => ({
-          ...node,
-          position: getNodePosition(i, rawNodes.length),
-        }));
+        layoutNodes = rawNodes.map((node, i) => ({ ...node, position: getNodePosition(i, rawNodes.length) }));
       } else {
         layoutNodes = rawNodes;
       }
-      layoutNodes.forEach((n) => {
-        const d = n.data as any;
-        if (d.dbId && d.dbId > 0) {
-          updateNodeMutation.mutate({ id: d.dbId, data: { positionX: n.position.x, positionY: n.position.y } });
-        }
-      });
     } else {
-      if (rawEdges.length > 0) {
-        const unsavedNodes = rawNodes.filter((n) => n.position.x === 0 && n.position.y === 0);
-        if (unsavedNodes.length > 0) {
-          const layoutAll = applyDagreLayout(rawNodes, rawEdges, "TB");
-          layoutNodes = rawNodes.map((n) => {
-            if (n.position.x === 0 && n.position.y === 0) {
-              const laid = layoutAll.find((l) => l.id === n.id);
-              const pos = laid ? laid.position : { x: 0, y: 0 };
-              const d = n.data as any;
-              if (d.dbId && d.dbId > 0) {
-                updateNodeMutation.mutate({ id: d.dbId, data: { positionX: pos.x, positionY: pos.y } });
-              }
-              return { ...n, position: pos };
-            }
-            return n;
-          });
-        } else {
-          layoutNodes = rawNodes;
-        }
-      } else {
-        layoutNodes = rawNodes.map((node, i) => {
-          if (node.position.x === 0 && node.position.y === 0) {
-            const pos = getNodePosition(i, rawNodes.length);
-            const d = node.data as any;
-            if (d.dbId && d.dbId > 0) {
-              updateNodeMutation.mutate({ id: d.dbId, data: { positionX: pos.x, positionY: pos.y } });
-            }
-            return { ...node, position: pos };
+      const savedCount = dbNodes.filter((n) => n.positionX !== 0 || n.positionY !== 0).length;
+      const allHaveSavedPositions = savedCount === dbNodes.length;
+
+      if (allHaveSavedPositions) {
+        layoutNodes = rawNodes;
+      } else if (rawEdges.length > 0) {
+        layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB");
+        layoutNodes.forEach((n) => {
+          const d = n.data as any;
+          if (d.dbId && d.dbId > 0) {
+            updateNodeMutation.mutate({ id: d.dbId, data: { positionX: n.position.x, positionY: n.position.y } });
           }
-          return node;
         });
+      } else if (rawNodes.length > 0) {
+        layoutNodes = rawNodes.map((node, i) => ({ ...node, position: getNodePosition(i, rawNodes.length) }));
+      } else {
+        layoutNodes = rawNodes;
       }
     }
 
@@ -1144,7 +1164,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
     setEdges(rawEdges);
     dataVersionRef.current += 1;
 
-    if (!hasInitialFitRef.current && layoutNodes.length > 0) {
+    if (levelChanged || (!hasInitialFitRef.current && layoutNodes.length > 0)) {
       hasInitialFitRef.current = true;
       setTimeout(() => fitView({ padding: 0.3, duration: 400, maxZoom: 1.2 }), 150);
     }
@@ -2014,7 +2034,7 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
               </Button>
             </>
           )}
-          {activeView !== "sdd" && nodeCount > 5 && (
+          {activeView !== "sdd" && nodeCount > 3 && (
             <div className="flex items-center rounded-lg bg-zinc-900 border border-zinc-800 p-0.5" data-testid="level-selector">
               <button
                 onClick={() => setDetailLevel("L0")}
@@ -2078,7 +2098,7 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
                   <span className="ml-1 text-[9px] font-bold">{completenessIssues.length}</span>
                 )}
               </Button>
-              {nodeCount > 5 && (
+              {nodeCount > 3 && (
                 <Button
                   size="sm"
                   variant="ghost"
