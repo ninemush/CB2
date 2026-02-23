@@ -1094,9 +1094,15 @@ function ChatPanel({ idea }: { idea: Idea }) {
 }
 
 
-function ExportDropdown({ ideaId, ideaTitle }: { ideaId: string; ideaTitle: string }) {
+function ExportDialog({ ideaId, ideaTitle }: { ideaId: string; ideaTitle: string }) {
   const [open, setOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [selected, setSelected] = useState<Record<string, boolean>>({
+    "as-is": true,
+    "to-be": true,
+    pdd: true,
+    sdd: true,
+  });
   const ref = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -1108,37 +1114,40 @@ function ExportDropdown({ ideaId, ideaTitle }: { ideaId: string; ideaTitle: stri
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [open]);
 
-  async function doExport(types: string[]) {
+  const toggle = (key: string) => setSelected((prev) => ({ ...prev, [key]: !prev[key] }));
+  const selectedTypes = Object.entries(selected).filter(([, v]) => v).map(([k]) => k);
+  const allSelected = selectedTypes.length === 4;
+  const noneSelected = selectedTypes.length === 0;
+
+  async function doExport() {
+    if (noneSelected) return;
     setExporting(true);
     setOpen(false);
     try {
-      const query = types.length ? `?types=${types.join(",")}` : "";
+      const query = `?types=${selectedTypes.join(",")}`;
       const resp = await fetch(`/api/ideas/${ideaId}/export${query}`, { credentials: "include" });
       if (!resp.ok) throw new Error("Export failed");
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${ideaTitle.replace(/[^a-zA-Z0-9_-]/g, "_")}_export.md`;
+      a.download = `${ideaTitle.replace(/[^a-zA-Z0-9_-]/g, "_")}_export.docx`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast({ title: "Export downloaded" });
+      toast({ title: "Word document downloaded" });
     } catch {
       toast({ title: "Export failed", variant: "destructive" });
     }
     setExporting(false);
   }
 
-  const options = [
-    { label: "All Documents", types: [] as string[] },
-    { label: "As-Is Map", types: ["as-is"] },
-    { label: "To-Be Map", types: ["to-be"] },
-    { label: "PDD", types: ["pdd"] },
-    { label: "SDD", types: ["sdd"] },
-    { label: "Maps + PDD", types: ["as-is", "to-be", "pdd"] },
-    { label: "Full Package (All)", types: ["as-is", "to-be", "pdd", "sdd"] },
+  const items = [
+    { key: "as-is", label: "As-Is Process Map" },
+    { key: "to-be", label: "To-Be Process Map" },
+    { key: "pdd", label: "Process Design Document (PDD)" },
+    { key: "sdd", label: "Solution Design Document (SDD)" },
   ];
 
   return (
@@ -1154,20 +1163,58 @@ function ExportDropdown({ ideaId, ideaTitle }: { ideaId: string; ideaTitle: stri
         {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
       </Button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[180px]" data-testid="export-dropdown-menu">
-          <div className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-            Export Documents
-          </div>
-          {options.map((opt) => (
+        <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-lg shadow-xl py-2 w-[260px]" data-testid="export-dialog">
+          <div className="px-3 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+            <span>Export to Word</span>
             <button
-              key={opt.label}
-              className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-accent/50 transition-colors"
-              onClick={() => doExport(opt.types)}
-              data-testid={`export-option-${opt.label.toLowerCase().replace(/\s+/g, "-")}`}
+              className="text-[10px] text-primary hover:underline font-normal normal-case tracking-normal"
+              onClick={() => {
+                const newVal = !allSelected;
+                setSelected({ "as-is": newVal, "to-be": newVal, pdd: newVal, sdd: newVal });
+              }}
+              data-testid="button-toggle-all-export"
             >
-              {opt.label}
+              {allSelected ? "Deselect all" : "Select all"}
             </button>
-          ))}
+          </div>
+          <div className="px-1 py-1 space-y-0.5">
+            {items.map((item) => (
+              <label
+                key={item.key}
+                className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-accent/50 cursor-pointer transition-colors"
+                data-testid={`export-check-${item.key}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={!!selected[item.key]}
+                  onChange={() => toggle(item.key)}
+                  className="h-3.5 w-3.5 rounded border-border accent-primary"
+                />
+                <span className="text-xs text-foreground">{item.label}</span>
+              </label>
+            ))}
+          </div>
+          <div className="px-3 pt-2 pb-1 border-t border-border/50 mt-1">
+            <Button
+              size="sm"
+              className="w-full h-7 text-xs"
+              onClick={doExport}
+              disabled={noneSelected || exporting}
+              data-testid="button-download-export"
+            >
+              {exporting ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Download className="mr-1.5 h-3 w-3" />
+                  Download .docx
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       )}
     </div>
@@ -1375,7 +1422,7 @@ export default function Workspace() {
               </>
             )}
           </div>
-          <ExportDropdown ideaId={idea.id} ideaTitle={idea.title} />
+          <ExportDialog ideaId={idea.id} ideaTitle={idea.title} />
         </div>
       </div>
 

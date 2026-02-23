@@ -5,6 +5,11 @@ import { processMapStorage } from "./process-map-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
 import { z } from "zod";
+import {
+  Document, Packer, Paragraph, TextRun, HeadingLevel,
+  Table, TableRow, TableCell, WidthType, BorderStyle,
+  AlignmentType, ShadingType,
+} from "docx";
 
 const anthropic = new Anthropic({
   apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
@@ -775,12 +780,29 @@ ${content}`
     try {
       const idea = await storage.getIdea(ideaId);
       const ideaTitle = idea?.title || "Untitled Idea";
-      const sections: string[] = [];
+      const docChildren: (Paragraph | Table)[] = [];
 
-      sections.push(`# Document Export: ${ideaTitle}`);
-      sections.push(`**Exported:** ${new Date().toISOString()}`);
-      sections.push(`**Idea ID:** ${ideaId}`);
-      sections.push("");
+      const ORANGE = "E8450A";
+
+      docChildren.push(new Paragraph({
+        heading: HeadingLevel.TITLE,
+        children: [new TextRun({ text: `Document Export: ${ideaTitle}`, bold: true, size: 48, color: ORANGE })],
+        spacing: { after: 200 },
+      }));
+      docChildren.push(new Paragraph({
+        children: [
+          new TextRun({ text: "Exported: ", bold: true, size: 20, color: "999999" }),
+          new TextRun({ text: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }), size: 20, color: "999999" }),
+        ],
+        spacing: { after: 100 },
+      }));
+      docChildren.push(new Paragraph({
+        children: [
+          new TextRun({ text: "Idea ID: ", bold: true, size: 20, color: "999999" }),
+          new TextRun({ text: ideaId, size: 20, color: "999999", font: "Courier New" }),
+        ],
+        spacing: { after: 400 },
+      }));
 
       for (const t of requestedTypes) {
         const typeLower = t.toLowerCase();
@@ -788,99 +810,264 @@ ${content}`
         if (typeLower === "as-is" || typeLower === "to-be") {
           const viewType = typeLower;
           const label = typeLower === "as-is" ? "As-Is Process Map" : "To-Be Process Map";
-          sections.push(`---\n\n## ${label}\n`);
+
+          docChildren.push(new Paragraph({
+            heading: HeadingLevel.HEADING_1,
+            children: [new TextRun({ text: label, bold: true, size: 32, color: ORANGE })],
+            spacing: { before: 400, after: 200 },
+            border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: ORANGE } },
+          }));
 
           const nodes = await processMapStorage.getNodesByIdeaId(ideaId, viewType);
           const edges = await processMapStorage.getEdgesByIdeaId(ideaId, viewType);
 
           if (!nodes.length) {
-            sections.push(`*No ${label.toLowerCase()} data available.*\n`);
+            docChildren.push(new Paragraph({
+              children: [new TextRun({ text: `No ${label.toLowerCase()} data available.`, italics: true, color: "888888" })],
+              spacing: { after: 200 },
+            }));
             continue;
           }
 
-          sections.push(`**Steps (${nodes.length}):**\n`);
-          const sortedNodes = [...nodes].sort((a, b) => {
-            return (a.positionY || 0) - (b.positionY || 0) || (a.positionX || 0) - (b.positionX || 0);
-          });
+          docChildren.push(new Paragraph({
+            heading: HeadingLevel.HEADING_2,
+            children: [new TextRun({ text: `Process Steps (${nodes.length})`, bold: true, size: 26 })],
+            spacing: { before: 200, after: 100 },
+          }));
+
+          const sortedNodes = [...nodes].sort((a, b) =>
+            (a.positionY || 0) - (b.positionY || 0) || (a.positionX || 0) - (b.positionX || 0)
+          );
+
+          const tableRows: TableRow[] = [
+            new TableRow({
+              tableHeader: true,
+              children: ["Step", "Type", "Role", "System"].map(h =>
+                new TableCell({
+                  width: { size: h === "Step" ? 40 : 20, type: WidthType.PERCENTAGE },
+                  shading: { type: ShadingType.SOLID, fill: ORANGE, color: "FFFFFF" },
+                  children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, color: "FFFFFF", size: 20 })], alignment: AlignmentType.LEFT })],
+                })
+              ),
+            }),
+          ];
           for (const node of sortedNodes) {
-            const nodeType = node.nodeType || "task";
-            const typeTag = nodeType !== "task" ? ` [${nodeType.toUpperCase()}]` : "";
-            sections.push(`- **${node.name || "Unnamed Step"}**${typeTag}`);
-            if (node.role) sections.push(`  - Role: ${node.role}`);
-            if (node.system) sections.push(`  - System: ${node.system}`);
+            tableRows.push(new TableRow({
+              children: [
+                new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: node.name || "Unnamed Step", bold: true, size: 20 })]})] }),
+                new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: (node.nodeType || "task").toUpperCase(), size: 18, color: "666666" })]})] }),
+                new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: node.role || "—", size: 20 })]})] }),
+                new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: node.system || "—", size: 20 })]})] }),
+              ],
+            }));
           }
-          sections.push("");
+          docChildren.push(new Table({ rows: tableRows, width: { size: 100, type: WidthType.PERCENTAGE } }));
+          docChildren.push(new Paragraph({ spacing: { after: 200 } }));
 
           if (edges.length) {
-            sections.push(`**Connections (${edges.length}):**\n`);
+            docChildren.push(new Paragraph({
+              heading: HeadingLevel.HEADING_2,
+              children: [new TextRun({ text: `Connections (${edges.length})`, bold: true, size: 26 })],
+              spacing: { before: 200, after: 100 },
+            }));
             for (const edge of edges) {
               const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
               const targetNode = nodes.find(n => n.id === edge.targetNodeId);
               const sourceName = sourceNode?.name || String(edge.sourceNodeId);
               const targetName = targetNode?.name || String(edge.targetNodeId);
               const edgeLabel = edge.label ? ` [${edge.label}]` : "";
-              sections.push(`- ${sourceName} → ${targetName}${edgeLabel}`);
+              docChildren.push(new Paragraph({
+                children: [
+                  new TextRun({ text: "→  ", color: ORANGE, bold: true }),
+                  new TextRun({ text: `${sourceName}  →  ${targetName}${edgeLabel}`, size: 20 }),
+                ],
+                spacing: { after: 40 },
+              }));
             }
-            sections.push("");
           }
 
           const mapApproval = await documentStorage.getApproval(ideaId, typeLower === "as-is" ? "as-is-map" : "to-be-map");
+          docChildren.push(new Paragraph({ spacing: { before: 200 } }));
           if (mapApproval) {
-            sections.push(`**Approval Status:** Approved`);
-            sections.push(`- Approved by: ${mapApproval.userName} (${mapApproval.userRole})`);
-            sections.push(`- Approved at: ${mapApproval.approvedAt ? new Date(mapApproval.approvedAt).toISOString() : "N/A"}`);
+            docChildren.push(new Paragraph({
+              children: [
+                new TextRun({ text: "✓ Approved", bold: true, color: "22C55E", size: 22 }),
+                new TextRun({ text: `  by ${mapApproval.userName} (${mapApproval.userRole})`, size: 20, color: "888888" }),
+                new TextRun({ text: mapApproval.approvedAt ? `  on ${new Date(mapApproval.approvedAt).toLocaleDateString()}` : "", size: 20, color: "888888" }),
+              ],
+              spacing: { after: 300 },
+            }));
           } else {
-            sections.push(`**Approval Status:** Not yet approved`);
+            docChildren.push(new Paragraph({
+              children: [new TextRun({ text: "○ Not yet approved", color: "888888", size: 20 })],
+              spacing: { after: 300 },
+            }));
           }
-          sections.push("");
 
         } else {
           const docType = typeLower.toUpperCase();
           const label = docType === "PDD" ? "Process Design Document" : "Solution Design Document";
-          sections.push(`---\n\n## ${label} (${docType})\n`);
+
+          docChildren.push(new Paragraph({
+            heading: HeadingLevel.HEADING_1,
+            children: [new TextRun({ text: `${label} (${docType})`, bold: true, size: 32, color: ORANGE })],
+            spacing: { before: 400, after: 200 },
+            border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: ORANGE } },
+          }));
 
           const allVersions = await documentStorage.getDocumentVersions(ideaId, docType);
           const latest = allVersions[0];
 
           if (!latest) {
-            sections.push(`*No ${docType} has been generated yet.*\n`);
+            docChildren.push(new Paragraph({
+              children: [new TextRun({ text: `No ${docType} has been generated yet.`, italics: true, color: "888888" })],
+              spacing: { after: 200 },
+            }));
             continue;
           }
 
-          sections.push(`**Current Version:** v${latest.version} | **Status:** ${latest.status}`);
-          sections.push(`**Created:** ${latest.createdAt ? new Date(latest.createdAt).toISOString() : "N/A"}\n`);
+          docChildren.push(new Paragraph({
+            children: [
+              new TextRun({ text: `Version ${latest.version}`, bold: true, size: 22 }),
+              new TextRun({ text: `  |  Status: ${latest.status}`, size: 20, color: "888888" }),
+              new TextRun({ text: `  |  Created: ${latest.createdAt ? new Date(latest.createdAt).toLocaleDateString() : "N/A"}`, size: 20, color: "888888" }),
+            ],
+            spacing: { after: 100 },
+          }));
 
           const approval = await documentStorage.getApproval(ideaId, docType);
           if (approval) {
-            sections.push(`**Approval Status:** Approved`);
-            sections.push(`- Approved by: ${approval.userName} (${approval.userRole})`);
-            sections.push(`- Approved at: ${approval.approvedAt ? new Date(approval.approvedAt).toISOString() : "N/A"}\n`);
+            docChildren.push(new Paragraph({
+              children: [
+                new TextRun({ text: "✓ Approved", bold: true, color: "22C55E", size: 22 }),
+                new TextRun({ text: `  by ${approval.userName} (${approval.userRole})`, size: 20, color: "888888" }),
+                new TextRun({ text: approval.approvedAt ? `  on ${new Date(approval.approvedAt).toLocaleDateString()}` : "", size: 20, color: "888888" }),
+              ],
+              spacing: { after: 200 },
+            }));
           } else {
-            sections.push(`**Approval Status:** Not yet approved\n`);
+            docChildren.push(new Paragraph({
+              children: [new TextRun({ text: "○ Not yet approved", color: "888888", size: 20 })],
+              spacing: { after: 200 },
+            }));
           }
 
-          sections.push(`### Document Content\n`);
-          sections.push(latest.content || "*No content*");
-          sections.push("");
+          docChildren.push(new Paragraph({
+            heading: HeadingLevel.HEADING_2,
+            children: [new TextRun({ text: "Document Content", bold: true, size: 26 })],
+            spacing: { before: 200, after: 100 },
+          }));
+
+          const content = latest.content || "No content";
+          const lines = content.split("\n");
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("## ")) {
+              docChildren.push(new Paragraph({
+                heading: HeadingLevel.HEADING_2,
+                children: [new TextRun({ text: trimmed.replace(/^##\s+/, ""), bold: true, size: 26 })],
+                spacing: { before: 200, after: 100 },
+              }));
+            } else if (trimmed.startsWith("### ")) {
+              docChildren.push(new Paragraph({
+                heading: HeadingLevel.HEADING_3,
+                children: [new TextRun({ text: trimmed.replace(/^###\s+/, ""), bold: true, size: 24 })],
+                spacing: { before: 150, after: 80 },
+              }));
+            } else if (trimmed.startsWith("# ")) {
+              docChildren.push(new Paragraph({
+                heading: HeadingLevel.HEADING_1,
+                children: [new TextRun({ text: trimmed.replace(/^#\s+/, ""), bold: true, size: 30 })],
+                spacing: { before: 250, after: 120 },
+              }));
+            } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+              const bulletText = trimmed.replace(/^[-*]\s+/, "");
+              const runs: TextRun[] = [];
+              const boldParts = bulletText.split(/(\*\*[^*]+\*\*)/);
+              for (const part of boldParts) {
+                if (part.startsWith("**") && part.endsWith("**")) {
+                  runs.push(new TextRun({ text: part.slice(2, -2), bold: true, size: 20 }));
+                } else {
+                  runs.push(new TextRun({ text: part, size: 20 }));
+                }
+              }
+              docChildren.push(new Paragraph({
+                children: runs,
+                bullet: { level: 0 },
+                spacing: { after: 40 },
+              }));
+            } else if (trimmed.startsWith("```")) {
+              continue;
+            } else if (trimmed === "") {
+              docChildren.push(new Paragraph({ spacing: { after: 80 } }));
+            } else {
+              const runs: TextRun[] = [];
+              const boldParts = trimmed.split(/(\*\*[^*]+\*\*)/);
+              for (const part of boldParts) {
+                if (part.startsWith("**") && part.endsWith("**")) {
+                  runs.push(new TextRun({ text: part.slice(2, -2), bold: true, size: 20 }));
+                } else {
+                  runs.push(new TextRun({ text: part, size: 20 }));
+                }
+              }
+              docChildren.push(new Paragraph({
+                children: runs,
+                spacing: { after: 60 },
+              }));
+            }
+          }
 
           if (allVersions.length > 1) {
-            sections.push(`### Version History\n`);
-            sections.push(`| Version | Status | Created |`);
-            sections.push(`|---------|--------|---------|`);
+            docChildren.push(new Paragraph({
+              heading: HeadingLevel.HEADING_2,
+              children: [new TextRun({ text: "Version History", bold: true, size: 26 })],
+              spacing: { before: 300, after: 100 },
+            }));
+            const versionRows: TableRow[] = [
+              new TableRow({
+                tableHeader: true,
+                children: ["Version", "Status", "Created"].map(h =>
+                  new TableCell({
+                    shading: { type: ShadingType.SOLID, fill: ORANGE, color: "FFFFFF" },
+                    children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, color: "FFFFFF", size: 20 })] })],
+                  })
+                ),
+              }),
+            ];
             for (const v of allVersions) {
-              sections.push(`| v${v.version} | ${v.status} | ${v.createdAt ? new Date(v.createdAt).toISOString() : "N/A"} |`);
+              versionRows.push(new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: `v${v.version}`, size: 20 })] })] }),
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: v.status, size: 20 })] })] }),
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: v.createdAt ? new Date(v.createdAt).toLocaleDateString() : "N/A", size: 20 })] })] }),
+                ],
+              }));
             }
-            sections.push("");
+            docChildren.push(new Table({ rows: versionRows, width: { size: 100, type: WidthType.PERCENTAGE } }));
           }
         }
       }
 
-      const markdown = sections.join("\n");
-      const filename = `${ideaTitle.replace(/[^a-zA-Z0-9_-]/g, "_")}_export_${new Date().toISOString().slice(0, 10)}.md`;
+      const doc = new Document({
+        styles: {
+          default: {
+            document: {
+              run: { font: "Calibri", size: 22 },
+            },
+          },
+        },
+        sections: [{
+          properties: {},
+          children: docChildren,
+        }],
+      });
 
-      res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+      const buffer = await Packer.toBuffer(doc);
+      const filename = `${ideaTitle.replace(/[^a-zA-Z0-9_-]/g, "_")}_export_${new Date().toISOString().slice(0, 10)}.docx`;
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-      return res.send(markdown);
+      return res.send(Buffer.from(buffer));
     } catch (err: any) {
       console.error("[Document Export] Error:", err.message);
       return res.status(500).json({ message: "Export failed" });

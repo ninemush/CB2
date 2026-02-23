@@ -562,6 +562,39 @@ async function provisionStorageBuckets(
   return results;
 }
 
+async function detectAvailableRuntimeType(base: string, hdrs: Record<string, string>): Promise<string | null> {
+  try {
+    const sessRes = await fetch(`${base}/odata/Sessions?$top=5&$select=RuntimeType`, { headers: hdrs });
+    if (sessRes.ok) {
+      const sessData = await sessRes.json();
+      if (sessData.value?.length > 0) {
+        const types = sessData.value.map((s: any) => s.RuntimeType).filter(Boolean);
+        if (types.includes("Unattended")) return "Unattended";
+        if (types.includes("Production")) return "Production";
+        if (types.includes("NonProduction")) return "NonProduction";
+        if (types.includes("Development")) return "Development";
+        if (types.length > 0) return types[0];
+      }
+    }
+  } catch { /* ignore */ }
+
+  try {
+    const robotRes = await fetch(`${base}/odata/Robots?$top=5&$select=Type`, { headers: hdrs });
+    if (robotRes.ok) {
+      const robotData = await robotRes.json();
+      if (robotData.value?.length > 0) {
+        const types = robotData.value.map((r: any) => r.Type).filter(Boolean);
+        if (types.includes("Unattended")) return "Unattended";
+        if (types.includes("Production")) return "Production";
+        if (types.includes("Development")) return "Development";
+        if (types.length > 0) return types[0];
+      }
+    }
+  } catch { /* ignore */ }
+
+  return null;
+}
+
 async function provisionTriggers(
   base: string, hdrs: Record<string, string>,
   triggers: OrchestratorArtifacts["triggers"],
@@ -577,6 +610,18 @@ async function provisionTriggers(
       name: t.name,
       status: "failed" as const,
       message: "No valid Process (Release) found — trigger requires a release to be linked to. Retry deployment after process creation succeeds.",
+    }));
+  }
+
+  const runtimeType = await detectAvailableRuntimeType(base, hdrs);
+  console.log(`[UiPath Deploy] Detected available RuntimeType: ${runtimeType || "NONE"}`);
+
+  if (!runtimeType) {
+    return triggers.map(t => ({
+      artifact: "Trigger",
+      name: t.name,
+      status: "skipped" as const,
+      message: "No runtimes (robots) configured in this folder. Triggers require at least one Unattended or Production runtime to be assigned to a machine template. Add a runtime in UiPath Orchestrator → Machines → assign a robot, then re-deploy.",
     }));
   }
 
@@ -628,7 +673,7 @@ async function provisionTriggers(
           MinNumberOfItems: 1,
           MaxNumberOfItems: 100,
           JobsCount: 1,
-          RuntimeType: "Unattended",
+          RuntimeType: runtimeType,
           InputArguments: "{}",
         };
 
@@ -669,7 +714,7 @@ async function provisionTriggers(
             TimeZoneId: "UTC",
             TimeZoneIana: "Etc/UTC",
             StartStrategy: 15,
-            RuntimeType: "Unattended",
+            RuntimeType: runtimeType,
             InputArguments: JSON.stringify({ QueueName: t.queueName }),
           };
           const schedRes = await fetch(`${base}/odata/ProcessSchedules`, { method: "POST", headers: hdrs, body: JSON.stringify(schedBody) });
@@ -729,7 +774,7 @@ async function provisionTriggers(
           StartProcessCronSummary: t.description || "Scheduled trigger",
           TimeZoneId: "UTC",
           TimeZoneIana: "Etc/UTC",
-          RuntimeType: "Unattended",
+          RuntimeType: runtimeType,
           InputArguments: "{}",
         };
 
