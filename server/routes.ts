@@ -208,8 +208,8 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
-    const activeRole = req.session.activeRole;
-    if (activeRole !== "Admin") {
+    const dbUser = await storage.getUser(req.session.userId);
+    if (!dbUser || dbUser.role !== "Admin") {
       return res.status(403).json({ message: "Admin access required" });
     }
     const ideaId = req.params.id as string;
@@ -217,12 +217,11 @@ export async function registerRoutes(
     if (!idea) {
       return res.status(404).json({ message: "Idea not found" });
     }
-    const user = await storage.getUser(req.session.userId);
     await storage.createAuditLog({
       ideaId,
       userId: req.session.userId,
-      userName: user?.displayName || "Unknown",
-      userRole: activeRole,
+      userName: dbUser.displayName || "Unknown",
+      userRole: dbUser.role,
       action: "idea_deleted",
       fromStage: idea.stage,
       toStage: null,

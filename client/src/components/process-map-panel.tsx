@@ -128,6 +128,111 @@ interface ProcessMapData {
 
 type ProcessView = "as-is" | "to-be" | "sdd";
 
+interface CompletenessIssue {
+  type: "missing_role" | "missing_system" | "missing_description" | "dead_end" | "no_decision" | "single_path" | "no_end";
+  message: string;
+  nodeId?: string;
+  nodeName?: string;
+  severity: "warning" | "info";
+}
+
+function analyzeCompleteness(nodes: ProcessMapData["nodes"], edges: ProcessMapData["edges"]): CompletenessIssue[] {
+  const issues: CompletenessIssue[] = [];
+  const actionableNodes = nodes.filter(n => n.nodeType !== "start" && n.nodeType !== "end");
+
+  actionableNodes.forEach((n) => {
+    if (!n.role?.trim()) {
+      issues.push({ type: "missing_role", message: `"${n.name}" has no assigned role`, nodeId: String(n.id), nodeName: n.name, severity: "warning" });
+    }
+    if (!n.system?.trim() || n.system === "Manual") {
+      if (n.nodeType !== "decision") {
+        issues.push({ type: "missing_system", message: `"${n.name}" has no system specified`, nodeId: String(n.id), nodeName: n.name, severity: "info" });
+      }
+    }
+  });
+
+  const hasDecision = nodes.some(n => n.nodeType === "decision");
+  if (actionableNodes.length >= 3 && !hasDecision) {
+    issues.push({ type: "no_decision", message: "No decision points — consider adding branching logic", severity: "info" });
+  }
+
+  const hasEnd = nodes.some(n => n.nodeType === "end");
+  if (nodes.length > 1 && !hasEnd) {
+    issues.push({ type: "no_end", message: "Process has no End node — add a termination point", severity: "warning" });
+  }
+
+  const nodeOutgoing: Record<number, number> = {};
+  edges.forEach(e => { nodeOutgoing[e.sourceNodeId] = (nodeOutgoing[e.sourceNodeId] || 0) + 1; });
+  actionableNodes.forEach(n => {
+    if (!nodeOutgoing[n.id] && n.nodeType !== "end") {
+      issues.push({ type: "dead_end", message: `"${n.name}" has no outgoing path — it's a dead end`, nodeId: String(n.id), nodeName: n.name, severity: "warning" });
+    }
+  });
+
+  return issues.slice(0, 8);
+}
+
+interface PerformerSummary {
+  human: { count: number; nodes: string[] };
+  system: { count: number; nodes: string[] };
+  hybrid: { count: number; nodes: string[] };
+}
+
+function analyzePerformers(nodes: ProcessMapData["nodes"]): PerformerSummary {
+  const summary: PerformerSummary = {
+    human: { count: 0, nodes: [] },
+    system: { count: 0, nodes: [] },
+    hybrid: { count: 0, nodes: [] },
+  };
+  nodes.forEach(n => {
+    if (n.nodeType === "start" || n.nodeType === "end") return;
+    const p = classifyPerformer(n.role || "", n.system || "");
+    summary[p].count++;
+    summary[p].nodes.push(n.name);
+  });
+  return summary;
+}
+
+function detectPhaseGroups(nodes: ProcessMapData["nodes"], edges: ProcessMapData["edges"]): Array<{ name: string; nodes: ProcessMapData["nodes"] }> {
+  if (nodes.length < 4) return [{ name: "All Steps", nodes }];
+
+  const ordered: ProcessMapData["nodes"] = [];
+  const visited: Record<number, boolean> = {};
+  const adjacency: Record<number, number[]> = {};
+  edges.forEach(e => {
+    if (!adjacency[e.sourceNodeId]) adjacency[e.sourceNodeId] = [];
+    adjacency[e.sourceNodeId].push(e.targetNodeId);
+  });
+
+  const startNode = nodes.find(n => n.nodeType === "start");
+  const queue = startNode ? [startNode.id] : [nodes[0].id];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (visited[id]) continue;
+    visited[id] = true;
+    const node = nodes.find(n => n.id === id);
+    if (node) ordered.push(node);
+    const children = adjacency[id] || [];
+    children.forEach(c => { if (!visited[c]) queue.push(c); });
+  }
+  nodes.forEach(n => { if (!visited[n.id]) ordered.push(n); });
+
+  const actionable = ordered.filter(n => n.nodeType !== "start" && n.nodeType !== "end");
+  if (actionable.length < 4) return [{ name: "All Steps", nodes: ordered }];
+
+  const phaseSize = Math.max(3, Math.ceil(actionable.length / Math.min(6, Math.ceil(actionable.length / 4))));
+  const groups: Array<{ name: string; nodes: ProcessMapData["nodes"] }> = [];
+  
+  for (let i = 0; i < actionable.length; i += phaseSize) {
+    const chunk = actionable.slice(i, i + phaseSize);
+    const firstLabel = chunk[0]?.name || "Phase";
+    const phaseNum = Math.floor(i / phaseSize) + 1;
+    groups.push({ name: `Phase ${phaseNum}: ${firstLabel}`, nodes: chunk });
+  }
+
+  return groups;
+}
+
 interface ProcessMapPanelProps {
   ideaId: string;
   onStepsChange?: (count: number) => void;
@@ -1711,6 +1816,24 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
   const relayoutRef = useRef<(() => void) | null>(null);
   const [undoRedoControls, setUndoRedoControls] = useState<{ undo: () => void; redo: () => void; canUndo: boolean; canRedo: boolean } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showGuidance, setShowGuidance] = useState(false);
+  const [showPerformers, setShowPerformers] = useState(false);
+  const [showPhases, setShowPhases] = useState(false);
+
+  const completenessIssues = useMemo(() => {
+    if (!mapData?.nodes || !mapData?.edges) return [];
+    return analyzeCompleteness(mapData.nodes, mapData.edges);
+  }, [mapData?.nodes, mapData?.edges]);
+
+  const performerSummary = useMemo(() => {
+    if (!mapData?.nodes) return null;
+    return analyzePerformers(mapData.nodes);
+  }, [mapData?.nodes]);
+
+  const phaseGroups = useMemo(() => {
+    if (!mapData?.nodes || !mapData?.edges) return [];
+    return detectPhaseGroups(mapData.nodes, mapData.edges);
+  }, [mapData?.nodes, mapData?.edges]);
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -1773,6 +1896,45 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
             >
               <LayoutGrid className="h-3 w-3 mr-1" /> Re-layout
             </Button>
+          )}
+          {activeView !== "sdd" && nodeCount > 2 && (
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                className={`text-[10px] h-7 px-2 border border-zinc-800 rounded-lg ${showPerformers ? "text-purple-400 bg-purple-500/10 border-purple-500/30" : "text-zinc-400 hover:text-white"}`}
+                onClick={() => { setShowPerformers(!showPerformers); setShowGuidance(false); setShowPhases(false); }}
+                title="Human vs Machine breakdown"
+                data-testid="button-toggle-performers"
+              >
+                <User className="h-3 w-3 mr-1" />/<Monitor className="h-3 w-3" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className={`text-[10px] h-7 px-2 border border-zinc-800 rounded-lg ${showGuidance ? "text-amber-400 bg-amber-500/10 border-amber-500/30" : "text-zinc-400 hover:text-white"}`}
+                onClick={() => { setShowGuidance(!showGuidance); setShowPerformers(false); setShowPhases(false); }}
+                title="Completeness guidance"
+                data-testid="button-toggle-guidance"
+              >
+                <AlertCircle className="h-3 w-3" />
+                {completenessIssues.length > 0 && (
+                  <span className="ml-1 text-[9px] font-bold">{completenessIssues.length}</span>
+                )}
+              </Button>
+              {nodeCount > 5 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className={`text-[10px] h-7 px-2 border border-zinc-800 rounded-lg ${showPhases ? "text-blue-400 bg-blue-500/10 border-blue-500/30" : "text-zinc-400 hover:text-white"}`}
+                  onClick={() => { setShowPhases(!showPhases); setShowPerformers(false); setShowGuidance(false); }}
+                  title="Phase groups"
+                  data-testid="button-toggle-phases"
+                >
+                  <CircleDot className="h-3 w-3" />
+                </Button>
+              )}
+            </>
           )}
           <Button
             size="sm"
@@ -1864,6 +2026,150 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
               style={{ width: `${mapCompleteness}%` }}
             />
           </div>
+        </div>
+      )}
+
+      {showPerformers && performerSummary && activeView !== "sdd" && (
+        <div className="px-4 py-3 border-b border-zinc-800/80 bg-zinc-950/40 space-y-3" data-testid="panel-performers">
+          <div className="flex items-center gap-2 mb-2">
+            <User className="h-3.5 w-3.5 text-purple-400" />
+            <span className="text-[11px] font-semibold text-zinc-300">Human vs Machine Breakdown</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/20" data-testid="summary-human">
+              <div className="flex items-center gap-1.5 mb-1">
+                <User className="h-3 w-3 text-blue-400" />
+                <span className="text-[10px] font-semibold text-blue-400">Human</span>
+              </div>
+              <span className="text-lg font-bold text-blue-300">{performerSummary.human.count}</span>
+              {performerSummary.human.nodes.length > 0 && (
+                <div className="mt-1 space-y-0.5">
+                  {performerSummary.human.nodes.slice(0, 3).map((n, i) => (
+                    <div key={i} className="text-[8px] text-blue-400/60 truncate">{n}</div>
+                  ))}
+                  {performerSummary.human.nodes.length > 3 && (
+                    <div className="text-[8px] text-blue-400/40">+{performerSummary.human.nodes.length - 3} more</div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="p-2 rounded-lg bg-purple-500/10 border border-purple-500/20" data-testid="summary-system">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Monitor className="h-3 w-3 text-purple-400" />
+                <span className="text-[10px] font-semibold text-purple-400">System</span>
+              </div>
+              <span className="text-lg font-bold text-purple-300">{performerSummary.system.count}</span>
+              {performerSummary.system.nodes.length > 0 && (
+                <div className="mt-1 space-y-0.5">
+                  {performerSummary.system.nodes.slice(0, 3).map((n, i) => (
+                    <div key={i} className="text-[8px] text-purple-400/60 truncate">{n}</div>
+                  ))}
+                  {performerSummary.system.nodes.length > 3 && (
+                    <div className="text-[8px] text-purple-400/40">+{performerSummary.system.nodes.length - 3} more</div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20" data-testid="summary-hybrid">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Bot className="h-3 w-3 text-amber-400" />
+                <span className="text-[10px] font-semibold text-amber-400">Hybrid</span>
+              </div>
+              <span className="text-lg font-bold text-amber-300">{performerSummary.hybrid.count}</span>
+              {performerSummary.hybrid.nodes.length > 0 && (
+                <div className="mt-1 space-y-0.5">
+                  {performerSummary.hybrid.nodes.slice(0, 3).map((n, i) => (
+                    <div key={i} className="text-[8px] text-amber-400/60 truncate">{n}</div>
+                  ))}
+                  {performerSummary.hybrid.nodes.length > 3 && (
+                    <div className="text-[8px] text-amber-400/40">+{performerSummary.hybrid.nodes.length - 3} more</div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          {(() => {
+            const total = performerSummary.human.count + performerSummary.system.count + performerSummary.hybrid.count;
+            if (total === 0) return null;
+            const humanPct = Math.round((performerSummary.human.count / total) * 100);
+            const sysPct = Math.round((performerSummary.system.count / total) * 100);
+            const hybridPct = 100 - humanPct - sysPct;
+            return (
+              <div className="h-2 rounded-full overflow-hidden flex bg-zinc-800">
+                {humanPct > 0 && <div className="h-full bg-blue-500" style={{ width: `${humanPct}%` }} />}
+                {sysPct > 0 && <div className="h-full bg-purple-500" style={{ width: `${sysPct}%` }} />}
+                {hybridPct > 0 && <div className="h-full bg-amber-500" style={{ width: `${hybridPct}%` }} />}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {showGuidance && completenessIssues.length > 0 && activeView !== "sdd" && (
+        <div className="px-4 py-3 border-b border-zinc-800/80 bg-zinc-950/40 space-y-2" data-testid="panel-guidance">
+          <div className="flex items-center gap-2 mb-1">
+            <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
+            <span className="text-[11px] font-semibold text-zinc-300">Completeness Suggestions</span>
+          </div>
+          {completenessIssues.map((issue, i) => (
+            <div
+              key={i}
+              className={`flex items-start gap-2 p-2 rounded-lg text-[10px] ${
+                issue.severity === "warning"
+                  ? "bg-amber-500/10 border border-amber-500/15 text-amber-400"
+                  : "bg-zinc-800/50 border border-zinc-700/30 text-zinc-400"
+              }`}
+              data-testid={`guidance-issue-${i}`}
+            >
+              {issue.severity === "warning" ? (
+                <AlertCircle className="h-3 w-3 mt-0.5 shrink-0 text-amber-500" />
+              ) : (
+                <Sparkles className="h-3 w-3 mt-0.5 shrink-0 text-zinc-500" />
+              )}
+              <span className="leading-relaxed">{issue.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showGuidance && completenessIssues.length === 0 && activeView !== "sdd" && nodeCount > 0 && (
+        <div className="px-4 py-3 border-b border-zinc-800/80 bg-zinc-950/40" data-testid="panel-guidance-complete">
+          <div className="flex items-center gap-2 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/15 text-emerald-400 text-[10px]">
+            <Check className="h-3 w-3" />
+            <span>Process map looks complete — no issues detected</span>
+          </div>
+        </div>
+      )}
+
+      {showPhases && phaseGroups.length > 0 && activeView !== "sdd" && (
+        <div className="px-4 py-3 border-b border-zinc-800/80 bg-zinc-950/40 space-y-2" data-testid="panel-phases">
+          <div className="flex items-center gap-2 mb-1">
+            <CircleDot className="h-3.5 w-3.5 text-blue-400" />
+            <span className="text-[11px] font-semibold text-zinc-300">Phase Groups ({phaseGroups.length})</span>
+          </div>
+          {phaseGroups.map((group, gi) => (
+            <details key={gi} className="group" data-testid={`phase-group-${gi}`}>
+              <summary className="flex items-center gap-2 p-2 rounded-lg bg-zinc-800/40 border border-zinc-700/30 cursor-pointer hover:bg-zinc-800/60 transition-colors text-[10px] text-zinc-300 font-medium">
+                <ChevronRight className="h-3 w-3 text-zinc-500 group-open:rotate-90 transition-transform" />
+                <span>{group.name}</span>
+                <Badge variant="outline" className="ml-auto text-[8px] border-zinc-700 text-zinc-500">{group.nodes.length} steps</Badge>
+              </summary>
+              <div className="pl-6 pt-1 space-y-0.5">
+                {group.nodes.map((node, ni) => {
+                  const perf = classifyPerformer(node.role || "", node.system || "");
+                  const perfColor = perf === "system" ? "text-purple-400" : perf === "hybrid" ? "text-amber-400" : "text-blue-400";
+                  const PerfIcon = perf === "system" ? Monitor : perf === "hybrid" ? Bot : User;
+                  return (
+                    <div key={ni} className="flex items-center gap-2 text-[9px] text-zinc-400 py-0.5">
+                      <PerfIcon className={`h-2.5 w-2.5 ${perfColor}`} />
+                      <span className="truncate">{node.name}</span>
+                      {node.nodeType === "decision" && <Diamond className="h-2.5 w-2.5 text-amber-500 shrink-0" />}
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+          ))}
         </div>
       )}
 

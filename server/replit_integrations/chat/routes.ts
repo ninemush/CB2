@@ -356,6 +356,7 @@ export function registerChatRoutes(app: Express): void {
       });
 
       let fullResponse = "";
+      let stopReason = "";
 
       for await (const event of stream) {
         if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
@@ -363,6 +364,56 @@ export function registerChatRoutes(app: Express): void {
           if (text) {
             fullResponse += text;
             res.write(`data: ${JSON.stringify({ token: text })}\n\n`);
+          }
+        }
+        if (event.type === "message_delta" && (event as any).delta?.stop_reason) {
+          stopReason = (event as any).delta.stop_reason;
+        }
+      }
+
+      const isDocResponse = /^\[DOC:(PDD|SDD):\d+\]/.test(fullResponse.trim()) ||
+        (fullResponse.length > 2000 && /## \d+\.\s/.test(fullResponse) &&
+          (/Executive Summary/.test(fullResponse) || /orchestrator_artifacts/.test(fullResponse)));
+
+      if (isDocResponse && (stopReason === "max_tokens" || fullResponse.length > 7500)) {
+        const trimmed = fullResponse.trimEnd();
+        const looksIncomplete = stopReason === "max_tokens" || (
+          !trimmed.endsWith("---") &&
+          !trimmed.endsWith("```") &&
+          !trimmed.endsWith("---\n")
+        );
+
+        if (looksIncomplete) {
+          console.log(`[Chat] Document appears truncated (stopReason=${stopReason}, len=${fullResponse.length}). Auto-continuing...`);
+          res.write(`data: ${JSON.stringify({ token: "\n\n*[Continuing document generation...]*\n\n" })}\n\n`);
+
+          const continueMessages = [
+            ...chatMessages,
+            { role: "assistant" as const, content: fullResponse },
+            { role: "user" as const, content: "Continue exactly where you left off. Do NOT repeat any content already generated. Do NOT add a new document tag. Just continue the remaining sections seamlessly." },
+          ];
+
+          try {
+            const contStream = anthropic.messages.stream({
+              model: "claude-sonnet-4-6",
+              max_tokens: 8192,
+              system: systemPrompt,
+              messages: continueMessages,
+            });
+            let continuation = "";
+            for await (const evt of contStream) {
+              if (evt.type === "content_block_delta" && evt.delta.type === "text_delta") {
+                const text = evt.delta.text;
+                if (text) {
+                  continuation += text;
+                  res.write(`data: ${JSON.stringify({ token: text })}\n\n`);
+                }
+              }
+            }
+            fullResponse += "\n" + continuation;
+            console.log(`[Chat] Continuation added ${continuation.length} chars. Total doc: ${fullResponse.length} chars.`);
+          } catch (contErr: any) {
+            console.error(`[Chat] Continuation failed:`, contErr?.message);
           }
         }
       }
