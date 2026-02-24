@@ -424,7 +424,9 @@ function ChatPanel({ idea }: { idea: Idea }) {
 
   const displayMessages: ChatMsg[] = (() => {
     if (savedMessages && savedMessages.length > 0) {
-      const loaded: ChatMsg[] = savedMessages.map((m) => {
+      const loaded: ChatMsg[] = savedMessages
+        .filter((m) => m.role !== "system")
+        .map((m) => {
         const meta = parseMessageMeta(m.content);
         return {
           id: String(m.id),

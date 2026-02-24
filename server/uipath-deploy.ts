@@ -973,7 +973,7 @@ async function provisionTriggers(
           }
         } else if (res.status === 409 || text.includes("already exists")) {
           results.push({ artifact: "Trigger", name: t.name, status: "exists", message: "Already exists" });
-        } else if (res.status === 405) {
+        } else if (res.status === 404 || res.status === 405) {
           const schedBody: Record<string, any> = {
             Enabled: !createDisabled,
             Name: t.name,
