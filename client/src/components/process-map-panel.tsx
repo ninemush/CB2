@@ -528,7 +528,8 @@ function getNodeDimensions(nodeType: string): { width: number; height: number } 
 function applyDagreLayout(
   nodes: Node[],
   edges: Edge[],
-  direction: "LR" | "TB" = "TB"
+  direction: "LR" | "TB" = "TB",
+  simplified: boolean = false
 ): Node[] {
   const nodeCount = nodes.length;
   const edgeCount = edges.length;
@@ -541,7 +542,11 @@ function applyDagreLayout(
   let ranksep: number;
   let edgesep: number;
 
-  if (isVeryLarge) {
+  if (simplified) {
+    nodesep = 180;
+    ranksep = 120;
+    edgesep = 80;
+  } else if (isVeryLarge) {
     nodesep = Math.round(80 + density * 20);
     ranksep = Math.round(120 + density * 15);
     edgesep = Math.round(30 + density * 10);
@@ -843,11 +848,12 @@ function CustomEdge({
   const targetIndex = data?.targetIndex || 0;
   const targetSiblings = data?.targetSiblings || 1;
   const totalNodes = data?.totalNodes || 0;
+  const simplified = data?.simplified || false;
 
-  const useBezier = totalNodes > 25;
+  const useBezier = simplified || totalNodes > 25;
 
-  const sourceOffset = sourceSiblings > 1 ? (sourceIndex - (sourceSiblings - 1) / 2) * (useBezier ? 12 : 20) : 0;
-  const targetOffset = targetSiblings > 1 ? (targetIndex - (targetSiblings - 1) / 2) * (useBezier ? 12 : 20) : 0;
+  const sourceOffset = simplified ? 0 : (sourceSiblings > 1 ? (sourceIndex - (sourceSiblings - 1) / 2) * (useBezier ? 12 : 20) : 0);
+  const targetOffset = simplified ? 0 : (targetSiblings > 1 ? (targetIndex - (targetSiblings - 1) / 2) * (useBezier ? 12 : 20) : 0);
 
   const [edgePath, labelX, labelY] = useBezier
     ? getBezierPath({
@@ -884,8 +890,8 @@ function CustomEdge({
   else if (isPartial) edgeColor = "rgba(245,158,11,0.7)";
   else if (label) edgeColor = "rgba(148,163,184,0.5)";
 
-  const strokeWidth = useBezier ? (label ? 1.2 : 0.8) : (label ? 1.5 : 1);
-  const edgeOpacity = useBezier ? 0.7 : 1;
+  const strokeWidth = simplified ? 2 : useBezier ? (label ? 1.2 : 0.8) : (label ? 1.5 : 1);
+  const edgeOpacity = simplified ? 0.85 : useBezier ? 0.7 : 1;
 
   return (
     <>
@@ -1317,6 +1323,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       relTgtGrp[tk].push(e);
     });
     const relNodeCount = dbNodes.length;
+    const relSimplified = detailLevel !== "L2";
     const rawEdges: Edge[] = validEdges.map((e) => {
       const srcS = relSrcGrp[String(e.sourceNodeId)] || [e];
       const tgtS = relTgtGrp[String(e.targetNodeId)] || [e];
@@ -1327,12 +1334,13 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
           sourceIndex: srcS.indexOf(e), sourceSiblings: srcS.length,
           targetIndex: tgtS.indexOf(e), targetSiblings: tgtS.length,
           totalNodes: relNodeCount,
+          simplified: relSimplified,
         },
       };
     });
     let layoutNodes: Node[];
     if (rawEdges.length > 0) {
-      layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB");
+      layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB", relSimplified);
     } else {
       layoutNodes = rawNodes.map((node, i) => ({ ...node, position: getNodePosition(i, rawNodes.length) }));
     }
@@ -1385,11 +1393,12 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
     });
 
     const nodeCount = dbNodes.length;
+    const isSimplified = detailLevel !== "L2";
     const rawEdges: Edge[] = safeEdges.map((e) => {
       const srcSiblings = sourceGroups[String(e.sourceNodeId)] || [e];
       const tgtSiblings = targetGroups[String(e.targetNodeId)] || [e];
       const markerColor = activeView === "sdd" ? "rgba(249,115,22,0.5)" : activeView === "to-be" ? "rgba(34,197,94,0.5)" : "rgba(120,120,145,0.4)";
-      const markerSize = nodeCount > 25 ? 10 : 14;
+      const markerSize = isSimplified ? 16 : nodeCount > 25 ? 10 : 14;
 
       return {
         id: String(e.id),
@@ -1401,6 +1410,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
           sourceIndex: srcSiblings.indexOf(e), sourceSiblings: srcSiblings.length,
           targetIndex: tgtSiblings.indexOf(e), targetSiblings: tgtSiblings.length,
           totalNodes: nodeCount,
+          simplified: isSimplified,
         },
         animated: activeView === "to-be" || activeView === "sdd",
         markerEnd: {
@@ -1420,7 +1430,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
 
     if (detailLevel !== "L2" || forceLayout) {
       if (rawEdges.length > 0) {
-        layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB");
+        layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB", isSimplified);
         if (detailLevel === "L2") {
           layoutNodes.forEach((n) => {
             const d = n.data as any;
@@ -1441,7 +1451,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       if (allHaveSavedPositions) {
         layoutNodes = rawNodes;
       } else if (rawEdges.length > 0) {
-        layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB");
+        layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB", false);
         layoutNodes.forEach((n) => {
           const d = n.data as any;
           if (d.dbId && d.dbId > 0) {
