@@ -1331,86 +1331,28 @@ async function provisionActionCenter(
           const checkRes = await fetch(filterUrl, { headers: hdrs });
           if (checkRes.ok) {
             const checkText = await checkRes.text();
-            const genuineCheck = isGenuineServiceResponse(checkText);
-            if (!genuineCheck.genuine) continue;
-            const checkData = JSON.parse(checkText);
-            const items = checkData.value || checkData.items || (Array.isArray(checkData) ? checkData : []);
-            if (items.length > 0) {
-              results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "exists", message: `Already exists (ID: ${items[0].Id || items[0].id})`, id: items[0].Id || items[0].id });
-              found = true;
-              break;
-            }
+            if (checkText.startsWith("<!") || checkText.startsWith("<html") || checkText.startsWith("<HTML")) continue;
+            try {
+              const checkData = JSON.parse(checkText);
+              const items = checkData.value || checkData.items || (Array.isArray(checkData) ? checkData : []);
+              if (items.length > 0) {
+                let msg = `Already exists (ID: ${items[0].Id || items[0].id})`;
+                if (ac.assignedRole) msg += `. Assigned role: ${ac.assignedRole}`;
+                if (ac.sla) msg += `. SLA: ${ac.sla}`;
+                results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "exists", message: msg, id: items[0].Id || items[0].id });
+                found = true;
+                break;
+              }
+            } catch { continue; }
           }
         } catch { continue; }
       }
-      if (found) continue;
-
-      const body: Record<string, any> = { Name: ac.taskCatalog, Description: truncDesc(ac.description) };
-      let acCreated = false;
-      for (const ep of tryEndpoints) {
-        try {
-          const res = await fetch(ep.url, { method: "POST", headers: hdrs, body: JSON.stringify(body) });
-          const text = await res.text();
-          console.log(`[UiPath Deploy] Action Center "${ac.taskCatalog}" via ${ep.label} -> ${res.status}: ${text.slice(0, 300)}`);
-
-          if (res.ok || res.status === 201) {
-            const creation = validateCreationResponse(text);
-            if (!creation.valid) {
-              console.warn(`[UiPath Deploy] Action Center "${ac.taskCatalog}" got ${res.status} but body invalid: ${creation.error}`);
-              results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: `API returned ${res.status} but response invalid: ${creation.error}` });
-              acCreated = true;
-              break;
-            }
-            const createdId = creation.data?.Id || creation.data?.id;
-
-            let verified = false;
-            if (createdId) {
-              try {
-                const filterUrl = ep.isOdata
-                  ? `${ep.url}?$filter=Name eq '${odataEscape(ac.taskCatalog)}'&$top=1`
-                  : `${ep.url}?name=${encodeURIComponent(ac.taskCatalog)}&top=1`;
-                const verifyRes = await fetch(filterUrl, { headers: hdrs });
-                if (verifyRes.ok) {
-                  const verifyText = await verifyRes.text();
-                  const verifyCheck = isGenuineServiceResponse(verifyText);
-                  if (verifyCheck.genuine) {
-                    const verifyData = JSON.parse(verifyText);
-                    const items = verifyData.value || verifyData.items || (Array.isArray(verifyData) ? verifyData : []);
-                    if (items.length > 0) {
-                      verified = true;
-                    }
-                  }
-                }
-              } catch { /* verification failed */ }
-            }
-
-            if (verified) {
-              let msg = `Created and verified (ID: ${createdId})`;
-              if (ac.assignedRole) msg += `. Assign to role: ${ac.assignedRole}`;
-              if (ac.sla) msg += `. SLA: ${ac.sla}`;
-              results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg, id: createdId });
-            } else {
-              results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: `API returned ${res.status} but post-creation verification failed — catalog may not actually exist` });
-            }
-            acCreated = true;
-            break;
-          } else if (res.status === 409 || text.includes("already exists")) {
-            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "exists", message: "Already exists" });
-            acCreated = true;
-            break;
-          } else if (res.status === 404 || res.status === 405) {
-            continue;
-          } else if (res.status === 400 && text.includes("not onboarded")) {
-            continue;
-          } else {
-            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: sanitizeErrorMessage(res.status, text) });
-            acCreated = true;
-            break;
-          }
-        } catch { continue; }
-      }
-      if (!acCreated) {
-        results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "skipped", message: `Action Center API endpoints not responding. The service may need to be enabled for this folder in Orchestrator settings.` });
+      if (!found) {
+        let msg = `Create this catalog manually: Orchestrator → Action Center → Admin Settings → Add Catalog → Name: "${ac.taskCatalog}"`;
+        if (ac.description) msg += `. Description: ${ac.description}`;
+        if (ac.assignedRole) msg += `. Assign to role: ${ac.assignedRole}`;
+        if (ac.sla) msg += `. SLA: ${ac.sla}`;
+        results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "skipped", message: msg });
       }
     } catch (err: any) {
       results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: `API error: ${err.message}` });
@@ -1647,11 +1589,14 @@ async function provisionTestCases(
 
   if (!projectId) {
     try {
+      const projName = processName.replace(/_/g, " ");
+      const projPrefix = processName.replace(/[^A-Za-z0-9]/g, "").slice(0, 10).toUpperCase() || "AUTO";
       const createProjRes = await fetch(`${activeTmBase}/api/v2/projects`, {
         method: "POST",
         headers: hdrs,
         body: JSON.stringify({
-          Name: processName.replace(/_/g, " "),
+          Name: projName,
+          ProjectPrefix: projPrefix,
           Description: truncDesc(`Test project for ${processName}`),
         }),
       });
