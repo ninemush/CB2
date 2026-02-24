@@ -4,8 +4,8 @@ import {
   Background,
   Controls,
   MiniMap,
-  useNodesState,
-  useEdgesState,
+  applyNodeChanges,
+  applyEdgeChanges,
   addEdge,
   type Node,
   type Edge,
@@ -66,24 +66,40 @@ import { Badge } from "@/components/ui/badge";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-class ReactFlowErrorBoundary extends Component<{ children: ReactNode; onRetry?: () => void }, { hasError: boolean }> {
+class ReactFlowErrorBoundary extends Component<{ children: ReactNode; onRetry?: () => void }, { hasError: boolean; retryCount: number }> {
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   constructor(props: { children: ReactNode; onRetry?: () => void }) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, retryCount: 0 };
   }
   static getDerivedStateFromError() { return { hasError: true }; }
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.warn("[ProcessMap] Error boundary caught:", error.message);
+    if (this.state.retryCount < 3) {
+      this.retryTimer = setTimeout(() => {
+        this.setState(prev => ({ hasError: false, retryCount: prev.retryCount + 1 }));
+      }, 200 * (this.state.retryCount + 1));
+    }
+  }
+  componentWillUnmount() {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
   }
   render() {
     if (this.state.hasError) {
+      if (this.state.retryCount < 3) {
+        return (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="animate-spin h-6 w-6 border-2 border-cb-teal border-t-transparent rounded-full" />
+          </div>
+        );
+      }
       return (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-500">
           <AlertCircle className="h-8 w-8 text-amber-500/60" />
           <p className="text-xs text-zinc-400">Process map encountered an error</p>
           <button
             className="text-xs px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors"
-            onClick={() => this.setState({ hasError: false })}
+            onClick={() => this.setState({ hasError: false, retryCount: 0 })}
             data-testid="button-retry-map"
           >
             Retry
@@ -93,6 +109,20 @@ class ReactFlowErrorBoundary extends Component<{ children: ReactNode; onRetry?: 
     }
     return this.props.children;
   }
+}
+
+function DelayedMount({ children }: { children: ReactNode }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setReady(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+  if (!ready) return (
+    <div className="flex-1 flex items-center justify-center">
+      <div className="animate-spin h-6 w-6 border-2 border-cb-teal border-t-transparent rounded-full" />
+    </div>
+  );
+  return <>{children}</>;
 }
 
 interface HistorySnapshot {
@@ -534,8 +564,7 @@ function applyDagreLayout(
     edgesep,
     marginx: 60,
     marginy: 60,
-    acyclicer: "greedy",
-    ranker: isLarge ? "tight-tree" : "network-simplex",
+    ranker: "longest-path",
     align: isLarge ? "UL" : undefined,
   });
 
@@ -559,20 +588,24 @@ function applyDagreLayout(
   });
 
   sortedEdges.forEach((edge) => {
-    const fanout = outDeg[edge.source] || 1;
-    const fanin = inDeg[edge.target] || 1;
-    const isHighFanout = fanout > 2;
-    const isHighFanin = fanin > 2;
-    g.setEdge(edge.source, edge.target, {
-      minlen: isHighFanout ? 2 : 1,
-      weight: isHighFanout || isHighFanin ? 0.5 : 1,
-    });
+    g.setEdge(edge.source, edge.target);
   });
 
-  dagre.layout(g);
+  try {
+    dagre.layout(g);
+  } catch (err) {
+    console.warn("[dagre] layout failed, nodes:", g.nodes().length, "edges:", g.edges().length, "graph opts:", JSON.stringify(g.graph()), err);
+    return nodes.map((node, i) => ({
+      ...node,
+      position: { x: (i % 6) * 200 + 60, y: Math.floor(i / 6) * 150 + 60 },
+    }));
+  }
 
   return nodes.map((node) => {
     const pos = g.node(node.id);
+    if (!pos) {
+      return { ...node, position: { x: 0, y: 0 } };
+    }
     const nodeType = (node.data as any)?.nodeType || "task";
     const dims = getNodeDimensions(nodeType);
     return {
@@ -904,6 +937,19 @@ const edgeTypes: EdgeTypes = {
   custom: CustomEdge,
 };
 
+const defaultEdgeOpts = {
+  type: "custom",
+  markerEnd: {
+    type: MarkerType.ArrowClosed,
+    width: 16,
+    height: 16,
+  },
+};
+
+const connectionStyle = { stroke: "rgba(251,146,60,0.6)", strokeWidth: 2 };
+const proOpts = { hideAttribution: true };
+const snapGridVal: [number, number] = [10, 10];
+
 interface NodeEditData {
   nodeId: number;
   name: string;
@@ -1142,9 +1188,11 @@ function NodeContextMenu({
   );
 }
 
-function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRedoReady }: { ideaId: string; activeView: ProcessView; detailLevel: DetailLevel; onRelayout?: (fn: () => void) => void; onUndoRedoReady?: (controls: { undo: () => void; redo: () => void; canUndo: boolean; canRedo: boolean }) => void; }) {
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRedoReady, onFocusNodeReady }: { ideaId: string; activeView: ProcessView; detailLevel: DetailLevel; onRelayout?: (fn: () => void) => void; onUndoRedoReady?: (controls: { undo: () => void; redo: () => void; canUndo: boolean; canRedo: boolean }) => void; onFocusNodeReady?: (fn: (nodeId: string) => void) => void; }) {
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
+  const onNodesChange = useCallback((changes: any) => setNodes(nds => applyNodeChanges(changes, nds)), [setNodes]);
+  const onEdgesChange = useCallback((changes: any) => setEdges(eds => applyEdgeChanges(changes, eds)), [setEdges]);
   const [editingNode, setEditingNode] = useState<NodeEditData | null>(null);
   const [editingEdge, setEditingEdge] = useState<EdgeEditData | null>(null);
   const [edgeEditPos, setEdgeEditPos] = useState({ x: 0, y: 0 });
@@ -1160,13 +1208,39 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
   const dataVersionRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const skipNextHistoryRef = useRef(false);
-  const { fitView, screenToFlowPosition } = useReactFlow();
+  const { fitView, setCenter, getNodes, screenToFlowPosition } = useReactFlow();
   const { pushSnapshot, undo, redo, reset: resetHistory, canUndo, canRedo } = useUndoRedo();
   const nodesRef = useRef<Node[]>([]);
   const edgesRef = useRef<Edge[]>([]);
 
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   useEffect(() => { edgesRef.current = edges; }, [edges]);
+
+  const focusNode = useCallback((nodeId: string) => {
+    const allNodes = getNodes();
+    const target = allNodes.find(n => n.id === nodeId || (n.data as any)?.dbId?.toString() === nodeId);
+    if (target) {
+      const x = target.position.x + (target.measured?.width ?? 140) / 2;
+      const y = target.position.y + (target.measured?.height ?? 40) / 2;
+      setCenter(x, y, { zoom: 1.5, duration: 600 });
+      const highlightClass = "ring-2 ring-amber-400 ring-offset-2 ring-offset-zinc-900 rounded-lg";
+      setNodes(nds => nds.map(n => ({
+        ...n,
+        selected: n.id === target.id,
+        className: n.id === target.id ? `${n.className || ""} ${highlightClass}`.trim() : (n.className || ""),
+      })));
+      setTimeout(() => {
+        setNodes(nds => nds.map(n => ({
+          ...n,
+          className: (n.className || "").replace(highlightClass, "").trim(),
+        })));
+      }, 2500);
+    }
+  }, [getNodes, setCenter, setNodes]);
+
+  useEffect(() => {
+    onFocusNodeReady?.(focusNode);
+  }, [onFocusNodeReady, focusNode]);
 
   const takeSnapshot = useCallback(() => {
     if (skipNextHistoryRef.current) { skipNextHistoryRef.current = false; return; }
@@ -1230,9 +1304,11 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
         dbId: n.id, viewType: activeView,
       },
     }));
-    const relSrcGrp: Record<string, typeof dbEdges> = {};
-    const relTgtGrp: Record<string, typeof dbEdges> = {};
-    dbEdges.forEach(e => {
+    const nodeIdSet = new Set(dbNodes.map(n => n.id));
+    const validEdges = dbEdges.filter(e => nodeIdSet.has(e.sourceNodeId) && nodeIdSet.has(e.targetNodeId));
+    const relSrcGrp: Record<string, typeof validEdges> = {};
+    const relTgtGrp: Record<string, typeof validEdges> = {};
+    validEdges.forEach(e => {
       const sk = String(e.sourceNodeId);
       const tk = String(e.targetNodeId);
       if (!relSrcGrp[sk]) relSrcGrp[sk] = [];
@@ -1241,7 +1317,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       relTgtGrp[tk].push(e);
     });
     const relNodeCount = dbNodes.length;
-    const rawEdges: Edge[] = dbEdges.map((e) => {
+    const rawEdges: Edge[] = validEdges.map((e) => {
       const srcS = relSrcGrp[String(e.sourceNodeId)] || [e];
       const tgtS = relTgtGrp[String(e.targetNodeId)] || [e];
       return {
@@ -1295,9 +1371,11 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       },
     }));
 
-    const sourceGroups: Record<string, typeof dbEdges> = {};
-    const targetGroups: Record<string, typeof dbEdges> = {};
-    dbEdges.forEach(e => {
+    const nodeIdSet2 = new Set(dbNodes.map(n => n.id));
+    const safeEdges = dbEdges.filter(e => nodeIdSet2.has(e.sourceNodeId) && nodeIdSet2.has(e.targetNodeId));
+    const sourceGroups: Record<string, typeof safeEdges> = {};
+    const targetGroups: Record<string, typeof safeEdges> = {};
+    safeEdges.forEach(e => {
       const sk = String(e.sourceNodeId);
       const tk = String(e.targetNodeId);
       if (!sourceGroups[sk]) sourceGroups[sk] = [];
@@ -1307,7 +1385,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
     });
 
     const nodeCount = dbNodes.length;
-    const rawEdges: Edge[] = dbEdges.map((e) => {
+    const rawEdges: Edge[] = safeEdges.map((e) => {
       const srcSiblings = sourceGroups[String(e.sourceNodeId)] || [e];
       const tgtSiblings = targetGroups[String(e.targetNodeId)] || [e];
       const markerColor = activeView === "sdd" ? "rgba(249,115,22,0.5)" : activeView === "to-be" ? "rgba(34,197,94,0.5)" : "rgba(120,120,145,0.4)";
@@ -1841,24 +1919,17 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
         onPaneContextMenu={onPaneContextMenu}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        defaultEdgeOptions={{
-          type: "custom",
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            width: 16,
-            height: 16,
-          },
-        }}
-        connectionLineStyle={{ stroke: "rgba(251,146,60,0.6)", strokeWidth: 2 }}
+        defaultEdgeOptions={defaultEdgeOpts}
+        connectionLineStyle={connectionStyle}
         connectionLineType={ConnectionLineType.SmoothStep}
         edgesReconnectable
-        proOptions={{ hideAttribution: true }}
+        proOptions={proOpts}
         className={`process-map-canvas ${reconnectingEdge ? "reconnecting" : ""}`}
         minZoom={0.2}
         maxZoom={2}
         nodesDraggable={detailLevel === "L2"}
         snapToGrid
-        snapGrid={[10, 10]}
+        snapGrid={snapGridVal}
         deleteKeyCode={null}
         selectionKeyCode={null}
       >
@@ -2179,6 +2250,7 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
 
   const [showApprovalConfirm, setShowApprovalConfirm] = useState(false);
   const relayoutRef = useRef<(() => void) | null>(null);
+  const focusNodeRef = useRef<((nodeId: string) => void) | null>(null);
   const [undoRedoControls, setUndoRedoControls] = useState<{ undo: () => void; redo: () => void; canUndo: boolean; canRedo: boolean } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showGuidance, setShowGuidance] = useState(false);
@@ -2504,24 +2576,33 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
             <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
             <span className="text-[11px] font-semibold text-zinc-300">Completeness Suggestions</span>
           </div>
-          {completenessIssues.map((issue, i) => (
-            <div
-              key={i}
-              className={`flex items-start gap-2 p-2 rounded-lg text-[10px] ${
-                issue.severity === "warning"
-                  ? "bg-amber-500/10 border border-amber-500/15 text-amber-400"
-                  : "bg-zinc-800/50 border border-zinc-700/30 text-zinc-400"
-              }`}
-              data-testid={`guidance-issue-${i}`}
-            >
-              {issue.severity === "warning" ? (
-                <AlertCircle className="h-3 w-3 mt-0.5 shrink-0 text-amber-500" />
-              ) : (
-                <Sparkles className="h-3 w-3 mt-0.5 shrink-0 text-zinc-500" />
-              )}
-              <span className="leading-relaxed">{issue.message}</span>
-            </div>
-          ))}
+          {completenessIssues.map((issue, i) => {
+            const isClickable = !!issue.nodeId;
+            return (
+              <button
+                key={i}
+                type="button"
+                disabled={!isClickable}
+                onClick={() => { if (issue.nodeId) focusNodeRef.current?.(issue.nodeId); }}
+                className={`flex items-start gap-2 p-2 rounded-lg text-[10px] w-full text-left transition-colors ${
+                  issue.severity === "warning"
+                    ? "bg-amber-500/10 border border-amber-500/15 text-amber-400"
+                    : "bg-zinc-800/50 border border-zinc-700/30 text-zinc-400"
+                } ${isClickable ? "cursor-pointer hover:bg-amber-500/20 hover:border-amber-500/30" : "cursor-default"}`}
+                data-testid={`guidance-issue-${i}`}
+              >
+                {issue.severity === "warning" ? (
+                  <AlertCircle className="h-3 w-3 mt-0.5 shrink-0 text-amber-500" />
+                ) : (
+                  <Sparkles className="h-3 w-3 mt-0.5 shrink-0 text-zinc-500" />
+                )}
+                <span className="leading-relaxed flex-1">{issue.message}</span>
+                {isClickable && (
+                  <Maximize2 className="h-3 w-3 mt-0.5 shrink-0 opacity-50" />
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -2553,11 +2634,18 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
                   const perfColor = perf === "system" ? "text-purple-400" : perf === "hybrid" ? "text-amber-400" : "text-blue-400";
                   const PerfIcon = perf === "system" ? Monitor : perf === "hybrid" ? Bot : User;
                   return (
-                    <div key={ni} className="flex items-center gap-2 text-[9px] text-zinc-400 py-0.5">
+                    <button
+                      key={ni}
+                      type="button"
+                      onClick={() => focusNodeRef.current?.(String(node.id))}
+                      className="flex items-center gap-2 text-[9px] text-zinc-400 py-0.5 w-full text-left hover:text-zinc-200 transition-colors cursor-pointer"
+                      data-testid={`phase-node-${node.id}`}
+                    >
                       <PerfIcon className={`h-2.5 w-2.5 ${perfColor}`} />
                       <span className="truncate">{node.name}</span>
                       {node.nodeType === "decision" && <Diamond className="h-2.5 w-2.5 text-amber-500 shrink-0" />}
-                    </div>
+                      <Maximize2 className="h-2 w-2 ml-auto shrink-0 opacity-0 group-hover:opacity-30" />
+                    </button>
                   );
                 })}
               </div>
@@ -2571,7 +2659,9 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
       ) : (
         <ReactFlowErrorBoundary>
           <ReactFlowProvider>
-            <ProcessMapFlow ideaId={ideaId} activeView={activeView} detailLevel={detailLevel} onRelayout={(fn) => { relayoutRef.current = fn; }} onUndoRedoReady={setUndoRedoControls} />
+            <DelayedMount>
+              <ProcessMapFlow ideaId={ideaId} activeView={activeView} detailLevel={detailLevel} onRelayout={(fn) => { relayoutRef.current = fn; }} onUndoRedoReady={setUndoRedoControls} onFocusNodeReady={(fn) => { focusNodeRef.current = fn; }} />
+            </DelayedMount>
           </ReactFlowProvider>
         </ReactFlowErrorBoundary>
       )}

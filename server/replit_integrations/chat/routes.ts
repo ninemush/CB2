@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { chatStorage } from "./storage";
 import { storage } from "../../storage";
 import { documentStorage } from "../../document-storage";
+import { processMapStorage } from "../../process-map-storage";
 import { evaluateTransition } from "../../stage-transition";
 import { PIPELINE_STAGES, type PipelineStage } from "@shared/schema";
 
@@ -94,6 +95,13 @@ BRANCHING RULES (CRITICAL — real processes are NOT linear):
 - PARALLEL PATHS: If two tasks happen simultaneously after a step, both FROM the same parent (no decision needed — just two children with no LABEL).
 - MULTIPLE END NODES: Use separate End nodes for each terminal outcome (e.g., "Claim Approved End", "Claim Rejected End", "Claim Withdrawn End").
 - NEVER output all steps in a linear chain when the process has decisions. EVERY process has decisions — insurance claims, invoice processing, onboarding, purchase orders, IT service requests — ALL of them branch.
+
+DUPLICATE PREVENTION (CRITICAL):
+- EXACTLY ONE Start node per process. Never output multiple Start nodes.
+- Each step name must be unique. Never repeat the same step name or a near-identical variant (e.g., do NOT output both "Validate Documents" and "Document Validation" — pick one).
+- When adding steps to an existing map, check what already exists. Reference existing step names in FROM fields — do not recreate them.
+- If regenerating a full process, output a single coherent graph. Do not output leftover steps from a previous version.
+- End nodes: use distinct names for genuinely different outcomes (e.g., "Approved End", "Rejected End"). Do NOT create multiple end nodes for the same outcome.
 
 EXAMPLE 1 — Insurance claim with 3-way decision and loop:
 [STEP: Customer Submits Claim | ROLE: Customer | SYSTEM: Claims Portal | TYPE: start]
@@ -344,6 +352,14 @@ export function registerChatRoutes(app: Express): void {
           parts.push(`SDD has orchestrator_artifacts block: ${hasArtifacts ? "YES" : "NO"}`);
         }
         if (parts.length > 0) docContext = "\nDocument status: " + parts.join(" | ");
+      } catch (e) { /* non-critical */ }
+
+      try {
+        const existingNodes = await processMapStorage.getNodesByIdeaId(ideaId, "as-is");
+        if (existingNodes.length > 0) {
+          const stepList = existingNodes.map(n => `${n.name} (${n.nodeType})`).join(", ");
+          docContext += `\nEXISTING AS-IS MAP (${existingNodes.length} steps): ${stepList}\nDo NOT recreate these steps. Reference them by exact name in FROM fields when adding new steps.`;
+        }
       } catch (e) { /* non-critical */ }
 
       const systemPrompt = buildSystemPrompt(idea.title, idea.stage, docContext);
