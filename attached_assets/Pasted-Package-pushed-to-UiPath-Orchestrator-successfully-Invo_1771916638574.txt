@@ -1,0 +1,158 @@
+Package pushed to UiPath Orchestrator successfully.
+
+Invoice_Processing_Automation v1.701.20260224 Org: uipatezkzunj / Tenant: DefaultTenant Folder: SumeetAppDefaultFeed
+
+Process created: "Invoice Processing Automation" — ready to run
+
+Orchestrator Deployment Report
+
+Queues: ✅ InvoiceProcessingQueue — Created and verified (ID: 382895) ✅ InvoiceValidationQueue — Created and verified (ID: 382896) ✅ SAPPostingQueue — Created and verified (ID: 382897)
+
+Storage Buckets: ❌ INV-InputDocuments — HTTP 400: {"message":"Parameter validation error: 'BucketDto' state:2","errorCode":0,"traceId":"00-a848ab6844edc2786cc6f1f1097ccd97-2b03ea22f9b7a73a-00"} ❌ INV-ProcessedDocuments — HTTP 400: {"message":"Parameter validation error: 'BucketDto' state:2","errorCode":0,"traceId":"00-d864bad937946cad1797d8f394982794-4fc9264f212d9015-00"} ❌ INV-ExceptionDocuments — HTTP 400: {"message":"Parameter validation error: 'BucketDto' state:2","errorCode":0,"traceId":"00-44dd73099a4620ed72cbc1470bd4189b-4911c126ad631b71-00"} ❌ INV-AuditLogs — HTTP 400: {"message":"Parameter validation error: 'BucketDto' state:2","errorCode":0,"traceId":"00-928d5966695a8c02d3c63ad80cbc9f81-329eea458259eead-00"}
+
+Assets: ✅ INV_EmailUsername — Created and verified (ID: 1055156, Type: Credential). UPDATE credentials in Orchestrator > Assets. ✅ INV_EmailPassword — Created and verified (ID: 1055157, Type: Credential). UPDATE credentials in Orchestrator > Assets. ✅ INV_SAP_Username — Created and verified (ID: 1055158, Type: Credential). UPDATE credentials in Orchestrator > Assets. ✅ INV_SAP_Password — Created and verified (ID: 1055159, Type: Credential). UPDATE credentials in Orchestrator > Assets. ✅ INV_SAP_SystemURL — Created and verified (ID: 1055160, Type: Text) ✅ INV_SAP_TransactionCode — Created and verified (ID: 1055161, Type: Text) ✅ OCR_ConfidenceThreshold — Created and verified (ID: 1055162, Type: Text) ✅ ExceptionSLA_Hours — Created and verified (ID: 1055163, Type: Text) ✅ EmailMonitor_IntervalMinutes — Created and verified (ID: 1055164, Type: Text) ✅ LastRunTimestamp — Created and verified (ID: 1055165, Type: Text)
+
+Machines: ✅ INV-UnattendedBot-01 — Created and verified (ID: 310438, Type: Template). Folder assignment failed (HTTP 405):
+
+Robot Accounts: ❌ Robot Account Check — WARNING: Machine templates were provisioned, but robot accounts must be manually created in UiPath Orchestrator (Tenant > Robots > Add Standard Robot). Without robot accounts connected to these machine templates, scheduled triggers and unattended jobs will NOT execute. Go to Orchestrator > Tenant > Robots, create a robot account, and assign it to the machine template.
+
+Environments: ❌ Production — HTTP 405: ❌ Development — HTTP 405:
+
+Triggers: ✅ INV_EmailMonitor_Schedule — Time trigger created and verified (ID: 243114), cron: 0 0/15 7-18 ? * MON-FRI * ✅ INV_PDFExtractor_QueueTrigger — Created as scheduled trigger and verified (ID: 243115) polling queue "InvoiceProcessingQueue" every 5 min ✅ INV_ValidationEngine_QueueTrigger — Created as scheduled trigger and verified (ID: 243116) polling queue "InvoiceValidationQueue" every 5 min ✅ INV_SAPPosting_QueueTrigger — Created as scheduled trigger and verified (ID: 243117) polling queue "SAPPostingQueue" every 5 min
+
+Action Centers: ⚠️ Invoice Exception Review — Action Center API endpoints not responding. The service may need to be enabled for this folder in Orchestrator settings.
+
+Test Cases: ⚠️ 8 test case(s) — Test Manager not available on this tenant. 8 test cases were defined but cannot be provisioned. Test Manager requires an Enterprise license.
+
+7 item(s) failed — check permissions and retry from Orchestrator. 2 item(s) skipped — these services are not available on your tenant or require manual setup.
+
+The automation is now deployed and ready. You can trigger a job from this workspace or from Orchestrator directly.
+11:02 AM
+VERIFIED DEPLOYMENT RESULTS (use ONLY these facts when discussing this deployment):
+- Package: Invoice_Processing_Automation v1.701.20260224
+- Process: Invoice Processing Automation
+- Created: 18 (Queue: InvoiceProcessingQueue, Queue: InvoiceValidationQueue, Queue: SAPPostingQueue, Asset: INV_EmailUsername, Asset: INV_EmailPassword, Asset: INV_SAP_Username, Asset: INV_SAP_Password, Asset: INV_SAP_SystemURL, Asset: INV_SAP_TransactionCode, Asset: OCR_ConfidenceThreshold, Asset: ExceptionSLA_Hours, Asset: EmailMonitor_IntervalMinutes, Asset: LastRunTimestamp, Machine: INV-UnattendedBot-01, Trigger: INV_EmailMonitor_Schedule, Trigger: INV_PDFExtractor_QueueTrigger, Trigger: INV_ValidationEngine_QueueTrigger, Trigger: INV_SAPPosting_QueueTrigger)
+- Already existed: 0
+- FAILED: 7 (Storage Bucket: INV-InputDocuments — HTTP 400: {"message":"Parameter validation error: 'BucketDto' state:2","errorCode":0,"traceId":"00-a848ab6844edc2786cc6f1f1097ccd97-2b03ea22f9b7a73a-00"}; Storage Bucket: INV-ProcessedDocuments — HTTP 400: {"message":"Parameter validation error: 'BucketDto' state:2","errorCode":0,"traceId":"00-d864bad937946cad1797d8f394982794-4fc9264f212d9015-00"}; Storage Bucket: INV-ExceptionDocuments — HTTP 400: {"message":"Parameter validation error: 'BucketDto' state:2","errorCode":0,"traceId":"00-44dd73099a4620ed72cbc1470bd4189b-4911c126ad631b71-00"}; Storage Bucket: INV-AuditLogs — HTTP 400: {"message":"Parameter validation error: 'BucketDto' state:2","errorCode":0,"traceId":"00-928d5966695a8c02d3c63ad80cbc9f81-329eea458259eead-00"}; Robot Account: Robot Account Check — WARNING: Machine templates were provisioned, but robot accounts must be manually created in UiPath Orchestrator (Tenant > Robots > Add Standard Robot). Without robot accounts connected to these machine templates, scheduled triggers and unattended jobs will NOT execute. Go to Orchestrator > Tenant > Robots, create a robot account, and assign it to the machine template.; Environment: Production — HTTP 405: ; Environment: Development — HTTP 405: )
+- SKIPPED (service unavailable): 2 (Action Center: Invoice Exception Review — Action Center API endpoints not responding. The service may need to be enabled for this folder in Orchestrator settings.; Test Case: 8 test case(s) — Test Manager not available on this tenant. 8 test cases were defined but cannot be provisioned. Test Manager requires an Enterprise license.)
+
+IMPORTANT: Never claim an artifact was "created" or "deployed" if it appears in the FAILED or SKIPPED lists above. Report the actual status honestly.
+11:02 AM
+Deployment Report
+Invoice_Processing_Automation v1.701.20260224
+
+uipatezkzunj/DefaultTenant
+SumeetAppDefaultFeed
+Invoice Processing Automation
+18 created
+2 skipped
+7 failed
+
+Queues
+3 items3 new
+InvoiceProcessingQueue
+Created
+Created and verified (ID: 382895)
+InvoiceValidationQueue
+Created
+Created and verified (ID: 382896)
+SAPPostingQueue
+Created
+Created and verified (ID: 382897)
+
+Storage Buckets
+4 items4 need attention
+INV-InputDocuments
+Failed
+HTTP 400: {"message":"Parameter validation error: 'BucketDto' state:2","errorCode":0,"traceId":"00-a848ab6844edc2786cc6f1f1097ccd97-2b03ea22f9b7a73a-00"}
+INV-ProcessedDocuments
+Failed
+HTTP 400: {"message":"Parameter validation error: 'BucketDto' state:2","errorCode":0,"traceId":"00-d864bad937946cad1797d8f394982794-4fc9264f212d9015-00"}
+INV-ExceptionDocuments
+Failed
+HTTP 400: {"message":"Parameter validation error: 'BucketDto' state:2","errorCode":0,"traceId":"00-44dd73099a4620ed72cbc1470bd4189b-4911c126ad631b71-00"}
+INV-AuditLogs
+Failed
+HTTP 400: {"message":"Parameter validation error: 'BucketDto' state:2","errorCode":0,"traceId":"00-928d5966695a8c02d3c63ad80cbc9f81-329eea458259eead-00"}
+
+Assets
+10 items10 new
+INV_EmailUsername
+Created
+Created and verified (ID: 1055156, Type: Credential). UPDATE credentials in Orchestrator > Assets.
+INV_EmailPassword
+Created
+Created and verified (ID: 1055157, Type: Credential). UPDATE credentials in Orchestrator > Assets.
+INV_SAP_Username
+Created
+Created and verified (ID: 1055158, Type: Credential). UPDATE credentials in Orchestrator > Assets.
+INV_SAP_Password
+Created
+Created and verified (ID: 1055159, Type: Credential). UPDATE credentials in Orchestrator > Assets.
+INV_SAP_SystemURL
+Created
+Created and verified (ID: 1055160, Type: Text)
+INV_SAP_TransactionCode
+Created
+Created and verified (ID: 1055161, Type: Text)
+OCR_ConfidenceThreshold
+Created
+Created and verified (ID: 1055162, Type: Text)
+ExceptionSLA_Hours
+Created
+Created and verified (ID: 1055163, Type: Text)
+EmailMonitor_IntervalMinutes
+Created
+Created and verified (ID: 1055164, Type: Text)
+LastRunTimestamp
+Created
+Created and verified (ID: 1055165, Type: Text)
+
+Machines
+1 item1 new
+INV-UnattendedBot-01
+Created
+Created and verified (ID: 310438, Type: Template). Folder assignment failed (HTTP 405):
+
+Robot Accounts
+1 item1 need attention
+Robot Account Check
+Failed
+WARNING: Machine templates were provisioned, but robot accounts must be manually created in UiPath Orchestrator (Tenant > Robots > Add Standard Robot). Without robot accounts connected to these machine templates, scheduled triggers and unattended jobs will NOT execute. Go to Orchestrator > Tenant > Robots, create a robot account, and assign it to the machine template.
+
+Environments
+2 items2 need attention
+Production
+Failed
+HTTP 405:
+Development
+Failed
+HTTP 405:
+
+Triggers
+4 items4 new
+INV_EmailMonitor_Schedule
+Created
+Time trigger created and verified (ID: 243114), cron: 0 0/15 7-18 ? * MON-FRI *
+INV_PDFExtractor_QueueTrigger
+Created
+Created as scheduled trigger and verified (ID: 243115) polling queue "InvoiceProcessingQueue" every 5 min
+INV_ValidationEngine_QueueTrigger
+Created
+Created as scheduled trigger and verified (ID: 243116) polling queue "InvoiceValidationQueue" every 5 min
+INV_SAPPosting_QueueTrigger
+Created
+Created as scheduled trigger and verified (ID: 243117) polling queue "SAPPostingQueue" every 5 min
+
+Action Centers
+1 item1 need attention
+Invoice Exception Review
+Skipped
+Action Center API endpoints not responding. The service may need to be enabled for this folder in Orchestrator settings.
+
+Test Cases
+1 item1 need attention
+8 test case(s)
+Skipped
+Test Manager not available on this tenant. 8 test cases were defined but cannot be provisioned. Test Manager requires an Enterprise license.
+7 items failed, 2 skipped — check details above
