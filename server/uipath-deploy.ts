@@ -1509,19 +1509,29 @@ async function provisionDocUnderstanding(
 
 async function provisionTestCases(
   config: UiPathConfig,
-  token: string,
+  _mainToken: string,
   testCases: OrchestratorArtifacts["testCases"],
   processName: string
 ): Promise<DeploymentResult[]> {
   if (!testCases?.length) return [];
   const results: DeploymentResult[] = [];
 
+  const tmToken = await getTMToken(config);
+  if (!tmToken) {
+    return [{
+      artifact: "Test Case",
+      name: `${testCases.length} test case(s)`,
+      status: "skipped" as const,
+      message: `Could not acquire TM-scoped token. Test Manager scopes (TM.Projects, TM.TestCases) may not be available for this external application. ${testCases.length} test cases were defined but cannot be provisioned.`,
+    }];
+  }
+
   const tmBases = [
     `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/testmanager_`,
     `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/tmapi_`,
   ];
   const hdrs: Record<string, string> = {
-    "Authorization": `Bearer ${token}`,
+    "Authorization": `Bearer ${tmToken}`,
     "Content-Type": "application/json",
     "Accept": "application/json",
   };
@@ -1545,15 +1555,20 @@ async function provisionTestCases(
         activeTmBase = tmBase;
         try {
           const projData = JSON.parse(probeText);
-          if (projData.value?.length > 0) {
-            const match = projData.value.find((p: any) =>
-              p.Name?.toLowerCase().includes(processName.toLowerCase().replace(/_/g, " ")) ||
-              processName.toLowerCase().includes(p.Name?.toLowerCase())
+          const projects = projData.data || projData.value || [];
+          if (projects.length > 0) {
+            const match = projects.find((p: any) =>
+              (p.Name || p.name)?.toLowerCase().includes(processName.toLowerCase().replace(/_/g, " ")) ||
+              processName.toLowerCase().includes((p.Name || p.name)?.toLowerCase())
             );
-            projectId = match?.Id || projData.value[0].Id;
+            projectId = match?.Id || match?.id || projects[0].Id || projects[0].id;
           }
         } catch { /* valid service but empty/unparseable list — continue to create project */ }
         break;
+      }
+      if (projRes.status === 401) {
+        console.log(`[UiPath Deploy] Test Manager returned 401 — TM token may lack required scopes`);
+        continue;
       }
     } catch { continue; }
   }
@@ -1563,7 +1578,7 @@ async function provisionTestCases(
       artifact: "Test Case",
       name: `${testCases.length} test case(s)`,
       status: "skipped" as const,
-      message: `Test Manager not available on this tenant. ${testCases.length} test cases were defined but cannot be provisioned. Test Manager requires an Enterprise license.`,
+      message: `Test Manager not available on this tenant. ${testCases.length} test cases were defined but cannot be provisioned. Test Manager requires an Enterprise license or the service may not be enabled.`,
     }];
   }
 
@@ -1687,17 +1702,29 @@ async function provisionTestCases(
   return results;
 }
 
+export type ServiceAvailability = {
+  available: boolean;
+  endpoint?: string;
+  message: string;
+};
+
 export type InfraProbeResult = {
   machines: Array<{ id: number; name: string; type: string; unattendedSlots: number; nonProdSlots: number }>;
   users: Array<{ id: number; userName: string; type: string; rolesList: string[] }>;
   sessions: Array<{ robotName: string; machineName: string; state: string; runtimeType: string }>;
   robots: Array<{ id: number; name: string; machineName: string; type: string; userName: string }>;
+  actionCenter: ServiceAvailability;
+  testManager: ServiceAvailability;
 };
 
 async function preflightInfraProbe(
-  base: string, hdrs: Record<string, string>, folderId?: string
+  base: string, hdrs: Record<string, string>, folderId?: string, config?: UiPathConfig
 ): Promise<InfraProbeResult> {
-  const result: InfraProbeResult = { machines: [], users: [], sessions: [], robots: [] };
+  const result: InfraProbeResult = {
+    machines: [], users: [], sessions: [], robots: [],
+    actionCenter: { available: false, message: "Not probed" },
+    testManager: { available: false, message: "Not probed" },
+  };
   const numFolderId = folderId ? parseInt(folderId, 10) : null;
 
   try {
@@ -1768,7 +1795,52 @@ async function preflightInfraProbe(
     console.warn(`[UiPath Probe] Robots probe failed: ${err.message}`);
   }
 
-  console.log(`[UiPath Probe] Infrastructure: ${result.machines.length} machines, ${result.users.length} users, ${result.sessions.length} sessions, ${result.robots.length} robots`);
+  try {
+    const acProbeUrl = `${base}/odata/TaskCatalogs?$top=1`;
+    const acRes = await fetch(acProbeUrl, { headers: hdrs });
+    const acText = await acRes.text();
+    const acIsHTML = acText.trim().startsWith("<") || acText.includes("<!DOCTYPE");
+    if (acRes.ok && !acIsHTML) {
+      const genuineCheck = isGenuineServiceResponse(acText);
+      if (genuineCheck.genuine) {
+        result.actionCenter = { available: true, endpoint: "OData", message: "Action Center is licensed and available" };
+      } else {
+        result.actionCenter = { available: false, message: "Action Center endpoint returned non-genuine response" };
+      }
+    } else if (acRes.status === 401 || acRes.status === 403) {
+      result.actionCenter = { available: false, message: `Action Center returned ${acRes.status} — may need additional permissions or not licensed` };
+    } else {
+      result.actionCenter = { available: false, message: `Action Center not available (HTTP ${acRes.status})` };
+    }
+  } catch (err: any) {
+    result.actionCenter = { available: false, message: `Action Center probe error: ${err.message}` };
+  }
+
+  if (config) {
+    const tmToken = await getTMToken(config);
+    if (tmToken) {
+      const tmBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/testmanager_`;
+      try {
+        const tmHdrs = { "Authorization": `Bearer ${tmToken}`, "Content-Type": "application/json", "Accept": "application/json" };
+        const tmRes = await fetch(`${tmBase}/api/v2/projects?$top=1`, { headers: tmHdrs, redirect: "manual" });
+        const tmText = await tmRes.text();
+        const tmIsHTML = tmText.trim().startsWith("<") || tmText.includes("<!DOCTYPE");
+        if (tmRes.ok && !tmIsHTML) {
+          result.testManager = { available: true, endpoint: tmBase, message: "Test Manager is licensed and available (separate TM token)" };
+        } else if (tmRes.status === 401) {
+          result.testManager = { available: false, message: "Test Manager returned 401 — TM scopes may not be authorized for this tenant" };
+        } else {
+          result.testManager = { available: false, message: `Test Manager returned HTTP ${tmRes.status}${tmIsHTML ? " (HTML redirect — service not provisioned)" : ""}` };
+        }
+      } catch (err: any) {
+        result.testManager = { available: false, message: `Test Manager probe error: ${err.message}` };
+      }
+    } else {
+      result.testManager = { available: false, message: "Could not acquire TM-scoped token — Test Manager scopes may not be available" };
+    }
+  }
+
+  console.log(`[UiPath Probe] Infrastructure: ${result.machines.length} machines, ${result.users.length} users, ${result.sessions.length} sessions, ${result.robots.length} robots | Action Center: ${result.actionCenter.available ? "✓" : "✗"} | Test Manager: ${result.testManager.available ? "✓" : "✗"}`);
   return result;
 }
 
@@ -1821,6 +1893,20 @@ function formatInfraProbeResults(probe: InfraProbeResult): DeploymentResult[] {
     });
   }
 
+  results.push({
+    artifact: "Infrastructure",
+    name: "Action Center",
+    status: probe.actionCenter.available ? "exists" : "skipped",
+    message: probe.actionCenter.message,
+  });
+
+  results.push({
+    artifact: "Infrastructure",
+    name: "Test Manager",
+    status: probe.testManager.available ? "exists" : "skipped",
+    message: probe.testManager.message,
+  });
+
   return results;
 }
 
@@ -1853,6 +1939,39 @@ async function getPMToken(config: UiPathConfig): Promise<string | null> {
     return null;
   } catch (err: any) {
     console.warn(`[UiPath Deploy] PM token error: ${err.message}`);
+    return null;
+  }
+}
+
+async function getTMToken(config: UiPathConfig): Promise<string | null> {
+  try {
+    const tmScopes = "TM.Projects TM.Projects.Read TM.Projects.Write TM.TestCases TM.TestCases.Read TM.TestCases.Write TM.TestSets TM.TestSets.Read TM.TestSets.Write";
+    const params = new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      scope: tmScopes,
+    });
+
+    const res = await fetch("https://cloud.uipath.com/identity_/connect/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      console.warn(`[UiPath Deploy] TM token failed (${res.status}): ${errText.slice(0, 200)}`);
+      return null;
+    }
+    const data = await res.json();
+    if (data.access_token && data.scope?.includes("TM.")) {
+      console.log("[UiPath Deploy] TM token acquired successfully");
+      return data.access_token;
+    }
+    console.warn("[UiPath Deploy] TM token issued but missing TM scopes");
+    return null;
+  } catch (err: any) {
+    console.warn(`[UiPath Deploy] TM token error: ${err.message}`);
     return null;
   }
 }
@@ -2039,7 +2158,7 @@ export async function deployAllArtifacts(
     if (validation.releaseKey) releaseKey = validation.releaseKey;
     if (validation.releaseName) releaseName = validation.releaseName;
 
-    const infraProbe = await preflightInfraProbe(base, hdrs, config.folderId);
+    const infraProbe = await preflightInfraProbe(base, hdrs, config.folderId, config);
     const infraResults = formatInfraProbeResults(infraProbe);
     allResults.push(...infraResults);
 
