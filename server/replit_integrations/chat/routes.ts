@@ -333,10 +333,19 @@ export function registerChatRoutes(app: Express): void {
       }
 
       const history = await chatStorage.getMessagesByIdeaId(ideaId);
-      const chatMessages = history.map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-      }));
+      const filteredHistory = history.filter((m) => m.role === "user" || m.role === "assistant");
+      const chatMessages: { role: "user" | "assistant"; content: string }[] = [];
+      for (const m of filteredHistory) {
+        const role = m.role as "user" | "assistant";
+        if (chatMessages.length > 0 && chatMessages[chatMessages.length - 1].role === role) {
+          chatMessages[chatMessages.length - 1].content += "\n\n" + m.content;
+        } else {
+          chatMessages.push({ role, content: m.content });
+        }
+      }
+      if (chatMessages.length > 0 && chatMessages[0].role !== "user") {
+        chatMessages.shift();
+      }
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");

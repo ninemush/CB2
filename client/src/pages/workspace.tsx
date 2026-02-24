@@ -598,22 +598,26 @@ function ChatPanel({ idea }: { idea: Idea }) {
                 });
               }
               if (data.error) {
-                setStreamingMsg((prev) =>
-                  prev
-                    ? { ...prev, content: "Sorry, something went wrong. Please try again.", isStreaming: false }
-                    : prev
-                );
+                streamingMsgRef.current = "";
+                setStreamingMsg(null);
+                toast({
+                  title: "Message failed",
+                  description: "Something went wrong. Please try sending your message again.",
+                  variant: "destructive",
+                });
               }
             } catch {}
           }
         }
       }
     } catch {
-      setStreamingMsg((prev) =>
-        prev
-          ? { ...prev, content: "Sorry, I couldn't connect to the server. Please try again.", isStreaming: false }
-          : prev
-      );
+      streamingMsgRef.current = "";
+      setStreamingMsg(null);
+      toast({
+        title: "Connection error",
+        description: "Couldn't reach the server. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsStreaming(false);
       setIsGeneratingDoc(false);
