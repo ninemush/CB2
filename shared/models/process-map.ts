@@ -49,10 +49,13 @@ export const processApprovals = pgTable("process_approvals", {
   id: serial("id").primaryKey(),
   ideaId: varchar("idea_id").notNull().references(() => ideas.id, { onDelete: "cascade" }),
   viewType: text("view_type").notNull().default("as-is"),
+  version: integer("version").notNull().default(1),
   userId: varchar("user_id").notNull(),
   userRole: text("user_role").notNull(),
   userName: text("user_name").notNull(),
   snapshotJson: text("snapshot_json").notNull(),
+  invalidated: boolean("invalidated").notNull().default(false),
+  invalidatedReason: text("invalidated_reason"),
   approvedAt: timestamp("approved_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 

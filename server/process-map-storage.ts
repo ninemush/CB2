@@ -1,6 +1,6 @@
 import { processNodes, processEdges, processApprovals, type ProcessNode, type InsertProcessNode, type ProcessEdge, type InsertProcessEdge, type ProcessApproval, type InsertProcessApproval } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, desc } from "drizzle-orm";
 
 export class ProcessMapStorage {
   async getNodesByIdeaId(ideaId: string, viewType: string = "as-is"): Promise<ProcessNode[]> {
@@ -97,8 +97,55 @@ export class ProcessMapStorage {
 
   async getApproval(ideaId: string, viewType: string = "as-is"): Promise<ProcessApproval | undefined> {
     const [approval] = await db.select().from(processApprovals)
-      .where(and(eq(processApprovals.ideaId, ideaId), eq(processApprovals.viewType, viewType)));
+      .where(and(
+        eq(processApprovals.ideaId, ideaId),
+        eq(processApprovals.viewType, viewType),
+        eq(processApprovals.invalidated, false),
+      ))
+      .orderBy(desc(processApprovals.version))
+      .limit(1);
     return approval;
+  }
+
+  async getLatestApproval(ideaId: string, viewType: string = "as-is"): Promise<ProcessApproval | undefined> {
+    const [approval] = await db.select().from(processApprovals)
+      .where(and(
+        eq(processApprovals.ideaId, ideaId),
+        eq(processApprovals.viewType, viewType),
+      ))
+      .orderBy(desc(processApprovals.version))
+      .limit(1);
+    return approval;
+  }
+
+  async getApprovalHistory(ideaId: string, viewType: string = "as-is"): Promise<ProcessApproval[]> {
+    return db.select().from(processApprovals)
+      .where(and(
+        eq(processApprovals.ideaId, ideaId),
+        eq(processApprovals.viewType, viewType),
+      ))
+      .orderBy(desc(processApprovals.version));
+  }
+
+  async getAllApprovalsForIdea(ideaId: string): Promise<ProcessApproval[]> {
+    return db.select().from(processApprovals)
+      .where(eq(processApprovals.ideaId, ideaId))
+      .orderBy(desc(processApprovals.approvedAt));
+  }
+
+  async getNextVersion(ideaId: string, viewType: string): Promise<number> {
+    const latest = await this.getLatestApproval(ideaId, viewType);
+    return latest ? latest.version + 1 : 1;
+  }
+
+  async invalidateApprovals(ideaId: string, viewType: string, reason: string): Promise<void> {
+    await db.update(processApprovals)
+      .set({ invalidated: true, invalidatedReason: reason })
+      .where(and(
+        eq(processApprovals.ideaId, ideaId),
+        eq(processApprovals.viewType, viewType),
+        eq(processApprovals.invalidated, false),
+      ));
   }
 
   async createApproval(data: InsertProcessApproval): Promise<ProcessApproval> {

@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { useRoute, Link } from "wouter";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -140,6 +141,23 @@ function getCompletedStagesForIdea(idea: Idea) {
   return completed;
 }
 
+const STAGE_ARTIFACTS: Record<string, string[]> = {
+  "Design": ["as-is-map"],
+  "Build": ["as-is-map", "to-be-map", "pdd"],
+  "Test": ["as-is-map", "to-be-map", "pdd", "sdd"],
+  "Governance / Security Scan": ["as-is-map", "to-be-map", "pdd", "sdd"],
+  "CoE Approval": ["as-is-map", "to-be-map", "pdd", "sdd"],
+  "Deploy": ["as-is-map", "to-be-map", "pdd", "sdd"],
+  "Maintenance": ["as-is-map", "to-be-map", "pdd", "sdd"],
+};
+
+const ARTIFACT_LABELS: Record<string, string> = {
+  "as-is-map": "As-Is Map",
+  "to-be-map": "To-Be Map",
+  "pdd": "PDD",
+  "sdd": "SDD",
+};
+
 function StageTracker({
   idea,
   onStageClick,
@@ -150,85 +168,154 @@ function StageTracker({
   const currentIndex = PIPELINE_STAGES.indexOf(idea.stage as PipelineStage);
   const completedStages = getCompletedStagesForIdea(idea);
 
-  return (
-    <div className="flex flex-col h-full" data-testid="panel-stage-tracker">
-      <div className="px-4 py-3 border-b border-border">
-        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-          Progress
-        </h3>
-      </div>
-      <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-4">
-        <div className="relative">
-          {PIPELINE_STAGES.map((stage, index) => {
-            const isCompleted = index < currentIndex;
-            const isCurrent = index === currentIndex;
-            const isFuture = index > currentIndex;
+  const { data: approvalSummary } = useQuery<Record<string, any>>({
+    queryKey: ["/api/ideas", idea.id, "approval-summary"],
+    queryFn: async () => {
+      const res = await fetch(`/api/ideas/${idea.id}/approval-summary`, { credentials: "include" });
+      if (!res.ok) return {};
+      return res.json();
+    },
+    staleTime: 30000,
+  });
 
-            return (
-              <div key={stage} className="relative flex items-start group" data-testid={`stage-step-${index}`}>
-                {index < PIPELINE_STAGES.length - 1 && (
-                  <div
-                    className={`absolute left-[11px] top-[24px] w-[2px] h-[calc(100%-8px)] ${
-                      isCompleted
-                        ? "bg-cb-teal/40"
-                        : isCurrent
-                          ? "bg-gradient-to-b from-primary/60 to-border/30"
-                          : "bg-border/30"
-                    }`}
-                  />
-                )}
+  const getStageTooltip = (stage: string): ReactNode | null => {
+    const artifacts = STAGE_ARTIFACTS[stage];
+    if (!artifacts || !approvalSummary) return null;
 
-                <div className="relative z-10 flex items-center justify-center w-6 h-6 shrink-0 mt-0.5">
-                  {isCompleted && (
-                    <button
-                      onClick={() => onStageClick(stage)}
-                      className="flex items-center justify-center w-5 h-5 rounded-full bg-cb-teal/20 border border-cb-teal/30 cursor-pointer hover:bg-cb-teal/30 transition-colors"
-                      data-testid={`button-stage-${index}`}
-                    >
-                      <Check className="h-2.5 w-2.5 text-cb-teal" />
-                    </button>
-                  )}
-                  {isCurrent && (
-                    <div className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/20 border-2 border-primary">
-                      <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-                    </div>
-                  )}
-                  {isFuture && (
-                    <div className="flex items-center justify-center w-5 h-5 rounded-full bg-muted/30 border border-border/50">
-                      <Lock className="h-2 w-2 text-muted-foreground/40" />
-                    </div>
-                  )}
-                </div>
+    const items = artifacts.map(key => {
+      const data = approvalSummary[key];
+      if (!data) return { key, label: ARTIFACT_LABELS[key] || key, status: "pending" as const };
+      return {
+        key,
+        label: ARTIFACT_LABELS[key] || key,
+        status: data.invalidated ? "invalidated" as const : "approved" as const,
+        version: data.version,
+        userName: data.userName,
+        approvedAt: data.approvedAt,
+      };
+    });
 
-                <div className="ml-2.5 pb-5 min-w-0 flex-1">
-                  <span
-                    className={`text-xs leading-tight block ${
-                      isCurrent
-                        ? "text-primary font-semibold"
-                        : isCompleted
-                          ? "text-foreground/80 font-medium"
-                          : "text-muted-foreground/50"
-                    }`}
-                  >
-                    {stage}
-                  </span>
-                  {isCompleted && completedStages[stage] && (
-                    <span className="text-[10px] text-muted-foreground/60 mt-0.5 block">
-                      {completedStages[stage]}
-                    </span>
-                  )}
-                  {isCurrent && (
-                    <span className="text-[10px] text-primary/70 mt-0.5 block">
-                      In progress
-                    </span>
-                  )}
-                </div>
+    if (items.every(i => i.status === "pending")) return null;
+
+    return (
+      <div className="space-y-1.5 text-left min-w-[180px]">
+        <div className="text-[11px] font-semibold text-zinc-200 border-b border-zinc-700 pb-1 mb-1">{stage}</div>
+        {items.map(item => (
+          <div key={item.key} className="flex items-center justify-between gap-3">
+            <span className="text-[10px] text-zinc-400">{item.label}</span>
+            {item.status === "approved" ? (
+              <div className="flex items-center gap-1">
+                <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
+                  v{item.version || 1}
+                </span>
+                <span className="text-[9px] text-zinc-500">{item.userName}</span>
               </div>
-            );
-          })}
+            ) : item.status === "invalidated" ? (
+              <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400">needs redo</span>
+            ) : (
+              <span className="text-[9px] text-zinc-600">pending</span>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <div className="flex flex-col h-full" data-testid="panel-stage-tracker">
+        <div className="px-4 py-3 border-b border-border">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            Progress
+          </h3>
+        </div>
+        <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-4">
+          <div className="relative">
+            {PIPELINE_STAGES.map((stage, index) => {
+              const isCompleted = index < currentIndex;
+              const isCurrent = index === currentIndex;
+              const isFuture = index > currentIndex;
+              const tooltip = getStageTooltip(stage);
+
+              const stageContent = (
+                <div key={stage} className="relative flex items-start group" data-testid={`stage-step-${index}`}>
+                  {index < PIPELINE_STAGES.length - 1 && (
+                    <div
+                      className={`absolute left-[11px] top-[24px] w-[2px] h-[calc(100%-8px)] ${
+                        isCompleted
+                          ? "bg-cb-teal/40"
+                          : isCurrent
+                            ? "bg-gradient-to-b from-primary/60 to-border/30"
+                            : "bg-border/30"
+                      }`}
+                    />
+                  )}
+
+                  <div className="relative z-10 flex items-center justify-center w-6 h-6 shrink-0 mt-0.5">
+                    {isCompleted && (
+                      <button
+                        onClick={() => onStageClick(stage)}
+                        className="flex items-center justify-center w-5 h-5 rounded-full bg-cb-teal/20 border border-cb-teal/30 cursor-pointer hover:bg-cb-teal/30 transition-colors"
+                        data-testid={`button-stage-${index}`}
+                      >
+                        <Check className="h-2.5 w-2.5 text-cb-teal" />
+                      </button>
+                    )}
+                    {isCurrent && (
+                      <div className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/20 border-2 border-primary">
+                        <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                      </div>
+                    )}
+                    {isFuture && (
+                      <div className="flex items-center justify-center w-5 h-5 rounded-full bg-muted/30 border border-border/50">
+                        <Lock className="h-2 w-2 text-muted-foreground/40" />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="ml-2.5 pb-5 min-w-0 flex-1">
+                    <span
+                      className={`text-xs leading-tight block ${
+                        isCurrent
+                          ? "text-primary font-semibold"
+                          : isCompleted
+                            ? "text-foreground/80 font-medium"
+                            : "text-muted-foreground/50"
+                      }`}
+                    >
+                      {stage}
+                    </span>
+                    {isCompleted && completedStages[stage] && (
+                      <span className="text-[10px] text-muted-foreground/60 mt-0.5 block">
+                        {completedStages[stage]}
+                      </span>
+                    )}
+                    {isCurrent && (
+                      <span className="text-[10px] text-primary/70 mt-0.5 block">
+                        In progress
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+
+              if (tooltip && (isCompleted || isCurrent)) {
+                return (
+                  <Tooltip key={stage}>
+                    <TooltipTrigger asChild>{stageContent}</TooltipTrigger>
+                    <TooltipContent side="right" className="p-2.5 bg-zinc-900 border-zinc-700 max-w-[260px]">
+                      {tooltip}
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              }
+
+              return stageContent;
+            })}
+          </div>
         </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
 

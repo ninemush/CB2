@@ -60,8 +60,11 @@ import {
   ChevronRight,
   AlertCircle,
   Layers,
+  History,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -185,6 +188,7 @@ interface ProcessMapData {
   nodes: ProcessNode[];
   edges: { id: number; ideaId: string; viewType: string; sourceNodeId: number; targetNodeId: number; label: string; createdAt: string }[];
   approval: ProcessApproval | null;
+  mapChanged?: boolean;
 }
 
 type ProcessView = "as-is" | "to-be" | "sdd";
@@ -2213,6 +2217,21 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
 
   const nodeCount = mapData?.nodes?.length || 0;
   const approval = mapData?.approval;
+  const mapChanged = mapData?.mapChanged || false;
+
+  const { data: approvalHistory } = useQuery<ProcessApproval[]>({
+    queryKey: ["/api/ideas", ideaId, "process-approval-history", activeView],
+    queryFn: async () => {
+      const res = await fetch(`/api/ideas/${ideaId}/process-approval-history?view=${activeView}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    staleTime: 30000,
+  });
+
+  const [viewingSnapshotVersion, setViewingSnapshotVersion] = useState<number | null>(null);
+
+  const showApproveButton = activeView !== "sdd" && nodeCount >= 3 && (!approval || mapChanged);
 
   const mapCompleteness = useMemo(() => {
     if (!mapData?.nodes || mapData.nodes.length === 0) return 0;
@@ -2252,8 +2271,10 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "process-map", activeView] });
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "process-map"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "process-approval-history"] });
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "messages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "approval-summary"] });
       onApproved?.();
     },
   });
@@ -2485,7 +2506,7 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
         </div>
       )}
 
-      {nodeCount > 0 && !approval && activeView === "as-is" && (
+      {nodeCount > 0 && (!approval || mapChanged) && activeView === "as-is" && (
         <div className="px-4 py-2 border-b border-zinc-800/80 bg-zinc-950/30" data-testid="map-completeness-bar">
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] text-zinc-500 font-medium">Completeness</span>
@@ -2676,32 +2697,44 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
         </ReactFlowErrorBoundary>
       )}
 
-      {activeView !== "sdd" && nodeCount >= 3 && !approval && (
+      {showApproveButton && (
         <div className="px-4 py-2.5 border-t border-zinc-800/80 flex items-center justify-between bg-zinc-950/50">
           {!showApprovalConfirm ? (
-            <Button
-              size="sm"
-              className="text-xs h-8 bg-cb-teal hover:bg-cb-teal/80 rounded-lg shadow-sm shadow-cb-teal/20"
-              onClick={() => setShowApprovalConfirm(true)}
-              data-testid="button-approve-map"
-            >
-              <Check className="h-3 w-3 mr-1.5" /> Approve {activeView === "as-is" ? "As-Is" : activeView === "to-be" ? "To-Be" : "SDD"} Map
-            </Button>
+            <div className="flex items-center gap-2 flex-1">
+              <Button
+                size="sm"
+                className={`text-xs h-8 rounded-lg shadow-sm ${mapChanged ? "bg-amber-500 hover:bg-amber-500/80 shadow-amber-500/20" : "bg-cb-teal hover:bg-cb-teal/80 shadow-cb-teal/20"}`}
+                onClick={() => setShowApprovalConfirm(true)}
+                data-testid="button-approve-map"
+              >
+                {mapChanged ? (
+                  <><RefreshCw className="h-3 w-3 mr-1.5" /> Re-approve {activeView === "as-is" ? "As-Is" : "To-Be"} Map</>
+                ) : (
+                  <><Check className="h-3 w-3 mr-1.5" /> Approve {activeView === "as-is" ? "As-Is" : activeView === "to-be" ? "To-Be" : "SDD"} Map</>
+                )}
+              </Button>
+              {mapChanged && approval && (
+                <span className="text-[10px] text-amber-400/80">Map changed since v{(approval as any).version || 1} approval</span>
+              )}
+            </div>
           ) : (
             <div className="flex-1 space-y-2">
               <p className="text-[11px] text-zinc-400 leading-relaxed">
-                By approving, you formally sign off on this {activeView === "as-is" ? "As-Is" : activeView === "to-be" ? "To-Be" : "SDD"} process map. This is recorded with your name, role, and timestamp.
+                {mapChanged
+                  ? `Changes detected since last approval. Re-approving will create a new version and ${activeView === "as-is" ? "invalidate all downstream artifacts (To-Be, PDD, SDD, UiPath package)" : "invalidate downstream documents (PDD, SDD)"}.`
+                  : `By approving, you formally sign off on this ${activeView === "as-is" ? "As-Is" : activeView === "to-be" ? "To-Be" : "SDD"} process map. This is recorded with your name, role, and timestamp.`
+                }
               </p>
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
-                  className="text-xs h-7 bg-cb-teal hover:bg-cb-teal/80 rounded-lg"
+                  className={`text-xs h-7 rounded-lg ${mapChanged ? "bg-amber-500 hover:bg-amber-500/80" : "bg-cb-teal hover:bg-cb-teal/80"}`}
                   onClick={() => { approveMutation.mutate(); setShowApprovalConfirm(false); }}
                   disabled={approveMutation.isPending}
                   data-testid="button-confirm-approve"
                 >
                   {approveMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Check className="h-3 w-3 mr-1" />}
-                  Confirm
+                  {mapChanged ? "Confirm Re-approval" : "Confirm"}
                 </Button>
                 <Button
                   size="sm"
@@ -2718,17 +2751,55 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
         </div>
       )}
 
-      {activeView !== "sdd" && approval && (
-        <div className="px-4 py-2.5 border-t border-zinc-800/80 flex items-center gap-2 bg-zinc-950/50" data-testid="approval-badge">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-            <Check className="h-3 w-3 text-emerald-500" />
-            <span className="text-[11px] text-emerald-400 font-medium">{activeView === "as-is" ? "As-Is" : "To-Be"} Approved</span>
+      {activeView !== "sdd" && approval && !mapChanged && (
+        <div className="px-4 py-2.5 border-t border-zinc-800/80 flex items-center justify-between bg-zinc-950/50" data-testid="approval-badge">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+              <Check className="h-3 w-3 text-emerald-500" />
+              <span className="text-[11px] text-emerald-400 font-medium">{activeView === "as-is" ? "As-Is" : "To-Be"} Approved v{(approval as any).version || 1}</span>
+            </div>
+            <span className="text-[10px] text-zinc-500">
+              {new Date(approval.approvedAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}
+              {" by "}
+              {approval.userName}
+            </span>
           </div>
-          <span className="text-[10px] text-zinc-500">
-            {new Date(approval.approvedAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}
-            {" by "}
-            {approval.userName}
-          </span>
+
+          {approvalHistory && approvalHistory.length > 1 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="ghost" className="text-xs h-7 text-zinc-400 hover:text-zinc-200 gap-1" data-testid="button-version-history">
+                  <History className="h-3 w-3" />
+                  <span>v{(approval as any).version || 1}</span>
+                  <ChevronDown className="h-2.5 w-2.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[240px]">
+                {approvalHistory.map((h) => (
+                  <DropdownMenuItem
+                    key={h.id}
+                    className="flex flex-col items-start gap-0.5 cursor-pointer"
+                    onClick={() => setViewingSnapshotVersion(h.version === (approval as any).version ? null : (h as any).version)}
+                    data-testid={`version-item-${(h as any).version}`}
+                  >
+                    <div className="flex items-center gap-2 w-full">
+                      <span className="text-xs font-medium">
+                        v{(h as any).version || 1}
+                        {(h as any).version === (approval as any).version && " (current)"}
+                      </span>
+                      {(h as any).invalidated && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-400">superseded</span>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-zinc-500">
+                      {new Date(h.approvedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                      {" by "}{h.userName}
+                    </span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       )}
     </div>

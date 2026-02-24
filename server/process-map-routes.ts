@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { processMapStorage } from "./process-map-storage";
+import { documentStorage } from "./document-storage";
 import { storage } from "./storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { evaluateTransition } from "./stage-transition";
@@ -46,6 +47,36 @@ const updateEdgeSchema = z.object({
   sourceNodeId: z.number().optional(),
   targetNodeId: z.number().optional(),
 });
+
+function hasMapChanged(
+  currentNodes: any[],
+  currentEdges: any[],
+  snapshotJson: string
+): boolean {
+  try {
+    const snapshot = JSON.parse(snapshotJson);
+    const snapNodes = snapshot.nodes || [];
+    const snapEdges = snapshot.edges || [];
+
+    if (currentNodes.length !== snapNodes.length || currentEdges.length !== snapEdges.length) {
+      return true;
+    }
+
+    const normalize = (nodes: any[], edges: any[]) => {
+      const sortedNodes = nodes
+        .map((n: any) => ({ name: n.name, role: n.role, system: n.system, nodeType: n.nodeType || n.node_type, description: n.description, isPainPoint: n.isPainPoint ?? n.is_pain_point, isGhost: n.isGhost ?? n.is_ghost, orderIndex: n.orderIndex ?? n.order_index }))
+        .sort((a: any, b: any) => (a.orderIndex || 0) - (b.orderIndex || 0) || a.name.localeCompare(b.name));
+      const sortedEdges = edges
+        .map((e: any) => ({ source: e.sourceNodeId ?? e.source_node_id, target: e.targetNodeId ?? e.target_node_id, label: e.label }))
+        .sort((a: any, b: any) => a.source - b.source || a.target - b.target);
+      return JSON.stringify({ nodes: sortedNodes, edges: sortedEdges });
+    };
+
+    return normalize(currentNodes, currentEdges) !== normalize(snapNodes, snapEdges);
+  } catch {
+    return true;
+  }
+}
 
 async function verifyIdeaAccess(req: Request, res: Response): Promise<string | null> {
     if (!req.session.userId) {
@@ -183,7 +214,63 @@ export function registerProcessMapRoutes(app: Express): void {
       }
     }
 
-    return res.json({ nodes, edges, approval });
+    let mapChanged = false;
+    if (approval && approval.snapshotJson) {
+      mapChanged = hasMapChanged(nodes, edges, approval.snapshotJson);
+    }
+
+    return res.json({ nodes, edges, approval, mapChanged });
+  });
+
+  app.get("/api/ideas/:ideaId/process-approval-history", async (req: Request, res: Response) => {
+    const ideaId = await verifyIdeaAccess(req, res);
+    if (!ideaId) return;
+    const viewType = (req.query.view as string) || "as-is";
+    const history = await processMapStorage.getApprovalHistory(ideaId, viewType);
+    return res.json(history);
+  });
+
+  app.get("/api/ideas/:ideaId/approval-summary", async (req: Request, res: Response) => {
+    const ideaId = await verifyIdeaAccess(req, res);
+    if (!ideaId) return;
+    const allApprovals = await processMapStorage.getAllApprovalsForIdea(ideaId);
+    const pddApproval = await documentStorage.getApproval(ideaId, "PDD");
+    const sddApproval = await documentStorage.getApproval(ideaId, "SDD");
+
+    const summary: Record<string, any> = {};
+
+    for (const a of allApprovals) {
+      const key = `${a.viewType}-map`;
+      if (!summary[key] || a.version > summary[key].version) {
+        summary[key] = {
+          type: `${a.viewType} Map`,
+          version: a.version,
+          userName: a.userName,
+          userRole: a.userRole,
+          approvedAt: a.approvedAt,
+          invalidated: a.invalidated,
+        };
+      }
+    }
+
+    if (pddApproval) {
+      summary["pdd"] = {
+        type: "PDD",
+        userName: pddApproval.userName,
+        userRole: pddApproval.userRole,
+        approvedAt: pddApproval.approvedAt,
+      };
+    }
+    if (sddApproval) {
+      summary["sdd"] = {
+        type: "SDD",
+        userName: sddApproval.userName,
+        userRole: sddApproval.userRole,
+        approvedAt: sddApproval.approvedAt,
+      };
+    }
+
+    return res.json(summary);
   });
 
   app.post("/api/ideas/:ideaId/process-nodes", async (req: Request, res: Response) => {
@@ -306,7 +393,14 @@ export function registerProcessMapRoutes(app: Express): void {
     const viewType = (req.body.viewType as string) || "as-is";
 
     const existingApproval = await processMapStorage.getApproval(ideaId, viewType);
-    if (existingApproval) return res.status(400).json({ message: "Already approved" });
+    if (existingApproval) {
+      const nodes = await processMapStorage.getNodesByIdeaId(ideaId, viewType);
+      const edges = await processMapStorage.getEdgesByIdeaId(ideaId, viewType);
+      const changed = hasMapChanged(nodes, edges, existingApproval.snapshotJson);
+      if (!changed) {
+        return res.status(400).json({ message: "Already approved — no changes detected" });
+      }
+    }
 
     const nodes = await processMapStorage.getNodesByIdeaId(ideaId, viewType);
     if (nodes.length < 3) return res.status(400).json({ message: "At least 3 nodes required" });
@@ -317,58 +411,86 @@ export function registerProcessMapRoutes(app: Express): void {
     const edges = await processMapStorage.getEdgesByIdeaId(ideaId, viewType);
     const snapshot = JSON.stringify({ nodes, edges });
 
+    if (existingApproval) {
+      await processMapStorage.invalidateApprovals(ideaId, viewType, `Superseded by new version`);
+    }
+
+    const nextVersion = await processMapStorage.getNextVersion(ideaId, viewType);
+
     const approval = await processMapStorage.createApproval({
       ideaId,
       viewType,
+      version: nextVersion,
       userId: user.id,
       userRole: (req.session.activeRole || user.role) as string,
       userName: user.displayName,
       snapshotJson: snapshot,
+      invalidated: false,
     });
 
     if (viewType === "as-is") {
-      const existingToBe = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
-      if (existingToBe.length === 0) {
-        const idMap: Record<number, number> = {};
-        for (const node of nodes) {
-          const toBeNode = await processMapStorage.createNode({
+      if (existingApproval) {
+        await processMapStorage.invalidateApprovals(ideaId, "to-be", "As-Is map was re-approved (v" + nextVersion + ")");
+        await processMapStorage.invalidateApprovals(ideaId, "sdd", "As-Is map was re-approved (v" + nextVersion + ")");
+        await processMapStorage.clearAllForView(ideaId, "to-be");
+        await processMapStorage.clearAllForView(ideaId, "sdd");
+        try { await documentStorage.deleteApproval(ideaId, "PDD"); } catch {}
+        try { await documentStorage.deleteApproval(ideaId, "SDD"); } catch {}
+        console.log(`[ProcessMap] Cascade invalidation: As-Is v${nextVersion} invalidated To-Be, PDD, SDD for idea=${ideaId}`);
+      }
+
+      const idMap: Record<number, number> = {};
+      for (const node of nodes) {
+        const toBeNode = await processMapStorage.createNode({
+          ideaId,
+          name: node.name,
+          role: node.role,
+          system: node.system,
+          nodeType: node.nodeType,
+          description: node.isPainPoint
+            ? `[AUTOMATED] ${node.description || node.name}`
+            : node.description,
+          isGhost: node.isGhost,
+          isPainPoint: false,
+          viewType: "to-be",
+          orderIndex: node.orderIndex,
+          positionX: node.positionX,
+          positionY: node.positionY,
+        });
+        idMap[node.id] = toBeNode.id;
+      }
+      for (const edge of edges) {
+        if (idMap[edge.sourceNodeId] && idMap[edge.targetNodeId]) {
+          await processMapStorage.createEdge({
             ideaId,
-            name: node.name,
-            role: node.role,
-            system: node.system,
-            nodeType: node.nodeType,
-            description: node.isPainPoint
-              ? `[AUTOMATED] ${node.description || node.name}`
-              : node.description,
-            isGhost: node.isGhost,
-            isPainPoint: false,
+            sourceNodeId: idMap[edge.sourceNodeId],
+            targetNodeId: idMap[edge.targetNodeId],
+            label: edge.label,
             viewType: "to-be",
-            orderIndex: node.orderIndex,
-            positionX: node.positionX,
-            positionY: node.positionY,
           });
-          idMap[node.id] = toBeNode.id;
-        }
-        for (const edge of edges) {
-          if (idMap[edge.sourceNodeId] && idMap[edge.targetNodeId]) {
-            await processMapStorage.createEdge({
-              ideaId,
-              sourceNodeId: idMap[edge.sourceNodeId],
-              targetNodeId: idMap[edge.targetNodeId],
-              label: edge.label,
-              viewType: "to-be",
-            });
-          }
         }
       }
     }
 
+    if (viewType === "to-be" && existingApproval) {
+      await processMapStorage.invalidateApprovals(ideaId, "sdd", "To-Be map was re-approved (v" + nextVersion + ")");
+      await processMapStorage.clearAllForView(ideaId, "sdd");
+      try { await documentStorage.deleteApproval(ideaId, "PDD"); } catch {}
+      try { await documentStorage.deleteApproval(ideaId, "SDD"); } catch {}
+      console.log(`[ProcessMap] Cascade invalidation: To-Be v${nextVersion} invalidated PDD, SDD for idea=${ideaId}`);
+    }
+
+    const isReapproval = existingApproval != null;
     await chatStorage.createMessage(
       ideaId,
       "assistant",
       viewType === "as-is"
-        ? "Great \u2014 As-Is process map approved. I've generated a To-Be process map based on your current workflow. You can switch to the To-Be view to review and refine the optimized version. I'll also now prepare your Process Design Document."
-        : "To-Be process map approved. The optimized workflow has been locked in."
+        ? isReapproval
+          ? `As-Is process map re-approved (v${nextVersion}). All downstream artifacts (To-Be map, PDD, SDD, UiPath package) have been invalidated and need to be redone. I've regenerated the To-Be map from the updated As-Is.`
+          : "Great \u2014 As-Is process map approved. I've generated a To-Be process map based on your current workflow. You can switch to the To-Be view to review and refine the optimized version. I'll also now prepare your Process Design Document."
+        : isReapproval
+          ? `To-Be process map re-approved (v${nextVersion}). Downstream documents (PDD, SDD) have been invalidated and need to be regenerated.`
+          : "To-Be process map approved. The optimized workflow has been locked in."
     );
 
     try {
