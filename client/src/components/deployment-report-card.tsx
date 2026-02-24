@@ -202,7 +202,9 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
                     const StatusIcon = cfg.icon;
                     const itemKey = `${artifactType}-${idx}`;
                     const msgExpanded = expandedMessages[itemKey];
-                    const showExpandable = item.message && item.message.length > 60 && item.status !== "created" && item.status !== "exists";
+                    const hasDetailMessage = item.message && item.message.length > 60;
+                    const showExpandable = hasDetailMessage && item.status !== "created";
+                    const showMessage = item.status === "failed" || item.status === "skipped" || (item.status === "exists" && item.message && item.message.includes("polling"));
 
                     return (
                       <div
@@ -217,7 +219,7 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
                             <span className="text-xs font-medium text-foreground truncate">{item.name || "Unknown"}</span>
                             <span className={`text-[10px] shrink-0 ${cfg.color}`}>{cfg.label}</span>
                           </div>
-                          {item.status === "failed" || item.status === "skipped" ? (
+                          {showMessage ? (
                             <p className={`text-[10px] text-muted-foreground leading-tight mt-0.5 ${!msgExpanded && showExpandable ? "line-clamp-1" : ""}`}>
                               {item.message}
                             </p>

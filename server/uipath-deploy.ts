@@ -922,7 +922,7 @@ async function provisionTriggers(
           if (schedCheckRes.ok) {
             const schedCheckData = await schedCheckRes.json();
             if (schedCheckData.value?.length > 0) {
-              results.push({ artifact: "Trigger", name: t.name, status: "exists", message: `Already exists as scheduled trigger (ID: ${schedCheckData.value[0].Id})`, id: schedCheckData.value[0].Id });
+              results.push({ artifact: "Trigger", name: t.name, status: "exists", message: `Already exists as queue-polling trigger (ID: ${schedCheckData.value[0].Id}). Native queue triggers are not available on this tenant — polling every 5 min instead.`, id: schedCheckData.value[0].Id });
               alreadyExists = true;
             }
           }
@@ -1016,12 +1016,12 @@ async function provisionTriggers(
             const verify = await verifyArtifactExists(base, hdrs, "ProcessSchedules", "Name", t.name, "Scheduled Trigger", schedReturnedId);
             if (verify.exists) {
               const disabledNote = createDisabled ? ` [CREATED DISABLED — ${runtimeDetection.warning || "No Unattended runtime verified"}. Enable after configuring runtimes.]` : "";
-              results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Created as scheduled trigger and verified (ID: ${verify.id}) polling queue "${t.queueName}" every 5 min${disabledNote}`, id: verify.id });
+              results.push({ artifact: "Trigger", name: t.name, status: "created", message: `Created as queue-polling trigger (ID: ${verify.id}). Native queue triggers are not available on this tenant — polling "${t.queueName}" every 5 min instead.${disabledNote}`, id: verify.id });
             } else {
               results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `ProcessSchedule fallback returned ${schedRes.status} but verification failed — trigger not found. ${verify.detail || ""}` });
             }
           } else if (schedRes.status === 409 || schedText.includes("already exists")) {
-            results.push({ artifact: "Trigger", name: t.name, status: "exists", message: "Already exists as scheduled trigger" });
+            results.push({ artifact: "Trigger", name: t.name, status: "exists", message: "Already exists as queue-polling trigger. Native queue triggers are not available on this tenant — polling every 5 min instead." });
           } else {
             results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `Trigger creation failed — QueueTriggers returned ${res.status}, ProcessSchedules returned ${schedRes.status}: ${schedText.slice(0, 200)}` });
           }
