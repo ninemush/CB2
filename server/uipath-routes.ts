@@ -256,9 +256,6 @@ export function registerUiPathRoutes(app: Express): void {
         console.error("[UiPath] Auto-create process failed:", err.message);
       }
 
-      const folderLine = details?.folderName
-        ? `Folder: **${details.folderName}**`
-        : `Location: Tenant feed`;
       const processLine = processResult.success
         ? `\n**Process created:** "${result.details?.processName}" — ready to run`
         : `\n**Process:** Could not auto-create (${processResult.message}). You may need to create it manually in Orchestrator.`;
@@ -316,19 +313,35 @@ export function registerUiPathRoutes(app: Express): void {
         deploymentReport = `\n\nArtifact deployment encountered an error: ${err.message}`;
       }
 
+      const deployResults = result.details?.deploymentResults || [];
+      const createdCount = deployResults.filter((r: any) => r.status === "created").length;
+      const failedCount = deployResults.filter((r: any) => r.status === "failed").length;
+      const skippedCount = deployResults.filter((r: any) => r.status === "skipped").length;
+
+      let statusLine = "";
+      if (deployResults.length > 0) {
+        if (failedCount > 0) {
+          statusLine = `${createdCount} artifact(s) provisioned, ${failedCount} failed — see the deployment report for details.`;
+        } else if (skippedCount > 0) {
+          statusLine = `${createdCount} artifact(s) provisioned, ${skippedCount} skipped (service not available on tenant).`;
+        } else if (createdCount > 0) {
+          statusLine = `All ${createdCount} artifact(s) provisioned successfully.`;
+        }
+      } else if (deploymentReport) {
+        statusLine = deploymentReport.replace(/^\n+/, "");
+      }
+
       const chatMsg = [
-        `Package pushed to UiPath Orchestrator successfully.`,
+        `Package deployed to UiPath Orchestrator.`,
         ``,
         `**${packageId}** v${packageVersion}`,
-        `Org: ${details?.orgName || "—"} / Tenant: ${details?.tenantName || "—"}`,
-        folderLine,
         processLine,
-        deploymentReport,
+        statusLine,
         ``,
         processResult.success
-          ? `The automation is now deployed and ready. You can trigger a job from this workspace or from Orchestrator directly.`
+          ? `The automation is ready. You can trigger a job from this workspace or from Orchestrator.`
           : `Create a Process from this package in Orchestrator to make it runnable.`,
-      ].join("\n");
+      ].filter(Boolean).join("\n");
 
       await chatStorage.createMessage(ideaId, "assistant", chatMsg);
     } else {

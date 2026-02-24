@@ -5,6 +5,17 @@ function odataEscape(value: string): string {
   return value.replace(/'/g, "''");
 }
 
+function sanitizeErrorMessage(httpStatus: number, rawText: string): string {
+  try {
+    const parsed = JSON.parse(rawText);
+    const msg = parsed.message || parsed.Message || parsed.error?.message || parsed.errorMessage;
+    if (msg) return `Error ${httpStatus}: ${msg}`;
+  } catch {}
+  const clean = rawText.replace(/[{}"\\]/g, "").replace(/traceId:[^,]+,?/gi, "").replace(/errorCode:\d+,?/gi, "").trim();
+  if (clean.length > 150) return `Error ${httpStatus}: ${clean.slice(0, 150)}...`;
+  return `Error ${httpStatus}: ${clean || "Request failed"}`;
+}
+
 function generateUuid(): string {
   const hex = "0123456789abcdef";
   let uuid = "";
@@ -430,7 +441,7 @@ async function provisionQueues(
       } else if (res.status === 409 || text.includes("already exists")) {
         results.push({ artifact: "Queue", name: q.name, status: "exists", message: "Already exists" });
       } else {
-        results.push({ artifact: "Queue", name: q.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 300)}` });
+        results.push({ artifact: "Queue", name: q.name, status: "failed", message: sanitizeErrorMessage(res.status, text) });
       }
     } catch (err: any) {
       results.push({ artifact: "Queue", name: q.name, status: "failed", message: err.message });
@@ -502,7 +513,7 @@ async function provisionAssets(
       } else if (res.status === 409 || text.includes("already exists")) {
         results.push({ artifact: "Asset", name: a.name, status: "exists", message: "Already exists" });
       } else {
-        results.push({ artifact: "Asset", name: a.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 300)}` });
+        results.push({ artifact: "Asset", name: a.name, status: "failed", message: sanitizeErrorMessage(res.status, text) });
       }
     } catch (err: any) {
       results.push({ artifact: "Asset", name: a.name, status: "failed", message: err.message });
@@ -622,7 +633,7 @@ async function provisionMachines(
       } else if (res.status === 409 || text.includes("already exists")) {
         results.push({ artifact: "Machine", name: m.name, status: "exists", message: "Already exists" });
       } else {
-        results.push({ artifact: "Machine", name: m.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 300)}` });
+        results.push({ artifact: "Machine", name: m.name, status: "failed", message: sanitizeErrorMessage(res.status, text) });
       }
     } catch (err: any) {
       results.push({ artifact: "Machine", name: m.name, status: "failed", message: err.message });
@@ -988,10 +999,10 @@ async function provisionTriggers(
               results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `ProcessSchedule fallback returned ${schedRes.status} but verification failed — trigger not found. ${verify.detail || ""}` });
             }
           } else {
-            results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `QueueTriggers API returned 405, ProcessSchedule fallback also failed (${schedRes.status}): ${schedText.slice(0, 300)}` });
+            results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `Trigger creation failed — QueueTriggers and ProcessSchedule endpoints both unavailable.` });
           }
         } else {
-          results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 300)}` });
+          results.push({ artifact: "Trigger", name: t.name, status: "failed", message: sanitizeErrorMessage(res.status, text) });
         }
       } else {
         const checkRes = await fetch(
@@ -1074,7 +1085,7 @@ async function provisionTriggers(
           } else if (text.includes("StartStrategy")) {
             continue;
           } else {
-            results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 300)}` });
+            results.push({ artifact: "Trigger", name: t.name, status: "failed", message: sanitizeErrorMessage(res.status, text) });
             created = true;
             break;
           }
@@ -1180,7 +1191,7 @@ async function provisionEnvironments(
         } else if (text.includes("Type") && body.Type) {
           continue;
         } else {
-          results.push({ artifact: "Environment", name: env.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 200)}` });
+          results.push({ artifact: "Environment", name: env.name, status: "failed", message: sanitizeErrorMessage(res.status, text) });
           envCreated = true;
           break;
         }
@@ -1340,7 +1351,7 @@ async function provisionActionCenter(
           } else if (res.status === 400 && text.includes("not onboarded")) {
             continue;
           } else {
-            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 200)}` });
+            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: sanitizeErrorMessage(res.status, text) });
             acCreated = true;
             break;
           }
@@ -1692,7 +1703,7 @@ async function provisionTestCases(
       } else if (res.status === 409 || text.includes("already exists")) {
         results.push({ artifact: "Test Case", name: tc.name, status: "exists", message: "Already exists" });
       } else {
-        results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: `HTTP ${res.status}: ${text.slice(0, 200)}` });
+        results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: sanitizeErrorMessage(res.status, text) });
       }
     } catch (err: any) {
       results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: err.message });
@@ -1854,7 +1865,7 @@ function formatInfraProbeResults(probe: InfraProbeResult): DeploymentResult[] {
       artifact: "Infrastructure",
       name: "Machine Templates",
       status: unattendedMachines.length > 0 ? "exists" : "skipped",
-      message: `Found ${probe.machines.length} machine template(s) in folder${unattendedMachines.length > 0 ? ` (${totalUnattSlots} unattended slot(s) across ${unattendedMachines.length} machine(s))` : " — none have unattended slots"}. Names: ${probe.machines.map(m => m.name).join(", ")}`,
+      message: `Found ${probe.machines.length} machine template(s) in folder${unattendedMachines.length > 0 ? ` (${totalUnattSlots} unattended slot(s) across ${unattendedMachines.length} machine(s))` : " — none have unattended slots"}.`,
     });
   } else {
     results.push({
@@ -1871,7 +1882,7 @@ function formatInfraProbeResults(probe: InfraProbeResult): DeploymentResult[] {
       artifact: "Infrastructure",
       name: "Users/Robot Accounts",
       status: robotUsers.length > 0 ? "exists" : "skipped",
-      message: `Found ${probe.users.length} user(s) in folder${robotUsers.length > 0 ? ` (${robotUsers.length} robot account(s): ${robotUsers.map(u => u.userName).join(", ")})` : ""}`,
+      message: `Found ${probe.users.length} user(s) in folder${robotUsers.length > 0 ? ` (${robotUsers.length} robot account(s))` : ""}`,
     });
   } else {
     results.push({

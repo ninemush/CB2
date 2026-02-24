@@ -58,13 +58,25 @@ const statusConfig: Record<string, { icon: typeof CheckCircle2; color: string; b
 };
 
 export function DeploymentReportCard({ report, onDismiss }: { report: DeployReport; onDismiss: () => void }) {
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const infraGroups = ["Infrastructure", "Runtime Check"];
+
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    for (const r of report.results) {
+      const art = r.artifact || "Other";
+      if (initial[art] === undefined) {
+        initial[art] = infraGroups.includes(art) ? false : true;
+      }
+    }
+    return initial;
+  });
+  const [expandedMessages, setExpandedMessages] = useState<Record<string, boolean>>({});
 
   const grouped: Record<string, DeploymentResult[]> = {};
   for (const r of report.results) {
-    const key = r.artifact;
+    const key = r.artifact || "Other";
     if (!grouped[key]) grouped[key] = [];
-    grouped[key].push(r);
+    grouped[key].push({ ...r, name: r.name || "Unknown", artifact: r.artifact || "Other" });
   }
 
   const counts = {
@@ -81,44 +93,38 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
     setExpandedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const toggleMessage = (key: string) => {
+    setExpandedMessages((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const groupLabel = (artifactType: string) => {
+    if (artifactType === "Infrastructure" || artifactType === "Runtime Check") return artifactType;
+    return artifactType + "s";
+  };
+
   return (
-    <div className="mx-2 my-3 rounded-lg border border-border overflow-hidden bg-card/80 backdrop-blur-sm" data-testid="deployment-report-card">
-      <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-primary/10 to-transparent border-b border-border/50">
-        <div className="flex items-center gap-2">
-          <Package className="h-4 w-4 text-primary" />
+    <div className="mx-2 my-3 rounded-lg border border-border overflow-hidden bg-card/80 backdrop-blur-sm max-w-md" data-testid="deployment-report-card">
+      <div className="flex items-center justify-between px-4 py-2.5 bg-gradient-to-r from-primary/10 to-transparent border-b border-border/50">
+        <div className="flex items-center gap-2 min-w-0">
+          <Package className="h-4 w-4 text-primary shrink-0" />
           <span className="font-semibold text-sm text-foreground">Deployment Report</span>
-          {report.packageId && (
-            <span className="text-xs text-muted-foreground">
-              {report.packageId} v{report.version}
-            </span>
-          )}
         </div>
         <button
           onClick={onDismiss}
-          className="text-muted-foreground hover:text-foreground transition-colors"
+          className="text-muted-foreground hover:text-foreground transition-colors shrink-0 ml-2"
           data-testid="button-dismiss-deploy-report"
         >
           <X className="h-4 w-4" />
         </button>
       </div>
 
-      {(report.orgName || report.processName) && (
-        <div className="px-4 py-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground border-b border-border/30">
-          {report.orgName && (
-            <span>
-              <Server className="h-3 w-3 inline mr-1" />
-              {report.orgName}/{report.tenantName}
-            </span>
-          )}
-          {report.folderName && (
-            <span>
-              <FolderOpen className="h-3 w-3 inline mr-1" />
-              {report.folderName}
-            </span>
-          )}
+      {report.packageId && (
+        <div className="px-4 py-2 text-xs text-muted-foreground border-b border-border/30 flex flex-wrap gap-x-3 gap-y-0.5">
+          <span className="font-medium text-foreground">{report.packageId}</span>
+          <span>v{report.version}</span>
           {report.processName && (
-            <span>
-              <Zap className="h-3 w-3 inline mr-1" />
+            <span className="flex items-center gap-1">
+              <Zap className="h-3 w-3" />
               {report.processName}
             </span>
           )}
@@ -127,36 +133,37 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
 
       <div className="px-4 py-2 flex gap-3 border-b border-border/30">
         {counts.created > 0 && (
-          <span className="flex items-center gap-1 text-xs text-green-400">
+          <span className="flex items-center gap-1 text-xs text-green-400" data-testid="text-deploy-created-count">
             <CheckCircle2 className="h-3 w-3" />
             {counts.created} created
           </span>
         )}
         {counts.exists > 0 && (
-          <span className="flex items-center gap-1 text-xs text-blue-400">
+          <span className="flex items-center gap-1 text-xs text-blue-400" data-testid="text-deploy-exists-count">
             <Info className="h-3 w-3" />
             {counts.exists} existing
           </span>
         )}
         {counts.skipped > 0 && (
-          <span className="flex items-center gap-1 text-xs text-amber-400">
+          <span className="flex items-center gap-1 text-xs text-amber-400" data-testid="text-deploy-skipped-count">
             <AlertTriangle className="h-3 w-3" />
             {counts.skipped} skipped
           </span>
         )}
         {counts.failed > 0 && (
-          <span className="flex items-center gap-1 text-xs text-red-400">
+          <span className="flex items-center gap-1 text-xs text-red-400" data-testid="text-deploy-failed-count">
             <XCircle className="h-3 w-3" />
             {counts.failed} failed
           </span>
         )}
       </div>
 
-      <div className="divide-y divide-border/30">
+      <div className="divide-y divide-border/30 max-h-[300px] overflow-y-auto">
         {Object.entries(grouped).map(([artifactType, items]) => {
-          const isExpanded = expandedGroups[artifactType] !== false;
+          const isExpanded = expandedGroups[artifactType] === true;
           const groupCreated = items.filter((i) => i.status === "created").length;
           const groupIssues = items.filter((i) => i.status === "failed" || i.status === "skipped").length;
+          const allOk = groupIssues === 0;
 
           return (
             <div key={artifactType}>
@@ -166,38 +173,50 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
                 data-testid={`deploy-group-${artifactType.toLowerCase().replace(/\s+/g, "-")}`}
               >
                 {isExpanded ? (
-                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
                 ) : (
-                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
                 )}
                 <span className="text-muted-foreground shrink-0">{artifactIcon(artifactType)}</span>
                 <span className="text-xs font-medium text-foreground">
-                  {artifactType}s
+                  {groupLabel(artifactType)}
                 </span>
-                <span className="text-[10px] text-muted-foreground ml-auto">
-                  {items.length} item{items.length > 1 ? "s" : ""}
-                  {groupCreated > 0 && <span className="text-green-400 ml-1.5">{groupCreated} new</span>}
-                  {groupIssues > 0 && <span className="text-amber-400 ml-1.5">{groupIssues} need attention</span>}
+                <span className="text-[10px] text-muted-foreground ml-auto flex items-center gap-1.5">
+                  {allOk ? (
+                    <CheckCircle2 className="h-3 w-3 text-green-400" />
+                  ) : groupIssues > 0 ? (
+                    <span className="text-amber-400">{groupIssues} issue{groupIssues > 1 ? "s" : ""}</span>
+                  ) : null}
+                  <span>{items.length}</span>
                 </span>
               </button>
               {isExpanded && (
-                <div className="px-4 pb-2 space-y-1">
+                <div className="px-4 pb-2 space-y-0.5">
                   {items.map((item, idx) => {
                     const cfg = statusConfig[item.status] || statusConfig.failed;
                     const StatusIcon = cfg.icon;
+                    const itemKey = `${artifactType}-${idx}`;
+                    const msgExpanded = expandedMessages[itemKey];
+                    const showExpandable = item.message && item.message.length > 60 && item.status !== "created" && item.status !== "exists";
+
                     return (
                       <div
                         key={idx}
-                        className={`flex items-start gap-2 px-3 py-1.5 rounded-md ${cfg.bg}`}
-                        data-testid={`deploy-item-${item.name.toLowerCase().replace(/\s+/g, "-")}`}
+                        className={`flex items-start gap-2 px-3 py-1.5 rounded-md ${cfg.bg} cursor-pointer`}
+                        onClick={() => showExpandable && toggleMessage(itemKey)}
+                        data-testid={`deploy-item-${(item.name || "unknown").toLowerCase().replace(/\s+/g, "-")}`}
                       >
                         <StatusIcon className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${cfg.color}`} />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-foreground truncate">{item.name}</span>
-                            <span className={`text-[10px] ${cfg.color}`}>{cfg.label}</span>
+                            <span className="text-xs font-medium text-foreground truncate">{item.name || "Unknown"}</span>
+                            <span className={`text-[10px] shrink-0 ${cfg.color}`}>{cfg.label}</span>
                           </div>
-                          <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">{item.message}</p>
+                          {item.status === "failed" || item.status === "skipped" ? (
+                            <p className={`text-[10px] text-muted-foreground leading-tight mt-0.5 ${!msgExpanded && showExpandable ? "line-clamp-1" : ""}`}>
+                              {item.message}
+                            </p>
+                          ) : null}
                         </div>
                       </div>
                     );
@@ -218,12 +237,12 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
         ) : partialSuccess ? (
           <span className="flex items-center gap-1">
             <AlertTriangle className="h-3.5 w-3.5" />
-            Core artifacts provisioned. {counts.skipped} item{counts.skipped > 1 ? "s" : ""} skipped (service not available on tenant)
+            Core artifacts provisioned. {counts.skipped} skipped (service not available)
           </span>
         ) : (
           <span className="flex items-center gap-1">
             <AlertTriangle className="h-3.5 w-3.5" />
-            {counts.failed} item{counts.failed > 1 ? "s" : ""} failed{counts.skipped > 0 ? `, ${counts.skipped} skipped` : ""} — check details above
+            {counts.failed} failed{counts.skipped > 0 ? `, ${counts.skipped} skipped` : ""} — expand groups for details
           </span>
         )}
       </div>

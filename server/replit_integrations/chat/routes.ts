@@ -580,9 +580,8 @@ export function registerChatRoutes(app: Express): void {
           const deployData = await deployRes.json();
           if (deployData.success) {
             const d = deployData.details;
-            let statusMsg = `Deployment complete. Package "${d?.packageId}" v${d?.version} uploaded to Orchestrator.`;
-            if (d?.processName) statusMsg += ` Process "${d.processName}" created.`;
-            if (d?.deploymentSummary) statusMsg += ` ${d.deploymentSummary}`;
+            let statusMsg = `Deployment complete — ${d?.packageId} v${d?.version}`;
+            if (d?.processName) statusMsg += ` — Process "${d.processName}" ready.`;
             const deployResults: Array<{artifact: string; name: string; status: string; message: string}> = d?.deploymentResults || [];
             const deployReport = {
               packageId: d?.packageId,
