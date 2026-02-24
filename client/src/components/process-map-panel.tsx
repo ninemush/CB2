@@ -339,6 +339,33 @@ function filterNodesForLevel(
     const startNodes = allNodes.filter(n => n.nodeType === "start");
     const endNodes = allNodes.filter(n => n.nodeType === "end");
 
+    const startNodeIds = new Set(startNodes.map(n => n.id));
+    const endNodeIds = new Set(endNodes.map(n => n.id));
+
+    if (allNodes.length === 0) {
+      return { nodes: [], edges: [] };
+    }
+    const refNode = allNodes[0];
+    const makeSynthetic = (nodeType: "start" | "end", name: string): ProcessMapData["nodes"][0] => ({
+      ...refNode,
+      id: syntheticId--,
+      name,
+      nodeType,
+      description: "",
+      role: "",
+      system: "",
+      positionX: 0,
+      positionY: 0,
+    });
+    const consolidatedStart = startNodes.length > 0
+      ? { ...startNodes[0], name: "Start", positionX: 0, positionY: 0 }
+      : makeSynthetic("start", "Start");
+    const consolidatedEnd = endNodes.length > 0
+      ? { ...endNodes[0], name: "End", positionX: 0, positionY: 0 }
+      : makeSynthetic("end", "End");
+    const l0StartId = consolidatedStart.id;
+    const l0EndId = consolidatedEnd.id;
+
     const phaseSyntheticNodes: ProcessMapData["nodes"] = [];
     const phaseSyntheticIdMap: Record<number, number> = {};
     phaseGroups.forEach((group, gi) => {
@@ -372,22 +399,24 @@ function filterNodesForLevel(
         const tgtNode = nodeById[target];
         if (!tgtNode) continue;
         let targetL0Id: number;
-        if (tgtNode.nodeType === "end") {
-          targetL0Id = tgtNode.id;
+        if (endNodeIds.has(target)) {
+          targetL0Id = l0EndId;
+        } else if (startNodeIds.has(target)) {
+          continue;
         } else {
           const gi = phaseGroupForNode[target];
           if (gi !== undefined && phaseSyntheticIdMap[gi] !== undefined) {
             targetL0Id = phaseSyntheticIdMap[gi];
           } else continue;
         }
-        const key = `${s.id}->${targetL0Id}`;
+        const key = `${l0StartId}->${targetL0Id}`;
         if (!seenL0Pairs.has(key)) {
           seenL0Pairs.add(key);
           l0Edges.push({
             id: edgeId--,
             ideaId: allEdges[0]?.ideaId || s.ideaId,
             viewType: allEdges[0]?.viewType || "as-is",
-            sourceNodeId: s.id,
+            sourceNodeId: l0StartId,
             targetNodeId: targetL0Id,
             label: "",
             createdAt: new Date().toISOString(),
@@ -416,9 +445,9 @@ function filterNodesForLevel(
         const tgtNode = nodeById[targetId];
         if (!tgtNode) return;
         let targetL0Id: number;
-        if (tgtNode.nodeType === "end") {
-          targetL0Id = tgtNode.id;
-        } else if (tgtNode.nodeType === "start") {
+        if (endNodeIds.has(targetId)) {
+          targetL0Id = l0EndId;
+        } else if (startNodeIds.has(targetId)) {
           return;
         } else {
           const tgi = phaseGroupForNode[targetId];
@@ -444,8 +473,8 @@ function filterNodesForLevel(
     }
 
     const resultNodes: ProcessMapData["nodes"] = [
-      ...startNodes,
-      ...endNodes,
+      consolidatedStart,
+      consolidatedEnd,
       ...phaseSyntheticNodes,
     ];
 
