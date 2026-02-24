@@ -1,0 +1,36 @@
+Package pushed to UiPath Orchestrator successfully.
+
+Send_invitation_and_collate_responses v1.0.20260224 Org: uipatezkzunj / Tenant: DefaultTenant Folder: SumeetAppDefaultFeed
+
+Process created: "Send invitation and collate responses" — ready to run
+
+Orchestrator Deployment Report
+
+Pre-flight Infrastructure Check: 🔵 Machine Templates — Found 31 machine template(s) in folder (22 unattended slot(s) across 11 machine(s)). Names: sumeet.sangawar@uipath.com's workspace machine, onat.atayer@uipath.com's workspace machine, cristian.belciu@uipath.com's workspace machine, khadir.abdullah@uipath.com's workspace machine, andreea.plesea@druidai.com's workspace machine, junaidy.laures@uipath.com's workspace machine, rob.terrio@uipath.com's workspace machine, teddy.oswari@uipath.com's workspace machine, LAPTOP-A9HGCIDA, prajwal.shambhu@uipath.com's workspace machine, aman.gupta@uipath.com's workspace machine, Prajwal_Test_SL, Cloud VM Pool, yusuf.yasin@uipath.com's workspace machine, anilkumar.alanka@uipath.com's workspace machine, Etihad, Pipelines serverless machine, sofiane.sahir@uipath.com's workspace machine, AppsEnabled_serverlessrobot, abderahim.lakehal@uipath.com's workspace machine, Gitex_demos, PRAJWALSHAMCE82, mohammed.asif@UiPath.com's workspace machine, MohammedAsif, Mohammed, khalil-x1, prajwalshambhu, Autopilot_execution, MedicalClaims_UnattendedMachine, MedicalClaims_AttendedMachine, INV-UnattendedBot-01 ⚠️ Users/Robot Accounts — No users or robot accounts found in folder 🔵 Action Center — Action Center is licensed and available 🔵 Test Manager — Test Manager is licensed and available (separate TM token)
+
+Queues: ❌ Donor Solicitation Queue — HTTP 400: {"message":"The field Description must be a string with a maximum length of 250.","errorCode":0,"traceId":"00-48b3c215fb6ad0a5ba99b35b7637b2d0-091c5d713db58291-00"}
+
+Storage Buckets: ✅ SophiaArtifactsBucket — Created and verified (ID: 163017, Provider: default (Orchestrator built-in))
+
+Assets: ✅ ProcessedCampaignIDs — Created and verified (ID: 1055286, Type: Text)
+
+Machines: ✅ UnattendedRobotMachine — Created and verified (ID: 310482, Type: Template). Folder assignment failed via all endpoint variants
+
+Triggers: ✅ CampaignWatcher_TimeTrigger — Time trigger created and verified (ID: 243158), cron: 0 0 9 ? * MON-FRI * ✅ SophiaDispatcher_QueueTrigger — Time trigger created and verified (ID: 243159), cron: 0 0 9 ? * MON-FRI * ✅ SophiaInboxMonitor_TimeTrigger — Time trigger created and verified (ID: 243160), cron: 0 0 9 ? * MON-FRI *
+
+Action Centers: ⚠️ undefined — Action Center API endpoints not responding. The service may need to be enabled for this folder in Orchestrator settings.
+
+1 item(s) failed — check permissions and retry from Orchestrator. 1 item(s) skipped — these services are not available on your tenant or require manual setup.
+
+The automation is now deployed and ready. You can trigger a job from this workspace or from Orchestrator directly.
+
+2:06 PM
+VERIFIED DEPLOYMENT RESULTS (use ONLY these facts when discussing this deployment):
+- Package: Send_invitation_and_collate_responses v1.0.20260224
+- Process: Send invitation and collate responses
+- Created: 6 (Storage Bucket: SophiaArtifactsBucket, Asset: ProcessedCampaignIDs, Machine: UnattendedRobotMachine, Trigger: CampaignWatcher_TimeTrigger, Trigger: SophiaDispatcher_QueueTrigger, Trigger: SophiaInboxMonitor_TimeTrigger)
+- Already existed: 3
+- FAILED: 1 (Queue: Donor Solicitation Queue — HTTP 400: {"message":"The field Description must be a string with a maximum length of 250.","errorCode":0,"traceId":"00-48b3c215fb6ad0a5ba99b35b7637b2d0-091c5d713db58291-00"})
+- SKIPPED (service unavailable): 2 (Infrastructure: Users/Robot Accounts — No users or robot accounts found in folder; Action Center: undefined — Action Center API endpoints not responding. The service may need to be enabled for this folder in Orchestrator settings.)
+
+IMPORTANT: Never claim an artifact was "created" or "deployed" if it appears in the FAILED or SKIPPED lists above. Report the actual status honestly.
