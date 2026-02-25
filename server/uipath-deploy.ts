@@ -1180,13 +1180,8 @@ async function provisionEnvironments(
     return environments.map(env => ({
       artifact: "Environment",
       name: env.name,
-      status: "manual" as const,
-      message: "Environments API not available on modern folder tenants (deprecated Oct 2023). Modern folders use machine templates and runtime slots instead.",
-      manualSteps: [
-        `Modern folders no longer use classic Environments — machine templates serve the same purpose`,
-        `In Orchestrator, go to your folder > Machine Templates to manage execution targets`,
-        `Assign Unattended/NonProduction runtime slots as needed for this automation`,
-      ],
+      status: "failed" as const,
+      message: "Environments API deprecated on modern folder tenants (post Oct 2023). Modern folders use machine templates and runtime slots instead — these have been provisioned automatically if specified in the artifacts.",
     }));
   }
 
@@ -1472,16 +1467,8 @@ async function provisionDocUnderstanding(
     return du.map(project => ({
       artifact: "Document Understanding",
       name: project.name,
-      status: "manual" as const,
-      message: `Document Understanding service not available on this tenant.`,
-      manualSteps: [
-        `Open UiPath Automation Cloud: https://cloud.uipath.com/${config.orgName}/${config.tenantName}`,
-        `Navigate to Document Understanding service (must be enabled by tenant admin)`,
-        `Create a new DU project named "${project.name}"`,
-        project.documentTypes?.length ? `Add document types: ${project.documentTypes.join(", ")}` : null,
-        project.description ? `Description: "${project.description}"` : null,
-        `Configure extractors and classifiers as needed`,
-      ].filter(Boolean) as string[],
+      status: "failed" as const,
+      message: `Document Understanding service not available on this tenant. The DU microservice must be enabled by a tenant admin at https://cloud.uipath.com/${config.orgName}/${config.tenantName}. Document types needed: ${project.documentTypes?.join(", ") || "N/A"}.`,
     }));
   }
 

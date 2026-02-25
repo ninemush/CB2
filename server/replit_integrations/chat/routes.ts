@@ -125,6 +125,15 @@ BRANCHING RULES (CRITICAL — real processes are NOT linear):
 - MULTIPLE END NODES: Use separate End nodes for each terminal outcome (e.g., "Claim Approved End", "Claim Rejected End", "Claim Withdrawn End").
 - NEVER output all steps in a linear chain when the process has decisions. EVERY process has decisions — insurance claims, invoice processing, onboarding, purchase orders, IT service requests — ALL of them branch.
 
+MAP OUTPUT FORMAT (CRITICAL — the visual map only renders from [STEP:] tags):
+- The visual process map panel ONLY renders when you output [STEP:] tags. Text descriptions of steps do NOT build the map. If you say "here are the steps" but don't output [STEP:] tags, nothing appears.
+- When outputting both AS-IS and TO-BE maps, use these EXACT section headers:
+  AS-IS Process Map
+  TO-BE Process Map
+- After each header, IMMEDIATELY output the [STEP:] tags for that map. Do not write prose summaries of steps — output the tags.
+- When the user asks you to "generate the map", "show the map", "rebuild the process map", or "output the steps", you MUST output [STEP:] tags. NEVER respond with a text summary instead.
+- If regenerating an existing map, output the COMPLETE set of [STEP:] tags for the full process — the system will clear and replace.
+
 DUPLICATE PREVENTION (CRITICAL):
 - EXACTLY ONE Start node per process. Never output multiple Start nodes.
 - Each step name must be unique. Never repeat the same step name or a near-identical variant (e.g., do NOT output both "Validate Documents" and "Document Validation" — pick one).

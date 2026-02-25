@@ -4,6 +4,7 @@ import { parseArtifactsFromSDD, extractArtifactsWithLLM, deployAllArtifacts, for
 import { documentStorage } from "./document-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
+import { processMapStorage } from "./process-map-storage";
 
 function requireAdmin(req: Request, res: Response): boolean {
   if (!req.session.userId) {
@@ -233,6 +234,27 @@ export function registerUiPathRoutes(app: Express): void {
       return res.status(500).json({ message: "Invalid package data" });
     }
 
+    try {
+      const sdd = await documentStorage.getLatestDocument(ideaId, "SDD");
+      if (sdd?.content) pkg._sddContent = sdd.content;
+      const toBeNodes = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
+      const asIsNodes = await processMapStorage.getNodesByIdeaId(ideaId, "as-is");
+      const mapNodes = toBeNodes.length > 0 ? toBeNodes : asIsNodes;
+      if (mapNodes.length > 0) {
+        pkg._processNodes = mapNodes;
+        const edges = await processMapStorage.getEdgesByIdeaId(ideaId, toBeNodes.length > 0 ? "to-be" : "as-is");
+        pkg._processEdges = edges;
+      }
+      if (sdd?.content) {
+        const { parseArtifactsFromSDD: parseSdd, extractArtifactsWithLLM: extractLlm } = await import("./uipath-deploy");
+        let artifacts = parseSdd(sdd.content);
+        if (!artifacts) artifacts = await extractLlm(sdd.content);
+        if (artifacts) pkg._orchestratorArtifacts = artifacts;
+      }
+    } catch (err: any) {
+      console.log(`[UiPath Deploy] Could not enrich package with process data: ${err.message}`);
+    }
+
     const result = await pushToUiPath(pkg);
 
     if (result.success) {
@@ -439,7 +461,7 @@ export function registerUiPathRoutes(app: Express): void {
         const list = await safeCall("list", `${base}/odata/Buckets?$top=3`, { headers: hdrs });
         sec.steps.push({ step: "list", url: `${base}/odata/Buckets?$top=3`, method: "GET", ...list });
 
-        function diagUuid() {
+        const diagUuid = () => {
           const h = "0123456789abcdef";
           let u = "";
           for (let i = 0; i < 36; i++) {

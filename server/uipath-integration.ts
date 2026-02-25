@@ -5,7 +5,13 @@ import archiver from "archiver";
 import { PassThrough } from "stream";
 import {
   generateRichXamlFromSpec,
+  generateRichXamlFromNodes,
   generateInitAllSettingsXaml,
+  generateReframeworkMainXaml,
+  generateGetTransactionDataXaml,
+  generateSetTransactionStatusXaml,
+  generateCloseAllApplicationsXaml,
+  generateKillAllProcessesXaml,
   aggregateGaps,
   aggregatePackages,
   generateDeveloperHandoffGuide,
@@ -13,6 +19,7 @@ import {
   type XamlGeneratorResult,
   type XamlGap,
 } from "./xaml-generator";
+import { enrichWithAI, type EnrichmentResult } from "./ai-xaml-enricher";
 
 export type UiPathConfig = {
   orgName: string;
@@ -194,11 +201,26 @@ function generateUuid(): string {
   return uuid;
 }
 
-function generateConfigXlsx(pkg: any, sddContent?: string): string {
+function generateConfigXlsx(pkg: any, sddContent?: string, orchestratorArtifacts?: any): string {
   const settingsRows: string[][] = [["Name", "Value", "Description"]];
   const constantsRows: string[][] = [["Name", "Value", "Description"]];
 
-  if (sddContent) {
+  if (orchestratorArtifacts) {
+    if (orchestratorArtifacts.assets) {
+      for (const asset of orchestratorArtifacts.assets) {
+        if (asset.type === "Credential") {
+          settingsRows.push([asset.name, "", asset.description || `Credential: ${asset.name}`]);
+        } else {
+          settingsRows.push([asset.name, asset.value || "", asset.description || ""]);
+        }
+      }
+    }
+    if (orchestratorArtifacts.queues) {
+      for (const q of orchestratorArtifacts.queues) {
+        constantsRows.push([`QueueName_${q.name}`, q.name, q.description || `Queue: ${q.name}`]);
+      }
+    }
+  } else if (sddContent) {
     const section9Match = sddContent.match(/## 9[\.\s][^\n]+\n([\s\S]*?)(?=## \d+\.|$)/);
     if (section9Match) {
       const artifactMatch = section9Match[1].match(/```orchestrator_artifacts\s*\n([\s\S]*?)\n```/);
@@ -217,7 +239,9 @@ function generateConfigXlsx(pkg: any, sddContent?: string): string {
         } catch { /* parse error */ }
       }
     }
+  }
 
+  if (sddContent) {
     const section4Match = sddContent.match(/## 4[\.\s][^\n]+\n([\s\S]*?)(?=## \d+\.|$)/);
     if (section4Match) {
       const urlMatches = section4Match[1].match(/https?:\/\/[^\s)>"]+/g);
@@ -233,19 +257,22 @@ function generateConfigXlsx(pkg: any, sddContent?: string): string {
     }
   }
 
-  if (settingsRows.length === 1) {
-    settingsRows.push(["OrchestratorURL", "", "Orchestrator base URL"]);
-    settingsRows.push(["ProcessTimeout", "30", "Max process timeout in minutes"]);
-    settingsRows.push(["MaxRetries", "3", "Maximum retry attempts"]);
-    settingsRows.push(["LogLevel", "Info", "Logging level (Info/Warn/Error)"]);
+  settingsRows.push(["OrchestratorURL", "", "Orchestrator base URL"]);
+  settingsRows.push(["ProcessTimeout", "30", "Max process timeout in minutes"]);
+  settingsRows.push(["MaxRetries", "3", "Maximum retry attempts"]);
+  settingsRows.push(["LogLevel", "Info", "Logging level (Info/Warn/Error)"]);
+
+  const hasQueues = orchestratorArtifacts?.queues?.length > 0;
+  if (hasQueues) {
+    settingsRows.push(["OrchestratorQueueName", orchestratorArtifacts.queues[0].name, "Primary transaction queue"]);
+    settingsRows.push(["MaxRetryNumber", "3", "REFramework max retry attempts per transaction"]);
+    settingsRows.push(["ProcessName", pkg.projectName || "Automation", "REFramework process name"]);
   }
 
-  if (constantsRows.length === 1) {
-    constantsRows.push(["ApplicationName", pkg.projectName || "Automation", "Process name"]);
-    constantsRows.push(["Version", "1.0.0", "Package version"]);
-    constantsRows.push(["MaxWaitTime", "30000", "Max wait time in milliseconds"]);
-    constantsRows.push(["RetryInterval", "5000", "Retry interval in milliseconds"]);
-  }
+  constantsRows.push(["ApplicationName", pkg.projectName || "Automation", "Process name"]);
+  constantsRows.push(["Version", "1.0.0", "Package version"]);
+  constantsRows.push(["MaxWaitTime", "30000", "Max wait time in milliseconds"]);
+  constantsRows.push(["RetryInterval", "5000", "Retry interval in milliseconds"]);
 
   let xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -275,6 +302,38 @@ function generateConfigXlsx(pkg: any, sddContent?: string): string {
 }
 
 async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<{ buffer: Buffer; gaps: XamlGap[]; usedPackages: string[] }> {
+  const projectName = (pkg.projectName || "Automation").replace(/\s+/g, "_");
+  const sddContent = pkg._sddContent || "";
+  const orchestratorArtifacts = pkg._orchestratorArtifacts || null;
+  const processNodes = pkg._processNodes || [];
+  const processEdges = pkg._processEdges || [];
+
+  let enrichment: EnrichmentResult | null = null;
+  if (processNodes.length > 0 && sddContent) {
+    try {
+      console.log(`[UiPath] Requesting AI enrichment for ${processNodes.length} process nodes...`);
+      enrichment = await enrichWithAI(
+        processNodes,
+        processEdges,
+        sddContent,
+        orchestratorArtifacts,
+        projectName,
+        45000
+      );
+      if (enrichment) {
+        console.log(`[UiPath] AI enrichment successful: ${enrichment.nodes.length} enriched nodes, REFramework=${enrichment.useReFramework}, ${enrichment.decomposition?.length || 0} sub-workflows`);
+      }
+    } catch (err: any) {
+      console.log(`[UiPath] AI enrichment failed (falling back to keyword classification): ${err.message}`);
+    }
+  }
+
+  const hasQueues = orchestratorArtifacts?.queues?.length > 0;
+  const useReFramework = enrichment?.useReFramework || hasQueues;
+  const queueName = enrichment?.reframeworkConfig?.queueName
+    || orchestratorArtifacts?.queues?.[0]?.name
+    || "TransactionQueue";
+
   return new Promise<{ buffer: Buffer; gaps: XamlGap[]; usedPackages: string[] }>((resolve, reject) => {
     const buffers: Buffer[] = [];
     const passthrough = new PassThrough();
@@ -285,7 +344,6 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<{
     const archive = archiver("zip", { zlib: { level: 9 } });
     archive.pipe(passthrough);
 
-    const projectName = (pkg.projectName || "Automation").replace(/\s+/g, "_");
     const libPath = "lib/net45";
     const xamlResults: XamlGeneratorResult[] = [];
 
@@ -331,44 +389,108 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<{
 
     const workflows = pkg.workflows || [];
     let hasMain = false;
-    const sddContent = pkg._sddContent || "";
+
+    if (enrichment?.decomposition?.length) {
+      console.log(`[UiPath] Using AI decomposition: ${enrichment.decomposition.length} sub-workflows`);
+      for (const decomp of enrichment.decomposition) {
+        const wfName = decomp.name.replace(/\s+/g, "_");
+        const decompNodes = processNodes.filter((n: any) => decomp.nodeIds.includes(n.id));
+        const decompEdges = processEdges.filter((e: any) =>
+          decomp.nodeIds.includes(e.sourceNodeId) || decomp.nodeIds.includes(e.targetNodeId)
+        );
+        if (decompNodes.length > 0) {
+          const result = generateRichXamlFromNodes(
+            decompNodes,
+            decompEdges,
+            wfName,
+            decomp.description || "",
+            enrichment
+          );
+          xamlResults.push(result);
+          archive.append(result.xaml, { name: `${libPath}/${wfName}.xaml` });
+          if (wfName === "Main") hasMain = true;
+          console.log(`[UiPath] Generated decomposed workflow "${wfName}": ${decompNodes.length} nodes, ${result.gaps.length} gaps`);
+        }
+      }
+    }
 
     for (const wf of workflows) {
       const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
-
       const result = generateRichXamlFromSpec(wf, sddContent || undefined);
       xamlResults.push(result);
-
       archive.append(result.xaml, { name: `${libPath}/${wfName}.xaml` });
       if (wfName === "Main") hasMain = true;
-
       console.log(`[UiPath] Generated rich XAML for "${wfName}": ${result.gaps.length} gaps, ${result.usedPackages.length} packages`);
     }
 
-    const initXaml = generateInitAllSettingsXaml();
+    if (!hasMain && processNodes.length > 0 && !enrichment?.decomposition?.length) {
+      const processResult = generateRichXamlFromNodes(
+        processNodes,
+        processEdges,
+        useReFramework ? "Process" : projectName,
+        pkg.description || "",
+        enrichment
+      );
+      xamlResults.push(processResult);
+      const processFileName = useReFramework ? "Process" : projectName;
+      archive.append(processResult.xaml, { name: `${libPath}/${processFileName}.xaml` });
+      console.log(`[UiPath] Generated process XAML from ${processNodes.length} map nodes: ${processResult.gaps.length} gaps`);
+    }
+
+    const initXaml = generateInitAllSettingsXaml(orchestratorArtifacts);
     archive.append(initXaml, { name: `${libPath}/InitAllSettings.xaml` });
 
-    if (!hasMain) {
+    if (useReFramework && !hasMain) {
+      console.log(`[UiPath] Generating REFramework structure (queue: ${queueName})`);
+      const mainXaml = generateReframeworkMainXaml(projectName, queueName);
+      archive.append(mainXaml, { name: `${libPath}/Main.xaml` });
+      hasMain = true;
+
+      const getTransXaml = generateGetTransactionDataXaml(queueName);
+      archive.append(getTransXaml, { name: `${libPath}/GetTransactionData.xaml` });
+
+      const setStatusXaml = generateSetTransactionStatusXaml();
+      archive.append(setStatusXaml, { name: `${libPath}/SetTransactionStatus.xaml` });
+
+      const closeAppsXaml = generateCloseAllApplicationsXaml();
+      archive.append(closeAppsXaml, { name: `${libPath}/CloseAllApplications.xaml` });
+
+      const killXaml = generateKillAllProcessesXaml();
+      archive.append(killXaml, { name: `${libPath}/KillAllProcesses.xaml` });
+    } else if (!hasMain) {
       let mainActivities = `
         <ui:InvokeWorkflowFile DisplayName="Initialize Settings" WorkflowFileName="InitAllSettings.xaml" />`;
-      if (workflows.length > 0) {
+
+      if (enrichment?.decomposition?.length) {
+        for (const decomp of enrichment.decomposition) {
+          const wfName = decomp.name.replace(/\s+/g, "_");
+          mainActivities += `
+        <ui:InvokeWorkflowFile DisplayName="Run ${escapeXml(decomp.name)}" WorkflowFileName="${wfName}.xaml" />`;
+        }
+      } else if (workflows.length > 0) {
         for (const wf of workflows) {
           const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
           mainActivities += `
         <ui:InvokeWorkflowFile DisplayName="Run ${escapeXml(wf.name || wfName)}" WorkflowFileName="${wfName}.xaml" />`;
         }
+      } else if (processNodes.length > 0) {
+        mainActivities += `
+        <ui:InvokeWorkflowFile DisplayName="Run ${escapeXml(projectName)}" WorkflowFileName="${projectName}.xaml" />`;
       } else {
         mainActivities += `
-        <ui:Comment DisplayName="Auto-generated by CannonBall" Text="This automation package was generated from the CannonBall pipeline. Open this project in UiPath Studio to build out the workflow logic." />
-        <ui:Comment DisplayName="Process: ${escapeXml(projectName)}" Text="${escapeXml(pkg.description || "")}" />`;
+        <ui:Comment DisplayName="Auto-generated by CannonBall" Text="This automation package was generated from the CannonBall pipeline. Open this project in UiPath Studio to build out the workflow logic." />`;
       }
       mainActivities += `
         <ui:LogMessage Level="Info" Message="'Process completed successfully'" DisplayName="Log Completion" />`;
+
+      const closeAppsXaml = generateCloseAllApplicationsXaml();
+      archive.append(closeAppsXaml, { name: `${libPath}/CloseAllApplications.xaml` });
+
       const mainXaml = buildXaml("Main", `${projectName} - Main Workflow`, mainActivities);
       archive.append(mainXaml, { name: `${libPath}/Main.xaml` });
     }
 
-    const configCsv = generateConfigXlsx(pkg, sddContent || undefined);
+    const configCsv = generateConfigXlsx(pkg, sddContent || undefined, orchestratorArtifacts);
     archive.append(configCsv, { name: `${libPath}/Data/Config.xlsx` });
 
     const richPackages = aggregatePackages(xamlResults);
@@ -460,7 +582,29 @@ ${depEntries}
 </package>`;
     archive.append(nuspecXml, { name: `${projectName}.nuspec` });
 
-    const workflowNames = workflows.map((wf: any) => (wf.name || "Workflow").replace(/\s+/g, "_"));
+    const workflowNames: string[] = [];
+    if (useReFramework) {
+      workflowNames.push("Main", "GetTransactionData", "Process", "SetTransactionStatus", "CloseAllApplications", "KillAllProcesses");
+    }
+    if (enrichment?.decomposition?.length) {
+      for (const d of enrichment.decomposition) {
+        const n = d.name.replace(/\s+/g, "_");
+        if (!workflowNames.includes(n)) workflowNames.push(n);
+      }
+    }
+    for (const wf of workflows) {
+      const n = (wf.name || "Workflow").replace(/\s+/g, "_");
+      if (!workflowNames.includes(n)) workflowNames.push(n);
+    }
+    if (!workflowNames.includes("Main")) workflowNames.unshift("Main");
+    if (!workflowNames.includes(projectName) && processNodes.length > 0 && !enrichment?.decomposition?.length && !useReFramework) {
+      workflowNames.push(projectName);
+    }
+
+    const painPoints = processNodes
+      .filter((n: any) => n.isPainPoint)
+      .map((n: any) => ({ name: n.name, description: n.description || "" }));
+
     const dhg = generateDeveloperHandoffGuide({
       projectName,
       description: pkg.description || "",
@@ -468,9 +612,12 @@ ${depEntries}
       usedPackages: allUsedPkgs,
       workflowNames,
       sddContent: sddContent || undefined,
+      enrichment,
+      useReFramework,
+      painPoints,
     });
     archive.append(dhg, { name: `${libPath}/DeveloperHandoffGuide.md` });
-    console.log(`[UiPath] Generated Developer Handoff Guide: ${allGaps.length} gaps, ~${(allGaps.reduce((s: number, g: XamlGap) => s + g.estimatedMinutes, 0) / 60).toFixed(1)}h effort`);
+    console.log(`[UiPath] Generated Developer Handoff Guide: ${allGaps.length} gaps, ~${(allGaps.reduce((s: number, g: XamlGap) => s + g.estimatedMinutes, 0) / 60).toFixed(1)}h effort, REFramework=${useReFramework}`);
 
     archive.finalize();
   });

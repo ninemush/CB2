@@ -38,12 +38,13 @@ export interface ViewSteps {
   steps: ParsedStep[];
 }
 
-const AS_IS_HEADER = /AS[-\s]IS\s+Process\s*Map/i;
-const TO_BE_HEADER = /TO[-\s]BE\s+Process\s*Map/i;
+const AS_IS_HEADER = /\*{0,2}AS[-\s]IS\s+(?:Process\s*)?Map\*{0,2}/i;
+const TO_BE_HEADER = /\*{0,2}TO[-\s]BE\s+(?:Process\s*)?Map\*{0,2}/i;
 
 export function parseStepsByView(text: string): ViewSteps[] {
-  const asIsMatch = AS_IS_HEADER.exec(text);
-  const toBeMatch = TO_BE_HEADER.exec(text);
+  const cleaned = text.replace(/\*{1,2}/g, "");
+  const asIsMatch = AS_IS_HEADER.exec(cleaned);
+  const toBeMatch = TO_BE_HEADER.exec(cleaned);
 
   if (!asIsMatch && !toBeMatch) {
     const steps = parseStepsFromText(text);
@@ -58,8 +59,8 @@ export function parseStepsByView(text: string): ViewSteps[] {
     const firstStart = firstIsAsIs ? asIsMatch.index : toBeMatch.index;
     const secondStart = firstIsAsIs ? toBeMatch.index : asIsMatch.index;
 
-    const firstSection = text.slice(firstStart, secondStart);
-    const secondSection = text.slice(secondStart);
+    const firstSection = cleaned.slice(firstStart, secondStart);
+    const secondSection = cleaned.slice(secondStart);
 
     const firstSteps = parseStepsFromText(firstSection);
     const secondSteps = parseStepsFromText(secondSection);
@@ -71,11 +72,11 @@ export function parseStepsByView(text: string): ViewSteps[] {
       result.push({ viewType: firstIsAsIs ? "to-be" : "as-is", steps: secondSteps });
     }
   } else if (asIsMatch) {
-    const section = text.slice(asIsMatch.index);
+    const section = cleaned.slice(asIsMatch.index);
     const steps = parseStepsFromText(section);
     if (steps.length > 0) result.push({ viewType: "as-is", steps });
   } else if (toBeMatch) {
-    const section = text.slice(toBeMatch.index);
+    const section = cleaned.slice(toBeMatch.index);
     const steps = parseStepsFromText(section);
     if (steps.length > 0) result.push({ viewType: "to-be", steps });
   }

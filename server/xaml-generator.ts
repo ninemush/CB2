@@ -1,4 +1,5 @@
 import type { ProcessNode, ProcessEdge } from "@shared/schema";
+import type { EnrichedNodeSpec, EnrichedActivity, EnrichmentResult } from "./ai-xaml-enricher";
 
 export type XamlGap = {
   category: "selector" | "credential" | "endpoint" | "logic" | "config" | "manual";
@@ -665,11 +666,68 @@ function wrapInIf(innerXml: string, condition: string, displayName: string): str
           </If>`;
 }
 
+function renderEnrichedActivities(enrichedNode: EnrichedNodeSpec): {
+  xml: string;
+  packages: string[];
+  variables: VariableDecl[];
+  gaps: XamlGap[];
+} {
+  const packages: string[] = [];
+  const variables: VariableDecl[] = [];
+  const gaps: XamlGap[] = [];
+
+  if (enrichedNode.activities.length === 0) {
+    return { xml: "", packages: [], variables: [], gaps: [] };
+  }
+
+  let innerXml = "";
+  for (const act of enrichedNode.activities) {
+    packages.push(act.package);
+    if (act.variables) {
+      for (const v of act.variables) {
+        variables.push(v);
+      }
+    }
+
+    let propAttrs = "";
+    for (const [key, value] of Object.entries(act.properties || {})) {
+      propAttrs += ` ${key}="${escapeXml(String(value))}"`;
+    }
+
+    let selectorComment = "";
+    if (act.selectorHint) {
+      selectorComment = `\n              <!-- Selector: ${escapeXml(act.selectorHint)} -->`;
+    }
+
+    innerXml += `\n            <${act.activityType} DisplayName="${escapeXml(act.displayName)}"${propAttrs} />${selectorComment}`;
+  }
+
+  for (const gap of enrichedNode.gaps || []) {
+    gaps.push(gap);
+  }
+
+  const firstAct = enrichedNode.activities[0];
+  const errorHandling = firstAct.errorHandling || "none";
+
+  let xml: string;
+  if (enrichedNode.activities.length === 1) {
+    xml = wrapInTryCatch(innerXml, enrichedNode.nodeName, errorHandling);
+  } else {
+    const sequenceXml = `
+          <Sequence DisplayName="${escapeXml(enrichedNode.nodeName)}">${innerXml}
+          </Sequence>`;
+    xml = wrapInTryCatch(sequenceXml, enrichedNode.nodeName, errorHandling);
+  }
+
+  return { xml, packages, variables, gaps };
+}
+
 export function generateRichXamlFromNodes(
   nodes: ProcessNode[],
   edges: ProcessEdge[],
   workflowName: string,
-  projectDescription: string
+  projectDescription: string,
+  enrichment?: EnrichmentResult | null
 ): XamlGeneratorResult {
   const allGaps: XamlGap[] = [];
   const allVariables: VariableDecl[] = [];
@@ -713,7 +771,72 @@ export function generateRichXamlFromNodes(
     });
   }
 
+  const enrichedMap = new Map<number, EnrichedNodeSpec>();
+  if (enrichment?.nodes) {
+    for (const en of enrichment.nodes) {
+      enrichedMap.set(en.nodeId, en);
+    }
+  }
+
   for (const node of taskNodes) {
+    const enrichedSpec = enrichedMap.get(node.id);
+
+    if (enrichedSpec && enrichedSpec.activities.length > 0) {
+      if (node.nodeType === "decision") {
+        const outEdges = edgeMap.get(node.id) || [];
+        const condition = outEdges.find(e => e.label)?.label || "TODO_Condition";
+        allVariables.push({ name: `bool_${node.name.replace(/[^A-Za-z0-9]/g, "")}`, type: "Boolean", defaultValue: "False" });
+
+        let thenActivities = "";
+        let elseActivities = "";
+        for (const outEdge of outEdges) {
+          const targetEnriched = enrichedMap.get(outEdge.target);
+          const targetNode = nodeMap.get(outEdge.target);
+          if (!targetNode) continue;
+          const label = (outEdge.label || "").toLowerCase();
+          let branchXml: string;
+          if (targetEnriched && targetEnriched.activities.length > 0) {
+            const rendered = renderEnrichedActivities(targetEnriched);
+            branchXml = rendered.xml;
+            rendered.packages.forEach(p => usedPackages.add(p));
+            allVariables.push(...rendered.variables);
+            allGaps.push(...rendered.gaps);
+          } else {
+            const classified = classifyActivity({ system: targetNode.system || "", nodeType: targetNode.nodeType, name: targetNode.name, description: targetNode.description || "", role: targetNode.role || "", isPainPoint: targetNode.isPainPoint || false });
+            branchXml = renderActivity(classified.activityType, targetNode.name, classified.properties, classified.selectorHint);
+          }
+          if (label.includes("yes") || label.includes("true") || label.includes("approve") || label.includes("pass")) {
+            thenActivities += branchXml;
+          } else {
+            elseActivities += branchXml;
+          }
+        }
+
+        if (!thenActivities) thenActivities = `\n            <ui:LogMessage Level="Info" Message="'Then: ${escapeXml(node.name)}'" DisplayName="Then Path" />`;
+        if (!elseActivities) elseActivities = `\n              <ui:LogMessage Level="Info" Message="'Else: ${escapeXml(node.name)}'" DisplayName="Else Path" />`;
+
+        activities += `
+        <If DisplayName="Decision: ${escapeXml(node.name)}" Condition="[${escapeXml(condition)}]">
+          <If.Then>
+            <Sequence DisplayName="Yes: ${escapeXml(node.name)}">${thenActivities}
+            </Sequence>
+          </If.Then>
+          <If.Else>
+            <Sequence DisplayName="No: ${escapeXml(node.name)}">${elseActivities}
+            </Sequence>
+          </If.Else>
+        </If>`;
+        continue;
+      }
+
+      const rendered = renderEnrichedActivities(enrichedSpec);
+      rendered.packages.forEach(p => usedPackages.add(p));
+      allVariables.push(...rendered.variables);
+      allGaps.push(...rendered.gaps);
+      activities += rendered.xml;
+      continue;
+    }
+
     const ctx: ActivityContext = {
       system: node.system || "",
       nodeType: node.nodeType,
@@ -954,7 +1077,31 @@ function extractSddSection(sddContent: string, sectionNumber: number): string | 
   return match ? match[1].trim() : null;
 }
 
-export function generateInitAllSettingsXaml(): string {
+export function generateInitAllSettingsXaml(orchestratorArtifacts?: any): string {
+  let assetActivities = "";
+  const assets = orchestratorArtifacts?.assets || [];
+  const credAssets = assets.filter((a: any) => a.type === "Credential");
+  const textAssets = assets.filter((a: any) => a.type !== "Credential");
+
+  if (credAssets.length > 0) {
+    for (const asset of credAssets) {
+      assetActivities += `
+          <ui:GetCredential DisplayName="Get ${escapeXml(asset.name)}" AssetName="${escapeXml(asset.name)}" Username="[str_TempUser]" Password="[sec_TempPass]" />
+          <Assign DisplayName="Store ${escapeXml(asset.name)} User">
+            <Assign.To><OutArgument x:TypeArguments="x:String">[str_TempUser]</OutArgument></Assign.To>
+            <Assign.Value><InArgument x:TypeArguments="x:String">[str_TempUser]</InArgument></Assign.Value>
+          </Assign>`;
+    }
+  }
+
+  if (textAssets.length > 0) {
+    for (const asset of textAssets) {
+      const varType = asset.type === "Integer" ? "x:Int32" : asset.type === "Bool" ? "x:Boolean" : "x:String";
+      assetActivities += `
+          <ui:GetAsset DisplayName="Get ${escapeXml(asset.name)}" AssetName="${escapeXml(asset.name)}" Value="[str_AssetValue]" />`;
+    }
+  }
+
   return `<?xml version="1.0" encoding="utf-8"?>
 <Activity mc:Ignorable="sap sap2010" x:Class="InitAllSettings"
   xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
@@ -970,9 +1117,12 @@ export function generateInitAllSettingsXaml(): string {
       <Variable x:TypeArguments="scg:DataTable" Name="dt_Settings" />
       <Variable x:TypeArguments="scg:DataTable" Name="dt_Constants" />
       <Variable x:TypeArguments="x:String" Name="str_ConfigPath" Default="Data\\Config.xlsx" />
+      <Variable x:TypeArguments="x:String" Name="str_AssetValue" />
+      <Variable x:TypeArguments="x:String" Name="str_TempUser" />
+      <Variable x:TypeArguments="x:String" Name="sec_TempPass" />
+      <Variable x:TypeArguments="scg:DataRow" Name="row_Current" />
     </Sequence.Variables>
     <ui:LogMessage Level="Info" Message="'Reading configuration from Config.xlsx...'" DisplayName="Log Config Start" />
-    <!-- TODO: Read Settings sheet from Config.xlsx -->
     <ui:ExcelApplicationScope DisplayName="Read Config File" WorkbookPath="[str_ConfigPath]">
       <ui:ExcelApplicationScope.Body>
         <Sequence DisplayName="Read Config Sheets">
@@ -981,9 +1131,264 @@ export function generateInitAllSettingsXaml(): string {
         </Sequence>
       </ui:ExcelApplicationScope.Body>
     </ui:ExcelApplicationScope>
-    <!-- TODO: Iterate through dt_Settings rows and fetch Orchestrator Asset values -->
-    <!-- TODO: Iterate through dt_Constants rows and store values in Config dictionary -->
+    <ForEach x:TypeArguments="scg:DataRow" DisplayName="Process Settings Rows" Values="[dt_Settings.Rows]">
+      <ActivityAction x:TypeArguments="scg:DataRow">
+        <Argument x:TypeArguments="scg:DataRow" x:Name="row" />
+        <Sequence DisplayName="Process Setting Row">
+          <ui:LogMessage Level="Trace" Message="[&quot;Processing setting: &quot; &amp; row(&quot;Name&quot;).ToString]" DisplayName="Log Setting" />
+        </Sequence>
+      </ActivityAction>
+    </ForEach>${assetActivities}
+    <ForEach x:TypeArguments="scg:DataRow" DisplayName="Process Constants Rows" Values="[dt_Constants.Rows]">
+      <ActivityAction x:TypeArguments="scg:DataRow">
+        <Argument x:TypeArguments="scg:DataRow" x:Name="constRow" />
+        <Sequence DisplayName="Store Constant">
+          <ui:LogMessage Level="Trace" Message="[&quot;Loaded constant: &quot; &amp; constRow(&quot;Name&quot;).ToString]" DisplayName="Log Constant" />
+        </Sequence>
+      </ActivityAction>
+    </ForEach>
     <ui:LogMessage Level="Info" Message="'Configuration loaded successfully'" DisplayName="Log Config Complete" />
+  </Sequence>
+</Activity>`;
+}
+
+export function generateReframeworkMainXaml(projectName: string, queueName: string): string {
+  const safeName = escapeXml(projectName.replace(/\s+/g, "_"));
+  return `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="Main"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <StateMachine DisplayName="${safeName} - REFramework Main">
+    <StateMachine.Variables>
+      <Variable x:TypeArguments="x:Int32" Name="int_TransactionNumber" Default="0" />
+      <Variable x:TypeArguments="x:Int32" Name="int_RetryNumber" Default="0" />
+      <Variable x:TypeArguments="x:Int32" Name="int_MaxRetries" Default="3" />
+      <Variable x:TypeArguments="x:String" Name="str_TransactionID" />
+      <Variable x:TypeArguments="x:String" Name="str_QueueName" Default="'${escapeXml(queueName)}'" />
+      <Variable x:TypeArguments="ui:QueueItem" Name="qi_TransactionItem" />
+      <Variable x:TypeArguments="x:Boolean" Name="bool_SystemReady" Default="False" />
+    </StateMachine.Variables>
+
+    <State DisplayName="Init" x:Name="State_Init">
+      <State.Entry>
+        <Sequence DisplayName="Initialize Process">
+          <ui:LogMessage Level="Info" Message="'=== Initializing ${safeName} ==='" DisplayName="Log Init Start" />
+          <ui:InvokeWorkflowFile DisplayName="Initialize Settings" WorkflowFileName="InitAllSettings.xaml" />
+          <Assign DisplayName="Set System Ready">
+            <Assign.To><OutArgument x:TypeArguments="x:Boolean">[bool_SystemReady]</OutArgument></Assign.To>
+            <Assign.Value><InArgument x:TypeArguments="x:Boolean">True</InArgument></Assign.Value>
+          </Assign>
+          <ui:LogMessage Level="Info" Message="'Initialization complete'" DisplayName="Log Init Complete" />
+        </Sequence>
+      </State.Entry>
+      <Transition DisplayName="Init -> Get Transaction" To="{x:Reference State_GetTransaction}">
+        <Transition.Condition>[bool_SystemReady]</Transition.Condition>
+      </Transition>
+      <Transition DisplayName="Init -> End (Failed)" To="{x:Reference State_End}">
+        <Transition.Condition>[Not bool_SystemReady]</Transition.Condition>
+      </Transition>
+    </State>
+
+    <State DisplayName="Get Transaction Data" x:Name="State_GetTransaction">
+      <State.Entry>
+        <Sequence DisplayName="Get Next Transaction">
+          <ui:InvokeWorkflowFile DisplayName="Get Transaction Data" WorkflowFileName="GetTransactionData.xaml">
+            <ui:InvokeWorkflowFile.Arguments>
+              <InArgument x:TypeArguments="x:String" x:Key="in_QueueName">[str_QueueName]</InArgument>
+              <OutArgument x:TypeArguments="ui:QueueItem" x:Key="out_TransactionItem">[qi_TransactionItem]</OutArgument>
+              <InOutArgument x:TypeArguments="x:Int32" x:Key="io_TransactionNumber">[int_TransactionNumber]</InOutArgument>
+            </ui:InvokeWorkflowFile.Arguments>
+          </ui:InvokeWorkflowFile>
+        </Sequence>
+      </State.Entry>
+      <Transition DisplayName="Has Transaction -> Process" To="{x:Reference State_Process}">
+        <Transition.Condition>[qi_TransactionItem IsNot Nothing]</Transition.Condition>
+      </Transition>
+      <Transition DisplayName="No Transaction -> End" To="{x:Reference State_End}">
+        <Transition.Condition>[qi_TransactionItem Is Nothing]</Transition.Condition>
+      </Transition>
+    </State>
+
+    <State DisplayName="Process Transaction" x:Name="State_Process">
+      <State.Entry>
+        <TryCatch DisplayName="Try Process Transaction">
+          <TryCatch.Try>
+            <Sequence DisplayName="Process">
+              <ui:InvokeWorkflowFile DisplayName="Process Transaction" WorkflowFileName="Process.xaml">
+                <ui:InvokeWorkflowFile.Arguments>
+                  <InArgument x:TypeArguments="ui:QueueItem" x:Key="in_TransactionItem">[qi_TransactionItem]</InArgument>
+                </ui:InvokeWorkflowFile.Arguments>
+              </ui:InvokeWorkflowFile>
+              <ui:InvokeWorkflowFile DisplayName="Set Transaction Status - Success" WorkflowFileName="SetTransactionStatus.xaml">
+                <ui:InvokeWorkflowFile.Arguments>
+                  <InArgument x:TypeArguments="ui:QueueItem" x:Key="in_TransactionItem">[qi_TransactionItem]</InArgument>
+                  <InArgument x:TypeArguments="x:String" x:Key="in_Status">"Successful"</InArgument>
+                </ui:InvokeWorkflowFile.Arguments>
+              </ui:InvokeWorkflowFile>
+              <Assign DisplayName="Reset Retry Counter">
+                <Assign.To><OutArgument x:TypeArguments="x:Int32">[int_RetryNumber]</OutArgument></Assign.To>
+                <Assign.Value><InArgument x:TypeArguments="x:Int32">0</InArgument></Assign.Value>
+              </Assign>
+            </Sequence>
+          </TryCatch.Try>
+          <TryCatch.Catches>
+            <Catch x:TypeArguments="s:Exception">
+              <ActivityAction x:TypeArguments="s:Exception">
+                <Argument x:TypeArguments="s:Exception" x:Name="exception" />
+                <Sequence DisplayName="Handle Exception">
+                  <ui:LogMessage Level="Error" Message="[&quot;Transaction failed: &quot; &amp; exception.Message]" DisplayName="Log Error" />
+                  <ui:InvokeWorkflowFile DisplayName="Set Transaction Status - Failed" WorkflowFileName="SetTransactionStatus.xaml">
+                    <ui:InvokeWorkflowFile.Arguments>
+                      <InArgument x:TypeArguments="ui:QueueItem" x:Key="in_TransactionItem">[qi_TransactionItem]</InArgument>
+                      <InArgument x:TypeArguments="x:String" x:Key="in_Status">"Failed"</InArgument>
+                    </ui:InvokeWorkflowFile.Arguments>
+                  </ui:InvokeWorkflowFile>
+                  <ui:InvokeWorkflowFile DisplayName="Close All Applications" WorkflowFileName="CloseAllApplications.xaml" />
+                </Sequence>
+              </ActivityAction>
+            </Catch>
+          </TryCatch.Catches>
+        </TryCatch>
+      </State.Entry>
+      <Transition DisplayName="Process -> Get Next Transaction" To="{x:Reference State_GetTransaction}" />
+    </State>
+
+    <State DisplayName="End Process" x:Name="State_End" IsFinal="True">
+      <State.Entry>
+        <Sequence DisplayName="Cleanup">
+          <ui:InvokeWorkflowFile DisplayName="Close All Applications" WorkflowFileName="CloseAllApplications.xaml" />
+          <ui:LogMessage Level="Info" Message="[&quot;=== ${safeName} Complete. Transactions processed: &quot; &amp; int_TransactionNumber.ToString]" DisplayName="Log End" />
+        </Sequence>
+      </State.Entry>
+    </State>
+
+    <StateMachine.InitialState>
+      <x:Reference>State_Init</x:Reference>
+    </StateMachine.InitialState>
+  </StateMachine>
+</Activity>`;
+}
+
+export function generateGetTransactionDataXaml(queueName: string): string {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="GetTransactionData"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="Get Transaction Data">
+    <Sequence.Variables>
+      <Variable x:TypeArguments="x:String" Name="in_QueueName" Default="'${escapeXml(queueName)}'" />
+      <Variable x:TypeArguments="ui:QueueItem" Name="out_TransactionItem" />
+      <Variable x:TypeArguments="x:Int32" Name="io_TransactionNumber" Default="0" />
+    </Sequence.Variables>
+    <ui:GetTransactionItem DisplayName="Get Queue Item" QueueName="[in_QueueName]" TransactionItem="[out_TransactionItem]" />
+    <If DisplayName="Check Transaction Item" Condition="[out_TransactionItem IsNot Nothing]">
+      <If.Then>
+        <Sequence DisplayName="Transaction Found">
+          <Assign DisplayName="Increment Transaction Counter">
+            <Assign.To><OutArgument x:TypeArguments="x:Int32">[io_TransactionNumber]</OutArgument></Assign.To>
+            <Assign.Value><InArgument x:TypeArguments="x:Int32">[io_TransactionNumber + 1]</InArgument></Assign.Value>
+          </Assign>
+          <ui:LogMessage Level="Info" Message="[&quot;Processing transaction #&quot; &amp; io_TransactionNumber.ToString &amp; &quot; - Ref: &quot; &amp; out_TransactionItem.Reference]" DisplayName="Log Transaction" />
+        </Sequence>
+      </If.Then>
+      <If.Else>
+        <ui:LogMessage Level="Info" Message="'No more transactions in queue'" DisplayName="Log Queue Empty" />
+      </If.Else>
+    </If>
+  </Sequence>
+</Activity>`;
+}
+
+export function generateSetTransactionStatusXaml(): string {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="SetTransactionStatus"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="Set Transaction Status">
+    <Sequence.Variables>
+      <Variable x:TypeArguments="ui:QueueItem" Name="in_TransactionItem" />
+      <Variable x:TypeArguments="x:String" Name="in_Status" Default="'Successful'" />
+      <Variable x:TypeArguments="x:String" Name="in_ErrorMessage" />
+    </Sequence.Variables>
+    <If DisplayName="Check Status" Condition="[in_Status = &quot;Successful&quot;]">
+      <If.Then>
+        <ui:SetTransactionStatus DisplayName="Set Success" TransactionItem="[in_TransactionItem]" Status="Successful" />
+      </If.Then>
+      <If.Else>
+        <Sequence DisplayName="Set Failed">
+          <ui:SetTransactionStatus DisplayName="Set Failed" TransactionItem="[in_TransactionItem]" Status="Failed" ErrorType="Application" Reason="[in_ErrorMessage]" />
+          <ui:LogMessage Level="Error" Message="[&quot;Transaction failed: &quot; &amp; in_ErrorMessage]" DisplayName="Log Failure" />
+        </Sequence>
+      </If.Else>
+    </If>
+  </Sequence>
+</Activity>`;
+}
+
+export function generateCloseAllApplicationsXaml(): string {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="CloseAllApplications"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="Close All Applications">
+    <TryCatch DisplayName="Safe Cleanup">
+      <TryCatch.Try>
+        <Sequence DisplayName="Close Applications">
+          <ui:LogMessage Level="Info" Message="'Closing all applications...'" DisplayName="Log Cleanup Start" />
+          <ui:CloseApplication DisplayName="Close Browser" />
+          <ui:LogMessage Level="Info" Message="'All applications closed'" DisplayName="Log Cleanup Complete" />
+        </Sequence>
+      </TryCatch.Try>
+      <TryCatch.Catches>
+        <Catch x:TypeArguments="s:Exception">
+          <ActivityAction x:TypeArguments="s:Exception">
+            <Argument x:TypeArguments="s:Exception" x:Name="closeEx" />
+            <ui:LogMessage Level="Warn" Message="[&quot;Error during cleanup: &quot; &amp; closeEx.Message]" DisplayName="Log Cleanup Error" />
+          </ActivityAction>
+        </Catch>
+      </TryCatch.Catches>
+    </TryCatch>
+  </Sequence>
+</Activity>`;
+}
+
+export function generateKillAllProcessesXaml(): string {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="KillAllProcesses"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="Kill All Processes">
+    <ui:LogMessage Level="Warn" Message="'Force killing all application processes...'" DisplayName="Log Kill Start" />
+    <ui:KillProcess DisplayName="Kill Chrome" ProcessName="chrome" />
+    <ui:KillProcess DisplayName="Kill IE" ProcessName="iexplore" />
+    <ui:KillProcess DisplayName="Kill Excel" ProcessName="EXCEL" />
+    <ui:LogMessage Level="Info" Message="'All processes terminated'" DisplayName="Log Kill Complete" />
   </Sequence>
 </Activity>`;
 }
@@ -1013,6 +1418,9 @@ export type DhgOptions = {
   usedPackages: string[];
   workflowNames: string[];
   sddContent?: string;
+  enrichment?: EnrichmentResult | null;
+  useReFramework?: boolean;
+  painPoints?: { name: string; description: string }[];
 };
 
 export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
@@ -1023,6 +1431,9 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
     usedPackages,
     workflowNames,
     sddContent,
+    enrichment,
+    useReFramework,
+    painPoints,
   } = opts;
 
   const selectorGaps = gaps.filter((g) => g.category === "selector");
@@ -1043,19 +1454,58 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
     md += `**Description:** ${description}\n`;
   }
   md += `**Generated:** ${new Date().toISOString().split("T")[0]}\n`;
-  md += `**Estimated Completion Effort:** ${totalHours} hours (${totalMinutes} minutes)\n\n`;
+  md += `**Estimated Completion Effort:** ${totalHours} hours (${totalMinutes} minutes)\n`;
+  md += `**Architecture Pattern:** ${useReFramework ? "REFramework (Robotic Enterprise Framework) — Queue-based transactional processing" : "Sequential (Linear workflow)"}\n`;
+  if (enrichment) {
+    md += `**AI Enrichment:** Applied — activities have system-specific selectors and real property values\n`;
+  }
+  md += `\n---\n\n`;
+
+  md += `## 1. Architecture Decision Record\n\n`;
+  if (useReFramework) {
+    md += `### Why REFramework?\n\n`;
+    md += `This automation uses the UiPath Robotic Enterprise Framework (REFramework) because:\n`;
+    md += `- The process involves queue-based transaction processing\n`;
+    md += `- Each transaction item can be processed independently\n`;
+    md += `- Built-in retry logic handles transient failures\n`;
+    md += `- State machine pattern provides clear process lifecycle management\n`;
+    md += `- Automatic recovery from application/system exceptions\n\n`;
+    md += `### State Machine Flow\n\n`;
+    md += `\`\`\`\nInit → Get Transaction → Process Transaction → Get Transaction (loop)\n                                    ↓ (exception)\n                              Close Apps → Get Transaction (retry)\n                    ↓ (no more items)\n                       End Process\n\`\`\`\n\n`;
+  } else {
+    md += `### Why Sequential Pattern?\n\n`;
+    md += `This automation uses a sequential (linear) workflow because:\n`;
+    md += `- The process follows a linear step-by-step flow\n`;
+    md += `- No queue-based transaction processing is involved\n`;
+    md += `- Steps have dependencies on previous step outputs\n\n`;
+  }
+  if (enrichment?.dhgNotes?.length) {
+    md += `### Architecture Notes\n\n`;
+    for (const note of enrichment.dhgNotes) {
+      md += `- ${note}\n`;
+    }
+    md += `\n`;
+  }
+
   md += `---\n\n`;
 
-  md += `## 1. Package Overview\n\n`;
+  md += `## 2. Package Overview\n\n`;
   md += `This automation package was generated by CannonBall from an approved Solution Design Document (SDD). `;
   md += `It contains near-production-ready XAML workflows with real UiPath activities, but requires developer review and completion of the items listed below.\n\n`;
   md += `### File Listing\n\n`;
   md += `| File | Purpose |\n`;
   md += `|------|--------|\n`;
   md += `| \`project.json\` | UiPath project manifest with dependencies |\n`;
-  md += `| \`Main.xaml\` | Entry point workflow |\n`;
+  md += `| \`Main.xaml\` | ${useReFramework ? "REFramework State Machine entry point" : "Entry point workflow"} |\n`;
+  if (useReFramework) {
+    md += `| \`GetTransactionData.xaml\` | Fetches next queue item for processing |\n`;
+    md += `| \`Process.xaml\` | Business logic for single transaction |\n`;
+    md += `| \`SetTransactionStatus.xaml\` | Marks transaction as Successful/Failed |\n`;
+    md += `| \`CloseAllApplications.xaml\` | Graceful application cleanup |\n`;
+    md += `| \`KillAllProcesses.xaml\` | Force-kill hanging processes |\n`;
+  }
   for (const wfName of workflowNames) {
-    if (wfName !== "Main") {
+    if (!["Main", "GetTransactionData", "Process", "SetTransactionStatus", "CloseAllApplications", "KillAllProcesses"].includes(wfName)) {
       md += `| \`${wfName}.xaml\` | Workflow: ${wfName} |\n`;
     }
   }
@@ -1078,28 +1528,66 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
 
   md += `---\n\n`;
 
-  md += `## 2. Selector Completion Checklist\n\n`;
+  md += `## 3. Selector Completion Checklist\n\n`;
   if (selectorGaps.length === 0) {
     md += `No UI selectors require configuration.\n\n`;
   } else {
     md += `The following activities have placeholder UI selectors that must be replaced with real selectors captured from UiPath Studio.\n\n`;
     md += `| # | Activity | Description | Placeholder Selector | Est. Time |\n`;
     md += `|---|----------|-------------|---------------------|----------|\n`;
-    selectorGaps.forEach((g, i) => {
-      md += `| ${i + 1} | \`${g.activity}\` | ${g.description} | \`${g.placeholder}\` | ${g.estimatedMinutes} min |\n`;
-    });
+
+    const selectorsBySystem: Record<string, XamlGap[]> = {};
+    for (const g of selectorGaps) {
+      const sys = extractSystemFromGap(g);
+      if (!selectorsBySystem[sys]) selectorsBySystem[sys] = [];
+      selectorsBySystem[sys].push(g);
+    }
+
+    let sIdx = 0;
+    for (const [sys, sysGaps] of Object.entries(selectorsBySystem)) {
+      for (const g of sysGaps) {
+        sIdx++;
+        md += `| ${sIdx} | \`${g.activity}\` | ${g.description} | \`${g.placeholder}\` | ${g.estimatedMinutes} min |\n`;
+      }
+    }
     md += `\n`;
-    md += `**How to capture selectors:**\n`;
-    md += `1. Open the workflow in UiPath Studio\n`;
-    md += `2. Find each activity marked with a TODO selector comment\n`;
-    md += `3. Use the **Indicate on Screen** feature to capture the real selector\n`;
-    md += `4. Validate each selector works reliably across multiple runs\n`;
-    md += `5. Consider adding wildcards for dynamic attributes (e.g., session IDs)\n\n`;
+
+    md += `**System-Specific Selector Guidance:**\n\n`;
+    const systems = Object.keys(selectorsBySystem);
+    for (const sys of systems) {
+      const lsys = sys.toLowerCase();
+      if (lsys.includes("sap")) {
+        md += `**SAP GUI/Fiori:**\n`;
+        md += `- Use UiExplorer with SAP Bridge enabled\n`;
+        md += `- SAP GUI selectors use \`automationid\` attributes (e.g., \`usr/txtRSYST-BNAME\`)\n`;
+        md += `- Fiori selectors use CSS selectors (e.g., \`.sapMInputBaseInner\`)\n`;
+        md += `- Add wildcards for session-specific attributes: \`<wnd app='saplogon.exe' title='SAP*' />\`\n\n`;
+      } else if (lsys.includes("salesforce")) {
+        md += `**Salesforce:**\n`;
+        md += `- Use Lightning-compatible selectors with \`data-interactive-lib-uid\` or SLDS classes\n`;
+        md += `- Dynamic IDs change per session — use \`css-selector\` with SLDS class patterns\n`;
+        md += `- Consider Salesforce Integration Activities package for API-based operations\n\n`;
+      } else if (lsys.includes("servicenow")) {
+        md += `**ServiceNow:**\n`;
+        md += `- Table field selectors use \`id\` pattern: \`sys_display.<table>.<field>\`\n`;
+        md += `- Use \`data-type\` and \`name\` attributes for form fields\n`;
+        md += `- Consider ServiceNow REST API for bulk operations\n\n`;
+      } else if (lsys.includes("web") || lsys.includes("browser")) {
+        md += `**Web Browser:**\n`;
+        md += `- Use UiExplorer to capture selectors from Chrome/Edge\n`;
+        md += `- Prefer \`id\`, \`name\`, or \`data-testid\` attributes for stability\n`;
+        md += `- Avoid positional selectors (\`tableRow\`, \`tableCol\`) when possible\n\n`;
+      } else if (lsys !== "General") {
+        md += `**${sys}:**\n`;
+        md += `- Use UiExplorer to capture application-specific selectors\n`;
+        md += `- Test selectors across different screen resolutions and user accounts\n\n`;
+      }
+    }
   }
 
   md += `---\n\n`;
 
-  md += `## 3. Credential & Asset Setup\n\n`;
+  md += `## 4. Credential & Asset Setup\n\n`;
   if (credentialGaps.length === 0) {
     md += `No credential or asset configuration required.\n\n`;
   } else {
@@ -1120,7 +1608,7 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
 
   md += `---\n\n`;
 
-  md += `## 4. Integration Endpoints\n\n`;
+  md += `## 5. Integration Endpoints\n\n`;
   const integrationGaps = [...endpointGaps, ...configGaps];
   if (integrationGaps.length === 0) {
     md += `No integration endpoints require configuration.\n\n`;
@@ -1136,7 +1624,19 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
 
   md += `---\n\n`;
 
-  md += `## 5. Testing Checklist\n\n`;
+  if (painPoints && painPoints.length > 0) {
+    md += `## 6. Risk Assessment (Pain Points)\n\n`;
+    md += `The following process pain points were identified during analysis. These areas may require extra attention during development and testing.\n\n`;
+    md += `| # | Step | Risk | Mitigation |\n`;
+    md += `|---|------|------|------------|\n`;
+    painPoints.forEach((pp, i) => {
+      md += `| ${i + 1} | ${pp.name} | ${pp.description || "Identified as pain point"} | Add extra error handling and logging; consider retry logic |\n`;
+    });
+    md += `\n---\n\n`;
+  }
+
+  const testingSectionNum = painPoints && painPoints.length > 0 ? 7 : 6;
+  md += `## ${testingSectionNum}. Testing Checklist\n\n`;
   let testingContent = "";
   if (sddContent) {
     const section7Match = sddContent.match(/## 7[\.\s][^\n]+\n([\s\S]*?)(?=## \d+\.|$)/);
@@ -1155,6 +1655,25 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
     md += `4. **UAT**: Run with real data in a controlled environment with business stakeholders\n`;
     md += `5. **Performance Testing**: Verify processing times meet SLA requirements\n\n`;
   }
+
+  md += `### Environment Setup Checklist\n\n`;
+  md += `#### Development\n`;
+  md += `- [ ] UiPath Studio installed and licensed\n`;
+  md += `- [ ] All target application access configured (dev credentials)\n`;
+  md += `- [ ] Orchestrator Dev folder created with assets/queues\n`;
+  md += `- [ ] Config.xlsx updated with Dev environment values\n\n`;
+  md += `#### UAT\n`;
+  md += `- [ ] UAT Orchestrator folder with separate assets/queues\n`;
+  md += `- [ ] UAT credentials provisioned for all target systems\n`;
+  md += `- [ ] Test data prepared and loaded into queues\n`;
+  md += `- [ ] Business stakeholders available for validation\n\n`;
+  md += `#### Production\n`;
+  md += `- [ ] Production Orchestrator folder configured\n`;
+  md += `- [ ] Production credentials and assets created\n`;
+  md += `- [ ] Triggers/schedules configured\n`;
+  md += `- [ ] Monitoring and alerting set up\n`;
+  md += `- [ ] Runbook documentation completed\n\n`;
+
   md += `### Pre-Production Checklist\n\n`;
   md += `- [ ] All placeholder selectors replaced with real selectors\n`;
   md += `- [ ] All credentials configured in Orchestrator\n`;
@@ -1167,7 +1686,8 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
 
   md += `---\n\n`;
 
-  md += `## 6. Known Gaps & Manual Steps\n\n`;
+  const gapsSectionNum = testingSectionNum + 1;
+  md += `## ${gapsSectionNum}. Known Gaps & Manual Steps\n\n`;
   const complexGaps = [...logicGaps, ...manualGaps];
   if (complexGaps.length === 0) {
     md += `No complex logic gaps or manual steps identified.\n\n`;
@@ -1183,7 +1703,8 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
 
   md += `---\n\n`;
 
-  md += `## 7. Estimated Completion Effort\n\n`;
+  const effortSectionNum = gapsSectionNum + 1;
+  md += `## ${effortSectionNum}. Estimated Completion Effort\n\n`;
   md += `| Category | Count | Est. Minutes | Est. Hours |\n`;
   md += `|----------|-------|-------------|------------|\n`;
 
@@ -1209,6 +1730,17 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
   md += `Actual effort may vary based on environment complexity, selector stability, and business rule complexity.\n`;
 
   return md;
+}
+
+function extractSystemFromGap(gap: XamlGap): string {
+  const desc = (gap.description + " " + gap.placeholder).toLowerCase();
+  if (desc.includes("sap")) return "SAP";
+  if (desc.includes("salesforce") || desc.includes("sfdc")) return "Salesforce";
+  if (desc.includes("servicenow") || desc.includes("snow")) return "ServiceNow";
+  if (desc.includes("workday")) return "Workday";
+  if (desc.includes("oracle")) return "Oracle";
+  if (desc.includes("browser") || desc.includes("web") || desc.includes("chrome")) return "Web Browser";
+  return "General";
 }
 
 export function generateDhgSummary(gaps: XamlGap[]): string {
