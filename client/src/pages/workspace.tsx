@@ -45,7 +45,7 @@ import { DocumentCard, UiPathPackageCard } from "@/components/document-card";
 
 let currentProcessView: "as-is" | "to-be" | "sdd" = "as-is";
 
-function ThinkingIndicator() {
+function ThinkingIndicator({ context }: { context?: "uipath" | "default" }) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -56,6 +56,12 @@ function ThinkingIndicator() {
   }, []);
 
   const getMessage = () => {
+    if (context === "uipath") {
+      if (elapsed >= 30) return "Complex packages take a moment, almost there...";
+      if (elapsed >= 15) return "Building workflows and packaging...";
+      if (elapsed >= 5) return "Preparing automation package...";
+      return "Processing deployment request...";
+    }
     if (elapsed >= 15) return "This is taking longer than usual, hang tight...";
     if (elapsed >= 5) return "Still working on this...";
     return "Thinking";
@@ -581,6 +587,7 @@ function ChatPanel({ idea }: { idea: Idea }) {
     if (savedMessages && savedMessages.length > 0) {
       const loaded: ChatMsg[] = savedMessages
         .filter((m) => m.role !== "system" && !isSystemTriggerMsg(m.content))
+        .filter((m) => !(m.role === "assistant" && (!m.content || m.content.trim().length === 0)))
         .map((m) => {
         const meta = parseMessageMeta(m.content);
         return {
@@ -593,7 +600,7 @@ function ChatPanel({ idea }: { idea: Idea }) {
           uipathData: meta.uipathData,
           deployReport: meta.deployReport,
         };
-      });
+      }).filter((m) => m.content || m.docType || m.uipathData || m.deployReport);
       const result = [...loaded];
       if (pendingUserMsg && !isSystemTriggerMsg(pendingUserMsg.content)) result.push(pendingUserMsg);
       if (streamingMsg) result.push(streamingMsg);
@@ -1329,8 +1336,11 @@ function ChatPanel({ idea }: { idea: Idea }) {
           }
 
           if (msg.isStreaming && !msg.content && !isGeneratingDoc && msg.role === "assistant") {
+            const lastUserMsg = displayMessages.filter(m => m.role === "user").pop();
+            const lastUserText = (lastUserMsg?.content || "").toLowerCase();
+            const isUiPathContext = /uipath|deploy|package|push.*uipath|orchestrator|push to|regenerate.*package/.test(lastUserText);
             return (
-              <ThinkingIndicator key={msg.id} />
+              <ThinkingIndicator key={msg.id} context={isUiPathContext ? "uipath" : "default"} />
             );
           }
 

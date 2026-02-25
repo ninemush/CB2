@@ -601,7 +601,12 @@ export function registerChatRoutes(app: Express): void {
         }
       }
 
-      await chatStorage.createMessage(ideaId, "assistant", cleanedResponse);
+      let savedStreamMsgId: number | null = null;
+      const isDeployOnly = fullResponse.includes("[DEPLOY_UIPATH]") && cleanedResponse.replace(/\s+/g, "").length < 10;
+      if (!isDeployOnly) {
+        const savedMsg = await chatStorage.createMessage(ideaId, "assistant", cleanedResponse);
+        savedStreamMsgId = savedMsg?.id ?? null;
+      }
 
       let skipAutoTransition = false;
 
@@ -705,17 +710,29 @@ export function registerChatRoutes(app: Express): void {
             await chatStorage.createMessage(ideaId, "system", verifiedSummary);
 
             const deployMsgContent = `${statusMsg}\n[DEPLOY_REPORT:${JSON.stringify(deployReport)}]`;
-            await chatStorage.createMessage(ideaId, "assistant", deployMsgContent);
+            if (savedStreamMsgId) {
+              await chatStorage.updateMessageContent(savedStreamMsgId, deployMsgContent);
+            } else {
+              await chatStorage.createMessage(ideaId, "assistant", deployMsgContent);
+            }
 
             res.write(`data: ${JSON.stringify({ deployStatus: statusMsg, deployComplete: true, deployReport })}\n\n`);
           } else {
             const errMsg = `Deployment failed: ${deployData.message}`;
-            await chatStorage.createMessage(ideaId, "assistant", errMsg);
+            if (savedStreamMsgId) {
+              await chatStorage.updateMessageContent(savedStreamMsgId, errMsg);
+            } else {
+              await chatStorage.createMessage(ideaId, "assistant", errMsg);
+            }
             res.write(`data: ${JSON.stringify({ deployStatus: errMsg, deployComplete: true, deployError: true })}\n\n`);
           }
         } catch (deployErr: any) {
           const errMsg = `Deployment error: ${deployErr?.message || "Unknown error"}`;
-          await chatStorage.createMessage(ideaId, "assistant", errMsg);
+          if (savedStreamMsgId) {
+            await chatStorage.updateMessageContent(savedStreamMsgId, errMsg);
+          } else {
+            await chatStorage.createMessage(ideaId, "assistant", errMsg);
+          }
           res.write(`data: ${JSON.stringify({ deployStatus: errMsg, deployComplete: true, deployError: true })}\n\n`);
         }
       }

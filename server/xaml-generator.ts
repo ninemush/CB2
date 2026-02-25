@@ -708,7 +708,7 @@ function mapClrType(type: string): string {
   if (lower === "string") return "x:String";
   if (lower === "int32" || lower === "integer" || lower === "int") return "x:Int32";
   if (lower === "boolean" || lower === "bool") return "x:Boolean";
-  if (lower.includes("datatable")) return "scg:DataTable";
+  if (lower.includes("datatable")) return "scg2:DataTable";
   return type;
 }
 
@@ -1076,7 +1076,8 @@ export function generateRichXamlFromNodes(
   xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
-  xmlns:scg="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
+  xmlns:scg2="clr-namespace:System.Data;assembly=System.Data"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Sequence DisplayName="${escapeXml(workflowName)}">
@@ -1196,7 +1197,8 @@ export function generateRichXamlFromSpec(
   xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
-  xmlns:scg="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
+  xmlns:scg2="clr-namespace:System.Data;assembly=System.Data"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Sequence DisplayName="${escapeXml(wfName)}">
@@ -1255,18 +1257,19 @@ export function generateInitAllSettingsXaml(orchestratorArtifacts?: any): string
   xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
-  xmlns:scg="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
+  xmlns:scg2="clr-namespace:System.Data;assembly=System.Data"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Sequence DisplayName="Initialize All Settings">
     <Sequence.Variables>
-      <Variable x:TypeArguments="scg:DataTable" Name="dt_Settings" />
-      <Variable x:TypeArguments="scg:DataTable" Name="dt_Constants" />
+      <Variable x:TypeArguments="scg2:DataTable" Name="dt_Settings" />
+      <Variable x:TypeArguments="scg2:DataTable" Name="dt_Constants" />
       <Variable x:TypeArguments="x:String" Name="str_ConfigPath" Default="Data\\Config.xlsx" />
       <Variable x:TypeArguments="x:String" Name="str_AssetValue" />
       <Variable x:TypeArguments="x:String" Name="str_TempUser" />
       <Variable x:TypeArguments="x:String" Name="sec_TempPass" />
-      <Variable x:TypeArguments="scg:DataRow" Name="row_Current" />
+      <Variable x:TypeArguments="scg2:DataRow" Name="row_Current" />
     </Sequence.Variables>
     <ui:LogMessage Level="Info" Message="'Reading configuration from Config.xlsx...'" DisplayName="Log Config Start" />
     <ui:ExcelApplicationScope DisplayName="Read Config File" WorkbookPath="[str_ConfigPath]">
@@ -1277,17 +1280,17 @@ export function generateInitAllSettingsXaml(orchestratorArtifacts?: any): string
         </Sequence>
       </ui:ExcelApplicationScope.Body>
     </ui:ExcelApplicationScope>
-    <ForEach x:TypeArguments="scg:DataRow" DisplayName="Process Settings Rows" Values="[dt_Settings.Rows]">
-      <ActivityAction x:TypeArguments="scg:DataRow">
-        <Argument x:TypeArguments="scg:DataRow" x:Name="row" />
+    <ForEach x:TypeArguments="scg2:DataRow" DisplayName="Process Settings Rows" Values="[dt_Settings.Rows]">
+      <ActivityAction x:TypeArguments="scg2:DataRow">
+        <Argument x:TypeArguments="scg2:DataRow" x:Name="row" />
         <Sequence DisplayName="Process Setting Row">
           <ui:LogMessage Level="Trace" Message="[&quot;Processing setting: &quot; &amp; row(&quot;Name&quot;).ToString]" DisplayName="Log Setting" />
         </Sequence>
       </ActivityAction>
     </ForEach>${assetActivities}
-    <ForEach x:TypeArguments="scg:DataRow" DisplayName="Process Constants Rows" Values="[dt_Constants.Rows]">
-      <ActivityAction x:TypeArguments="scg:DataRow">
-        <Argument x:TypeArguments="scg:DataRow" x:Name="constRow" />
+    <ForEach x:TypeArguments="scg2:DataRow" DisplayName="Process Constants Rows" Values="[dt_Constants.Rows]">
+      <ActivityAction x:TypeArguments="scg2:DataRow">
+        <Argument x:TypeArguments="scg2:DataRow" x:Name="constRow" />
         <Sequence DisplayName="Store Constant">
           <ui:LogMessage Level="Trace" Message="[&quot;Loaded constant: &quot; &amp; constRow(&quot;Name&quot;).ToString]" DisplayName="Log Constant" />
         </Sequence>
@@ -1312,7 +1315,8 @@ export function generateReframeworkMainXaml(projectName: string, queueName: stri
   xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
-  xmlns:scg="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
+  xmlns:scg2="clr-namespace:System.Data;assembly=System.Data"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <StateMachine DisplayName="${safeName} - REFramework Main">
@@ -1437,6 +1441,7 @@ export function generateGetTransactionDataXaml(queueName: string): string {
   xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Sequence DisplayName="Get Transaction Data">
@@ -1475,6 +1480,7 @@ export function generateSetTransactionStatusXaml(): string {
   xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Sequence DisplayName="Set Transaction Status">
@@ -1508,6 +1514,7 @@ export function generateCloseAllApplicationsXaml(): string {
   xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Sequence DisplayName="Close All Applications">
@@ -1542,6 +1549,7 @@ export function generateKillAllProcessesXaml(): string {
   xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Sequence DisplayName="Kill All Processes">
