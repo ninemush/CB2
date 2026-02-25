@@ -20,8 +20,10 @@ The application employs a modern web stack:
 - **Automated Stage Transitions**: Engine evaluates and automatically transitions ideas across 10 pipeline stages based on criteria, with audit logging.
 - **Document Generation**: Automated PDD and SDD generation after process map and PDD approvals, respectively, including version control. Chat-regenerated documents are auto-saved.
 - **Rich UiPath Package Generation & Deployment**: Generates near-production-ready UiPath packages (~70-80% complete) with real activities (TypeInto, Click, HttpClient, ExcelReadRange, If, ForEach, TryCatch, RetryScope, etc.) instead of stubs. The XAML generator engine (`server/xaml-generator.ts`) maps process map nodes and SDD details to specific UiPath activity types based on system context (UI automation, Excel, email, API, database, file, queue operations). Packages include Config.xlsx with Settings/Constants populated from SDD artifacts, InitAllSettings.xaml, and a Developer Handoff Guide (DHG) documenting all gaps (selectors, credentials, endpoints) with step-by-step completion instructions. Supports conversational deployment to UiPath Orchestrator with live status streaming.
-- **Test Manager V2 API Integration**: Creates Test Manager projects via `/api/v2/Projects` (lowercase fields: `name`, `prefix`, `description`), test cases via `/api/v2/Projects/{projectId}/TestCases` (lowercase: `name`, `description`, `labels[]`, `manualSteps[]`), and test data queues via `/odata/TestDataQueues` with `X-UIPATH-OrganizationUnitId` header for folder-scoped operations. Probes three TM base URL patterns (`testmanager_`, `tmapi_`, `testmanager`) with redirect detection and post-creation project verification.
-- **Action Center Provisioning**: Creates Task Catalogs via the Actions microservice (`actions_/api/v1/TaskCatalogs`) with fallback to OData and GenericTask endpoints. Three-tier creation strategy with clear manual instructions on failure.
+- **Test Manager V2 API Integration**: Creates Test Manager projects via `/api/v2/Projects` (lowercase fields: `name`, `prefix`, `description`), test cases via `/api/v2/Projects/{projectId}/TestCases` (lowercase: `name`, `description`, `labels[]`, `manualSteps[]`), and test data queues via `/odata/TestDataQueues` with `X-UIPATH-OrganizationUnitId` header and required `ContentJsonSchema` field. Probes three TM base URL patterns (`testmanager_`, `tmapi_`, `testmanager`) with redirect detection and post-creation project verification. Falls back to "manual" status with step-by-step UI instructions when the TestCases API returns 404 (requires Enterprise license).
+- **Action Center Provisioning**: Creates Task Catalogs via the Actions microservice (`actions_/api/v1/TaskCatalogs`) with fallback to OData and GenericTask endpoints. Three-tier creation strategy; when all API approaches fail (405), returns "manual" status with step-by-step Orchestrator UI instructions including direct URLs.
+- **UiPath Diagnostic Endpoint**: `GET /api/admin/uipath-diagnostic` (admin-only) tests real API calls across all 11 artifact types against the connected tenant and returns structured JSON results. Useful for debugging client tenants and understanding API limitations.
+- **"Manual" Deployment Status**: `DeploymentResult` type supports a "manual" status (in addition to created/exists/failed/skipped) with `manualSteps[]` array providing step-by-step Orchestrator UI instructions for artifacts that cannot be created via API. The deployment report card renders these as expandable numbered instruction lists with amber styling.
 - **File Upload Content Extraction**: Server-side file upload (`/api/upload`) with content extraction for DOCX (mammoth), PDF (pdf-parse), XLSX (xlsx), TXT, and CSV. Extracted content is injected into AI chat context to automatically drive process mapping and document generation. Images and videos are acknowledged with prompts for user description.
 - **Admin & Review Panels**: CoE review page for idea approval/rejection and an Admin panel for user management, audit logs, and system configuration.
 - **Role-Based Access**: Authorization enforced on process map and document routes based on user ownership and roles (Admin/CoE).
@@ -39,3 +41,22 @@ The application employs a modern web stack:
 - **Session Management**: express-session and connect-pg-simple.
 - **File Parsing**: mammoth (DOCX), pdf-parse (PDF), xlsx (XLSX/XLS), multer (file upload handling).
 - **UiPath Orchestrator**: For deploying automation packages, including API integrations for provisioning assets, queues, and processes.
+
+## UiPath API Diagnostic Results (Feb 2026)
+Admin diagnostic endpoint: `GET /api/admin/uipath-diagnostic`
+
+| Artifact Type | API Status | Fix Applied |
+|---|---|---|
+| Queues | Working | N/A |
+| Assets | Working | N/A |
+| Machines | Working | N/A |
+| Triggers | Working (needs process) | N/A |
+| Storage Buckets | Working | UUID Identifier required; no StorageProvider preferred |
+| Environments | Manual | Modern folders deprecated (405). Machine templates used instead |
+| Robot Accounts | Manual | Identity API returns HTML. PM token OK but endpoint inaccessible |
+| Action Center | Manual | Task Catalog POST returns 405. Tenant limitation |
+| Test Data Queues | Working | `ContentJsonSchema` field required (default schema added) |
+| Document Understanding | Manual | DU service not available on tenant |
+| Test Manager | Manual | TestCases endpoints return 404. Project CRUD works |
+
+Key files: `server/uipath-deploy.ts` (provisioning), `server/uipath-routes.ts` (diagnostic endpoint), `server/uipath-integration.ts` (auth/connection), `client/src/components/deployment-report-card.tsx` (UI).

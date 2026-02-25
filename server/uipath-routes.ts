@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { getUiPathConfig, saveUiPathConfig, testUiPathConnection, pushToUiPath, getLastTestedAt, fetchUiPathFolders, saveUiPathFolder, createProcess, listMachines, listRobots, listProcesses, startJob, getJobStatus, runHealthCheck, verifyUiPathScopes, probeUiPathScopes, autoDetectUiPathScopes } from "./uipath-integration";
+import { getUiPathConfig, getAccessToken, saveUiPathConfig, testUiPathConnection, pushToUiPath, getLastTestedAt, fetchUiPathFolders, saveUiPathFolder, createProcess, listMachines, listRobots, listProcesses, startJob, getJobStatus, runHealthCheck, verifyUiPathScopes, probeUiPathScopes, autoDetectUiPathScopes } from "./uipath-integration";
 import { parseArtifactsFromSDD, extractArtifactsWithLLM, deployAllArtifacts, formatDeploymentReport } from "./uipath-deploy";
 import { documentStorage } from "./document-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
@@ -353,5 +353,415 @@ export function registerUiPathRoutes(app: Express): void {
     }
 
     return res.json(result);
+  });
+
+  app.get("/api/admin/uipath-diagnostic", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const config = await getUiPathConfig();
+    if (!config) return res.json({ error: "UiPath not configured" });
+
+    const ts = Date.now();
+    const results: Record<string, any> = { timestamp: new Date().toISOString(), config: { orgName: config.orgName, tenantName: config.tenantName, folderId: config.folderId, folderName: config.folderName } };
+
+    async function safeCall(label: string, url: string, opts: RequestInit = {}): Promise<{ status: number; text: string; data: any; ok: boolean; headers?: Record<string, string> }> {
+      try {
+        const r = await fetch(url, { ...opts, signal: AbortSignal.timeout(15000) });
+        const text = await r.text();
+        let data = null;
+        try { data = JSON.parse(text); } catch {}
+        return { status: r.status, text: text.slice(0, 2000), data, ok: r.ok };
+      } catch (e: any) {
+        return { status: 0, text: e.message, data: null, ok: false };
+      }
+    }
+
+    try {
+      const token = await getAccessToken(config);
+      const base = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_`;
+      const hdrs: Record<string, string> = { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" };
+      if (config.folderId) hdrs["X-UIPATH-OrganizationUnitId"] = config.folderId;
+      results.tokenAcquired = true;
+
+      // ── QUEUES ──
+      {
+        const sec: any = { artifact: "Queue", steps: [] };
+        const list = await safeCall("list", `${base}/odata/QueueDefinitions?$top=3`, { headers: hdrs });
+        sec.steps.push({ step: "list", url: `${base}/odata/QueueDefinitions?$top=3`, method: "GET", ...list });
+        const body = { Name: `CB_Diag_Queue_${ts}`, Description: "CannonBall diagnostic test", MaxNumberOfRetries: 1, EnforceUniqueReference: false };
+        const create = await safeCall("create", `${base}/odata/QueueDefinitions`, { method: "POST", headers: hdrs, body: JSON.stringify(body) });
+        sec.steps.push({ step: "create", url: `${base}/odata/QueueDefinitions`, method: "POST", requestBody: body, ...create });
+        sec.overallStatus = create.ok ? "working" : `failed (${create.status})`;
+        if (create.ok && create.data?.Id) {
+          const del = await safeCall("cleanup", `${base}/odata/QueueDefinitions(${create.data.Id})`, { method: "DELETE", headers: hdrs });
+          sec.steps.push({ step: "cleanup", method: "DELETE", ...del });
+        }
+        results.queues = sec;
+      }
+
+      // ── ASSETS ──
+      {
+        const sec: any = { artifact: "Asset", steps: [] };
+        const list = await safeCall("list", `${base}/odata/Assets?$top=3`, { headers: hdrs });
+        sec.steps.push({ step: "list", url: `${base}/odata/Assets?$top=3`, method: "GET", ...list });
+        const body = { Name: `CB_Diag_Asset_${ts}`, ValueType: "Text", StringValue: "diag_value", Description: "CannonBall diagnostic" };
+        const create = await safeCall("create", `${base}/odata/Assets`, { method: "POST", headers: hdrs, body: JSON.stringify(body) });
+        sec.steps.push({ step: "create", url: `${base}/odata/Assets`, method: "POST", requestBody: body, ...create });
+        sec.overallStatus = create.ok ? "working" : `failed (${create.status})`;
+        if (create.ok && create.data?.Id) {
+          const del = await safeCall("cleanup", `${base}/odata/Assets(${create.data.Id})`, { method: "DELETE", headers: hdrs });
+          sec.steps.push({ step: "cleanup", method: "DELETE", ...del });
+        }
+        results.assets = sec;
+      }
+
+      // ── MACHINES ──
+      {
+        const sec: any = { artifact: "Machine", steps: [] };
+        const list = await safeCall("list", `${base}/odata/Machines?$top=3`, { headers: hdrs });
+        sec.steps.push({ step: "list", url: `${base}/odata/Machines?$top=3`, method: "GET", ...list });
+        const body = { Name: `CB_Diag_Machine_${ts}`, Type: "Standard", Description: "CannonBall diagnostic" };
+        const create = await safeCall("create", `${base}/odata/Machines`, { method: "POST", headers: hdrs, body: JSON.stringify(body) });
+        sec.steps.push({ step: "create", url: `${base}/odata/Machines`, method: "POST", requestBody: body, ...create });
+        if (!create.ok) {
+          const bodyTpl = { Name: `CB_Diag_MachineTpl_${ts}`, Description: "CannonBall diagnostic", NonProductionSlots: 0, UnattendedSlots: 1 };
+          const createTpl = await safeCall("create_template", `${base}/odata/Machines`, { method: "POST", headers: hdrs, body: JSON.stringify(bodyTpl) });
+          sec.steps.push({ step: "create_template", requestBody: bodyTpl, ...createTpl });
+          sec.overallStatus = createTpl.ok ? "working (template)" : `failed (${create.status}, template ${createTpl.status})`;
+        } else {
+          sec.overallStatus = "working";
+        }
+        results.machines = sec;
+      }
+
+      // ── STORAGE BUCKETS ──
+      {
+        const sec: any = { artifact: "StorageBucket", steps: [] };
+        const list = await safeCall("list", `${base}/odata/Buckets?$top=3`, { headers: hdrs });
+        sec.steps.push({ step: "list", url: `${base}/odata/Buckets?$top=3`, method: "GET", ...list });
+
+        function diagUuid() {
+          const h = "0123456789abcdef";
+          let u = "";
+          for (let i = 0; i < 36; i++) {
+            if (i === 8 || i === 13 || i === 18 || i === 23) u += "-";
+            else if (i === 14) u += "4";
+            else u += h[Math.floor(Math.random() * 16)];
+          }
+          return u;
+        }
+        const bucketVariants = [
+          { Name: `CB_Diag_Bucket_${ts}`, Identifier: diagUuid(), Description: "CannonBall diagnostic", StorageProvider: "Orchestrator" },
+          { Name: `CB_Diag_Bucket2_${ts}`, Identifier: diagUuid(), Description: "CannonBall diagnostic" },
+        ];
+        let bucketCreated = false;
+        for (const body of bucketVariants) {
+          const provLabel = (body as any).StorageProvider || "none";
+          const create = await safeCall(`create_${provLabel}`, `${base}/odata/Buckets`, { method: "POST", headers: hdrs, body: JSON.stringify(body) });
+          sec.steps.push({ step: `create_${provLabel}`, url: `${base}/odata/Buckets`, method: "POST", requestBody: body, ...create });
+          if (create.ok) {
+            sec.overallStatus = `working (StorageProvider=${provLabel})`;
+            bucketCreated = true;
+            if (create.data?.Id) {
+              await safeCall("cleanup", `${base}/odata/Buckets(${create.data.Id})`, { method: "DELETE", headers: hdrs });
+            }
+            break;
+          }
+        }
+        if (!bucketCreated) sec.overallStatus = `failed (all variants)`;
+        results.storageBuckets = sec;
+      }
+
+      // ── ENVIRONMENTS ──
+      {
+        const sec: any = { artifact: "Environment", steps: [] };
+        const list = await safeCall("list", `${base}/odata/Environments?$top=3`, { headers: hdrs });
+        sec.steps.push({ step: "list", url: `${base}/odata/Environments?$top=3`, method: "GET", ...list });
+        const body = { Name: `CB_Diag_Env_${ts}`, Description: "CannonBall diagnostic", Type: "Dev" };
+        const create = await safeCall("create", `${base}/odata/Environments`, { method: "POST", headers: hdrs, body: JSON.stringify(body) });
+        sec.steps.push({ step: "create", url: `${base}/odata/Environments`, method: "POST", requestBody: body, ...create });
+        sec.overallStatus = create.ok ? "working" : `failed (${create.status})`;
+        results.environments = sec;
+      }
+
+      // ── TRIGGERS (probe only, needs process) ──
+      {
+        const sec: any = { artifact: "Trigger", steps: [] };
+        const list = await safeCall("list", `${base}/odata/ProcessSchedules?$top=3`, { headers: hdrs });
+        sec.steps.push({ step: "list", url: `${base}/odata/ProcessSchedules?$top=3`, method: "GET", ...list });
+        sec.overallStatus = list.ok ? "endpoint available (creation needs process)" : `endpoint unavailable (${list.status})`;
+        results.triggers = sec;
+      }
+
+      // ── USERS / ROBOT ACCOUNTS ──
+      {
+        const sec: any = { artifact: "RobotAccount", steps: [] };
+        const listUsers = await safeCall("list_users", `${base}/odata/Users?$top=5`, { headers: hdrs });
+        sec.steps.push({ step: "list_users", url: `${base}/odata/Users?$top=5`, method: "GET", ...listUsers });
+
+        let pmToken: string | null = null;
+        try {
+          const pmScopes = "PM.RobotAccount PM.RobotAccount.Read PM.RobotAccount.Write";
+          const pmParams = new URLSearchParams({ grant_type: "client_credentials", client_id: config.clientId, client_secret: config.clientSecret, scope: pmScopes });
+          pmParams.append("acr_values", `tenantId:${config.orgName}`);
+          const pmRes = await safeCall("pm_token", "https://cloud.uipath.com/identity_/connect/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: pmParams.toString() });
+          sec.steps.push({ step: "pm_token", ...pmRes, scopesRequested: pmScopes, scopesGranted: pmRes.data?.scope || null });
+          if (pmRes.ok && pmRes.data?.access_token) pmToken = pmRes.data.access_token;
+        } catch {}
+
+        if (pmToken) {
+          const pmHdrs = { "Authorization": `Bearer ${pmToken}`, "Content-Type": "application/json" };
+          const identityUrls = [
+            `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/identity_/api/RobotAccount`,
+            `https://cloud.uipath.com/${config.orgName}/identity_/api/RobotAccount`,
+          ];
+          const robotBody = { name: `CB_Diag_Robot_${ts}`, displayName: `CB_Diag_Robot_${ts}`, domain: "UiPath" };
+          let robotCreated = false;
+          let robotId: any = null;
+          for (const idUrl of identityUrls) {
+            const create = await safeCall("create_robot", idUrl, { method: "POST", headers: pmHdrs, body: JSON.stringify(robotBody) });
+            sec.steps.push({ step: "create_robot", url: idUrl, method: "POST", requestBody: robotBody, ...create });
+            const isHtml = create.text.trimStart().startsWith("<!") || create.text.trimStart().startsWith("<html");
+            if (isHtml) {
+              sec.steps[sec.steps.length - 1].note = "Response is HTML (web page, not API)";
+              continue;
+            }
+            if (create.ok && create.data) {
+              robotCreated = true;
+              robotId = create.data?.id || create.data?.Id;
+              if (robotId && config.folderId) {
+                const assignBody = { assignments: { UserIds: [robotId], RolesPerFolder: [{ FolderId: parseInt(config.folderId, 10), Roles: [{ Name: "Executor" }] }] } };
+                const assign = await safeCall("assign_folder", `${base}/odata/Folders/UiPath.Server.Configuration.OData.AssignUsers`, { method: "POST", headers: hdrs, body: JSON.stringify(assignBody) });
+                sec.steps.push({ step: "assign_folder", requestBody: assignBody, ...assign });
+              }
+              break;
+            }
+          }
+          sec.overallStatus = robotCreated ? "working" : "pm_token_ok_but_identity_api_returns_html (manual setup needed)";
+        } else {
+          const odataBody = { UserName: `CB_Diag_Robot_${ts}`, Name: `CB_Diag_Robot_${ts}`, Surname: "DiagBot", EmailAddress: `diag_${ts}@robot.local`, RolesList: ["Robot"], Type: "Robot", Domain: "UiPath" };
+          const odataCreate = await safeCall("create_via_odata", `${base}/odata/Users`, { method: "POST", headers: hdrs, body: JSON.stringify(odataBody) });
+          sec.steps.push({ step: "create_via_odata", url: `${base}/odata/Users`, requestBody: odataBody, ...odataCreate });
+          sec.overallStatus = odataCreate.ok ? "working (odata fallback)" : `no_pm_token_and_odata_failed (${odataCreate.status})`;
+        }
+        results.robotAccounts = sec;
+      }
+
+      // ── ACTION CENTER ──
+      {
+        const sec: any = { artifact: "ActionCenter", steps: [] };
+        const actionsBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/actions_/api/v1`;
+        const probeActions = await safeCall("probe_actions", `${actionsBase}/TaskCatalogs?$top=1`, { headers: hdrs });
+        sec.steps.push({ step: "probe_actions", url: `${actionsBase}/TaskCatalogs?$top=1`, ...probeActions });
+
+        const probeOdata = await safeCall("probe_odata", `${base}/odata/TaskCatalogs?$top=1`, { headers: hdrs });
+        sec.steps.push({ step: "probe_odata", url: `${base}/odata/TaskCatalogs?$top=1`, ...probeOdata });
+
+        const catalogBody = { Name: `CB_Diag_Catalog_${ts}`, Description: "CannonBall diagnostic" };
+
+        if (probeActions.ok) {
+          const create = await safeCall("create_actions", `${actionsBase}/TaskCatalogs`, { method: "POST", headers: hdrs, body: JSON.stringify(catalogBody) });
+          sec.steps.push({ step: "create_actions", requestBody: catalogBody, ...create });
+          sec.overallStatus = create.ok ? "working (actions microservice)" : `actions_probe_ok_but_create_failed (${create.status})`;
+        } else {
+          const createOdata = await safeCall("create_odata", `${base}/odata/TaskCatalogs`, { method: "POST", headers: hdrs, body: JSON.stringify(catalogBody) });
+          sec.steps.push({ step: "create_odata", requestBody: catalogBody, ...createOdata });
+
+          const genericBody = { Title: `CB_Diag_Task_${ts}`, Priority: "Medium", TaskCatalogName: `CB_Diag_Catalog_${ts}`, Data: JSON.stringify({ autoCreated: true }) };
+          const createGeneric = await safeCall("create_generic", `${base}/tasks/GenericTasks/CreateTask`, { method: "POST", headers: hdrs, body: JSON.stringify(genericBody) });
+          sec.steps.push({ step: "create_generic", requestBody: genericBody, ...createGeneric });
+
+          sec.overallStatus = createOdata.ok ? "working (odata)" : createGeneric.ok ? "working (generic)" : `all_failed (actions=${probeActions.status}, odata=${createOdata.status}, generic=${createGeneric.status})`;
+        }
+        results.actionCenter = sec;
+      }
+
+      // ── TEST DATA QUEUES ──
+      {
+        const sec: any = { artifact: "TestDataQueue", steps: [] };
+        const list = await safeCall("list", `${base}/odata/TestDataQueues?$top=3`, { headers: hdrs });
+        sec.steps.push({ step: "list", url: `${base}/odata/TestDataQueues?$top=3`, method: "GET", ...list });
+
+        const defaultSchema = JSON.stringify({ type: "object", properties: { TestInput: { type: "string" }, ExpectedOutput: { type: "string" } } });
+        const tdqVariants = [
+          { Name: `CB_Diag_TDQ_${ts}`, Description: "CannonBall diagnostic", ContentJsonSchema: defaultSchema },
+          { Name: `CB_Diag_TDQ2_${ts}`, Description: "CannonBall diagnostic" },
+        ];
+        let tdqCreated = false;
+        for (const body of tdqVariants) {
+          const label = (body as any).ContentJsonSchema ? "with_schema" : "no_schema";
+          const create = await safeCall(`create_${label}`, `${base}/odata/TestDataQueues`, { method: "POST", headers: hdrs, body: JSON.stringify(body) });
+          sec.steps.push({ step: `create_${label}`, requestBody: body, ...create });
+          if (create.ok) {
+            sec.overallStatus = `working (${label})`;
+            tdqCreated = true;
+            break;
+          }
+        }
+        if (!tdqCreated) sec.overallStatus = `failed (all variants)`;
+        results.testDataQueues = sec;
+      }
+
+      // ── DOCUMENT UNDERSTANDING ──
+      {
+        const sec: any = { artifact: "DocumentUnderstanding", steps: [] };
+        const duBases = [
+          `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/du_/api/framework/projects`,
+          `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/documentunderstanding_/api/framework/projects`,
+        ];
+        for (const duUrl of duBases) {
+          const probe = await safeCall("probe", `${duUrl}?$top=1`, { headers: hdrs });
+          sec.steps.push({ step: "probe", url: duUrl, ...probe });
+          if (probe.ok) {
+            sec.overallStatus = "available";
+            break;
+          }
+        }
+        if (!sec.overallStatus) sec.overallStatus = "not_available";
+        results.documentUnderstanding = sec;
+      }
+
+      // ── TEST MANAGER ──
+      {
+        const sec: any = { artifact: "TestManager", steps: [] };
+        let tmToken: string | null = null;
+        const tmScopes = "TM.Projects TM.Projects.Read TM.Projects.Write TM.TestCases TM.TestCases.Read TM.TestCases.Write TM.TestSets TM.TestSets.Read TM.TestSets.Write";
+        try {
+          const tmParams = new URLSearchParams({ grant_type: "client_credentials", client_id: config.clientId, client_secret: config.clientSecret, scope: tmScopes });
+          const tmRes = await safeCall("tm_token", "https://cloud.uipath.com/identity_/connect/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: tmParams.toString() });
+          sec.steps.push({ step: "tm_token", scopesRequested: tmScopes, scopesGranted: tmRes.data?.scope || null, ...tmRes });
+          if (tmRes.ok && tmRes.data?.access_token) tmToken = tmRes.data.access_token;
+        } catch {}
+
+        if (!tmToken) {
+          sec.overallStatus = "no_tm_token";
+          results.testManager = sec;
+        } else {
+          const tmHdrs: Record<string, string> = { "Authorization": `Bearer ${tmToken}`, "Content-Type": "application/json", "Accept": "application/json" };
+          const tmBases = [
+            `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/testmanager_`,
+            `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/tmapi_`,
+            `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/testmanager`,
+          ];
+
+          let activeTmBase: string | null = null;
+          for (const tmBase of tmBases) {
+            const probe = await safeCall("probe", `${tmBase}/api/v2/Projects?$top=10`, { headers: tmHdrs, redirect: "manual" });
+            sec.steps.push({ step: "probe", url: `${tmBase}/api/v2/Projects?$top=10`, ...probe });
+            if (probe.ok && !probe.text.startsWith("<")) {
+              activeTmBase = tmBase;
+              break;
+            }
+          }
+
+          if (!activeTmBase) {
+            sec.overallStatus = "no_active_base_url";
+            results.testManager = sec;
+          } else {
+            let projectId: number | null = null;
+            let projectPrefix: string | null = null;
+
+            const listProj = await safeCall("list_projects", `${activeTmBase}/api/v2/Projects?$top=50`, { headers: tmHdrs });
+            sec.steps.push({ step: "list_projects", url: `${activeTmBase}/api/v2/Projects?$top=50`, ...listProj });
+
+            if (listProj.ok) {
+              const projects = listProj.data?.data || listProj.data?.value || (Array.isArray(listProj.data) ? listProj.data : []);
+              sec.projectsFound = projects.length;
+              sec.projectFields = projects.length > 0 ? Object.keys(projects[0]) : [];
+              sec.firstProject = projects.length > 0 ? projects[0] : null;
+              if (projects.length > 0) {
+                projectId = projects[0].id || projects[0].Id;
+                projectPrefix = projects[0].prefix || projects[0].Prefix || projects[0].projectPrefix || projects[0].ProjectPrefix;
+              }
+            }
+
+            if (!projectId) {
+              const projBody = { name: `CB_Diag_Project_${ts}`, prefix: "CBDIAG", description: "CannonBall diagnostic" };
+              const createProj = await safeCall("create_project", `${activeTmBase}/api/v2/Projects`, { method: "POST", headers: tmHdrs, body: JSON.stringify(projBody) });
+              sec.steps.push({ step: "create_project", requestBody: projBody, ...createProj });
+              if (createProj.ok && createProj.data) {
+                projectId = createProj.data.id || createProj.data.Id;
+                projectPrefix = createProj.data.prefix || createProj.data.Prefix;
+                sec.createdProject = createProj.data;
+              }
+            }
+
+            if (!projectId) {
+              sec.overallStatus = "no_project_id";
+              results.testManager = sec;
+            } else {
+              sec.usingProjectId = projectId;
+              sec.usingProjectPrefix = projectPrefix;
+
+              const verifyProj = await safeCall("verify_project", `${activeTmBase}/api/v2/Projects/${projectId}`, { headers: tmHdrs });
+              sec.steps.push({ step: "verify_project", url: `${activeTmBase}/api/v2/Projects/${projectId}`, ...verifyProj });
+
+              // Test case creation — try multiple approaches
+              const tcApproaches = [
+                { label: "v2_lowercase", url: `${activeTmBase}/api/v2/Projects/${projectId}/TestCases`, body: { name: `CB_Diag_TC_${ts}`, description: "Diagnostic test case" } },
+                { label: "v2_uppercase", url: `${activeTmBase}/api/v2/Projects/${projectId}/TestCases`, body: { Name: `CB_Diag_TC_Upper_${ts}`, Description: "Diagnostic test case (uppercase)" } },
+                { label: "v2_with_labels", url: `${activeTmBase}/api/v2/Projects/${projectId}/TestCases`, body: { name: `CB_Diag_TC_Labels_${ts}`, description: "With labels", labels: ["Diagnostic"], manualSteps: [{ stepDescription: "Test step", expectedResult: "Pass", order: 1 }] } },
+                { label: "v1_lowercase", url: `${activeTmBase}/api/v1/Projects/${projectId}/TestCases`, body: { name: `CB_Diag_TC_V1_${ts}`, description: "V1 test" } },
+                { label: "v2_testcases_direct", url: `${activeTmBase}/api/v2/TestCases`, body: { name: `CB_Diag_TC_Direct_${ts}`, description: "Direct endpoint", projectId: projectId } },
+              ];
+
+              for (const approach of tcApproaches) {
+                const create = await safeCall(`create_tc_${approach.label}`, approach.url, { method: "POST", headers: tmHdrs, body: JSON.stringify(approach.body) });
+                sec.steps.push({ step: `create_tc_${approach.label}`, url: approach.url, method: "POST", requestBody: approach.body, ...create });
+                if (create.ok) {
+                  sec.testCaseWorking = approach.label;
+                  break;
+                }
+              }
+
+              const listTc = await safeCall("list_testcases", `${activeTmBase}/api/v2/Projects/${projectId}/TestCases?$top=10`, { headers: tmHdrs });
+              sec.steps.push({ step: "list_testcases", url: `${activeTmBase}/api/v2/Projects/${projectId}/TestCases?$top=10`, ...listTc });
+
+              // Test sets
+              const tsApproaches = [
+                { label: "v2_testsets", url: `${activeTmBase}/api/v2/Projects/${projectId}/TestSets`, body: { name: `CB_Diag_TS_${ts}`, description: "Diagnostic test set" } },
+                { label: "v1_testsets", url: `${activeTmBase}/api/v1/Projects/${projectId}/TestSets`, body: { name: `CB_Diag_TS_V1_${ts}`, description: "V1 test set" } },
+              ];
+              for (const approach of tsApproaches) {
+                const create = await safeCall(`create_ts_${approach.label}`, approach.url, { method: "POST", headers: tmHdrs, body: JSON.stringify(approach.body) });
+                sec.steps.push({ step: `create_ts_${approach.label}`, url: approach.url, requestBody: approach.body, ...create });
+                if (create.ok) { sec.testSetWorking = approach.label; break; }
+              }
+
+              // Requirements
+              const reqApproaches = [
+                { label: "v2_requirements", url: `${activeTmBase}/api/v2/Projects/${projectId}/Requirements`, body: { name: `CB_Diag_Req_${ts}`, description: "Diagnostic requirement" } },
+              ];
+              for (const approach of reqApproaches) {
+                const create = await safeCall(`create_req_${approach.label}`, approach.url, { method: "POST", headers: tmHdrs, body: JSON.stringify(approach.body) });
+                sec.steps.push({ step: `create_req_${approach.label}`, url: approach.url, requestBody: approach.body, ...create });
+                if (create.ok) { sec.requirementWorking = approach.label; break; }
+              }
+
+              sec.overallStatus = sec.testCaseWorking ? `working (${sec.testCaseWorking})` : "test_case_creation_failed";
+              results.testManager = sec;
+            }
+          }
+        }
+      }
+
+      results.summary = {
+        queues: results.queues?.overallStatus,
+        assets: results.assets?.overallStatus,
+        machines: results.machines?.overallStatus,
+        storageBuckets: results.storageBuckets?.overallStatus,
+        environments: results.environments?.overallStatus,
+        triggers: results.triggers?.overallStatus,
+        robotAccounts: results.robotAccounts?.overallStatus,
+        actionCenter: results.actionCenter?.overallStatus,
+        testDataQueues: results.testDataQueues?.overallStatus,
+        documentUnderstanding: results.documentUnderstanding?.overallStatus,
+        testManager: results.testManager?.overallStatus,
+      };
+
+    } catch (e: any) {
+      results.error = e.message;
+    }
+
+    return res.json(results);
   });
 }

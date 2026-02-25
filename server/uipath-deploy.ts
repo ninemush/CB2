@@ -77,9 +77,10 @@ export type OrchestratorArtifacts = {
 export type DeploymentResult = {
   artifact: string;
   name: string;
-  status: "created" | "exists" | "failed" | "skipped";
+  status: "created" | "exists" | "failed" | "skipped" | "manual";
   message: string;
   id?: number;
+  manualSteps?: string[];
 };
 
 export function parseArtifactsFromSDD(sddContent: string): OrchestratorArtifacts | null {
@@ -1179,8 +1180,13 @@ async function provisionEnvironments(
     return environments.map(env => ({
       artifact: "Environment",
       name: env.name,
-      status: "skipped" as const,
-      message: "Environments API not available on modern folder tenants (deprecated Oct 2023). Modern folders use machine templates and runtime slots instead. No action needed — your folder's machine templates serve the same purpose.",
+      status: "manual" as const,
+      message: "Environments API not available on modern folder tenants (deprecated Oct 2023). Modern folders use machine templates and runtime slots instead.",
+      manualSteps: [
+        `Modern folders no longer use classic Environments — machine templates serve the same purpose`,
+        `In Orchestrator, go to your folder > Machine Templates to manage execution targets`,
+        `Assign Unattended/NonProduction runtime slots as needed for this automation`,
+      ],
     }));
   }
 
@@ -1445,13 +1451,26 @@ async function provisionActionCenter(
         continue;
       }
 
-      let fallbackMsg = `All API attempts failed — Actions microservice (${actionsServiceAvailable ? "tried" : "unavailable"}), OData (${createResult.status}), GenericTask (${taskResult.status}). `;
-      fallbackMsg += `Create this catalog manually: Orchestrator → Action Center → Admin Settings → Add Catalog → Name: "${ac.taskCatalog}"`;
-      if (ac.description) fallbackMsg += ` | Description: ${ac.description}`;
-      if (ac.assignedRole) fallbackMsg += ` | Assign to role: ${ac.assignedRole}`;
-      if (ac.sla) fallbackMsg += ` | SLA: ${ac.sla}`;
-      if (ac.escalation) fallbackMsg += ` | Escalation: ${ac.escalation}`;
-      results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: fallbackMsg });
+      const orchUrl = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_/actioncenter`;
+      const manualSteps = [
+        `Open UiPath Orchestrator: ${orchUrl}`,
+        `Navigate to Action Center → Admin Settings → Task Catalogs`,
+        `Click "Add Catalog"`,
+        `Set Name: "${ac.taskCatalog}"`,
+      ];
+      if (ac.description) manualSteps.push(`Set Description: "${ac.description}"`);
+      if (ac.assignedRole) manualSteps.push(`Assign to role: "${ac.assignedRole}"`);
+      if (ac.sla) manualSteps.push(`Set SLA: ${ac.sla}`);
+      if (ac.escalation) manualSteps.push(`Set Escalation rule: ${ac.escalation}`);
+      manualSteps.push(`Click "Save"`);
+
+      results.push({
+        artifact: "Action Center",
+        name: ac.taskCatalog,
+        status: "manual" as const,
+        message: `Task Catalog API creation is not supported on this tenant (Actions=${actionsServiceAvailable ? "405" : "unavailable"}, OData=${createResult.status}, GenericTask=${taskResult.status}). Create manually in Orchestrator UI.`,
+        manualSteps,
+      });
     } catch (err: any) {
       results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: `API error: ${err.message}` });
     }
@@ -1511,8 +1530,16 @@ async function provisionDocUnderstanding(
     return du.map(project => ({
       artifact: "Document Understanding",
       name: project.name,
-      status: "skipped" as const,
-      message: `DU API not reachable. Document types needed: ${project.documentTypes?.join(", ") || "N/A"}. Create the DU project manually in Document Understanding service.`,
+      status: "manual" as const,
+      message: `Document Understanding service not available on this tenant.`,
+      manualSteps: [
+        `Open UiPath Automation Cloud: https://cloud.uipath.com/${config.orgName}/${config.tenantName}`,
+        `Navigate to Document Understanding service (must be enabled by tenant admin)`,
+        `Create a new DU project named "${project.name}"`,
+        project.documentTypes?.length ? `Add document types: ${project.documentTypes.join(", ")}` : null,
+        project.description ? `Description: "${project.description}"` : null,
+        `Configure extractors and classifiers as needed`,
+      ].filter(Boolean) as string[],
     }));
   }
 
@@ -1848,12 +1875,30 @@ async function provisionTestCases(
         } else if (tcResult.status === 409 || tcResult.text.includes("already exists")) {
           results.push({ artifact: "Test Case", name: tc.name, status: "exists", message: "Already exists" });
         } else {
-          let failMsg = tcResult.error || `HTTP ${tcResult.status}: ${tcResult.text.slice(0, 200)}`;
-          const itemNotFoundInError = failMsg.match(/itemNotFound[:\s]*(.*)/i);
-          if (itemNotFoundInError) {
-            failMsg = `itemNotFound: ${itemNotFoundInError[1] || "Unknown error"} — project ID ${projectId} may not resolve correctly on TM base URL ${activeTmBase}. Try verifying the project exists in Test Manager UI.`;
+          const isItemNotFound = tcResult.text.includes("itemNotFound") || tcResult.text.includes("endpoint does not exist");
+          if (isItemNotFound) {
+            const tmUrl = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/testmanager_`;
+            results.push({
+              artifact: "Test Case",
+              name: tc.name,
+              status: "manual" as const,
+              message: `Test Case API endpoint not available (404 itemNotFound). The Test Manager API may require Enterprise license or the TestCases endpoint is not enabled on this tenant.`,
+              manualSteps: [
+                `Open Test Manager: ${tmUrl}`,
+                `Navigate to project "${processName}" (ID: ${projectId})`,
+                `Go to Test Cases tab`,
+                `Click "New Test Case"`,
+                `Set Name: "${tc.name}"`,
+                tc.description ? `Set Description: "${tc.description}"` : null,
+                tc.labels?.length ? `Add Labels: ${tc.labels.join(", ")}` : null,
+                tc.steps?.length ? `Add ${tc.steps.length} manual step(s): ${tc.steps.map((s, i) => `Step ${i + 1}: "${s.action}" → Expected: "${s.expected}"`).join("; ")}` : null,
+                `Click "Save"`,
+              ].filter(Boolean) as string[],
+            });
+          } else {
+            let failMsg = tcResult.error || `HTTP ${tcResult.status}: ${tcResult.text.slice(0, 200)}`;
+            results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: failMsg });
           }
-          results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: failMsg });
         }
       } catch (err: any) {
         results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: err.message });
@@ -1872,13 +1917,19 @@ async function provisionTestCases(
 
     for (const tdq of testDataQueues) {
       try {
+        const defaultSchema = JSON.stringify({
+          type: "object",
+          properties: {
+            TestInput: { type: "string" },
+            ExpectedOutput: { type: "string" },
+            TestCategory: { type: "string" },
+          },
+        });
         const queueBody: Record<string, any> = {
           Name: tdq.name,
           Description: truncDesc(tdq.description),
+          ContentJsonSchema: tdq.jsonSchema || defaultSchema,
         };
-        if (tdq.jsonSchema) {
-          queueBody.JsonSchema = tdq.jsonSchema;
-        }
 
         const queueResult = await uipathFetch(`${orchBase}/odata/TestDataQueues`, {
           method: "POST",
@@ -2353,11 +2404,18 @@ async function provisionRobotAccounts(
           console.log(`[UiPath Deploy] Robot account "${ra.name}" via ${identityUrl} -> ${res.status}: ${text.slice(0, 300)}`);
 
           if (res.ok || res.status === 201) {
+            if (text.trimStart().startsWith("<!") || text.trimStart().startsWith("<html")) {
+              console.log(`[UiPath Deploy] Robot account endpoint returned HTML page (not API) at ${identityUrl} — skipping this URL`);
+              continue;
+            }
             let createdId;
             try {
               const parsed = JSON.parse(text);
               createdId = parsed.id || parsed.Id;
-            } catch { /* ignore parse error */ }
+            } catch {
+              console.log(`[UiPath Deploy] Robot account response not JSON at ${identityUrl} — skipping`);
+              continue;
+            }
 
             if (config.folderId) {
               try {
@@ -2402,19 +2460,38 @@ async function provisionRobotAccounts(
       }
 
       if (!created) {
+        const adminUrl = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_/users`;
         results.push({
           artifact: "Robot Account",
           name: ra.name,
-          status: "skipped",
-          message: `PM token acquired but identity API endpoint not accessible. Create robot account "${ra.name}" manually in UiPath Cloud > Admin > Robot Accounts, then assign it to the folder with Executor role.`,
+          status: "manual" as const,
+          message: `Identity API endpoint returned non-API response (HTML page). Create robot account manually.`,
+          manualSteps: [
+            `Open UiPath Admin: ${adminUrl}`,
+            `Go to Admin > Accounts & Groups > Robot Accounts`,
+            `Click "Add Robot Account"`,
+            `Set Name: "${ra.name}"`,
+            `Select Domain: "UiPath"`,
+            `Save, then assign to folder "${config.folderName || config.folderId}" with Executor role`,
+          ],
         });
       }
     } else {
+      const adminUrl = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_/users`;
       results.push({
         artifact: "Robot Account",
         name: ra.name,
-        status: "skipped",
-        message: `PM.RobotAccount scope not available for client credentials flow. Create robot account "${ra.name}" manually in UiPath Cloud > Admin > Robot Accounts, then assign to folder with Executor role. Machine templates have been provisioned — robot accounts connect them to execute automations.`,
+        status: "manual" as const,
+        message: `PM.RobotAccount scope not available for client credentials flow.`,
+        manualSteps: [
+          `Open UiPath Admin: ${adminUrl}`,
+          `Go to Admin > Accounts & Groups > Robot Accounts`,
+          `Click "Add Robot Account"`,
+          `Set Name: "${ra.name}"`,
+          `Select Domain: "UiPath"`,
+          `Save, then assign to folder "${config.folderName || config.folderId}" with Executor role`,
+          `Machine templates have been provisioned — robot accounts connect them to execute automations`,
+        ],
       });
     }
   }
@@ -2552,6 +2629,7 @@ export function formatDeploymentReport(results: DeploymentResult[]): string {
       case "created": return "✅";
       case "exists": return "🔵";
       case "skipped": return "⚠️";
+      case "manual": return "🔧";
       case "failed": return "❌";
       default: return "•";
     }
@@ -2588,6 +2666,12 @@ export function formatDeploymentReport(results: DeploymentResult[]): string {
     lines.push(`**${artifact}s:**`);
     for (const item of items) {
       lines.push(`${statusIcon(item.status)} ${item.name} — ${item.message}`);
+      if (item.status === "manual" && item.manualSteps?.length) {
+        lines.push(`  **Manual Setup Steps:**`);
+        for (let i = 0; i < item.manualSteps.length; i++) {
+          lines.push(`  ${i + 1}. ${item.manualSteps[i]}`);
+        }
+      }
     }
     lines.push("");
   }
@@ -2595,21 +2679,25 @@ export function formatDeploymentReport(results: DeploymentResult[]): string {
   const created = deployResults.filter(r => r.status === "created").length;
   const failed = deployResults.filter(r => r.status === "failed").length;
   const skipped = deployResults.filter(r => r.status === "skipped").length;
+  const manual = deployResults.filter(r => r.status === "manual").length;
   const hasRuntimeIssue = runtimeChecks.some(r => r.status === "failed");
 
   if (failed > 0) {
     lines.push(`**${failed} item(s) failed** — check permissions and retry from Orchestrator.`);
   }
+  if (manual > 0) {
+    lines.push(`**${manual} item(s) require manual setup** — expand each item above for step-by-step instructions.`);
+  }
   if (skipped > 0) {
-    lines.push(`**${skipped} item(s) skipped** — these services are not available on your tenant or require manual setup.`);
+    lines.push(`**${skipped} item(s) skipped** — these services are not available on your tenant.`);
   }
   if (hasRuntimeIssue) {
     lines.push("**Action Required:** Configure an Unattended runtime in your Orchestrator folder before enabling triggers.");
   }
-  if (created > 0 && failed === 0 && skipped === 0 && !hasRuntimeIssue) {
+  if (created > 0 && failed === 0 && skipped === 0 && manual === 0 && !hasRuntimeIssue) {
     lines.push("All artifacts provisioned successfully. The automation is fully deployed.");
-  } else if (created > 0 && failed === 0 && skipped > 0 && !hasRuntimeIssue) {
-    lines.push("Core artifacts provisioned successfully. Skipped items require manual setup or are not available on your tenant.");
+  } else if (created > 0 && failed === 0 && !hasRuntimeIssue) {
+    lines.push("Core artifacts provisioned successfully." + (manual > 0 ? " Manual items have step-by-step instructions above." : "") + (skipped > 0 ? " Skipped items are not available on your tenant." : ""));
   }
 
   return lines.join("\n");

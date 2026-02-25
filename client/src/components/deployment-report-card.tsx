@@ -16,6 +16,7 @@ import {
   Zap,
   FileText,
   TestTube,
+  HandMetal,
 } from "lucide-react";
 
 interface DeploymentResult {
@@ -24,6 +25,7 @@ interface DeploymentResult {
   status: string;
   message: string;
   id?: number;
+  manualSteps?: string[];
 }
 
 interface DeployReport {
@@ -54,6 +56,7 @@ const statusConfig: Record<string, { icon: typeof CheckCircle2; color: string; b
   created: { icon: CheckCircle2, color: "text-green-400", bg: "bg-green-500/10", label: "Created" },
   exists: { icon: Info, color: "text-blue-400", bg: "bg-blue-500/10", label: "Exists" },
   skipped: { icon: Info, color: "text-slate-400", bg: "bg-slate-500/10", label: "Not Available" },
+  manual: { icon: HandMetal, color: "text-amber-400", bg: "bg-amber-500/10", label: "Manual Setup" },
   failed: { icon: XCircle, color: "text-red-400", bg: "bg-red-500/10", label: "Failed" },
 };
 
@@ -62,15 +65,16 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
 
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
-    const allSkippedGroups = new Set<string>();
+    const autoCollapseGroups = new Set<string>();
     for (const r of report.results) {
       const art = r.artifact || "Other";
-      if (r.status === "skipped") allSkippedGroups.add(art);
+      if (r.status === "skipped") autoCollapseGroups.add(art);
     }
     for (const r of report.results) {
       const art = r.artifact || "Other";
       if (initial[art] === undefined) {
-        initial[art] = infraGroups.includes(art) || allSkippedGroups.has(art) ? false : true;
+        const hasManual = report.results.some(rr => (rr.artifact || "Other") === art && rr.status === "manual");
+        initial[art] = infraGroups.includes(art) || (autoCollapseGroups.has(art) && !hasManual) ? false : true;
       }
     }
     return initial;
@@ -88,11 +92,12 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
     created: report.results.filter((r) => r.status === "created").length,
     exists: report.results.filter((r) => r.status === "exists").length,
     skipped: report.results.filter((r) => r.status === "skipped").length,
+    manual: report.results.filter((r) => r.status === "manual").length,
     failed: report.results.filter((r) => r.status === "failed").length,
   };
 
-  const allSuccess = counts.failed === 0 && counts.skipped === 0;
-  const partialSuccess = counts.failed === 0 && counts.skipped > 0;
+  const allSuccess = counts.failed === 0 && counts.skipped === 0 && counts.manual === 0;
+  const partialSuccess = counts.failed === 0 && (counts.skipped > 0 || counts.manual > 0);
 
   const toggleGroup = (key: string) => {
     setExpandedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -151,6 +156,12 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
             {counts.exists} existing
           </span>
         )}
+        {counts.manual > 0 && (
+          <span className="flex items-center gap-1 text-xs text-amber-400" data-testid="text-deploy-manual-count">
+            <HandMetal className="h-3 w-3" />
+            {counts.manual} manual
+          </span>
+        )}
         {counts.skipped > 0 && (
           <span className="flex items-center gap-1 text-xs text-slate-400" data-testid="text-deploy-skipped-count">
             <Info className="h-3 w-3" />
@@ -171,7 +182,8 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
           const groupCreated = items.filter((i) => i.status === "created").length;
           const groupFailed = items.filter((i) => i.status === "failed").length;
           const groupSkipped = items.filter((i) => i.status === "skipped").length;
-          const allOk = groupFailed === 0 && groupSkipped === 0;
+          const groupManual = items.filter((i) => i.status === "manual").length;
+          const allOk = groupFailed === 0 && groupSkipped === 0 && groupManual === 0;
 
           return (
             <div key={artifactType}>
@@ -197,6 +209,9 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
                       {groupFailed > 0 && (
                         <span className="text-red-400">{groupFailed} failed</span>
                       )}
+                      {groupManual > 0 && (
+                        <span className="text-amber-400">{groupManual} manual</span>
+                      )}
                       {groupSkipped > 0 && (
                         <span className="text-slate-400">{groupSkipped} n/a</span>
                       )}
@@ -214,13 +229,13 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
                     const msgExpanded = expandedMessages[itemKey];
                     const hasDetailMessage = item.message && item.message.length > 60;
                     const showExpandable = hasDetailMessage && item.status !== "created";
-                    const showMessage = item.status === "failed" || item.status === "skipped" || (item.status === "exists" && item.message && item.message.includes("polling"));
+                    const showMessage = item.status === "failed" || item.status === "skipped" || item.status === "manual" || (item.status === "exists" && item.message && item.message.includes("polling"));
 
                     return (
                       <div
                         key={idx}
                         className={`flex items-start gap-2 px-3 py-1.5 rounded-md ${cfg.bg} cursor-pointer`}
-                        onClick={() => showExpandable && toggleMessage(itemKey)}
+                        onClick={() => (showExpandable || item.manualSteps?.length) && toggleMessage(itemKey)}
                         data-testid={`deploy-item-${(item.name || "unknown").toLowerCase().replace(/\s+/g, "-")}`}
                       >
                         <StatusIcon className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${cfg.color}`} />
@@ -233,6 +248,13 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
                             <p className={`text-[10px] text-muted-foreground leading-tight mt-0.5 ${!msgExpanded && showExpandable ? "line-clamp-1" : ""}`}>
                               {item.message}
                             </p>
+                          ) : null}
+                          {msgExpanded && item.manualSteps?.length ? (
+                            <ol className="mt-1 ml-1 space-y-0.5 list-decimal list-inside">
+                              {item.manualSteps.map((step, si) => (
+                                <li key={si} className="text-[10px] text-muted-foreground leading-tight">{step}</li>
+                              ))}
+                            </ol>
                           ) : null}
                         </div>
                       </div>
@@ -254,12 +276,12 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
         ) : partialSuccess ? (
           <span className="flex items-center gap-1">
             <CheckCircle2 className="h-3.5 w-3.5" />
-            Core artifacts provisioned successfully. {counts.skipped} service{counts.skipped > 1 ? "s" : ""} not available on tenant.
+            Core artifacts provisioned.{counts.manual > 0 ? ` ${counts.manual} need manual setup.` : ""}{counts.skipped > 0 ? ` ${counts.skipped} not available.` : ""}
           </span>
         ) : (
           <span className="flex items-center gap-1">
             <AlertTriangle className="h-3.5 w-3.5" />
-            {counts.failed} failed{counts.skipped > 0 ? `, ${counts.skipped} not available` : ""} — expand groups for details
+            {counts.failed} failed{counts.manual > 0 ? `, ${counts.manual} manual` : ""}{counts.skipped > 0 ? `, ${counts.skipped} n/a` : ""} — expand for details
           </span>
         )}
       </div>

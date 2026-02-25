@@ -142,7 +142,7 @@ export async function getLastTestedAt(): Promise<string | null> {
   return rows.length > 0 ? rows[0].value : null;
 }
 
-async function getAccessToken(config: UiPathConfig): Promise<string> {
+export async function getAccessToken(config: UiPathConfig): Promise<string> {
   const params = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: config.clientId,
