@@ -16,6 +16,130 @@ export type XamlGeneratorResult = {
   variables: VariableDecl[];
 };
 
+const UIPATH_NAMESPACES = `xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:mva="clr-namespace:Microsoft.VisualBasic.Activities;assembly=System.Activities"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
+  xmlns:scg2="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=mscorlib"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"`;
+
+const UIPATH_VB_SETTINGS = `
+  <mva:VisualBasic.Settings>
+    <x:Null />
+  </mva:VisualBasic.Settings>
+  <sap2010:WorkflowViewState.IdRef>__ROOT_ID__</sap2010:WorkflowViewState.IdRef>
+  <TextExpression.NamespacesForImplementation>
+    <sco:Collection x:TypeArguments="x:String">
+      <x:String>System</x:String>
+      <x:String>System.Collections</x:String>
+      <x:String>System.Collections.Generic</x:String>
+      <x:String>System.Data</x:String>
+      <x:String>System.IO</x:String>
+      <x:String>System.Linq</x:String>
+      <x:String>System.Xml</x:String>
+      <x:String>System.Xml.Linq</x:String>
+      <x:String>UiPath.Core</x:String>
+      <x:String>UiPath.Core.Activities</x:String>
+      <x:String>Microsoft.VisualBasic</x:String>
+      <x:String>Microsoft.VisualBasic.Activities</x:String>
+      <x:String>System.Activities</x:String>
+      <x:String>System.Activities.Statements</x:String>
+      <x:String>System.Activities.Expressions</x:String>
+    </sco:Collection>
+  </TextExpression.NamespacesForImplementation>
+  <TextExpression.ReferencesForImplementation>
+    <sco:Collection x:TypeArguments="AssemblyReference">
+      <AssemblyReference>System.Activities</AssemblyReference>
+      <AssemblyReference>Microsoft.VisualBasic</AssemblyReference>
+      <AssemblyReference>mscorlib</AssemblyReference>
+      <AssemblyReference>System.Data</AssemblyReference>
+      <AssemblyReference>System</AssemblyReference>
+      <AssemblyReference>System.Core</AssemblyReference>
+      <AssemblyReference>System.Xml</AssemblyReference>
+      <AssemblyReference>System.Xml.Linq</AssemblyReference>
+      <AssemblyReference>UiPath.Core</AssemblyReference>
+      <AssemblyReference>UiPath.Core.Activities</AssemblyReference>
+    </sco:Collection>
+  </TextExpression.ReferencesForImplementation>`;
+
+export function makeUiPathCompliant(rawXaml: string): string {
+  let idCounter = 0;
+  const viewStateEntries: { id: string; width: number; height: number }[] = [];
+
+  function nextId(prefix: string): string {
+    idCounter++;
+    return `${prefix}_${idCounter}`;
+  }
+
+  function getHintSize(tag: string): { w: number; h: number } {
+    if (tag.startsWith("Sequence") || tag.startsWith("StateMachine")) return { w: 400, h: 300 };
+    if (tag.startsWith("If")) return { w: 400, h: 280 };
+    if (tag.startsWith("TryCatch")) return { w: 400, h: 260 };
+    if (tag.startsWith("ForEach")) return { w: 400, h: 240 };
+    if (tag.startsWith("State")) return { w: 300, h: 200 };
+    if (tag.startsWith("Transition")) return { w: 200, h: 60 };
+    return { w: 334, h: 90 };
+  }
+
+  let xml = rawXaml;
+
+  const oldNsBlock = xml.match(/xmlns="http:\/\/schemas\.microsoft\.com\/netfx\/2009\/xaml\/activities"[\s\S]*?xmlns:x="http:\/\/schemas\.microsoft\.com\/winfx\/2006\/xaml"/);
+  if (oldNsBlock) {
+    xml = xml.replace(oldNsBlock[0], UIPATH_NAMESPACES);
+  }
+
+  const classMatch = xml.match(/x:Class="([^"]+)"/);
+  const className = classMatch ? classMatch[1].replace(/[^A-Za-z0-9_]/g, "") : "Workflow";
+  const rootId = nextId(className);
+
+  const activityTagPattern = /<(Sequence|If|TryCatch|ForEach|Assign|State|StateMachine|Transition|Flowchart|FlowStep|FlowDecision|ui:[A-Za-z]+)\s+DisplayName="([^"]*)"([^>]*?)(\s*\/?>)/g;
+  xml = xml.replace(activityTagPattern, (match, tag, displayName, rest, closing) => {
+    if (rest.includes("WorkflowViewState.IdRef")) return match;
+    const prefix = tag.replace("ui:", "").replace(/[^A-Za-z]/g, "");
+    const id = nextId(prefix);
+    const hint = getHintSize(tag);
+    viewStateEntries.push({ id, width: hint.w, height: hint.h });
+    return `<${tag} DisplayName="${displayName}" sap2010:WorkflowViewState.IdRef="${id}" sap:VirtualizedContainerService.HintSize="${hint.w},${hint.h}"${rest}${closing}`;
+  });
+
+  const firstChildMatch = xml.match(/<(Sequence|StateMachine|Flowchart)\s+DisplayName="[^"]*"/);
+  if (firstChildMatch) {
+    const rootHint = firstChildMatch[1] === "StateMachine" ? { w: 600, h: 500 } : firstChildMatch[1] === "Flowchart" ? { w: 600, h: 400 } : { w: 500, h: 400 };
+    viewStateEntries.push({ id: rootId, width: rootHint.w, height: rootHint.h });
+  }
+
+  const vbSettingsBlock = UIPATH_VB_SETTINGS.replace("__ROOT_ID__", rootId);
+
+  const firstTag = xml.match(/<(Sequence|StateMachine|Flowchart)\s/);
+  if (firstTag && firstTag.index !== undefined) {
+    xml = xml.slice(0, firstTag.index) + vbSettingsBlock + "\n  " + xml.slice(firstTag.index);
+  }
+
+  let viewStateManager = `\n  <sap2010:WorkflowViewState.ViewStateManager>\n    <sap2010:ViewStateManager>`;
+  for (const entry of viewStateEntries) {
+    viewStateManager += `\n      <sap2010:ViewStateData Id="${entry.id}" sap:VirtualizedContainerService.HintSize="${entry.width},${entry.height}">
+        <sap:WorkflowViewStateService.ViewState>
+          <scg:Dictionary x:TypeArguments="x:String, x:Object">
+            <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+          </scg:Dictionary>
+        </sap:WorkflowViewStateService.ViewState>
+      </sap2010:ViewStateData>`;
+  }
+  viewStateManager += `\n    </sap2010:ViewStateManager>\n  </sap2010:WorkflowViewState.ViewStateManager>`;
+
+  xml = xml.replace(/<\/Activity>\s*$/, viewStateManager + "\n</Activity>");
+
+  xml = xml.replace(/scg:DataTable/g, "scg2:DataTable");
+  xml = xml.replace(/scg:DataRow/g, "scg2:DataRow");
+
+  return xml;
+}
+
 type VariableDecl = {
   name: string;
   type: string;
@@ -748,7 +872,13 @@ export function generateRichXamlFromNodes(
 
   const sortedNodes = [...nodes].sort((a, b) => a.orderIndex - b.orderIndex);
 
+  const timestamp = new Date().toISOString().split("T")[0];
   activities += `
+        <!-- CannonBall Auto-Generated XAML -->
+        <!-- Workflow: ${escapeXml(workflowName)} -->
+        <!-- Generated: ${timestamp} -->
+        <!-- Process Map: ${nodes.length} nodes, ${edges.length} edges -->
+        <!-- Trace: Each activity below references its source process map step -->
         <ui:LogMessage Level="Info" Message="'=== Starting: ${escapeXml(workflowName)} ==='" DisplayName="Log Start" />`;
 
   const startNodes = sortedNodes.filter(n => n.nodeType === "start");
@@ -780,10 +910,14 @@ export function generateRichXamlFromNodes(
 
   for (const node of taskNodes) {
     const enrichedSpec = enrichedMap.get(node.id);
+    const nodeTrace = `Step #${node.orderIndex} "${escapeXml(node.name)}" [${node.nodeType}]${node.system ? ` | System: ${escapeXml(node.system)}` : ""}${node.role ? ` | Role: ${escapeXml(node.role)}` : ""}`;
 
     if (enrichedSpec && enrichedSpec.activities.length > 0) {
       if (node.nodeType === "decision") {
         const outEdges = edgeMap.get(node.id) || [];
+        const edgeLabels = outEdges.map(e => `"${e.label || "unlabeled"}" → node #${e.target}`).join(", ");
+        activities += `
+        <!-- Decision: ${nodeTrace} | Branches: ${edgeLabels} -->`;
         const condition = outEdges.find(e => e.label)?.label || "TODO_Condition";
         allVariables.push({ name: `bool_${node.name.replace(/[^A-Za-z0-9]/g, "")}`, type: "Boolean", defaultValue: "False" });
 
@@ -829,6 +963,8 @@ export function generateRichXamlFromNodes(
         continue;
       }
 
+      activities += `
+        <!-- Source: ${nodeTrace} | AI-Enriched: ${enrichedSpec.activities.length} activities -->`;
       const rendered = renderEnrichedActivities(enrichedSpec);
       rendered.packages.forEach(p => usedPackages.add(p));
       allVariables.push(...rendered.variables);
@@ -848,6 +984,9 @@ export function generateRichXamlFromNodes(
 
     if (node.nodeType === "decision") {
       const outEdges = edgeMap.get(node.id) || [];
+      const edgeLabels = outEdges.map(e => `"${e.label || "unlabeled"}" → node #${e.target}`).join(", ");
+      activities += `
+        <!-- Decision: ${nodeTrace} | Branches: ${edgeLabels} -->`;
       const condition = outEdges.find(e => e.label)?.label || "TODO_Condition";
 
       allVariables.push({ name: "bool_Decision", type: "Boolean", defaultValue: "False" });
@@ -914,6 +1053,8 @@ export function generateRichXamlFromNodes(
       classified.selectorHint
     );
 
+    activities += `
+        <!-- Source: ${nodeTrace} | Activity: ${classified.activityType}${node.isPainPoint ? " | ⚠ Pain Point" : ""} -->`;
     const wrappedXml = wrapInTryCatch(activityXml, node.name, classified.errorHandling);
     activities += wrappedXml;
   }
@@ -1078,7 +1219,12 @@ function extractSddSection(sddContent: string, sectionNumber: number): string | 
 }
 
 export function generateInitAllSettingsXaml(orchestratorArtifacts?: any): string {
-  let assetActivities = "";
+  const assetCount = orchestratorArtifacts?.assets?.length || 0;
+  const queueCount = orchestratorArtifacts?.queues?.length || 0;
+  let assetActivities = `
+      <!-- InitAllSettings.xaml — Auto-generated by CannonBall -->
+      <!-- Reads Config.xlsx (Settings + Constants sheets) and retrieves Orchestrator assets -->
+      <!-- Assets: ${assetCount} | Queues: ${queueCount} -->`;
   const assets = orchestratorArtifacts?.assets || [];
   const credAssets = assets.filter((a: any) => a.type === "Credential");
   const textAssets = assets.filter((a: any) => a.type !== "Credential");
@@ -1155,6 +1301,11 @@ export function generateInitAllSettingsXaml(orchestratorArtifacts?: any): string
 export function generateReframeworkMainXaml(projectName: string, queueName: string): string {
   const safeName = escapeXml(projectName.replace(/\s+/g, "_"));
   return `<?xml version="1.0" encoding="utf-8"?>
+<!-- REFramework Main.xaml — Auto-generated by CannonBall -->
+<!-- Pattern: Robotic Enterprise Framework (State Machine) -->
+<!-- States: Init → Get Transaction Data → Process Transaction → End Process -->
+<!-- Queue: ${escapeXml(queueName)} -->
+<!-- Project: ${safeName} -->
 <Activity mc:Ignorable="sap sap2010" x:Class="Main"
   xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -1277,6 +1428,9 @@ export function generateReframeworkMainXaml(projectName: string, queueName: stri
 
 export function generateGetTransactionDataXaml(queueName: string): string {
   return `<?xml version="1.0" encoding="utf-8"?>
+<!-- GetTransactionData.xaml — Auto-generated by CannonBall -->
+<!-- REFramework: Retrieves next queue item from "${escapeXml(queueName)}" -->
+<!-- SDD Reference: See Orchestrator Artifacts → Queues section -->
 <Activity mc:Ignorable="sap sap2010" x:Class="GetTransactionData"
   xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -1312,6 +1466,9 @@ export function generateGetTransactionDataXaml(queueName: string): string {
 
 export function generateSetTransactionStatusXaml(): string {
   return `<?xml version="1.0" encoding="utf-8"?>
+<!-- SetTransactionStatus.xaml — Auto-generated by CannonBall -->
+<!-- REFramework: Marks queue item as Successful or Failed with retry logic -->
+<!-- SDD Reference: See Error Handling and Transaction Management sections -->
 <Activity mc:Ignorable="sap sap2010" x:Class="SetTransactionStatus"
   xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -1343,6 +1500,8 @@ export function generateSetTransactionStatusXaml(): string {
 
 export function generateCloseAllApplicationsXaml(): string {
   return `<?xml version="1.0" encoding="utf-8"?>
+<!-- CloseAllApplications.xaml — Auto-generated by CannonBall -->
+<!-- REFramework: Gracefully closes all open applications before ending -->
 <Activity mc:Ignorable="sap sap2010" x:Class="CloseAllApplications"
   xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -1375,6 +1534,8 @@ export function generateCloseAllApplicationsXaml(): string {
 
 export function generateKillAllProcessesXaml(): string {
   return `<?xml version="1.0" encoding="utf-8"?>
+<!-- KillAllProcesses.xaml — Auto-generated by CannonBall -->
+<!-- REFramework: Force-kills application processes on unrecoverable errors -->
 <Activity mc:Ignorable="sap sap2010" x:Class="KillAllProcesses"
   xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"

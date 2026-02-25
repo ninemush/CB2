@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
-import { useRoute, Link } from "wouter";
+import { useRoute, Link, useLocation } from "wouter";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useAuth } from "@/hooks/use-auth";
 import {
   ArrowLeft,
   Send,
@@ -23,6 +24,7 @@ import {
   MessageSquare,
   ListPlus,
   Download,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -60,13 +62,35 @@ function ThinkingIndicator() {
   };
 
   return (
-    <div className="flex items-center gap-2.5" data-testid="thinking-indicator">
-      <div className="flex items-center gap-1">
-        <span className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce" style={{ animationDelay: "0ms", animationDuration: "1.2s" }} />
-        <span className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce" style={{ animationDelay: "200ms", animationDuration: "1.2s" }} />
-        <span className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce" style={{ animationDelay: "400ms", animationDuration: "1.2s" }} />
+    <div className="flex justify-start" data-testid="thinking-indicator">
+      <div className="max-w-[85%] rounded-lg px-3 py-3 bg-card border border-card-border rounded-bl-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1">
+            <span
+              className="w-[5px] h-[5px] rounded-full bg-muted-foreground/40"
+              style={{
+                animation: "thinkingPulse 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite",
+                animationDelay: "0ms",
+              }}
+            />
+            <span
+              className="w-[5px] h-[5px] rounded-full bg-muted-foreground/40"
+              style={{
+                animation: "thinkingPulse 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite",
+                animationDelay: "200ms",
+              }}
+            />
+            <span
+              className="w-[5px] h-[5px] rounded-full bg-muted-foreground/40"
+              style={{
+                animation: "thinkingPulse 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite",
+                animationDelay: "400ms",
+              }}
+            />
+          </div>
+          <span className="text-[11px] text-muted-foreground/70 font-medium">{getMessage()}</span>
+        </div>
       </div>
-      <span className="text-[11px] text-muted-foreground/70 font-medium">{getMessage()}</span>
     </div>
   );
 }
@@ -1300,6 +1324,16 @@ function ChatPanel({ idea }: { idea: Idea }) {
             );
           }
 
+          if (msg.isStreaming && !msg.content && isGeneratingDoc) {
+            return null;
+          }
+
+          if (msg.isStreaming && !msg.content && !isGeneratingDoc && msg.role === "assistant") {
+            return (
+              <ThinkingIndicator key={msg.id} />
+            );
+          }
+
           return (
             <div
               key={msg.id}
@@ -1315,9 +1349,7 @@ function ChatPanel({ idea }: { idea: Idea }) {
               >
                 {msg.role === "assistant" ? (
                   <div className="text-xs leading-relaxed prose-chat overflow-hidden break-words">
-                    {msg.isStreaming && !msg.content ? (
-                      <ThinkingIndicator />
-                    ) : (
+                    {(
                       <>
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                           {stripStepTags(msg.content)}
@@ -1641,14 +1673,35 @@ export default function Workspace() {
   >(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitle, setEditTitle] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const isMobile = useIsMobile();
   const [mobileTab, setMobileTab] = useState<MobileTab>("chat");
+  const { user, activeRole } = useAuth();
+  const [, navigate] = useLocation();
 
   const { data: idea, isLoading } = useQuery<Idea>({
     queryKey: ["/api/ideas", ideaId],
     enabled: !!ideaId,
+  });
+
+  const canDeleteIdea = activeRole === "Admin" || activeRole === "CoE" || (user && idea && user.email === idea.ownerEmail);
+
+  const deleteIdeaMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("DELETE", `/api/ideas/${ideaId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas"] });
+      toast({ title: "Idea deleted", description: `"${idea?.title}" has been removed.` });
+      navigate("/");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
+      setConfirmingDelete(false);
+    },
   });
 
   useEffect(() => {
@@ -1832,6 +1885,43 @@ export default function Workspace() {
             )}
           </div>
           <ExportDialog ideaId={idea.id} ideaTitle={idea.title} />
+          {canDeleteIdea && (
+            <div className="relative shrink-0">
+              {confirmingDelete ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-muted-foreground">Delete idea?</span>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="text-[10px] px-2"
+                    disabled={deleteIdeaMutation.isPending}
+                    onClick={() => deleteIdeaMutation.mutate()}
+                    data-testid="button-confirm-delete-idea"
+                  >
+                    {deleteIdeaMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Yes"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-[10px] px-2"
+                    onClick={() => setConfirmingDelete(false)}
+                    data-testid="button-cancel-delete-idea"
+                  >
+                    No
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setConfirmingDelete(true)}
+                  data-testid="button-delete-idea"
+                >
+                  <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

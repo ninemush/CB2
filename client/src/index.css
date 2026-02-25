@@ -441,6 +441,11 @@
   to { stroke-dashoffset: -10; }
 }
 
+@keyframes thinkingPulse {
+  0%, 100% { opacity: 0.25; transform: translateY(0); }
+  50% { opacity: 0.8; transform: translateY(-2px); }
+}
+
 .react-flow__connection-line {
   filter: drop-shadow(0 0 4px rgba(251,146,60,0.4));
 }

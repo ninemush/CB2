@@ -1274,31 +1274,44 @@ async function provisionActionCenter(
   if (!actionCenter?.length) return [];
   const results: DeploymentResult[] = [];
 
+  const acHdrs = { ...hdrs };
+  if (config.folderId && !acHdrs["X-UIPATH-OrganizationUnitId"]) {
+    acHdrs["X-UIPATH-OrganizationUnitId"] = config.folderId;
+  }
+
   const actionsBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/actions_/api/v1`;
   const actionsCatalogUrl = `${actionsBase}/TaskCatalogs`;
   const odataCatalogUrl = `${base}/odata/TaskCatalogs`;
   const genericTaskUrl = `${base}/tasks/GenericTasks/CreateTask`;
+  const odataUnboundActionUrl = `${base}/odata/Tasks/UiPathODataSvc.CreateTask`;
 
   let odataAvailable = false;
   let actionsApiAvailable = false;
 
   const odataProbe = await uipathFetch(`${odataCatalogUrl}?$top=1`, {
-    headers: hdrs, label: "AC OData Probe", maxRetries: 1,
+    headers: acHdrs, label: "AC OData Probe", maxRetries: 1,
   });
   if (odataProbe.ok) {
     const genuine = isGenuineApiResponse(odataProbe.text);
     odataAvailable = genuine.genuine;
+    console.log(`[UiPath Deploy] AC OData probe: status=${odataProbe.status}, genuine=${genuine.genuine}, reason=${genuine.reason || "OK"}`);
+  } else {
+    console.log(`[UiPath Deploy] AC OData probe failed: status=${odataProbe.status}, body=${odataProbe.text.slice(0, 300)}`);
   }
 
   if (!preProbed) {
     const actionsProbe = await uipathFetch(`${actionsCatalogUrl}?$top=1`, {
-      headers: hdrs, label: "AC Actions Probe", maxRetries: 1,
+      headers: acHdrs, label: "AC Actions Probe", maxRetries: 1,
     });
     if (actionsProbe.ok) {
       const genuine = isGenuineApiResponse(actionsProbe.text);
       actionsApiAvailable = genuine.genuine;
+      console.log(`[UiPath Deploy] AC Actions probe: status=${actionsProbe.status}, genuine=${genuine.genuine}, reason=${genuine.reason || "OK"}`);
     } else if (actionsProbe.status === 401 || actionsProbe.status === 403) {
       actionsApiAvailable = true;
+      console.log(`[UiPath Deploy] AC Actions probe: status=${actionsProbe.status} (auth issue but service exists)`);
+    } else {
+      console.log(`[UiPath Deploy] AC Actions probe failed: status=${actionsProbe.status}, body=${actionsProbe.text.slice(0, 300)}`);
     }
   }
 
@@ -1313,12 +1326,16 @@ async function provisionActionCenter(
   }
 
   for (const ac of actionCenter) {
+    const attemptedEndpoints: string[] = [];
+    const failureDetails: string[] = [];
+
     try {
       let alreadyExists = false;
+
       if (odataAvailable) {
         const checkResult = await uipathFetch(
           `${odataCatalogUrl}?$filter=Name eq '${odataEscape(ac.taskCatalog)}'&$top=1`,
-          { headers: hdrs, label: "AC Check", maxRetries: 1 }
+          { headers: acHdrs, label: "AC Check", maxRetries: 1 }
         );
         if (checkResult.ok && checkResult.data?.value?.length > 0) {
           const existing = checkResult.data.value[0];
@@ -1329,13 +1346,30 @@ async function provisionActionCenter(
           alreadyExists = true;
         }
       }
+
+      if (!alreadyExists && actionsApiAvailable) {
+        const actionsCheckResult = await uipathFetch(
+          `${actionsCatalogUrl}?$filter=Name eq '${odataEscape(ac.taskCatalog)}'&$top=1`,
+          { headers: acHdrs, label: "AC Actions Check", maxRetries: 1 }
+        );
+        if (actionsCheckResult.ok && actionsCheckResult.data?.value?.length > 0) {
+          const existing = actionsCheckResult.data.value[0];
+          let msg = `Already exists via Actions API (ID: ${existing.Id || existing.id})`;
+          if (ac.assignedRole) msg += `. Assigned role: ${ac.assignedRole}`;
+          if (ac.sla) msg += `. SLA: ${ac.sla}`;
+          results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "exists", message: msg, id: existing.Id || existing.id });
+          alreadyExists = true;
+        }
+      }
+
       if (alreadyExists) continue;
 
       let created = false;
 
       if (actionsApiAvailable) {
+        attemptedEndpoints.push(`POST ${actionsCatalogUrl}`);
         const actionsCreateResult = await uipathFetch(actionsCatalogUrl, {
-          method: "POST", headers: hdrs,
+          method: "POST", headers: acHdrs,
           body: JSON.stringify({ Name: ac.taskCatalog, Description: truncDesc(ac.description) }),
           label: "AC Actions Create", maxRetries: 1,
         });
@@ -1348,12 +1382,21 @@ async function provisionActionCenter(
         } else if (actionsCreateResult.status === 409 || actionsCreateResult.text.includes("already exists")) {
           results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "exists", message: "Already exists (Actions)" });
           created = true;
+        } else {
+          const detail = `Actions API POST -> ${actionsCreateResult.status}: ${actionsCreateResult.text.slice(0, 500)}`;
+          failureDetails.push(detail);
+          if (actionsCreateResult.status === 405) {
+            console.warn(`[UiPath Deploy] AC Actions Create returned 405 (Method Not Allowed). Full response: ${actionsCreateResult.text}`);
+          } else {
+            console.warn(`[UiPath Deploy] AC Actions Create failed: ${detail}`);
+          }
         }
       }
 
       if (!created && odataAvailable) {
+        attemptedEndpoints.push(`POST ${odataCatalogUrl}`);
         const createResult = await uipathFetch(odataCatalogUrl, {
-          method: "POST", headers: hdrs,
+          method: "POST", headers: acHdrs,
           body: JSON.stringify({ Name: ac.taskCatalog, Description: truncDesc(ac.description) }),
           label: "AC OData Create", maxRetries: 1,
         });
@@ -1368,21 +1411,75 @@ async function provisionActionCenter(
         } else if (createResult.status === 409 || createResult.text.includes("already exists")) {
           results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "exists", message: "Already exists (OData)" });
           created = true;
+        } else {
+          const detail = `OData POST -> ${createResult.status}: ${createResult.text.slice(0, 500)}`;
+          failureDetails.push(detail);
+          if (createResult.status === 405) {
+            console.warn(`[UiPath Deploy] AC OData Create returned 405 (Method Not Allowed). Full response: ${createResult.text}`);
+          } else {
+            console.warn(`[UiPath Deploy] AC OData Create failed: ${detail}`);
+          }
         }
       }
 
       if (!created) {
+        attemptedEndpoints.push(`POST ${odataUnboundActionUrl}`);
+        const odataActionBody = {
+          taskDefinitionName: "ExternalTask",
+          taskCatalogName: ac.taskCatalog,
+          title: `${ac.taskCatalog} - Auto Provision`,
+          priority: "Medium",
+          data: JSON.stringify({ source: "CannonBall", description: ac.description || "" }),
+        };
+        const odataActionResult = await uipathFetch(odataUnboundActionUrl, {
+          method: "POST", headers: acHdrs,
+          body: JSON.stringify(odataActionBody),
+          label: "AC OData Unbound Action", maxRetries: 1,
+        });
+        console.log(`[UiPath Deploy] AC OData Unbound Action "${ac.taskCatalog}" -> ${odataActionResult.status}: ${odataActionResult.text.slice(0, 500)}`);
+
+        if (odataActionResult.ok || odataActionResult.status === 201) {
+          await new Promise(r => setTimeout(r, 1500));
+          const recheck = await uipathFetch(
+            `${odataCatalogUrl}?$filter=Name eq '${odataEscape(ac.taskCatalog)}'&$top=1`,
+            { headers: acHdrs, label: "AC Recheck after OData Action", maxRetries: 1 }
+          );
+          if (recheck.ok && recheck.data?.value?.length > 0) {
+            const verified = recheck.data.value[0];
+            let msg = `Created via OData unbound action (Catalog ID: ${verified.Id || verified.id})`;
+            if (ac.assignedRole) msg += `. Assigned role: ${ac.assignedRole}`;
+            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg, id: verified.Id || verified.id });
+            created = true;
+          } else {
+            let msg = `Task created via OData unbound action referencing catalog "${ac.taskCatalog}" — catalog may auto-provision on first task processing`;
+            if (ac.assignedRole) msg += `. Assign role: ${ac.assignedRole}`;
+            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg });
+            created = true;
+          }
+        } else {
+          const detail = `OData Unbound Action POST -> ${odataActionResult.status}: ${odataActionResult.text.slice(0, 500)}`;
+          failureDetails.push(detail);
+          if (odataActionResult.status === 405) {
+            console.warn(`[UiPath Deploy] AC OData Unbound Action returned 405 (Method Not Allowed). Full response: ${odataActionResult.text}`);
+          }
+        }
+      }
+
+      if (!created) {
+        attemptedEndpoints.push(`POST ${genericTaskUrl}`);
         const taskBody = { Title: `${ac.taskCatalog} - Provision`, Priority: "Medium", TaskCatalogName: ac.taskCatalog, Type: "ExternalTask" };
         const taskResult = await uipathFetch(genericTaskUrl, {
-          method: "POST", headers: hdrs,
+          method: "POST", headers: acHdrs,
           body: JSON.stringify(taskBody),
           label: "AC GenericTask", maxRetries: 1,
         });
+        console.log(`[UiPath Deploy] AC GenericTask "${ac.taskCatalog}" -> ${taskResult.status}: ${taskResult.text.slice(0, 500)}`);
+
         if (taskResult.ok || taskResult.status === 201) {
           await new Promise(r => setTimeout(r, 1000));
           const recheck = await uipathFetch(
             `${odataCatalogUrl}?$filter=Name eq '${odataEscape(ac.taskCatalog)}'&$top=1`,
-            { headers: hdrs, label: "AC Recheck", maxRetries: 1 }
+            { headers: acHdrs, label: "AC Recheck", maxRetries: 1 }
           );
           if (recheck.ok && recheck.data?.value?.length > 0) {
             const verified = recheck.data.value[0];
@@ -1396,20 +1493,31 @@ async function provisionActionCenter(
             results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg });
             created = true;
           }
+        } else {
+          const detail = `GenericTask POST -> ${taskResult.status}: ${taskResult.text.slice(0, 500)}`;
+          failureDetails.push(detail);
+          if (taskResult.status === 405) {
+            console.warn(`[UiPath Deploy] AC GenericTask returned 405 (Method Not Allowed). Full response: ${taskResult.text}`);
+          }
         }
       }
 
       if (!created) {
         const orchUrl = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_/actioncenter`;
+        const endpointsList = attemptedEndpoints.map((ep, i) => `  ${i + 1}. ${ep}`).join("\n");
+        const failuresList = failureDetails.map((d, i) => `  ${i + 1}. ${d}`).join("\n");
         results.push({
           artifact: "Action Center",
           name: ac.taskCatalog,
           status: "failed" as const,
-          message: `Task Catalog creation API not supported on this tenant (POST returns 405). The Action Center service is enabled (OData read works) but programmatic catalog creation requires UiPath Automation Cloud Enterprise. Create via Orchestrator UI: ${orchUrl}`,
+          message: `Task Catalog creation failed after trying ${attemptedEndpoints.length} endpoint(s). Attempted:\n${endpointsList}\nFailure details:\n${failuresList}\nThe Action Center service is detected but programmatic catalog creation may require UiPath Automation Cloud Enterprise or OR.Tasks + OR.Administration scopes. Create manually via Orchestrator UI: ${orchUrl}`,
         });
       }
     } catch (err: any) {
-      results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: `API error: ${err.message}` });
+      const endpointsList = attemptedEndpoints.length > 0
+        ? ` Attempted endpoints: ${attemptedEndpoints.join(", ")}.`
+        : "";
+      results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: `API error: ${err.message}.${endpointsList}` });
     }
   }
   return results;
@@ -1751,71 +1859,195 @@ async function provisionTestCases(
   }
 
   if (testCases?.length) {
+    const tmHdrsWithTenant: Record<string, string> = {
+      ...tmHdrs,
+      "X-UIPATH-TenantName": config.tenantName,
+    };
+
+    const mainTokenHdrs: Record<string, string> = {
+      "Authorization": `Bearer ${mainToken}`,
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "X-UIPATH-TenantName": config.tenantName,
+    };
+
+    let swaggerProbed = false;
+
     for (const tc of testCases) {
       try {
-        const body: Record<string, any> = {
+        const camelBody: Record<string, any> = {
           name: tc.name,
           description: truncDesc(tc.description),
         };
         if (tc.labels?.length) {
-          body.labels = tc.labels;
+          camelBody.labels = tc.labels;
         }
         if (tc.steps?.length) {
-          body.manualSteps = tc.steps.map((s, idx) => ({
+          camelBody.manualSteps = tc.steps.map((s, idx) => ({
             stepDescription: s.action,
             expectedResult: s.expected,
             order: idx + 1,
           }));
         }
 
-        const tcUrl = `${activeTmBase}/api/v2/Projects/${projectId}/TestCases`;
-        const tcResult = await uipathFetch(tcUrl, {
-          method: "POST",
-          headers: tmHdrs,
-          body: JSON.stringify(body),
-          label: "TM Create TestCase V2",
-          maxRetries: 1,
-          redirect: "manual" as any,
-        });
-        console.log(`[UiPath Deploy] Test Case "${tc.name}" via V2 -> ${tcResult.status}: ${tcResult.text.slice(0, 300)}`);
-
-        if (tcResult.status >= 300 && tcResult.status < 400) {
-          results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: `Test Manager returned redirect (${tcResult.status}) — service may have been redirected to login/HTML page. The base URL ${activeTmBase} may not be the correct TM endpoint.` });
-          continue;
+        const pascalBody: Record<string, any> = {
+          Name: tc.name,
+          Description: truncDesc(tc.description),
+          ProjectId: projectId,
+        };
+        if (tc.labels?.length) {
+          pascalBody.Labels = tc.labels;
+        }
+        if (tc.steps?.length) {
+          pascalBody.ManualSteps = tc.steps.map((s, idx) => ({
+            StepDescription: s.action,
+            ExpectedResult: s.expected,
+            Order: idx + 1,
+          }));
         }
 
-        if (tcResult.status === 200 || tcResult.status === 201) {
-          const creation = isValidCreation(tcResult.text);
-          if (!creation.valid) {
-            const itemNotFoundMatch = creation.error?.match(/itemNotFound[:\s]*(.*)/i);
-            const errorDetail = itemNotFoundMatch
-              ? `itemNotFound: ${itemNotFoundMatch[1] || "Unknown error"} — the project ID ${projectId} may not be valid on this TM instance`
-              : creation.error;
-            console.warn(`[UiPath Deploy] Test Case "${tc.name}" got ${tcResult.status} but validation failed: ${errorDetail}`);
-            results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: `API returned ${tcResult.status} but response invalid: ${errorDetail}` });
+        const endpointAttempts: Array<{
+          url: string;
+          body: Record<string, any>;
+          hdrs: Record<string, string>;
+          label: string;
+        }> = [
+          {
+            url: `${activeTmBase}/api/v2/Projects/${projectId}/TestCases`,
+            body: camelBody,
+            hdrs: tmHdrsWithTenant,
+            label: "V2 camelCase /Projects/{id}/TestCases (TM token)",
+          },
+          {
+            url: `${activeTmBase}/api/v2/Projects/${projectId}/TestCases`,
+            body: pascalBody,
+            hdrs: tmHdrsWithTenant,
+            label: "V2 PascalCase /Projects/{id}/TestCases (TM token)",
+          },
+          {
+            url: `${activeTmBase}/api/v2/TestCases`,
+            body: { ...pascalBody, ProjectId: projectId },
+            hdrs: tmHdrsWithTenant,
+            label: "V2 PascalCase /TestCases with ProjectId in body (TM token)",
+          },
+          {
+            url: `${activeTmBase}/api/v2/projects/${projectId}/test-cases`,
+            body: camelBody,
+            hdrs: tmHdrsWithTenant,
+            label: "V2 kebab-case /projects/{id}/test-cases (TM token)",
+          },
+          {
+            url: `${activeTmBase}/api/v2/Projects/${projectId}/TestCases`,
+            body: camelBody,
+            hdrs: mainTokenHdrs,
+            label: "V2 camelCase /Projects/{id}/TestCases (main Orchestrator token)",
+          },
+          {
+            url: `${activeTmBase}/api/v2/TestCases`,
+            body: { ...pascalBody, ProjectId: projectId },
+            hdrs: mainTokenHdrs,
+            label: "V2 PascalCase /TestCases with ProjectId in body (main token)",
+          },
+        ];
+
+        let created = false;
+        const attemptDetails: string[] = [];
+
+        for (const attempt of endpointAttempts) {
+          try {
+            const tcResult = await uipathFetch(attempt.url, {
+              method: "POST",
+              headers: attempt.hdrs,
+              body: JSON.stringify(attempt.body),
+              label: `TM TestCase: ${attempt.label}`,
+              maxRetries: 1,
+              redirect: "manual" as any,
+            });
+
+            console.log(`[UiPath Deploy] Test Case "${tc.name}" via ${attempt.label} -> ${tcResult.status}: ${tcResult.text.slice(0, 500)}`);
+            attemptDetails.push(`${attempt.label}: HTTP ${tcResult.status}`);
+
+            if (tcResult.status >= 300 && tcResult.status < 400) {
+              attemptDetails[attemptDetails.length - 1] += ` (redirect)`;
+              continue;
+            }
+
+            if (tcResult.status === 200 || tcResult.status === 201) {
+              const creation = isValidCreation(tcResult.text);
+              if (!creation.valid) {
+                const itemNotFoundMatch = creation.error?.match(/itemNotFound[:\s]*(.*)/i);
+                const errorDetail = itemNotFoundMatch
+                  ? `itemNotFound: ${itemNotFoundMatch[1] || "Unknown error"} — the project ID ${projectId} may not be valid on this TM instance`
+                  : creation.error;
+                console.warn(`[UiPath Deploy] Test Case "${tc.name}" via ${attempt.label} got ${tcResult.status} but validation failed: ${errorDetail}`);
+                attemptDetails[attemptDetails.length - 1] += ` (response invalid: ${errorDetail})`;
+                continue;
+              }
+              const createdId = creation.data?.Id || creation.data?.id;
+              const key = creation.data?.Key || creation.data?.key || (projectPrefix ? `${projectPrefix}-${createdId}` : null);
+              let msg = `Created via ${attempt.label} (ID: ${createdId}${key ? `, Key: ${key}` : ""})`;
+              if (tc.labels?.length) msg += `, labels: ${tc.labels.join(", ")}`;
+              if (tc.steps?.length) msg += `, ${tc.steps.length} manual steps`;
+              results.push({ artifact: "Test Case", name: tc.name, status: "created", message: msg, id: createdId });
+              created = true;
+              break;
+            } else if (tcResult.status === 409 || tcResult.text.includes("already exists")) {
+              results.push({ artifact: "Test Case", name: tc.name, status: "exists", message: "Already exists" });
+              created = true;
+              break;
+            } else if (tcResult.status === 404) {
+              console.log(`[UiPath Deploy] Test Case "${tc.name}" via ${attempt.label} returned 404. Full response body: ${tcResult.text}`);
+              attemptDetails[attemptDetails.length - 1] += ` (404 — ${tcResult.text.slice(0, 300)})`;
+              continue;
+            } else if (tcResult.status === 405) {
+              console.log(`[UiPath Deploy] Test Case "${tc.name}" via ${attempt.label} returned 405. Full response body: ${tcResult.text}`);
+              attemptDetails[attemptDetails.length - 1] += ` (405 method not allowed)`;
+              continue;
+            } else {
+              attemptDetails[attemptDetails.length - 1] += ` (${tcResult.text.slice(0, 200)})`;
+              continue;
+            }
+          } catch (attemptErr: any) {
+            attemptDetails.push(`${attempt.label}: Error — ${attemptErr.message}`);
             continue;
           }
-          const createdId = creation.data?.Id || creation.data?.id;
-          const key = creation.data?.Key || creation.data?.key || (projectPrefix ? `${projectPrefix}-${createdId}` : null);
-          let msg = `Created (ID: ${createdId}${key ? `, Key: ${key}` : ""})`;
-          if (tc.labels?.length) msg += `, labels: ${tc.labels.join(", ")}`;
-          if (tc.steps?.length) msg += `, ${tc.steps.length} manual steps`;
-          results.push({ artifact: "Test Case", name: tc.name, status: "created", message: msg, id: createdId });
-        } else if (tcResult.status === 409 || tcResult.text.includes("already exists")) {
-          results.push({ artifact: "Test Case", name: tc.name, status: "exists", message: "Already exists" });
-        } else {
-          const isItemNotFound = tcResult.text.includes("itemNotFound") || tcResult.text.includes("endpoint does not exist");
-          if (isItemNotFound) {
-            results.push({
-              artifact: "Test Case",
-              name: tc.name,
-              status: "failed" as const,
-              message: `TestCases API endpoint not available (404). This tenant's Test Manager license does not include the TestCases REST API. Project "${processName}" (ID: ${projectId}) was created successfully — test cases must be added via the Test Manager UI.`,
-            });
-          } else {
-            let failMsg = tcResult.error || `HTTP ${tcResult.status}: ${tcResult.text.slice(0, 200)}`;
-            results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: failMsg });
+        }
+
+        if (!created) {
+          if (!swaggerProbed) {
+            swaggerProbed = true;
+            try {
+              const swaggerUrl = `${activeTmBase}/swagger/index.html`;
+              const swaggerRes = await fetch(swaggerUrl, { headers: { "Authorization": `Bearer ${tmToken}` }, redirect: "manual" as (RequestRedirect | undefined) });
+              console.log(`[UiPath Deploy] Swagger probe ${swaggerUrl} -> ${swaggerRes.status}`);
+
+              const swaggerJsonUrls = [
+                `${activeTmBase}/swagger/v2/swagger.json`,
+                `${activeTmBase}/swagger/swagger.json`,
+              ];
+              for (const sjUrl of swaggerJsonUrls) {
+                try {
+                  const sjRes = await fetch(sjUrl, { headers: { "Authorization": `Bearer ${tmToken}` }, redirect: "manual" as (RequestRedirect | undefined) });
+                  if (sjRes.ok) {
+                    const sjText = await sjRes.text();
+                    const testCaseRoutes = sjText.match(/"\/api\/[^"]*[Tt]est[Cc]ase[^"]*"/g) || [];
+                    console.log(`[UiPath Deploy] Swagger JSON from ${sjUrl}: found ${testCaseRoutes.length} TestCase routes: ${testCaseRoutes.join(", ")}`);
+                  } else {
+                    console.log(`[UiPath Deploy] Swagger JSON probe ${sjUrl} -> ${sjRes.status}`);
+                  }
+                } catch {}
+              }
+            } catch (swaggerErr: any) {
+              console.log(`[UiPath Deploy] Swagger probe failed: ${swaggerErr.message}`);
+            }
           }
+
+          results.push({
+            artifact: "Test Case",
+            name: tc.name,
+            status: "failed" as const,
+            message: `All TestCases API endpoints returned errors. Project "${processName}" (ID: ${projectId}) was created successfully — test cases must be added via the Test Manager UI. Attempts: ${attemptDetails.join(" | ")}`,
+          });
         }
       } catch (err: any) {
         results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: err.message });

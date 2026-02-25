@@ -16,6 +16,7 @@ import {
   aggregatePackages,
   generateDeveloperHandoffGuide,
   generateDhgSummary,
+  makeUiPathCompliant,
   type XamlGeneratorResult,
   type XamlGap,
 } from "./xaml-generator";
@@ -407,7 +408,7 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<{
             enrichment
           );
           xamlResults.push(result);
-          archive.append(result.xaml, { name: `${libPath}/${wfName}.xaml` });
+          archive.append(makeUiPathCompliant(result.xaml), { name: `${libPath}/${wfName}.xaml` });
           if (wfName === "Main") hasMain = true;
           console.log(`[UiPath] Generated decomposed workflow "${wfName}": ${decompNodes.length} nodes, ${result.gaps.length} gaps`);
         }
@@ -418,7 +419,7 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<{
       const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
       const result = generateRichXamlFromSpec(wf, sddContent || undefined);
       xamlResults.push(result);
-      archive.append(result.xaml, { name: `${libPath}/${wfName}.xaml` });
+      archive.append(makeUiPathCompliant(result.xaml), { name: `${libPath}/${wfName}.xaml` });
       if (wfName === "Main") hasMain = true;
       console.log(`[UiPath] Generated rich XAML for "${wfName}": ${result.gaps.length} gaps, ${result.usedPackages.length} packages`);
     }
@@ -433,30 +434,30 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<{
       );
       xamlResults.push(processResult);
       const processFileName = useReFramework ? "Process" : projectName;
-      archive.append(processResult.xaml, { name: `${libPath}/${processFileName}.xaml` });
+      archive.append(makeUiPathCompliant(processResult.xaml), { name: `${libPath}/${processFileName}.xaml` });
       console.log(`[UiPath] Generated process XAML from ${processNodes.length} map nodes: ${processResult.gaps.length} gaps`);
     }
 
     const initXaml = generateInitAllSettingsXaml(orchestratorArtifacts);
-    archive.append(initXaml, { name: `${libPath}/InitAllSettings.xaml` });
+    archive.append(makeUiPathCompliant(initXaml), { name: `${libPath}/InitAllSettings.xaml` });
 
     if (useReFramework && !hasMain) {
       console.log(`[UiPath] Generating REFramework structure (queue: ${queueName})`);
       const mainXaml = generateReframeworkMainXaml(projectName, queueName);
-      archive.append(mainXaml, { name: `${libPath}/Main.xaml` });
+      archive.append(makeUiPathCompliant(mainXaml), { name: `${libPath}/Main.xaml` });
       hasMain = true;
 
       const getTransXaml = generateGetTransactionDataXaml(queueName);
-      archive.append(getTransXaml, { name: `${libPath}/GetTransactionData.xaml` });
+      archive.append(makeUiPathCompliant(getTransXaml), { name: `${libPath}/GetTransactionData.xaml` });
 
       const setStatusXaml = generateSetTransactionStatusXaml();
-      archive.append(setStatusXaml, { name: `${libPath}/SetTransactionStatus.xaml` });
+      archive.append(makeUiPathCompliant(setStatusXaml), { name: `${libPath}/SetTransactionStatus.xaml` });
 
       const closeAppsXaml = generateCloseAllApplicationsXaml();
-      archive.append(closeAppsXaml, { name: `${libPath}/CloseAllApplications.xaml` });
+      archive.append(makeUiPathCompliant(closeAppsXaml), { name: `${libPath}/CloseAllApplications.xaml` });
 
       const killXaml = generateKillAllProcessesXaml();
-      archive.append(killXaml, { name: `${libPath}/KillAllProcesses.xaml` });
+      archive.append(makeUiPathCompliant(killXaml), { name: `${libPath}/KillAllProcesses.xaml` });
     } else if (!hasMain) {
       let mainActivities = `
         <ui:InvokeWorkflowFile DisplayName="Initialize Settings" WorkflowFileName="InitAllSettings.xaml" />`;
@@ -484,10 +485,10 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<{
         <ui:LogMessage Level="Info" Message="'Process completed successfully'" DisplayName="Log Completion" />`;
 
       const closeAppsXaml = generateCloseAllApplicationsXaml();
-      archive.append(closeAppsXaml, { name: `${libPath}/CloseAllApplications.xaml` });
+      archive.append(makeUiPathCompliant(closeAppsXaml), { name: `${libPath}/CloseAllApplications.xaml` });
 
       const mainXaml = buildXaml("Main", `${projectName} - Main Workflow`, mainActivities);
-      archive.append(mainXaml, { name: `${libPath}/Main.xaml` });
+      archive.append(makeUiPathCompliant(mainXaml), { name: `${libPath}/Main.xaml` });
     }
 
     const configCsv = generateConfigXlsx(pkg, sddContent || undefined, orchestratorArtifacts);

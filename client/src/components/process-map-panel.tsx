@@ -66,6 +66,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -1324,7 +1325,7 @@ function NodeContextMenu({
   );
 }
 
-function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRedoReady, onFocusNodeReady }: { ideaId: string; activeView: ProcessView; detailLevel: DetailLevel; onRelayout?: (fn: () => void) => void; onUndoRedoReady?: (controls: { undo: () => void; redo: () => void; canUndo: boolean; canRedo: boolean }) => void; onFocusNodeReady?: (fn: (nodeId: string) => void) => void; }) {
+function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRedoReady, onFocusNodeReady, onDetailLevelChange }: { ideaId: string; activeView: ProcessView; detailLevel: DetailLevel; onRelayout?: (fn: () => void) => void; onUndoRedoReady?: (controls: { undo: () => void; redo: () => void; canUndo: boolean; canRedo: boolean }) => void; onFocusNodeReady?: (fn: (nodeId: string) => void) => void; onDetailLevelChange?: (level: DetailLevel) => void; }) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const onNodesChange = useCallback((changes: any) => setNodes(nds => applyNodeChanges(changes, nds)), [setNodes]);
@@ -1717,7 +1718,15 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
 
   const onNodeDoubleClick = useCallback((_: any, node: Node) => {
     const d = node.data as any;
-    if (detailLevel !== "L2" || d.dbId < 0) return;
+    if (detailLevel === "L0") {
+      onDetailLevelChange?.("L1");
+      return;
+    }
+    if (detailLevel === "L1") {
+      onDetailLevelChange?.("L2");
+      return;
+    }
+    if (d.dbId < 0) return;
     setEditingNode({
       nodeId: d.dbId,
       name: d.label || "",
@@ -1731,7 +1740,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
     setContextMenu(null);
     setNodeContextMenu(null);
     setDetailPopover(null);
-  }, [detailLevel]);
+  }, [detailLevel, onDetailLevelChange]);
 
   const onNodeContextMenu = useCallback((event: any, node: Node) => {
     event.preventDefault();
@@ -1979,7 +1988,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
 
   const onNodeDragStop = useCallback((_: any, node: Node) => {
     const d = node.data as any;
-    if (d.dbId) {
+    if (d.dbId && d.dbId > 0) {
       updateNodeMutation.mutate({
         id: d.dbId,
         data: { positionX: node.position.x, positionY: node.position.y },
@@ -2103,7 +2112,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
         className={`process-map-canvas ${reconnectingEdge ? "reconnecting" : ""}`}
         minZoom={0.2}
         maxZoom={2}
-        nodesDraggable={detailLevel === "L2"}
+        nodesDraggable
         snapToGrid
         snapGrid={snapGridVal}
         deleteKeyCode={null}
@@ -2763,14 +2772,42 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
             const automationPct = processSteps > 0 ? Math.min(100, Math.round(totalAutomatable / processSteps * 100)) : 0;
             return (
               <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex items-center gap-1.5">
-                  <Zap className="h-3 w-3 text-green-400" />
-                  <span className="text-[10px] font-semibold text-green-400">{automationPct}% automated</span>
-                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex items-center gap-1.5 cursor-default" data-testid="stat-automated-pct">
+                      <Zap className="h-3 w-3 text-green-400" />
+                      <span className="text-[10px] font-semibold text-green-400">{automationPct}% automated</span>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    <p className="text-xs">Percentage of steps handled by automation or system (not human)</p>
+                  </TooltipContent>
+                </Tooltip>
                 <div className="flex items-center gap-2 text-[9px] text-zinc-500">
-                  <span className="flex items-center gap-0.5"><Zap className="h-2.5 w-2.5 text-green-400" /> {automatedCount} resolved</span>
-                  <span className="flex items-center gap-0.5"><Monitor className="h-2.5 w-2.5 text-purple-400" /> {systemCount} system</span>
-                  <span className="flex items-center gap-0.5"><User className="h-2.5 w-2.5 text-blue-400" /> {humanCount} human</span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="flex items-center gap-0.5 cursor-default" data-testid="stat-resolved"><Zap className="h-2.5 w-2.5 text-green-400" /> {automatedCount} resolved</span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p className="text-xs">Pain points from the AS-IS map that have been automated in this TO-BE map</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="flex items-center gap-0.5 cursor-default" data-testid="stat-system"><Monitor className="h-2.5 w-2.5 text-purple-400" /> {systemCount} system</span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p className="text-xs">Steps performed by existing systems (non-human)</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="flex items-center gap-0.5 cursor-default" data-testid="stat-human"><User className="h-2.5 w-2.5 text-blue-400" /> {humanCount} human</span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p className="text-xs">Steps that still require manual human intervention</p>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
             );
@@ -2778,7 +2815,7 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
         </div>
       )}
 
-      {nodeCount > 0 && (!approval || mapChanged) && activeView === "as-is" && (
+      {activeView !== "sdd" && (
         <div className="px-4 py-2 border-b border-zinc-800/80 bg-zinc-950/30" data-testid="map-completeness-bar">
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] text-zinc-500 font-medium">Completeness</span>
@@ -2963,7 +3000,7 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
         <ReactFlowErrorBoundary>
           <ReactFlowProvider>
             <DelayedMount>
-              <ProcessMapFlow ideaId={ideaId} activeView={activeView} detailLevel={detailLevel} onRelayout={(fn) => { relayoutRef.current = fn; }} onUndoRedoReady={setUndoRedoControls} onFocusNodeReady={(fn) => { focusNodeRef.current = fn; }} />
+              <ProcessMapFlow ideaId={ideaId} activeView={activeView} detailLevel={detailLevel} onRelayout={(fn) => { relayoutRef.current = fn; }} onUndoRedoReady={setUndoRedoControls} onFocusNodeReady={(fn) => { focusNodeRef.current = fn; }} onDetailLevelChange={setDetailLevel} />
             </DelayedMount>
           </ReactFlowProvider>
         </ReactFlowErrorBoundary>
