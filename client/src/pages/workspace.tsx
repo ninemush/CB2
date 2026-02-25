@@ -844,6 +844,22 @@ function ChatPanel({ idea }: { idea: Idea }) {
             .then((r) => r.json());
           const existingNodes: any[] = existingMap.nodes || [];
 
+          const synonymMap: Record<string, string> = {
+            fetch: "get", retrieve: "get", obtain: "get", pull: "get", lookup: "get", "look": "get",
+            send: "send", email: "send", notify: "send", alert: "send", forward: "send",
+            log: "log", record: "log", track: "log", note: "log", write: "log",
+            calculate: "calculate", compute: "calculate", determine: "calculate", evaluate: "calculate",
+            enter: "enter", input: "enter", type: "enter", fill: "enter",
+            check: "check", verify: "check", validate: "check", confirm: "check", review: "check",
+            save: "save", store: "save", persist: "save", keep: "save",
+            create: "create", generate: "create", build: "create", make: "create", produce: "create",
+            update: "update", modify: "update", change: "update", edit: "update", revise: "update",
+            delete: "delete", remove: "delete", clear: "delete", erase: "delete",
+            open: "open", launch: "open", start: "open", begin: "open", initiate: "open",
+            close: "close", end: "close", finish: "close", complete: "close", terminate: "close",
+          };
+          const applySynonyms = (token: string): string => synonymMap[token] || token;
+
           const normalizeName = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
           const stripPrefixes = (s: string) =>
             s.replace(/^(record|send|initiate|close|auto[-\s]?|re[-\s]?check)\s+/i, "")
@@ -851,7 +867,13 @@ function ChatPanel({ idea }: { idea: Idea }) {
              .replace(/[?\-]/g, " ")
              .replace(/\s+/g, " ")
              .trim();
-          const tokenize = (s: string) => new Set(stripPrefixes(normalizeName(s)).split(" ").filter(w => w.length > 2));
+          const tokenize = (s: string) => new Set(stripPrefixes(normalizeName(s)).split(" ").filter(w => w.length > 2).map(applySynonyms));
+
+          const stripLeadingVerb = (s: string): string => {
+            const words = normalizeName(s).split(" ");
+            if (words.length > 1) return words.slice(1).join(" ");
+            return s;
+          };
 
           const similarity = (a: string, b: string): number => {
             const na = normalizeName(a);
@@ -860,6 +882,9 @@ function ChatPanel({ idea }: { idea: Idea }) {
             const shorter = na.length < nb.length ? na : nb;
             const longer = na.length < nb.length ? nb : na;
             if (shorter.length >= 6 && longer.includes(shorter)) return 0.85;
+            const verblessA = stripLeadingVerb(a);
+            const verblessB = stripLeadingVerb(b);
+            if (verblessA.length >= 5 && verblessA === verblessB) return 0.9;
             const tokA = tokenize(a);
             const tokB = tokenize(b);
             if (tokA.size === 0 || tokB.size === 0) return 0;
