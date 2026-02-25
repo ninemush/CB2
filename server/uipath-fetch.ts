@@ -225,10 +225,19 @@ export function isGenuineApiResponse(text: string): { genuine: boolean; reason?:
 }
 
 export function isValidCreation(text: string): { valid: boolean; data: any; error?: string } {
+  const trimmed = text?.trim();
+  if (!trimmed) {
+    return { valid: false, data: null, error: "Empty response body" };
+  }
+  if (trimmed.startsWith("<!") || trimmed.startsWith("<html") || trimmed.startsWith("<HTML") || trimmed.startsWith("<head")) {
+    return { valid: false, data: null, error: "HTML response — likely a redirect to login page, not a valid API response" };
+  }
   try {
-    const data = JSON.parse(text);
+    const data = JSON.parse(trimmed);
     if (data.errorCode || data.ErrorCode) {
-      return { valid: false, data, error: `Hidden error: ${data.errorCode || data.ErrorCode}: ${data.message || data.Message || ""}` };
+      const code = data.errorCode || data.ErrorCode;
+      const msg = data.message || data.Message || data.ErrorMessage || "Unknown error";
+      return { valid: false, data, error: `${code}: ${msg}` };
     }
     if (data["odata.error"]) {
       return { valid: false, data, error: `OData error: ${data["odata.error"].message?.value || ""}` };
@@ -241,10 +250,18 @@ export function isValidCreation(text: string): { valid: boolean; data: any; erro
       return { valid: false, data, error: data.error };
     }
     if (data.error && typeof data.error === "object") {
-      return { valid: false, data, error: JSON.stringify(data.error).slice(0, 200) };
+      const errorStr = JSON.stringify(data.error).slice(0, 200);
+      const itemNotFound = data.error.code === "itemNotFound" || data.error.code === "ItemNotFound";
+      if (itemNotFound) {
+        return { valid: false, data, error: `itemNotFound: ${data.error.message || data.error.innerError?.message || errorStr}` };
+      }
+      return { valid: false, data, error: errorStr };
     }
     if (typeof data.message === "string" && (data.message.includes("not onboarded") || data.message.includes("not available"))) {
       return { valid: false, data, error: data.message };
+    }
+    if (typeof data.code === "string" && data.code.toLowerCase() === "itemnotfound") {
+      return { valid: false, data, error: `itemNotFound: ${data.message || "Unknown error"}` };
     }
     if (!data.Id && !data.id && !data.Name && !data.name && !data.Key) {
       return { valid: false, data, error: "Response missing expected fields (Id, Name, Key)" };

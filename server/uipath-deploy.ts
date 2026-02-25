@@ -1273,24 +1273,48 @@ async function provisionActionCenter(
   if (!actionCenter?.length) return [];
   const results: DeploymentResult[] = [];
 
+  const actionsBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/actions_/api/v1`;
+  const actionsCatalogUrl = `${actionsBase}/TaskCatalogs`;
   const odataCatalogUrl = `${base}/odata/TaskCatalogs`;
   const genericTaskUrl = `${base}/tasks/GenericTasks/CreateTask`;
 
   let serviceAvailable = preProbed || false;
+  let actionsServiceAvailable = false;
   if (!serviceAvailable) {
-    const probeResult = await uipathFetch(`${odataCatalogUrl}?$top=1`, {
+    const actionsProbe = await uipathFetch(`${actionsCatalogUrl}?$top=1`, {
       headers: hdrs,
-      label: "AC Probe",
+      label: "AC Actions Probe",
       maxRetries: 1,
     });
-    if (probeResult.ok) {
-      const genuine = isGenuineApiResponse(probeResult.text);
-      serviceAvailable = genuine.genuine;
-      if (!genuine.genuine) {
-        console.log(`[UiPath Deploy] Action Center probe returned 200 but not genuine: ${genuine.reason}`);
+    if (actionsProbe.ok) {
+      const genuine = isGenuineApiResponse(actionsProbe.text);
+      if (genuine.genuine) {
+        serviceAvailable = true;
+        actionsServiceAvailable = true;
+        console.log(`[UiPath Deploy] Actions microservice endpoint available`);
+      } else {
+        console.log(`[UiPath Deploy] Actions microservice probe returned 200 but not genuine: ${genuine.reason}`);
       }
-    } else if (probeResult.status === 401 || probeResult.status === 403) {
+    } else if (actionsProbe.status === 401 || actionsProbe.status === 403) {
       serviceAvailable = true;
+      actionsServiceAvailable = true;
+    }
+
+    if (!serviceAvailable) {
+      const odataProbe = await uipathFetch(`${odataCatalogUrl}?$top=1`, {
+        headers: hdrs,
+        label: "AC OData Probe",
+        maxRetries: 1,
+      });
+      if (odataProbe.ok) {
+        const genuine = isGenuineApiResponse(odataProbe.text);
+        serviceAvailable = genuine.genuine;
+        if (!genuine.genuine) {
+          console.log(`[UiPath Deploy] Action Center OData probe returned 200 but not genuine: ${genuine.reason}`);
+        }
+      } else if (odataProbe.status === 401 || odataProbe.status === 403) {
+        serviceAvailable = true;
+      }
     }
   }
 
@@ -1305,24 +1329,61 @@ async function provisionActionCenter(
 
   for (const ac of actionCenter) {
     try {
-      const checkResult = await uipathFetch(
-        `${odataCatalogUrl}?$filter=Name eq '${odataEscape(ac.taskCatalog)}'&$top=1`,
-        { headers: hdrs, label: "AC Check", maxRetries: 1 }
-      );
-      if (checkResult.ok && checkResult.data?.value?.length > 0) {
-        const existing = checkResult.data.value[0];
-        let msg = `Already exists (ID: ${existing.Id || existing.id})`;
-        if (ac.assignedRole) msg += `. Assigned role: ${ac.assignedRole}`;
-        if (ac.sla) msg += `. SLA: ${ac.sla}`;
-        results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "exists", message: msg, id: existing.Id || existing.id });
-        continue;
+      const checkEndpoints = actionsServiceAvailable
+        ? [actionsCatalogUrl, odataCatalogUrl]
+        : [odataCatalogUrl];
+
+      let alreadyExists = false;
+      for (const checkUrl of checkEndpoints) {
+        const checkResult = await uipathFetch(
+          `${checkUrl}?$filter=Name eq '${odataEscape(ac.taskCatalog)}'&$top=1`,
+          { headers: hdrs, label: "AC Check", maxRetries: 1 }
+        );
+        if (checkResult.ok && checkResult.data?.value?.length > 0) {
+          const existing = checkResult.data.value[0];
+          let msg = `Already exists (ID: ${existing.Id || existing.id})`;
+          if (ac.assignedRole) msg += `. Assigned role: ${ac.assignedRole}`;
+          if (ac.sla) msg += `. SLA: ${ac.sla}`;
+          results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "exists", message: msg, id: existing.Id || existing.id });
+          alreadyExists = true;
+          break;
+        }
+      }
+      if (alreadyExists) continue;
+
+      if (actionsServiceAvailable) {
+        console.log(`[UiPath Deploy] Trying Actions microservice for catalog "${ac.taskCatalog}"...`);
+        const actionsCreateResult = await uipathFetch(actionsCatalogUrl, {
+          method: "POST",
+          headers: hdrs,
+          body: JSON.stringify({ Name: ac.taskCatalog, Description: truncDesc(ac.description) }),
+          label: "AC Actions Create",
+          maxRetries: 1,
+        });
+
+        if (actionsCreateResult.ok || actionsCreateResult.status === 201) {
+          const creation = isValidCreation(actionsCreateResult.text);
+          if (creation.valid) {
+            let msg = `Created via Actions microservice (ID: ${creation.data?.Id || creation.data?.id || "unknown"})`;
+            if (ac.assignedRole) msg += `. Assigned role: ${ac.assignedRole}`;
+            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg, id: creation.data?.Id || creation.data?.id });
+            continue;
+          }
+        }
+
+        if (actionsCreateResult.status === 409 || actionsCreateResult.text.includes("already exists")) {
+          results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "exists", message: "Already exists (detected via Actions microservice)" });
+          continue;
+        }
+
+        console.log(`[UiPath Deploy] Actions microservice returned ${actionsCreateResult.status} for "${ac.taskCatalog}", falling back to OData...`);
       }
 
       const createResult = await uipathFetch(odataCatalogUrl, {
         method: "POST",
         headers: hdrs,
         body: JSON.stringify({ Name: ac.taskCatalog, Description: truncDesc(ac.description) }),
-        label: "AC Create Catalog",
+        label: "AC OData Create",
         maxRetries: 1,
       });
 
@@ -1335,7 +1396,7 @@ async function provisionActionCenter(
           );
           if (verifyResult.ok && verifyResult.data?.value?.length > 0) {
             const verified = verifyResult.data.value[0];
-            let msg = `Created and verified (ID: ${verified.Id || verified.id})`;
+            let msg = `Created and verified via OData (ID: ${verified.Id || verified.id})`;
             if (ac.assignedRole) msg += `. Assigned role: ${ac.assignedRole}`;
             results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg, id: verified.Id || verified.id });
             continue;
@@ -1384,11 +1445,12 @@ async function provisionActionCenter(
         continue;
       }
 
-      let fallbackMsg = `API creation returned ${createResult.status} (OData) and ${taskResult.status} (GenericTask). `;
+      let fallbackMsg = `All API attempts failed — Actions microservice (${actionsServiceAvailable ? "tried" : "unavailable"}), OData (${createResult.status}), GenericTask (${taskResult.status}). `;
       fallbackMsg += `Create this catalog manually: Orchestrator → Action Center → Admin Settings → Add Catalog → Name: "${ac.taskCatalog}"`;
-      if (ac.description) fallbackMsg += `. Description: ${ac.description}`;
-      if (ac.assignedRole) fallbackMsg += `. Assign to role: ${ac.assignedRole}`;
-      if (ac.sla) fallbackMsg += `. SLA: ${ac.sla}`;
+      if (ac.description) fallbackMsg += ` | Description: ${ac.description}`;
+      if (ac.assignedRole) fallbackMsg += ` | Assign to role: ${ac.assignedRole}`;
+      if (ac.sla) fallbackMsg += ` | SLA: ${ac.sla}`;
+      if (ac.escalation) fallbackMsg += ` | Escalation: ${ac.escalation}`;
       results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: fallbackMsg });
     } catch (err: any) {
       results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "failed", message: `API error: ${err.message}` });
@@ -1572,6 +1634,7 @@ async function provisionTestCases(
   const tmBases = [
     `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/testmanager_`,
     `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/tmapi_`,
+    `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/testmanager`,
   ];
   const tmHdrs: Record<string, string> = {
     "Authorization": `Bearer ${tmToken}`,
@@ -1587,8 +1650,14 @@ async function provisionTestCases(
     try {
       const projRes = await uipathFetch(`${tmBase}/api/v2/Projects?$top=10`, {
         headers: tmHdrs, label: "TM Probe Projects", maxRetries: 1,
+        redirect: "manual" as any,
       });
       console.log(`[UiPath Deploy] Test Manager probe ${tmBase} -> ${projRes.status}: ${projRes.text.slice(0, 200)}`);
+
+      if (projRes.status >= 300 && projRes.status < 400) {
+        console.log(`[UiPath Deploy] Test Manager probe ${tmBase} returned redirect (${projRes.status}) — service may not be provisioned`);
+        continue;
+      }
 
       if (projRes.ok) {
         const genuineCheck = isGenuineServiceResponse(projRes.text);
@@ -1645,6 +1714,7 @@ async function provisionTestCases(
           description: truncDesc(`Test project for ${processName}`),
         }),
         label: "TM Create Project",
+        redirect: "manual" as any,
       });
       console.log(`[UiPath Deploy] Test project create -> ${createProjResult.status}: ${createProjResult.text.slice(0, 300)}`);
       if (createProjResult.status === 200 || createProjResult.status === 201) {
@@ -1652,14 +1722,43 @@ async function provisionTestCases(
         if (creation.valid && (creation.data?.Id || creation.data?.id)) {
           projectId = creation.data.Id || creation.data.id;
           projectPrefix = creation.data.Prefix || creation.data.prefix || creation.data.ProjectPrefix || creation.data.projectPrefix || prefix;
-          results.push({ artifact: "Test Project", name: projName, status: "created", message: `Created test project "${projName}" (ID: ${projectId}, Prefix: ${projectPrefix})`, id: projectId! });
+
+          let projectVerified = false;
+          try {
+            const verifyRes = await uipathFetch(`${activeTmBase}/api/v2/Projects/${projectId}`, {
+              headers: tmHdrs, label: "TM Verify Project", maxRetries: 1,
+              redirect: "manual" as any,
+            });
+            console.log(`[UiPath Deploy] Test project verification GET -> ${verifyRes.status}: ${verifyRes.text.slice(0, 200)}`);
+            if (verifyRes.ok && verifyRes.data && (verifyRes.data.Id || verifyRes.data.id)) {
+              projectVerified = true;
+              console.log(`[UiPath Deploy] Test project "${projName}" (ID: ${projectId}) verified successfully`);
+            } else {
+              const verifyGenuine = isGenuineApiResponse(verifyRes.text);
+              if (!verifyGenuine.genuine) {
+                console.warn(`[UiPath Deploy] Test project verification returned non-genuine response: ${verifyGenuine.reason}`);
+                projectId = null;
+              }
+            }
+          } catch (verifyErr: any) {
+            console.warn(`[UiPath Deploy] Test project verification error: ${verifyErr.message}`);
+          }
+
+          if (projectId) {
+            results.push({ artifact: "Test Project", name: projName, status: "created", message: `Created test project "${projName}" (ID: ${projectId}, Prefix: ${projectPrefix})${projectVerified ? " — verified" : " — unverified"}`, id: projectId! });
+          } else {
+            results.push({ artifact: "Test Project", name: projName, status: "failed", message: `Test project creation returned ${createProjResult.status} but post-creation verification failed — project ID may be invalid` });
+          }
         } else {
-          console.warn(`[UiPath Deploy] Test project creation returned ${createProjResult.status} but validation failed: ${creation.error}`);
+          const itemNotFoundMatch = creation.error?.match(/itemNotFound[:\s]*(.*)/i);
+          const errorDetail = itemNotFoundMatch ? `itemNotFound: ${itemNotFoundMatch[1] || "Unknown error"}` : creation.error;
+          console.warn(`[UiPath Deploy] Test project creation returned ${createProjResult.status} but validation failed: ${errorDetail}`);
+          results.push({ artifact: "Test Project", name: projName, status: "failed", message: `API returned ${createProjResult.status} but response validation failed: ${errorDetail}` });
         }
       } else if (createProjResult.status === 409 || createProjResult.text.includes("already exists")) {
         console.log(`[UiPath Deploy] Test project already exists, re-fetching...`);
         try {
-          const reListResult = await uipathFetch(`${activeTmBase}/api/v2/Projects?$top=50`, { headers: tmHdrs, label: "TM Re-list Projects", maxRetries: 1 });
+          const reListResult = await uipathFetch(`${activeTmBase}/api/v2/Projects?$top=50`, { headers: tmHdrs, label: "TM Re-list Projects", maxRetries: 1, redirect: "manual" as any });
           if (reListResult.ok) {
             const projects = reListResult.data?.data || reListResult.data?.value || [];
             const match = projects.find((p: any) =>
@@ -1720,14 +1819,24 @@ async function provisionTestCases(
           body: JSON.stringify(body),
           label: "TM Create TestCase V2",
           maxRetries: 1,
+          redirect: "manual" as any,
         });
         console.log(`[UiPath Deploy] Test Case "${tc.name}" via V2 -> ${tcResult.status}: ${tcResult.text.slice(0, 300)}`);
+
+        if (tcResult.status >= 300 && tcResult.status < 400) {
+          results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: `Test Manager returned redirect (${tcResult.status}) — service may have been redirected to login/HTML page. The base URL ${activeTmBase} may not be the correct TM endpoint.` });
+          continue;
+        }
 
         if (tcResult.status === 200 || tcResult.status === 201) {
           const creation = isValidCreation(tcResult.text);
           if (!creation.valid) {
-            console.warn(`[UiPath Deploy] Test Case "${tc.name}" got ${tcResult.status} but validation failed: ${creation.error}`);
-            results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: `API returned ${tcResult.status} but response invalid: ${creation.error}` });
+            const itemNotFoundMatch = creation.error?.match(/itemNotFound[:\s]*(.*)/i);
+            const errorDetail = itemNotFoundMatch
+              ? `itemNotFound: ${itemNotFoundMatch[1] || "Unknown error"} — the project ID ${projectId} may not be valid on this TM instance`
+              : creation.error;
+            console.warn(`[UiPath Deploy] Test Case "${tc.name}" got ${tcResult.status} but validation failed: ${errorDetail}`);
+            results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: `API returned ${tcResult.status} but response invalid: ${errorDetail}` });
             continue;
           }
           const createdId = creation.data?.Id || creation.data?.id;
@@ -1739,7 +1848,12 @@ async function provisionTestCases(
         } else if (tcResult.status === 409 || tcResult.text.includes("already exists")) {
           results.push({ artifact: "Test Case", name: tc.name, status: "exists", message: "Already exists" });
         } else {
-          results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: tcResult.error || `HTTP ${tcResult.status}: ${tcResult.text.slice(0, 200)}` });
+          let failMsg = tcResult.error || `HTTP ${tcResult.status}: ${tcResult.text.slice(0, 200)}`;
+          const itemNotFoundInError = failMsg.match(/itemNotFound[:\s]*(.*)/i);
+          if (itemNotFoundInError) {
+            failMsg = `itemNotFound: ${itemNotFoundInError[1] || "Unknown error"} — project ID ${projectId} may not resolve correctly on TM base URL ${activeTmBase}. Try verifying the project exists in Test Manager UI.`;
+          }
+          results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: failMsg });
         }
       } catch (err: any) {
         results.push({ artifact: "Test Case", name: tc.name, status: "failed", message: err.message });
@@ -1924,21 +2038,48 @@ async function preflightInfraProbe(
   }
 
   try {
-    const acProbeUrl = `${base}/odata/TaskCatalogs?$top=1`;
-    const acRes = await fetch(acProbeUrl, { headers: hdrs });
-    const acText = await acRes.text();
-    const acIsHTML = acText.trim().startsWith("<") || acText.includes("<!DOCTYPE");
-    if (acRes.ok && !acIsHTML) {
-      const genuineCheck = isGenuineServiceResponse(acText);
-      if (genuineCheck.genuine) {
-        result.actionCenter = { available: true, endpoint: "OData", message: "Action Center is licensed and available" };
-      } else {
-        result.actionCenter = { available: false, message: "Action Center endpoint returned non-genuine response" };
+    let acFound = false;
+
+    if (config) {
+      const actionsProbeUrl = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/actions_/api/v1/TaskCatalogs?$top=1`;
+      try {
+        const actionsRes = await fetch(actionsProbeUrl, { headers: hdrs });
+        const actionsText = await actionsRes.text();
+        const actionsIsHTML = actionsText.trim().startsWith("<") || actionsText.includes("<!DOCTYPE");
+        if (actionsRes.ok && !actionsIsHTML) {
+          const genuineCheck = isGenuineServiceResponse(actionsText);
+          if (genuineCheck.genuine) {
+            result.actionCenter = { available: true, endpoint: "Actions", message: "Action Center is licensed and available (Actions microservice)" };
+            acFound = true;
+          } else {
+            console.log(`[UiPath Probe] Actions microservice probe returned 200 but not genuine: ${genuineCheck.reason}`);
+          }
+        } else if (actionsRes.status === 401 || actionsRes.status === 403) {
+          result.actionCenter = { available: true, endpoint: "Actions", message: "Action Center Actions microservice detected (auth required)" };
+          acFound = true;
+        }
+      } catch (err: any) {
+        console.log(`[UiPath Probe] Actions microservice probe error: ${err.message}`);
       }
-    } else if (acRes.status === 401 || acRes.status === 403) {
-      result.actionCenter = { available: false, message: `Action Center returned ${acRes.status} — may need additional permissions or not licensed` };
-    } else {
-      result.actionCenter = { available: false, message: `Action Center not available (HTTP ${acRes.status})` };
+    }
+
+    if (!acFound) {
+      const acProbeUrl = `${base}/odata/TaskCatalogs?$top=1`;
+      const acRes = await fetch(acProbeUrl, { headers: hdrs });
+      const acText = await acRes.text();
+      const acIsHTML = acText.trim().startsWith("<") || acText.includes("<!DOCTYPE");
+      if (acRes.ok && !acIsHTML) {
+        const genuineCheck = isGenuineServiceResponse(acText);
+        if (genuineCheck.genuine) {
+          result.actionCenter = { available: true, endpoint: "OData", message: "Action Center is licensed and available" };
+        } else {
+          result.actionCenter = { available: false, message: "Action Center endpoint returned non-genuine response" };
+        }
+      } else if (acRes.status === 401 || acRes.status === 403) {
+        result.actionCenter = { available: false, message: `Action Center returned ${acRes.status} — may need additional permissions or not licensed` };
+      } else {
+        result.actionCenter = { available: false, message: `Action Center not available (HTTP ${acRes.status})` };
+      }
     }
   } catch (err: any) {
     result.actionCenter = { available: false, message: `Action Center probe error: ${err.message}` };
@@ -1947,21 +2088,44 @@ async function preflightInfraProbe(
   if (config) {
     const tmToken = await getTMToken(config);
     if (tmToken) {
-      const tmBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/testmanager_`;
-      try {
-        const tmHdrs = { "Authorization": `Bearer ${tmToken}`, "Content-Type": "application/json", "Accept": "application/json" };
-        const tmRes = await fetch(`${tmBase}/api/v2/projects?$top=1`, { headers: tmHdrs, redirect: "manual" });
-        const tmText = await tmRes.text();
-        const tmIsHTML = tmText.trim().startsWith("<") || tmText.includes("<!DOCTYPE");
-        if (tmRes.ok && !tmIsHTML) {
-          result.testManager = { available: true, endpoint: tmBase, message: "Test Manager is licensed and available (separate TM token)" };
-        } else if (tmRes.status === 401) {
-          result.testManager = { available: false, message: "Test Manager returned 401 — TM scopes may not be authorized for this tenant" };
-        } else {
-          result.testManager = { available: false, message: `Test Manager returned HTTP ${tmRes.status}${tmIsHTML ? " (HTML redirect — service not provisioned)" : ""}` };
+      const tmProbeBases = [
+        `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/testmanager_`,
+        `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/tmapi_`,
+        `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/testmanager`,
+      ];
+      let tmFound = false;
+      for (const tmBase of tmProbeBases) {
+        try {
+          const tmHdrs = { "Authorization": `Bearer ${tmToken}`, "Content-Type": "application/json", "Accept": "application/json" };
+          const tmRes = await fetch(`${tmBase}/api/v2/projects?$top=1`, { headers: tmHdrs, redirect: "manual" });
+          if (tmRes.status >= 300 && tmRes.status < 400) {
+            console.log(`[UiPath Probe] TM probe ${tmBase} returned redirect (${tmRes.status}) — skipping`);
+            continue;
+          }
+          const tmText = await tmRes.text();
+          const tmIsHTML = tmText.trim().startsWith("<") || tmText.includes("<!DOCTYPE");
+          if (tmRes.ok && !tmIsHTML) {
+            const genuineCheck = isGenuineServiceResponse(tmText);
+            if (genuineCheck.genuine) {
+              result.testManager = { available: true, endpoint: tmBase, message: `Test Manager is licensed and available at ${tmBase} (separate TM token)` };
+              tmFound = true;
+              break;
+            } else {
+              console.log(`[UiPath Probe] TM probe ${tmBase} returned 200 but not genuine: ${genuineCheck.reason}`);
+            }
+          } else if (tmRes.status === 401) {
+            result.testManager = { available: false, message: "Test Manager returned 401 — TM scopes may not be authorized for this tenant" };
+            tmFound = true;
+            break;
+          } else {
+            console.log(`[UiPath Probe] TM probe ${tmBase} -> ${tmRes.status}${tmIsHTML ? " (HTML)" : ""}`);
+          }
+        } catch (err: any) {
+          console.log(`[UiPath Probe] TM probe ${tmBase} error: ${err.message}`);
         }
-      } catch (err: any) {
-        result.testManager = { available: false, message: `Test Manager probe error: ${err.message}` };
+      }
+      if (!tmFound) {
+        result.testManager = { available: false, message: `Test Manager not available — tried ${tmProbeBases.length} base URL patterns, none returned a genuine API response` };
       }
     } else {
       result.testManager = { available: false, message: "Could not acquire TM-scoped token — Test Manager scopes may not be available" };

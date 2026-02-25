@@ -5,6 +5,7 @@ import { processMapStorage } from "./process-map-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
 import { getPlatformCapabilities } from "./uipath-integration";
+import { generateRichXamlFromSpec, generateDeveloperHandoffGuide, aggregateGaps as aggGapsImport } from "./xaml-generator";
 import { evaluateTransition } from "./stage-transition";
 import { z } from "zod";
 import {
@@ -24,7 +25,60 @@ Format your response as sections separated by "## " headings. Each section shoul
 
 const SDD_PROMPT = `(Legacy fallback — see SDD_PROSE_PROMPT and SDD_ARTIFACTS_PROMPT for active prompts)`;
 
-const UIPATH_PROMPT = `Based on the approved SDD, generate a UiPath automation package structure. Output a JSON object with this shape: { "projectName": "string", "description": "string", "dependencies": ["array of UiPath package names"], "workflows": [{ "name": "string", "description": "string", "steps": [{ "activity": "string", "properties": {}, "notes": "string" }] }] }. Be as specific as possible. Return ONLY the JSON object, no other text.`;
+const UIPATH_PROMPT = `Based on the approved SDD, generate a detailed UiPath automation package specification. Output a JSON object with this exact shape:
+
+{
+  "projectName": "string (PascalCase, no spaces)",
+  "description": "string",
+  "dependencies": [
+    "UiPath.System.Activities",
+    "UiPath.UIAutomation.Activities",
+    "... other specific UiPath package names needed"
+  ],
+  "workflows": [
+    {
+      "name": "string (PascalCase filename without .xaml)",
+      "description": "string",
+      "variables": [
+        {
+          "name": "string (camelCase variable name)",
+          "type": "String|Int32|Boolean|DataTable|Object|DateTime|Array<String>|Dictionary<String,Object>",
+          "defaultValue": "optional default value or empty string",
+          "scope": "workflow|sequence (where this variable is declared)"
+        }
+      ],
+      "steps": [
+        {
+          "activity": "string (human-readable step description)",
+          "activityType": "string (exact UiPath activity name, e.g. ui:TypeInto, ui:Click, ui:GetText, ui:OpenBrowser, ui:ExcelApplicationScope, ui:ReadRange, ui:WriteRange, ui:SendSmtpMailMessage, ui:GetImapMailMessage, ui:HttpClient, ui:ExecuteQuery, ui:ReadTextFile, ui:WriteTextFile, ui:AddQueueItem, ui:GetTransactionItem, ui:SetTransactionStatus, ui:LogMessage, ui:Assign, ui:Delay, ui:MessageBox, If, ForEach, While, Switch, TryCatch, RetryScope, InvokeWorkflowFile)",
+          "activityPackage": "string (UiPath package namespace, e.g. UiPath.UIAutomation.Activities, UiPath.Excel.Activities, UiPath.Mail.Activities, UiPath.WebAPI.Activities, UiPath.Database.Activities, UiPath.System.Activities)",
+          "properties": {
+            "key": "value (activity-specific properties like Selector, Input, Output, FileName, SheetName, URL, Method, Headers, Body, Query, Timeout, etc.)"
+          },
+          "selectorHint": "string or null (placeholder UI selector pattern for UI activities, e.g. '<html app=\"chrome\" /><webctrl tag=\"input\" id=\"username\" />' with TODO comments for elements needing real selectors)",
+          "errorHandling": "retry|catch|escalate|none (retry = wrap in RetryScope, catch = wrap in TryCatch, escalate = catch + Action Center escalation, none = no special handling)",
+          "notes": "string (implementation notes, business rules, or TODO items for the developer)"
+        }
+      ]
+    }
+  ]
+}
+
+IMPORTANT RULES:
+- Use SPECIFIC UiPath activity names in activityType (e.g. "ui:TypeInto" not just "Type Into")
+- For UI automation steps, always include a selectorHint with a realistic placeholder selector pattern and TODO comment
+- For system interaction steps (UI, API, DB, email), set errorHandling to "retry" or "catch"
+- For human-in-the-loop steps, set errorHandling to "escalate"
+- Include ALL variables needed by the workflow in the variables array
+- Include specific properties for each activity (e.g. Selector, Input, Output, FileName, URL, Method, etc.)
+- Map decision points to If/Switch activities with Condition properties
+- Map loops to ForEach/While activities
+- Include initialization steps (config read, variable setup) at the start of Main workflow
+- Include cleanup/logging steps at the end
+- List ALL required UiPath package dependencies
+- Be as specific and production-ready as possible
+
+Return ONLY the JSON object, no other text.`;
 
 const uipathPackageSchema = z.object({
   projectName: z.string().default("UiPathPackage"),
@@ -33,9 +87,19 @@ const uipathPackageSchema = z.object({
   workflows: z.array(z.object({
     name: z.string().default("Main"),
     description: z.string().default(""),
+    variables: z.array(z.object({
+      name: z.string().default("variable"),
+      type: z.string().default("String"),
+      defaultValue: z.string().optional().default(""),
+      scope: z.string().optional().default("workflow"),
+    })).optional().default([]),
     steps: z.array(z.object({
       activity: z.string().default("Activity"),
+      activityType: z.string().optional().default("ui:Comment"),
+      activityPackage: z.string().optional().default("UiPath.System.Activities"),
       properties: z.record(z.unknown()).default({}),
+      selectorHint: z.string().nullable().optional().default(null),
+      errorHandling: z.enum(["retry", "catch", "escalate", "none"]).optional().default("none"),
       notes: z.string().default(""),
     })).default([]),
   })).default([]),
@@ -734,6 +798,9 @@ ${content}`
         return res.status(500).json({ message: "Invalid package data" });
       }
 
+      const sdd = await documentStorage.getLatestDocument(ideaId, "SDD");
+      const sddContent = sdd?.content || "";
+
       const archiverModule = require("archiver") as typeof import("archiver");
       const archive = (archiverModule as any)("zip", { zlib: { level: 9 } });
 
@@ -742,13 +809,36 @@ ${content}`
 
       archive.pipe(res);
 
+      const { generateInitAllSettingsXaml: genInit, aggregatePackages: aggPkgs } = require("./xaml-generator");
+      const allXamlResults: any[] = [];
+
+      const workflows = pkg.workflows || [];
+      for (const wf of workflows) {
+        const result = generateRichXamlFromSpec(wf, sddContent || undefined);
+        allXamlResults.push(result);
+        archive.append(result.xaml, { name: `${wf.name || "Workflow"}.xaml` });
+      }
+
+      const initXaml = genInit();
+      archive.append(initXaml, { name: "InitAllSettings.xaml" });
+
+      const richPkgs = aggPkgs(allXamlResults);
+      const depMap: Record<string, string> = {};
+      for (const d of (pkg.dependencies || [])) {
+        depMap[d] = "*";
+      }
+      for (const rp of richPkgs) {
+        if (!depMap[rp]) depMap[rp] = "*";
+      }
+      if (!depMap["UiPath.Excel.Activities"]) {
+        depMap["UiPath.Excel.Activities"] = "*";
+      }
+
       const projectJson = {
         name: pkg.projectName || idea.title.replace(/\s+/g, "_"),
         description: pkg.description || idea.description,
         main: "Main.xaml",
-        dependencies: Object.fromEntries(
-          (pkg.dependencies || []).map((d: string) => [d, "*"])
-        ),
+        dependencies: depMap,
         schemaVersion: "4.0",
         studioVersion: "23.10.0",
         projectVersion: "1.0.0",
@@ -756,11 +846,7 @@ ${content}`
       };
       archive.append(JSON.stringify(projectJson, null, 2), { name: "project.json" });
 
-      const workflows = pkg.workflows || [];
-      for (const wf of workflows) {
-        const xamlContent = generateXamlStub(wf);
-        archive.append(xamlContent, { name: `${wf.name || "Workflow"}.xaml` });
-      }
+      archive.append("Settings\nName,Value,Description\nOrchestratorURL,,Orchestrator base URL\nProcessTimeout,30,Max process timeout in minutes\nMaxRetries,3,Maximum retry attempts\n\nConstants\nName,Value,Description\nApplicationName," + (pkg.projectName || "Automation") + ",Process name\nVersion,1.0.0,Package version", { name: "Data/Config.xlsx" });
 
       let readme = `# ${pkg.projectName || idea.title}\n\n`;
       readme += `${pkg.description || idea.description}\n\n`;
@@ -781,6 +867,19 @@ ${content}`
         }
       }
       archive.append(readme, { name: "README.md" });
+
+      const allGapsForDhg = aggGapsImport(allXamlResults);
+      const allUsedPkgsForDhg = Object.keys(depMap);
+      const wfNamesForDhg = workflows.map((wf: any) => (wf.name || "Workflow").replace(/\s+/g, "_"));
+      const dhgContent = generateDeveloperHandoffGuide({
+        projectName: pkg.projectName || idea.title.replace(/\s+/g, "_"),
+        description: pkg.description || idea.description,
+        gaps: allGapsForDhg,
+        usedPackages: allUsedPkgsForDhg,
+        workflowNames: wfNamesForDhg,
+        sddContent: sddContent || undefined,
+      });
+      archive.append(dhgContent, { name: "DeveloperHandoffGuide.md" });
 
       await archive.finalize();
     } catch (error) {
@@ -1103,31 +1202,9 @@ ${content}`
   });
 }
 
-function generateXamlStub(workflow: any): string {
-  const steps = workflow.steps || [];
-  let activities = "";
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
-    activities += `
-        <!-- Step ${i + 1}: ${step.activity || "Activity"} -->
-        <!-- Notes: ${step.notes || "N/A"} -->
-        <!-- Properties: ${JSON.stringify(step.properties || {})} -->
-        <ui:Comment DisplayName="Step ${i + 1}: ${escapeXml(step.activity || "Activity")}" Text="${escapeXml(step.notes || "")}" />`;
-  }
-
-  return `<?xml version="1.0" encoding="utf-8"?>
-<Activity mc:Ignorable="sap sap2010" x:Class="${workflow.name || "Workflow"}"
-  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
-  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
-  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
-  xmlns:ui="http://schemas.uipath.com/workflow/activities"
-  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <Sequence DisplayName="${escapeXml(workflow.name || "Main Sequence")}">
-    <Sequence.Variables />
-    <!-- ${escapeXml(workflow.description || "Auto-generated workflow")} -->${activities}
-  </Sequence>
-</Activity>`;
+function generateXamlStub(workflow: any, sddContent?: string): string {
+  const result = generateRichXamlFromSpec(workflow, sddContent);
+  return result.xaml;
 }
 
 function escapeXml(str: string): string {

@@ -3,6 +3,16 @@ import { appSettings } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import archiver from "archiver";
 import { PassThrough } from "stream";
+import {
+  generateRichXamlFromSpec,
+  generateInitAllSettingsXaml,
+  aggregateGaps,
+  aggregatePackages,
+  generateDeveloperHandoffGuide,
+  generateDhgSummary,
+  type XamlGeneratorResult,
+  type XamlGap,
+} from "./xaml-generator";
 
 export type UiPathConfig = {
   orgName: string;
@@ -155,17 +165,20 @@ async function getAccessToken(config: UiPathConfig): Promise<string> {
   return data.access_token;
 }
 
-function buildXaml(className: string, displayName: string, activities: string): string {
+function buildXaml(className: string, displayName: string, activities: string, variablesBlock?: string): string {
+  const vars = variablesBlock || "<Sequence.Variables />";
   return `<?xml version="1.0" encoding="utf-8"?>
 <Activity mc:Ignorable="sap sap2010" x:Class="${escapeXml(className)}"
   xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Data;assembly=System.Data"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Sequence DisplayName="${escapeXml(displayName)}">
-    <Sequence.Variables />${activities}
+    ${vars}${activities}
   </Sequence>
 </Activity>`;
 }
@@ -181,12 +194,92 @@ function generateUuid(): string {
   return uuid;
 }
 
-async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<Buffer> {
-  return new Promise<Buffer>((resolve, reject) => {
+function generateConfigXlsx(pkg: any, sddContent?: string): string {
+  const settingsRows: string[][] = [["Name", "Value", "Description"]];
+  const constantsRows: string[][] = [["Name", "Value", "Description"]];
+
+  if (sddContent) {
+    const section9Match = sddContent.match(/## 9[\.\s][^\n]+\n([\s\S]*?)(?=## \d+\.|$)/);
+    if (section9Match) {
+      const artifactMatch = section9Match[1].match(/```orchestrator_artifacts\s*\n([\s\S]*?)\n```/);
+      if (artifactMatch) {
+        try {
+          const artifacts = JSON.parse(artifactMatch[1]);
+          if (artifacts.assets) {
+            for (const asset of artifacts.assets) {
+              if (asset.type === "Credential") {
+                settingsRows.push([asset.name, "", asset.description || `Credential: ${asset.name}`]);
+              } else {
+                settingsRows.push([asset.name, asset.value || "", asset.description || ""]);
+              }
+            }
+          }
+        } catch { /* parse error */ }
+      }
+    }
+
+    const section4Match = sddContent.match(/## 4[\.\s][^\n]+\n([\s\S]*?)(?=## \d+\.|$)/);
+    if (section4Match) {
+      const urlMatches = section4Match[1].match(/https?:\/\/[^\s)>"]+/g);
+      if (urlMatches) {
+        const seen = new Set<string>();
+        for (const url of urlMatches) {
+          if (!seen.has(url)) {
+            seen.add(url);
+            constantsRows.push([`URL_${seen.size}`, url, `Integration endpoint`]);
+          }
+        }
+      }
+    }
+  }
+
+  if (settingsRows.length === 1) {
+    settingsRows.push(["OrchestratorURL", "", "Orchestrator base URL"]);
+    settingsRows.push(["ProcessTimeout", "30", "Max process timeout in minutes"]);
+    settingsRows.push(["MaxRetries", "3", "Maximum retry attempts"]);
+    settingsRows.push(["LogLevel", "Info", "Logging level (Info/Warn/Error)"]);
+  }
+
+  if (constantsRows.length === 1) {
+    constantsRows.push(["ApplicationName", pkg.projectName || "Automation", "Process name"]);
+    constantsRows.push(["Version", "1.0.0", "Package version"]);
+    constantsRows.push(["MaxWaitTime", "30000", "Max wait time in milliseconds"]);
+    constantsRows.push(["RetryInterval", "5000", "Retry interval in milliseconds"]);
+  }
+
+  let xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Settings" sheetId="1" r:id="rId1"/>
+    <sheet name="Constants" sheetId="2" r:id="rId2"/>
+  </sheets>
+  <definedNames/>
+</workbook>
+<!-- CONFIG DATA (Tab-separated for import into Excel) -->
+<!-- Settings Sheet -->
+`;
+
+  for (const row of settingsRows) {
+    xml += `<!-- ${row.join("\t")} -->\n`;
+  }
+  xml += `<!-- Constants Sheet -->\n`;
+  for (const row of constantsRows) {
+    xml += `<!-- ${row.join("\t")} -->\n`;
+  }
+
+  let csvSettings = settingsRows.map(r => r.join(",")).join("\n");
+  let csvConstants = constantsRows.map(r => r.join(",")).join("\n");
+
+  return `Settings\n${csvSettings}\n\nConstants\n${csvConstants}`;
+}
+
+async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<{ buffer: Buffer; gaps: XamlGap[]; usedPackages: string[] }> {
+  return new Promise<{ buffer: Buffer; gaps: XamlGap[]; usedPackages: string[] }>((resolve, reject) => {
     const buffers: Buffer[] = [];
     const passthrough = new PassThrough();
     passthrough.on("data", (chunk: Buffer) => buffers.push(chunk));
-    passthrough.on("end", () => resolve(Buffer.concat(buffers)));
+    passthrough.on("end", () => resolve({ buffer: Buffer.concat(buffers), gaps: allGaps, usedPackages: allUsedPkgs }));
     passthrough.on("error", reject);
 
     const archive = archiver("zip", { zlib: { level: 9 } });
@@ -194,6 +287,7 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<B
 
     const projectName = (pkg.projectName || "Automation").replace(/\s+/g, "_");
     const libPath = "lib/net45";
+    const xamlResults: XamlGeneratorResult[] = [];
 
     const contentTypesXml = `<?xml version="1.0" encoding="utf-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -202,6 +296,8 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<B
   <Default Extension="psmdcp" ContentType="application/vnd.openxmlformats-package.core-properties+xml" />
   <Default Extension="xaml" ContentType="application/octet" />
   <Default Extension="json" ContentType="application/json" />
+  <Default Extension="csv" ContentType="text/csv" />
+  <Default Extension="xlsx" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
 </Types>`;
     archive.append(contentTypesXml, { name: "[Content_Types].xml" });
 
@@ -229,9 +325,73 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<B
     };
     if (pkg.dependencies) {
       for (const d of pkg.dependencies) {
-        deps[d] = "*";
+        if (!deps[d]) deps[d] = "*";
       }
     }
+
+    const workflows = pkg.workflows || [];
+    let hasMain = false;
+    const sddContent = pkg._sddContent || "";
+
+    for (const wf of workflows) {
+      const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
+
+      const result = generateRichXamlFromSpec(wf, sddContent || undefined);
+      xamlResults.push(result);
+
+      archive.append(result.xaml, { name: `${libPath}/${wfName}.xaml` });
+      if (wfName === "Main") hasMain = true;
+
+      console.log(`[UiPath] Generated rich XAML for "${wfName}": ${result.gaps.length} gaps, ${result.usedPackages.length} packages`);
+    }
+
+    const initXaml = generateInitAllSettingsXaml();
+    archive.append(initXaml, { name: `${libPath}/InitAllSettings.xaml` });
+
+    if (!hasMain) {
+      let mainActivities = `
+        <ui:InvokeWorkflowFile DisplayName="Initialize Settings" WorkflowFileName="InitAllSettings.xaml" />`;
+      if (workflows.length > 0) {
+        for (const wf of workflows) {
+          const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
+          mainActivities += `
+        <ui:InvokeWorkflowFile DisplayName="Run ${escapeXml(wf.name || wfName)}" WorkflowFileName="${wfName}.xaml" />`;
+        }
+      } else {
+        mainActivities += `
+        <ui:Comment DisplayName="Auto-generated by CannonBall" Text="This automation package was generated from the CannonBall pipeline. Open this project in UiPath Studio to build out the workflow logic." />
+        <ui:Comment DisplayName="Process: ${escapeXml(projectName)}" Text="${escapeXml(pkg.description || "")}" />`;
+      }
+      mainActivities += `
+        <ui:LogMessage Level="Info" Message="'Process completed successfully'" DisplayName="Log Completion" />`;
+      const mainXaml = buildXaml("Main", `${projectName} - Main Workflow`, mainActivities);
+      archive.append(mainXaml, { name: `${libPath}/Main.xaml` });
+    }
+
+    const configCsv = generateConfigXlsx(pkg, sddContent || undefined);
+    archive.append(configCsv, { name: `${libPath}/Data/Config.xlsx` });
+
+    const richPackages = aggregatePackages(xamlResults);
+    const packageVersionMap: Record<string, string> = {
+      "UiPath.System.Activities": "[23.10.0]",
+      "UiPath.UIAutomation.Activities": "[23.10.0]",
+      "UiPath.Web.Activities": "[1.18.0]",
+      "UiPath.Excel.Activities": "[2.22.0]",
+      "UiPath.Mail.Activities": "[1.20.0]",
+      "UiPath.Database.Activities": "[1.8.0]",
+    };
+    for (const rp of richPackages) {
+      if (!deps[rp]) {
+        deps[rp] = packageVersionMap[rp] || "*";
+      }
+    }
+
+    if (!deps["UiPath.Excel.Activities"]) {
+      deps["UiPath.Excel.Activities"] = "[2.22.0]";
+    }
+
+    const allGaps = aggregateGaps(xamlResults);
+    const allUsedPkgs = Object.keys(deps);
 
     const entryPointId = generateUuid();
     const projectJson = {
@@ -279,41 +439,6 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<B
     };
     archive.append(JSON.stringify(projectJson, null, 2), { name: `${libPath}/project.json` });
 
-    const workflows = pkg.workflows || [];
-    let hasMain = false;
-
-    for (const wf of workflows) {
-      const steps = wf.steps || [];
-      let activities = "";
-      for (let i = 0; i < steps.length; i++) {
-        const step = steps[i];
-        activities += `
-        <ui:Comment DisplayName="Step ${i + 1}: ${escapeXml(step.activity || "Activity")}" Text="${escapeXml(step.notes || "")}" />`;
-      }
-
-      const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
-      const xaml = buildXaml(wfName, wf.name || "Main Sequence", activities);
-      archive.append(xaml, { name: `${libPath}/${wfName}.xaml` });
-      if (wfName === "Main") hasMain = true;
-    }
-
-    if (!hasMain) {
-      let mainActivities = "";
-      if (workflows.length > 0) {
-        for (const wf of workflows) {
-          const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
-          mainActivities += `
-        <ui:InvokeWorkflowFile DisplayName="Run ${escapeXml(wf.name || wfName)}" WorkflowFileName="${wfName}.xaml" />`;
-        }
-      } else {
-        mainActivities = `
-        <ui:Comment DisplayName="Auto-generated by CannonBall" Text="This automation package was generated from the CannonBall pipeline. Open this project in UiPath Studio to build out the workflow logic." />
-        <ui:Comment DisplayName="Process: ${escapeXml(projectName)}" Text="${escapeXml(pkg.description || "")}" />`;
-      }
-      const mainXaml = buildXaml("Main", `${projectName} - Main Workflow`, mainActivities);
-      archive.append(mainXaml, { name: `${libPath}/Main.xaml` });
-    }
-
     const depEntries = Object.entries(deps).map(
       ([id, ver]) => `      <dependency id="${id}" version="${ver}" />`
     ).join("\n");
@@ -335,6 +460,18 @@ ${depEntries}
 </package>`;
     archive.append(nuspecXml, { name: `${projectName}.nuspec` });
 
+    const workflowNames = workflows.map((wf: any) => (wf.name || "Workflow").replace(/\s+/g, "_"));
+    const dhg = generateDeveloperHandoffGuide({
+      projectName,
+      description: pkg.description || "",
+      gaps: allGaps,
+      usedPackages: allUsedPkgs,
+      workflowNames,
+      sddContent: sddContent || undefined,
+    });
+    archive.append(dhg, { name: `${libPath}/DeveloperHandoffGuide.md` });
+    console.log(`[UiPath] Generated Developer Handoff Guide: ${allGaps.length} gaps, ~${(allGaps.reduce((s: number, g: XamlGap) => s + g.estimatedMinutes, 0) / 60).toFixed(1)}h effort`);
+
     archive.finalize();
   });
 }
@@ -349,9 +486,10 @@ async function uploadToOrchestrator(
   pkg: any,
   projectName: string,
   version: string
-): Promise<{ ok: boolean; status: number; responseText: string }> {
-  const nupkgBuffer = await buildNuGetPackage(pkg, version);
-  console.log(`[UiPath] Built .nupkg for "${projectName}" v${version} — ${nupkgBuffer.length} bytes`);
+): Promise<{ ok: boolean; status: number; responseText: string; gaps: XamlGap[] }> {
+  const buildResult = await buildNuGetPackage(pkg, version);
+  const nupkgBuffer = buildResult.buffer;
+  console.log(`[UiPath] Built .nupkg for "${projectName}" v${version} — ${nupkgBuffer.length} bytes (${buildResult.gaps.length} gaps, ${buildResult.usedPackages.length} packages)`);
 
   const fileName = `${projectName}.${version}.nupkg`;
   const boundary = `----FormBoundary${Date.now()}`;
@@ -387,7 +525,7 @@ async function uploadToOrchestrator(
   console.log(`[UiPath] Upload response status: ${uploadRes.status}`);
   console.log(`[UiPath] Upload response body: ${responseText.slice(0, 1000)}`);
 
-  return { ok: uploadRes.ok, status: uploadRes.status, responseText };
+  return { ok: uploadRes.ok, status: uploadRes.status, responseText, gaps: buildResult.gaps };
 }
 
 export async function pushToUiPath(pkg: any): Promise<{ success: boolean; message: string; details?: any }> {
@@ -470,6 +608,8 @@ export async function pushToUiPath(pkg: any): Promise<{ success: boolean; messag
           `• Search for "${uploadedId}"`,
         ];
 
+    const dhgSummary = result.gaps.length > 0 ? generateDhgSummary(result.gaps) : "";
+
     const successMsg = [
       `Package "${uploadedId}" v${uploadedVersion} uploaded successfully${folderInfo}.`,
       ``,
@@ -480,6 +620,7 @@ export async function pushToUiPath(pkg: any): Promise<{ success: boolean; messag
       `Type: ${projectType}`,
       `Org: ${config.orgName} / Tenant: ${config.tenantName}`,
       ...(config.folderName ? [`Folder: ${config.folderName}`] : []),
+      ...(dhgSummary ? [``, `---`, ``, dhgSummary] : []),
     ].join("\n");
 
     return {
@@ -495,6 +636,8 @@ export async function pushToUiPath(pkg: any): Promise<{ success: boolean; messag
         orchestratorUrl: orchUrl,
         folderName: config.folderName || null,
         folderId: config.folderId || null,
+        gapCount: result.gaps.length,
+        dhgSummary: dhgSummary || null,
       },
     };
   } catch (err: any) {
@@ -1560,14 +1703,37 @@ export async function probeServiceAvailability(): Promise<ServiceAvailabilityMap
     result.orchestrator = orchRes.ok;
     if (!orchRes.ok) return result;
 
-    const [acRes, envRes, trigRes, schedRes] = await Promise.all([
+    const actionsProbeUrl = `${base}/actions_/api/v1/TaskCatalogs?$top=1`;
+    const [actionsAcRes, acRes, envRes, trigRes, schedRes] = await Promise.all([
+      fetch(actionsProbeUrl, { headers: hdrs }).catch(() => null),
       fetch(`${orchBase}/odata/TaskCatalogs?$top=1`, { headers: hdrs }).catch(() => null),
       fetch(`${orchBase}/odata/Environments?$top=1`, { headers: hdrs }).catch(() => null),
       fetch(`${orchBase}/odata/QueueTriggers?$top=1`, { headers: hdrs }).catch(() => null),
       fetch(`${orchBase}/odata/ProcessSchedules?$top=1`, { headers: hdrs }).catch(() => null),
     ]);
 
-    if (acRes) {
+    let acDetermined = false;
+    if (actionsAcRes) {
+      if (actionsAcRes.ok) {
+        const actionsText = await actionsAcRes.text();
+        const isHTML = actionsText.trim().startsWith("<");
+        if (!isHTML) {
+          try {
+            const data = JSON.parse(actionsText);
+            const isGenuine = !(data.errorCode || data["odata.error"] || (data.message && typeof data.message === "string" && data.message.includes("not onboarded")));
+            if (isGenuine) {
+              result.actionCenter = true;
+              acDetermined = true;
+            }
+          } catch { }
+        }
+      } else if (actionsAcRes.status === 401 || actionsAcRes.status === 403) {
+        result.actionCenter = true;
+        acDetermined = true;
+      }
+    }
+
+    if (!acDetermined && acRes) {
       if (acRes.ok) {
         const acText = await acRes.text();
         const isHTML = acText.trim().startsWith("<");
@@ -1582,6 +1748,8 @@ export async function probeServiceAvailability(): Promise<ServiceAvailabilityMap
       } else {
         result.actionCenter = false;
       }
+    } else if (!acDetermined) {
+      result.actionCenter = false;
     }
 
     if (envRes) {
