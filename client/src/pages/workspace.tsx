@@ -20,7 +20,7 @@ import {
   Pencil,
   FileText,
   ListChecks,
-  Map,
+  Map as MapIcon,
   MessageSquare,
   ListPlus,
   Download,
@@ -1809,7 +1809,7 @@ export default function Workspace() {
 
   const mobileTabs = [
     { id: "stages" as MobileTab, label: "Stages", icon: ListChecks },
-    { id: "map" as MobileTab, label: "Map", icon: Map },
+    { id: "map" as MobileTab, label: "Map", icon: MapIcon },
     { id: "chat" as MobileTab, label: "Chat", icon: MessageSquare },
   ];
 

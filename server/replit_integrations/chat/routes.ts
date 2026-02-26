@@ -194,6 +194,7 @@ DOCUMENT GENERATION:
 - When you generate or regenerate a PDD or SDD, you MUST start your response with exactly [DOC:PDD:0] or [DOC:SDD:0] followed immediately by the full document content. The system uses this tag to save the document as a new version. Without the tag, the document will NOT be saved and deployment will use stale content.
 - Example: [DOC:SDD:0]## 1. Automation Architecture Overview\\n...rest of SDD...
 - The number after the colon (0) is a placeholder — the system assigns the real ID.
+- IMPORTANT: Do NOT include [STEP:] tags inside [DOC:PDD:0] or [DOC:SDD:0] document content. The system automatically appends the process map from the database as a formatted table. Write the TO-BE and AS-IS process sections as narrative prose describing the automated flow — do not output raw [STEP:] tags inside documents.
 - DOCUMENT APPROVALS happen through a Confirm button that appears on the document card in the UI. Do NOT ask users to say "approved" in chat. Instead, tell them to use the Approve/Confirm button on the document card that appears above.
 - After the user approves a document via the button, the system records the approval. You will see this in the document context above. Do not re-ask for approval if it is already approved.
 
@@ -590,6 +591,44 @@ export function registerChatRoutes(app: Express): void {
 
       if (detectedDocType && docContent.length > 100) {
         try {
+          docContent = docContent.replace(/\[STEP:\s*[\d.]+\s+[^\]]*\]/g, "").replace(/\n{3,}/g, "\n\n").trim();
+
+          try {
+            const mapViewType = detectedDocType === "SDD" ? "to-be" : "as-is";
+            const mapNodes = await processMapStorage.getNodesByIdeaId(ideaId, mapViewType);
+            const fallbackNodes = mapNodes.length === 0 && mapViewType === "to-be"
+              ? await processMapStorage.getNodesByIdeaId(ideaId, "as-is")
+              : mapNodes;
+            
+            if (fallbackNodes.length > 0) {
+              const mapEdges = await processMapStorage.getEdgesByIdeaId(ideaId, mapNodes.length > 0 ? mapViewType : "as-is");
+              const nodeMap = new Map(fallbackNodes.map(n => [n.id, n]));
+              
+              let processMapSection = `\n\n### Process Map (${mapNodes.length > 0 ? mapViewType : "as-is"})\n\n`;
+              processMapSection += `| # | Step | Role | System | Type |\n`;
+              processMapSection += `|---|------|------|--------|------|\n`;
+              fallbackNodes.forEach((node, idx) => {
+                processMapSection += `| ${idx + 1} | ${node.name} | ${node.role || "-"} | ${node.system || "-"} | ${node.nodeType || "task"} |\n`;
+              });
+
+              if (mapEdges.length > 0) {
+                processMapSection += `\n**Process Flow:**\n`;
+                mapEdges.forEach(edge => {
+                  const src = nodeMap.get(edge.sourceNodeId);
+                  const tgt = nodeMap.get(edge.targetNodeId);
+                  if (src && tgt) {
+                    processMapSection += `- ${src.name} → ${tgt.name}${edge.label ? ` (${edge.label})` : ""}\n`;
+                  }
+                });
+              }
+
+              docContent += processMapSection;
+              console.log(`[Chat] Injected ${fallbackNodes.length}-node process map into ${detectedDocType}`);
+            }
+          } catch (mapErr: any) {
+            console.warn(`[Chat] Could not inject process map into ${detectedDocType}:`, mapErr?.message);
+          }
+
           const existing = await documentStorage.getLatestDocument(ideaId, detectedDocType);
           const version = existing ? existing.version + 1 : 1;
           if (existing && existing.status !== "approved") {

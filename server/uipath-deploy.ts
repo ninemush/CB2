@@ -581,6 +581,11 @@ async function assignMachineToFolder(
       body: { machineIds: [machineId] },
       label: "AssignMachines (legacy path)",
     },
+    {
+      url: `${base}/odata/Folders(${folderId})/UiPath.Server.Configuration.OData.AssignMachines`,
+      body: { assignments: { MachineIds: [machineId] } },
+      label: "AssignMachines (legacy with assignments wrapper)",
+    },
   ];
 
   for (const ep of endpoints) {
@@ -626,7 +631,11 @@ async function provisionMachines(
         if (checkData.value?.length > 0) {
           machineId = checkData.value[0].Id;
           const folderAssign = await assignMachineToFolder(base, hdrs, machineId!);
-          results.push({ artifact: "Machine", name: m.name, status: "exists", message: `Already exists (ID: ${machineId}). ${folderAssign.message}`, id: machineId ?? undefined });
+          const folderStatus = folderAssign.success ? "exists" : "exists" as const;
+          const folderNote = folderAssign.success
+            ? folderAssign.message
+            : `Not in current folder — assign manually: Orchestrator > Folder Settings > Machines. ${folderAssign.message}`;
+          results.push({ artifact: "Machine", name: m.name, status: folderStatus, message: `Already exists at tenant level (ID: ${machineId}). ${folderNote}`, id: machineId ?? undefined });
           continue;
         }
       }
@@ -664,9 +673,13 @@ async function provisionMachines(
         if (verify.exists) {
           machineId = verify.id ? Number(verify.id) : null;
           let folderMsg = "";
+          let folderOk = true;
           if (machineId) {
             const folderAssign = await assignMachineToFolder(base, hdrs, machineId);
-            folderMsg = ` ${folderAssign.message}`;
+            folderOk = folderAssign.success;
+            folderMsg = folderAssign.success
+              ? ` ${folderAssign.message}`
+              : ` WARNING: Not assigned to folder — assign manually: Orchestrator > Folder Settings > Machines. ${folderAssign.message}`;
           }
           results.push({ artifact: "Machine", name: m.name, status: "created", message: `Created and verified (ID: ${verify.id}, Type: Template).${folderMsg}`, id: verify.id });
         } else {
@@ -2046,7 +2059,7 @@ async function provisionTestCases(
             artifact: "Test Case",
             name: tc.name,
             status: "failed" as const,
-            message: `All TestCases API endpoints returned errors. Project "${processName}" (ID: ${projectId}) was created successfully — test cases must be added via the Test Manager UI. Attempts: ${attemptDetails.join(" | ")}`,
+            message: `All TestCases API endpoints returned errors. Project "${processName}" (ID: ${projectId}) was created successfully. Add test cases manually: Test Manager > Projects > "${processName}" > New Test Case. The TestCases API may require TM.TestCases.Write scope or a newer Test Manager version. Attempts: ${attemptDetails.join(" | ")}`,
           });
         }
       } catch (err: any) {
@@ -2591,7 +2604,7 @@ async function provisionRobotAccounts(
         artifact: "Robot Account",
         name: ra.name,
         status: "failed" as const,
-        message: `Robot account creation API not accessible on this tenant. Identity API returns web page instead of API response, and OData Users rejects Robot type creation. Robot accounts must be created via UiPath Admin Portal. Machine templates have been provisioned and will be used once a robot account is assigned.`,
+        message: `Robot account requires manual setup. Create in Admin Portal: Tenant > Manage Access > Robot Accounts, then assign to the target folder with Executor role. Required API scopes (PM.RobotAccount, PM.RobotAccount.Write, OR.Users.Write) are not accessible on this tenant. Machine templates have been provisioned and will be used once a robot account is assigned.`,
       });
     }
   }
