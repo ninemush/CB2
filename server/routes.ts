@@ -25,22 +25,38 @@ export async function registerRoutes(
 ): Promise<Server> {
   const PgStore = connectPgSimple(session);
 
-  app.use(
-    session({
-      store: new PgStore({
-        conString: process.env.DATABASE_URL,
-        createTableIfMissing: true,
-      }),
-      secret: process.env.SESSION_SECRET || "cannonball-dev-secret",
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        secure: false,
-        httpOnly: true,
-        maxAge: 24 * 60 * 60 * 1000,
-      },
-    })
-  );
+  const pgStore = new PgStore({
+    conString: process.env.DATABASE_URL,
+    createTableIfMissing: true,
+    errorLog: (err: Error) => {
+      console.error("[Session Store]", err.message);
+    },
+  });
+
+  const sessionMiddleware = session({
+    store: pgStore,
+    secret: process.env.SESSION_SECRET || "cannonball-dev-secret",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: false,
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1000,
+    },
+  });
+
+  app.use((req, res, next) => {
+    sessionMiddleware(req, res, (err) => {
+      if (err) {
+        console.error("[Session]", err.message);
+        if (req.path.startsWith("/api/")) {
+          return res.status(500).json({ message: "Session error" });
+        }
+        return next();
+      }
+      next();
+    });
+  });
 
   await seedDemoUsers();
   await seedDemoIdeas();
