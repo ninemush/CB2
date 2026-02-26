@@ -848,18 +848,20 @@ function ChatPanel({ idea }: { idea: Idea }) {
 
           const hasStepNumbers = steps.some(s => s.stepNumber);
 
-          const dedupedSteps = hasStepNumbers
-            ? Array.from(
-                steps.reduce((map, step) => {
-                  const key = step.stepNumber || step.name;
-                  map.set(key, step);
-                  return map;
-                }, new Map<string, typeof steps[0]>()).values()
-              )
-            : steps.filter((step, idx, arr) => {
-                const norm = normalizeName(step.name);
-                return arr.findIndex(s => normalizeName(s.name) === norm) === idx;
-              });
+          let dedupedSteps: typeof steps;
+          if (hasStepNumbers) {
+            const stepMap = new Map();
+            for (const step of steps) {
+              const key = step.stepNumber || step.name;
+              stepMap.set(key, step);
+            }
+            dedupedSteps = Array.from(stepMap.values());
+          } else {
+            dedupedSteps = steps.filter((step, idx, arr) => {
+              const norm = normalizeName(step.name);
+              return arr.findIndex(s => normalizeName(s.name) === norm) === idx;
+            });
+          }
 
           const dedupedHasStart = dedupedSteps.some(s => s.nodeType === "start");
           const dedupedHasEnd = dedupedSteps.some(s => s.nodeType === "end");
