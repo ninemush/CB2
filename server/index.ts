@@ -57,7 +57,9 @@ process.on("unhandledRejection", (reason) => {
 
 process.on("uncaughtException", (err) => {
   console.error("[FATAL] Uncaught exception:", err);
-  process.exit(1);
+  if (process.env.NODE_ENV === "production") {
+    process.exit(1);
+  }
 });
 
 (async () => {
