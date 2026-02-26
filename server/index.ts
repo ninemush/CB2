@@ -82,6 +82,11 @@ process.on("uncaughtException", (err) => {
     if (process.env.NODE_ENV === "production") {
       serveStatic(app);
     } else {
+      const originalExit = process.exit;
+      process.exit = ((code?: number) => {
+        console.warn(`[DEV] process.exit(${code}) intercepted — server staying alive. Stack:`, new Error().stack);
+      }) as never;
+
       const { setupVite } = await import("./vite");
       await setupVite(httpServer, app);
     }
