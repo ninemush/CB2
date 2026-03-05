@@ -1852,7 +1852,7 @@ export async function probeServiceAvailability(): Promise<ServiceAvailabilityMap
     if (!orchRes.ok) return result;
 
     const [acRes, envRes, trigRes, schedRes] = await Promise.all([
-      fetch(`${orchBase}/tasks/taskCatalogs?$top=1`, { headers: hdrs }).catch(() => null),
+      fetch(`${orchBase}/odata/TaskCatalogs?$top=1`, { headers: hdrs }).catch(() => null),
       fetch(`${orchBase}/odata/Environments?$top=1`, { headers: hdrs }).catch(() => null),
       fetch(`${orchBase}/odata/QueueTriggers?$top=1`, { headers: hdrs }).catch(() => null),
       fetch(`${orchBase}/odata/ProcessSchedules?$top=1`, { headers: hdrs }).catch(() => null),

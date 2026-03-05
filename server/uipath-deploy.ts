@@ -1293,8 +1293,8 @@ async function provisionActionCenter(
     acHdrs["X-UIPATH-OrganizationUnitId"] = config.folderId;
   }
 
-  const catalogUrl = `${base}/tasks/taskCatalogs`;
-  const odataCatalogUrl = `${base}/odata/TaskCatalogs`;
+  const catalogUrl = `${base}/odata/TaskCatalogs`;
+  const odataCatalogUrl = catalogUrl;
   const genericTaskUrl = `${base}/tasks/GenericTasks/CreateTask`;
   const odataUnboundActionUrl = `${base}/odata/Tasks/UiPathODataSvc.CreateTask`;
 
@@ -2156,6 +2156,8 @@ async function preflightInfraProbe(
         type: u.Type || "User",
         rolesList: u.RolesList || [],
       }));
+    } else {
+      console.log(`[UiPath Probe] GetUsersForFolder returned ${userRes.status} — will derive user info from robots`);
     }
   } catch (err: any) {
     console.warn(`[UiPath Probe] Users probe failed: ${err.message}`);
@@ -2193,7 +2195,7 @@ async function preflightInfraProbe(
   }
 
   try {
-    const acProbeUrl = `${base}/tasks/taskCatalogs?$top=1`;
+    const acProbeUrl = `${base}/odata/TaskCatalogs?$top=1`;
     const acRes = await fetch(acProbeUrl, { headers: hdrs });
     const acText = await acRes.text();
     const acIsHTML = acText.trim().startsWith("<") || acText.includes("<!DOCTYPE");
@@ -2213,56 +2215,45 @@ async function preflightInfraProbe(
     result.actionCenter = { available: false, message: `Action Center probe error: ${err.message}` };
   }
 
-  if (config) {
-    let tmToken: string | null = null;
-    try {
-      tmToken = await getSharedToken();
-    } catch (err: any) {
-      console.warn(`[UiPath Probe] Could not acquire token for TM probe: ${err.message}`);
+  try {
+    const tmOdataUrl = `${base}/odata/TestSets?$top=1`;
+    const tmRes = await fetch(tmOdataUrl, { headers: hdrs });
+    if (tmRes.ok) {
+      const tmText = await tmRes.text();
+      const tmIsHTML = tmText.trim().startsWith("<") || tmText.includes("<!DOCTYPE");
+      if (!tmIsHTML) {
+        const genuineCheck = isGenuineServiceResponse(tmText);
+        if (genuineCheck.genuine) {
+          result.testManager = { available: true, endpoint: "Orchestrator", message: "Test Manager is licensed and available (via Orchestrator OData)" };
+        } else {
+          result.testManager = { available: false, message: `Test Manager OData returned non-genuine response: ${genuineCheck.reason}` };
+        }
+      } else {
+        result.testManager = { available: false, message: "Test Manager OData returned HTML" };
+      }
+    } else if (tmRes.status === 401 || tmRes.status === 403) {
+      result.testManager = { available: false, message: `Test Manager returned ${tmRes.status} — may need additional permissions` };
+    } else {
+      result.testManager = { available: false, message: `Test Manager not available (HTTP ${tmRes.status})` };
     }
-    if (tmToken) {
-      const primaryTmBase = getTestManagerBaseUrl(config as UiPathAuthConfig);
-      const tmProbeBases = [
-        primaryTmBase,
-        `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/tmapi_`,
-      ];
-      let tmFound = false;
-      for (const tmBase of tmProbeBases) {
-        try {
-          const tmHdrs = { "Authorization": `Bearer ${tmToken}`, "Content-Type": "application/json", "Accept": "application/json" };
-          const tmRes = await fetch(`${tmBase}/api/v2/projects?$top=1`, { headers: tmHdrs, redirect: "manual" });
-          if (tmRes.status >= 300 && tmRes.status < 400) {
-            console.log(`[UiPath Probe] TM probe ${tmBase} returned redirect (${tmRes.status}) — skipping`);
-            continue;
-          }
-          const tmText = await tmRes.text();
-          const tmIsHTML = tmText.trim().startsWith("<") || tmText.includes("<!DOCTYPE");
-          if (tmRes.ok && !tmIsHTML) {
-            const genuineCheck = isGenuineServiceResponse(tmText);
-            if (genuineCheck.genuine) {
-              result.testManager = { available: true, endpoint: tmBase, message: `Test Manager is licensed and available at ${tmBase}` };
-              tmFound = true;
-              break;
-            } else {
-              console.log(`[UiPath Probe] TM probe ${tmBase} returned 200 but not genuine: ${genuineCheck.reason}`);
-            }
-          } else if (tmRes.status === 401) {
-            result.testManager = { available: false, message: "Test Manager returned 401 — TM scopes may not be authorized for this tenant" };
-            tmFound = true;
-            break;
-          } else {
-            console.log(`[UiPath Probe] TM probe ${tmBase} -> ${tmRes.status}${tmIsHTML ? " (HTML)" : ""}`);
-          }
-        } catch (err: any) {
-          console.log(`[UiPath Probe] TM probe ${tmBase} error: ${err.message}`);
+  } catch (err: any) {
+    result.testManager = { available: false, message: `Test Manager probe error: ${err.message}` };
+  }
+
+  if (config) {
+    const primaryTmBase = getTestManagerBaseUrl(config as UiPathAuthConfig);
+    try {
+      const tmToken = await getSharedToken();
+      const tmHdrs = { "Authorization": `Bearer ${tmToken}`, "Content-Type": "application/json", "Accept": "application/json" };
+      const tmProjRes = await fetch(`${primaryTmBase}/api/v2/Projects?$top=1`, { headers: tmHdrs, redirect: "manual" });
+      if (tmProjRes.ok) {
+        const tmText = await tmProjRes.text();
+        const genuineCheck = isGenuineServiceResponse(tmText);
+        if (genuineCheck.genuine) {
+          result.testManager = { available: true, endpoint: primaryTmBase, message: `Test Manager is licensed and available (TM API + Orchestrator OData)` };
         }
       }
-      if (!tmFound) {
-        result.testManager = { available: false, message: `Test Manager not available — tried ${tmProbeBases.length} base URL patterns, none returned a genuine API response` };
-      }
-    } else {
-      result.testManager = { available: false, message: "Could not acquire token for TM probe — check UiPath credentials" };
-    }
+    } catch { }
   }
 
   console.log(`[UiPath Probe] Infrastructure: ${result.machines.length} machines, ${result.users.length} users, ${result.sessions.length} sessions, ${result.robots.length} robots | Action Center: ${result.actionCenter.available ? "✓" : "✗"} | Test Manager: ${result.testManager.available ? "✓" : "✗"}`);
@@ -2297,6 +2288,14 @@ function formatInfraProbeResults(probe: InfraProbeResult): DeploymentResult[] {
       name: "Users/Robot Accounts",
       status: robotUsers.length > 0 ? "exists" : "skipped",
       message: `Found ${probe.users.length} user(s) in folder${robotUsers.length > 0 ? ` (${robotUsers.length} robot account(s))` : ""}`,
+    });
+  } else if (probe.robots.length > 0) {
+    const unattendedRobots = probe.robots.filter(r => r.type === "Unattended" || r.type === "NonProduction");
+    results.push({
+      artifact: "Infrastructure",
+      name: "Users/Robot Accounts",
+      status: unattendedRobots.length > 0 ? "exists" : "skipped",
+      message: `Found ${probe.robots.length} robot(s)${unattendedRobots.length > 0 ? ` (${unattendedRobots.length} Unattended)` : " — none are Unattended type"}`,
     });
   } else {
     results.push({

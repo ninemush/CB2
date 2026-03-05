@@ -601,7 +601,7 @@ export function registerUiPathRoutes(app: Express): void {
       // ── ACTION CENTER ──
       {
         const sec: any = { artifact: "ActionCenter", steps: [] };
-        const catalogsUrl = `${base}/tasks/taskCatalogs`;
+        const catalogsUrl = `${base}/odata/TaskCatalogs`;
         const probeCatalogs = await safeCall("probe_catalogs", `${catalogsUrl}?$top=1`, { headers: hdrs });
         sec.steps.push({ step: "probe_catalogs", url: `${catalogsUrl}?$top=1`, ...probeCatalogs });
 

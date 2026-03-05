@@ -473,7 +473,7 @@ export async function getMachines(): Promise<Machine[]> {
 
 export async function getActionCatalog(): Promise<ActionCatalog[]> {
   try {
-    const res = await orchRequest<ODataResponse<ActionCatalog>>("/tasks/taskCatalogs?$top=50");
+    const res = await orchRequest<ODataResponse<ActionCatalog>>("/odata/TaskCatalogs?$top=50");
     return res?.value || [];
   } catch (err: any) {
     if (err.statusCode === 404 || err.statusCode === 403) return [];

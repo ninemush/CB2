@@ -187,25 +187,32 @@ export async function checkActionCenterLicense(): Promise<CheckResult> {
 export async function checkTestManagerLicense(): Promise<CheckResult> {
   try {
     const testSets = await orch.getTestSets();
-    if (testSets.length >= 0) {
-      return {
-        name: "Test Manager",
-        status: "pass",
-        detail: `Test Manager reachable (${testSets.length} test set(s))`,
-      };
-    }
     return {
       name: "Test Manager",
-      status: "warning",
-      detail: "Test Manager returned empty response",
-      remediation: "Test Manager may not be licensed. Test gate (Stage 9) will be skipped.",
+      status: "pass",
+      detail: `Test Manager reachable (${testSets.length} test set(s))`,
     };
-  } catch (err: any) {
+  } catch {
+    try {
+      const config = await getConfig();
+      if (config) {
+        const headers = await getHeaders();
+        const base = getBaseUrl(config as any);
+        const res = await fetch(`${base}/odata/TestSets?$top=1`, { headers });
+        if (res.ok) {
+          return {
+            name: "Test Manager",
+            status: "pass",
+            detail: "Test Manager reachable (via Orchestrator OData)",
+          };
+        }
+      }
+    } catch { }
     return {
       name: "Test Manager",
       status: "warning",
       detail: "Test Manager not available on this tenant",
-      remediation: "Test Manager is not licensed or enabled. Test execution will be skipped, and publish will proceed without the test gate.",
+      remediation: "Test Manager requires a specific license. Test gate (Stage 9) will be skipped.",
     };
   }
 }
