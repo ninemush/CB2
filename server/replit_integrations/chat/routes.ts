@@ -58,9 +58,12 @@ function buildSystemPrompt(ideaTitle: string, currentStage: string, docContext?:
     if (serviceAvailability.triggers) available.push("Triggers (queue and time-based)");
     else unavailable.push("Triggers API");
 
-    serviceContext = `\n\nUIPath SERVICE AVAILABILITY (probed from the connected Orchestrator):
+    const allMajorAvailable = serviceAvailability.actionCenter && serviceAvailability.documentUnderstanding && serviceAvailability.testManager;
+    serviceContext = `\n\nUIPath SERVICE AVAILABILITY (LIVE PROBE — just now from the connected Orchestrator):
 - AVAILABLE: ${available.join(", ")}
-- NOT AVAILABLE: ${unavailable.length > 0 ? unavailable.join(", ") : "All services available"}`;
+- NOT AVAILABLE: ${unavailable.length > 0 ? unavailable.join(", ") : "All services available"}
+
+CRITICAL OVERRIDE: This service availability data was probed LIVE from the connected Orchestrator seconds ago. It is the authoritative, current truth. Previous messages in this conversation may contain older document versions that claimed different service availability — those are OUTDATED and WRONG. You MUST use ONLY the current probe results above. Do NOT copy or reproduce service availability claims from previous SDD versions in the chat history.${allMajorAvailable ? "\nAll major platform services (Action Center, Document Understanding, Test Manager) are AVAILABLE and WORKING. You MUST design the solution to USE them. Do NOT generate a 'Future Enhancements — Additional Services' section for any service listed as AVAILABLE above. Only mention genuinely unavailable services (if any) in Future Enhancements." : ""}`;
   }
 
   return `You are the CannonBall automation design assistant. Your job is to guide Process SMEs through designing business process automations. You are AI-first — you lead, you draft, you build. The SME's job is to give you information, refine your output, and approve it. They should never have to figure out what to do next — you always tell them.
@@ -387,8 +390,22 @@ export function registerChatRoutes(app: Express): void {
 
       const history = await chatStorage.getRecentMessagesByIdeaId(ideaId, 80);
       const filteredHistory = history.filter((m) => m.role === "user" || m.role === "assistant");
+
+      const lastSddIdx = filteredHistory.map((m, i) => m.role === "assistant" && m.content.startsWith("[DOC:SDD:") ? i : -1).filter(i => i >= 0).pop() ?? -1;
+      const lastPddIdx = filteredHistory.map((m, i) => m.role === "assistant" && m.content.startsWith("[DOC:PDD:") ? i : -1).filter(i => i >= 0).pop() ?? -1;
+
+      const cleanedHistory = filteredHistory.map((m, i) => {
+        if (m.role === "assistant" && m.content.startsWith("[DOC:SDD:") && i !== lastSddIdx) {
+          return { ...m, content: "[Previous SDD version — superseded. See current document status in system context.]" };
+        }
+        if (m.role === "assistant" && m.content.startsWith("[DOC:PDD:") && i !== lastPddIdx) {
+          return { ...m, content: "[Previous PDD version — superseded. See current document status in system context.]" };
+        }
+        return m;
+      });
+
       const merged: { role: "user" | "assistant"; content: string }[] = [];
-      for (const m of filteredHistory) {
+      for (const m of cleanedHistory) {
         const role = m.role as "user" | "assistant";
         if (merged.length > 0 && merged[merged.length - 1].role === role) {
           merged[merged.length - 1].content += "\n\n" + m.content;
