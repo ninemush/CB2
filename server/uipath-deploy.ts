@@ -1448,13 +1448,53 @@ async function provisionActionCenter(
       }
 
       if (!created) {
+        attemptedEndpoints.push(`POST ${genericTaskUrl} (OData typed)`);
+        const genericTaskBody = {
+          "@odata.type": "#UiPath.Server.Configuration.OData.CreateTaskParameters",
+          Title: `${ac.taskCatalog} - Auto Provision`,
+          Type: "ExternalTask",
+          Priority: "Medium",
+        };
+        const taskResult = await uipathFetch(genericTaskUrl, {
+          method: "POST", headers: acHdrs,
+          body: JSON.stringify(genericTaskBody),
+          label: "AC GenericTask OData Typed", maxRetries: 1,
+        });
+        console.log(`[UiPath Deploy] AC GenericTask OData Typed "${ac.taskCatalog}" -> ${taskResult.status}: ${taskResult.text.slice(0, 500)}`);
+
+        if (taskResult.ok || taskResult.status === 201) {
+          await new Promise(r => setTimeout(r, 1500));
+          const recheck = await uipathFetch(
+            `${odataCatalogUrl}?$filter=Name eq '${odataEscape(ac.taskCatalog)}'&$top=1`,
+            { headers: acHdrs, label: "AC Recheck after GenericTask", maxRetries: 1 }
+          );
+          if (recheck.ok && recheck.data?.value?.length > 0) {
+            const verified = recheck.data.value[0];
+            let msg = `Task Catalog created via task provisioning (Catalog ID: ${verified.Id || verified.id})`;
+            if (ac.assignedRole) msg += `. Assigned role: ${ac.assignedRole}`;
+            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg, id: verified.Id || verified.id });
+            created = true;
+          } else {
+            let taskId: string | undefined;
+            try { const td = JSON.parse(taskResult.text); taskId = td.Id || td.id; } catch {}
+            let msg = `ExternalTask created (Task ID: ${taskId || "unknown"}) referencing catalog "${ac.taskCatalog}". Direct catalog creation is not supported via API on this tenant — the catalog will auto-provision when the task is processed in Action Center, or you can create it manually in Orchestrator UI`;
+            if (ac.assignedRole) msg += `. Assign role: ${ac.assignedRole}`;
+            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg, id: taskId });
+            created = true;
+          }
+        } else {
+          const detail = `GenericTask OData Typed POST -> ${taskResult.status}: ${taskResult.text.slice(0, 500)}`;
+          failureDetails.push(detail);
+        }
+      }
+
+      if (!created) {
         attemptedEndpoints.push(`POST ${odataUnboundActionUrl}`);
         const odataActionBody = {
           taskDefinitionName: "ExternalTask",
           taskCatalogName: ac.taskCatalog,
           title: `${ac.taskCatalog} - Auto Provision`,
           priority: "Medium",
-          data: JSON.stringify({ source: "CannonBall", description: ac.description || "" }),
         };
         const odataActionResult = await uipathFetch(odataUnboundActionUrl, {
           method: "POST", headers: acHdrs,
@@ -1464,78 +1504,29 @@ async function provisionActionCenter(
         console.log(`[UiPath Deploy] AC OData Unbound Action "${ac.taskCatalog}" -> ${odataActionResult.status}: ${odataActionResult.text.slice(0, 500)}`);
 
         if (odataActionResult.ok || odataActionResult.status === 201) {
-          await new Promise(r => setTimeout(r, 1500));
-          const recheck = await uipathFetch(
-            `${odataCatalogUrl}?$filter=Name eq '${odataEscape(ac.taskCatalog)}'&$top=1`,
-            { headers: acHdrs, label: "AC Recheck after OData Action", maxRetries: 1 }
-          );
-          if (recheck.ok && recheck.data?.value?.length > 0) {
-            const verified = recheck.data.value[0];
-            let msg = `Created via OData unbound action (Catalog ID: ${verified.Id || verified.id})`;
-            if (ac.assignedRole) msg += `. Assigned role: ${ac.assignedRole}`;
-            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg, id: verified.Id || verified.id });
-            created = true;
-          } else {
-            let msg = `Task created via OData unbound action referencing catalog "${ac.taskCatalog}" — catalog may auto-provision on first task processing`;
-            if (ac.assignedRole) msg += `. Assign role: ${ac.assignedRole}`;
-            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg });
-            created = true;
-          }
+          let msg = `Task created via OData unbound action referencing catalog "${ac.taskCatalog}"`;
+          if (ac.assignedRole) msg += `. Assign role: ${ac.assignedRole}`;
+          results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg });
+          created = true;
         } else {
           const detail = `OData Unbound Action POST -> ${odataActionResult.status}: ${odataActionResult.text.slice(0, 500)}`;
           failureDetails.push(detail);
-          if (odataActionResult.status === 405) {
-            console.warn(`[UiPath Deploy] AC OData Unbound Action returned 405 (Method Not Allowed). Full response: ${odataActionResult.text}`);
-          }
-        }
-      }
-
-      if (!created) {
-        attemptedEndpoints.push(`POST ${genericTaskUrl}`);
-        const taskBody = { Title: `${ac.taskCatalog} - Provision`, Priority: "Medium", TaskCatalogName: ac.taskCatalog, Type: "ExternalTask" };
-        const taskResult = await uipathFetch(genericTaskUrl, {
-          method: "POST", headers: acHdrs,
-          body: JSON.stringify(taskBody),
-          label: "AC GenericTask", maxRetries: 1,
-        });
-        console.log(`[UiPath Deploy] AC GenericTask "${ac.taskCatalog}" -> ${taskResult.status}: ${taskResult.text.slice(0, 500)}`);
-
-        if (taskResult.ok || taskResult.status === 201) {
-          await new Promise(r => setTimeout(r, 1000));
-          const recheck = await uipathFetch(
-            `${odataCatalogUrl}?$filter=Name eq '${odataEscape(ac.taskCatalog)}'&$top=1`,
-            { headers: acHdrs, label: "AC Recheck", maxRetries: 1 }
-          );
-          if (recheck.ok && recheck.data?.value?.length > 0) {
-            const verified = recheck.data.value[0];
-            let msg = `Created via task provisioning (Catalog ID: ${verified.Id || verified.id})`;
-            if (ac.assignedRole) msg += `. Assigned role: ${ac.assignedRole}`;
-            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg, id: verified.Id || verified.id });
-            created = true;
-          } else {
-            let msg = `Task created referencing catalog "${ac.taskCatalog}" — catalog auto-provisions on first task processing`;
-            if (ac.assignedRole) msg += `. Assign role: ${ac.assignedRole}`;
-            results.push({ artifact: "Action Center", name: ac.taskCatalog, status: "created", message: msg });
-            created = true;
-          }
-        } else {
-          const detail = `GenericTask POST -> ${taskResult.status}: ${taskResult.text.slice(0, 500)}`;
-          failureDetails.push(detail);
-          if (taskResult.status === 405) {
-            console.warn(`[UiPath Deploy] AC GenericTask returned 405 (Method Not Allowed). Full response: ${taskResult.text}`);
-          }
         }
       }
 
       if (!created) {
         const orchUrl = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_/actioncenter`;
-        const endpointsList = attemptedEndpoints.map((ep, i) => `  ${i + 1}. ${ep}`).join("\n");
+        const statusCodes = failureDetails.map(d => { const m = d.match(/-> (\d+):/); return m ? m[1] : "unknown"; });
+        const allAre405 = statusCodes.length > 0 && statusCodes.every(s => s === "405");
+        const statusSummary = allAre405
+          ? `all ${attemptedEndpoints.length} endpoints returned 405 Method Not Allowed — this is a UiPath Cloud tenant restriction where Task Catalog creation is not exposed via API`
+          : `all ${attemptedEndpoints.length} endpoints failed (status codes: ${statusCodes.join(", ")})`;
         const failuresList = failureDetails.map((d, i) => `  ${i + 1}. ${d}`).join("\n");
         results.push({
           artifact: "Action Center",
           name: ac.taskCatalog,
           status: "failed" as const,
-          message: `Task Catalog creation failed after trying ${attemptedEndpoints.length} endpoint(s). Attempted:\n${endpointsList}\nFailure details:\n${failuresList}\nThe Action Center service is detected but programmatic catalog creation may require UiPath Automation Cloud Enterprise or OR.Tasks + OR.Administration scopes. Create manually via Orchestrator UI: ${orchUrl}`,
+          message: `Task Catalog creation failed — ${statusSummary}.\n\nFailure details:\n${failuresList}\n\nCreate manually in Orchestrator UI: ${orchUrl}\n\n1. Go to Action Center > Task Catalogs\n2. Click "+ Add Task Catalog"\n3. Name: "${ac.taskCatalog}"${ac.description ? `\n4. Description: "${ac.description}"` : ""}${ac.assignedRole ? `\n5. Assign role: ${ac.assignedRole}` : ""}`,
         });
       }
     } catch (err: any) {
