@@ -1710,14 +1710,15 @@ export async function autoDetectUiPathScopes(): Promise<{
     };
   }
 
-  const scopeString = detectedScopes.join(" ");
+  const orScopes = detectedScopes.filter(s => s.startsWith("OR."));
+  const scopeString = orScopes.join(" ");
   await upsertSetting("uipath_scopes", scopeString);
 
   return {
     status: "synced",
     detectedScopes,
     previousScopes,
-    message: `Auto-detected and saved ${detectedScopes.length} scopes from UiPath.`,
+    message: `Auto-detected and saved ${orScopes.length} OR scopes from UiPath. TM scopes are requested separately (UiPath requires separate tokens per resource).`,
   };
 }
 
@@ -1771,23 +1772,39 @@ export async function verifyUiPathScopes(): Promise<{ success: boolean; requeste
       ? { available: true, message: "Accessible" }
       : { available: false, message: `HTTP ${taskCatRes.status} — Action Center may not be enabled or needs OR.Tasks scope` };
 
-    const tmBases = [
-      `${base}/testmanager_/api/v2/projects?$top=1`,
-      `${base}/tmapi_/api/v2/projects?$top=1`,
-    ];
     let tmAvailable = false;
     let tmMsg = "";
-    for (const tmUrl of tmBases) {
-      try {
-        const tmRes = await fetch(tmUrl, { headers: hdrs });
-        if (tmRes.ok) {
-          tmAvailable = true;
-          tmMsg = "Accessible";
-          break;
-        } else {
-          tmMsg = `HTTP ${tmRes.status}`;
-        }
-      } catch { tmMsg = "Not reachable"; }
+
+    try {
+      const { getTmToken } = await import("./uipath-auth");
+      const tmTok = await getTmToken();
+      const tmHdrs: Record<string, string> = { Authorization: `Bearer ${tmTok}`, "Content-Type": "application/json" };
+      const tmBases = [
+        `${base}/testmanager_/api/v2/projects?$top=1`,
+        `${base}/tmapi_/api/v2/projects?$top=1`,
+      ];
+      for (const tmUrl of tmBases) {
+        try {
+          const tmRes = await fetch(tmUrl, { headers: tmHdrs });
+          if (tmRes.ok) {
+            tmAvailable = true;
+            tmMsg = "Accessible (TM token)";
+            break;
+          } else {
+            tmMsg = `HTTP ${tmRes.status}`;
+          }
+        } catch { tmMsg = "Not reachable"; }
+      }
+    } catch (err: any) {
+      tmMsg = `TM token unavailable: ${err.message}`;
+    }
+
+    if (!tmAvailable) {
+      const orchTmRes = await fetch(`${orchBase}/odata/TestSets?$top=1`, { headers: hdrs }).catch(() => null);
+      if (orchTmRes?.ok) {
+        tmAvailable = true;
+        tmMsg = "Accessible (via Orchestrator OData)";
+      }
     }
     serviceChecks["Test Manager"] = { available: tmAvailable, message: tmAvailable ? tmMsg : `Not available on this tenant (${tmMsg})` };
 
@@ -1801,14 +1818,28 @@ export async function verifyUiPathScopes(): Promise<{ success: boolean; requeste
         : { available: false, message: `Not reachable (DU: ${duRes.status}, AI Center: ${aiRes.status})` };
     }
 
+    let tmGrantedScopes: string[] = [];
+    try {
+      const { getTmToken } = await import("./uipath-auth");
+      const tmTok = await getTmToken();
+      const tmParts = tmTok.split(".");
+      if (tmParts.length === 3) {
+        const tmPayload = JSON.parse(Buffer.from(tmParts[1], "base64").toString("utf-8"));
+        if (tmPayload.scope) {
+          tmGrantedScopes = Array.isArray(tmPayload.scope) ? tmPayload.scope : tmPayload.scope.split(/\s+/);
+        }
+      }
+    } catch {}
+
+    const allGrantedScopes = [...grantedScopes, ...tmGrantedScopes];
     const availableCount = Object.values(serviceChecks).filter(s => s.available).length;
     const totalCount = Object.keys(serviceChecks).length;
 
     return {
       success: true,
       requestedScopes,
-      grantedScopes,
-      message: `Token obtained successfully. ${availableCount}/${totalCount} services accessible.`,
+      grantedScopes: allGrantedScopes,
+      message: `Token obtained successfully. ${availableCount}/${totalCount} services accessible. OR scopes: ${grantedScopes.length}, TM scopes: ${tmGrantedScopes.length} (separate tokens per UiPath requirement).`,
       services: serviceChecks,
     };
   } catch (err: any) {
@@ -1892,23 +1923,10 @@ export async function probeServiceAvailability(): Promise<ServiceAvailabilityMap
     ];
     let tmHdrs = { ...hdrs };
     try {
-      const tmTokenRes = await fetch("https://cloud.uipath.com/identity_/connect/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          grant_type: "client_credentials",
-          client_id: config.clientId,
-          client_secret: config.clientSecret,
-          scope: "TM.Projects TM.Projects.Read TM.TestCases TM.TestCases.Read",
-        }),
-      });
-      if (tmTokenRes.ok) {
-        const tmTokenData = await tmTokenRes.json() as any;
-        if (tmTokenData.access_token) {
-          tmHdrs = { ...hdrs, Authorization: `Bearer ${tmTokenData.access_token}` };
-        }
-      }
-    } catch { /* use main token as fallback */ }
+      const { getTmToken } = await import("./uipath-auth");
+      const tmTok = await getTmToken();
+      tmHdrs = { ...hdrs, Authorization: `Bearer ${tmTok}` };
+    } catch { }
     for (const tmUrl of tmBases) {
       try {
         const tmRes = await fetch(tmUrl, { headers: tmHdrs });

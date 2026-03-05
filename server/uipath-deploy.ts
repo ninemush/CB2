@@ -1,6 +1,6 @@
 import { getUiPathConfig, probeServiceAvailability, type UiPathConfig, type ServiceAvailabilityMap } from "./uipath-integration";
 import { uipathFetch, isGenuineApiResponse, isValidCreation } from "./uipath-fetch";
-import { getToken as getSharedToken, getTestManagerBaseUrl, type UiPathAuthConfig } from "./uipath-auth";
+import { getToken as getSharedToken, getTmToken, getTestManagerBaseUrl, type UiPathAuthConfig } from "./uipath-auth";
 import Anthropic from "@anthropic-ai/sdk";
 
 function odataEscape(value: string): string {
@@ -1640,7 +1640,7 @@ async function provisionTestCases(
 
   let tmToken: string;
   try {
-    tmToken = await getSharedToken();
+    tmToken = await getTmToken();
   } catch (err: any) {
     return [{
       artifact: "Test Case",
@@ -2243,7 +2243,7 @@ async function preflightInfraProbe(
   if (config) {
     const primaryTmBase = getTestManagerBaseUrl(config as UiPathAuthConfig);
     try {
-      const tmToken = await getSharedToken();
+      const tmToken = await getTmToken();
       const tmHdrs = { "Authorization": `Bearer ${tmToken}`, "Content-Type": "application/json", "Accept": "application/json" };
       const tmProjRes = await fetch(`${primaryTmBase}/api/v2/Projects?$top=1`, { headers: tmHdrs, redirect: "manual" });
       if (tmProjRes.ok) {

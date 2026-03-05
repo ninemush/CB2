@@ -26,7 +26,7 @@ type CachedToken = {
 
 const TOKEN_REFRESH_BUFFER_MS = 60_000;
 const TOKEN_ENDPOINT = "https://cloud.uipath.com/identity_/connect/token";
-const DEFAULT_SCOPES = [
+const DEFAULT_OR_SCOPES = [
   "OR.Default", "OR.Administration", "OR.Execution",
   "OR.Queues", "OR.Queues.Read", "OR.Queues.Write",
   "OR.Processes", "OR.Folders", "OR.Folders.Read",
@@ -38,15 +38,26 @@ const DEFAULT_SCOPES = [
   "OR.TestSetExecutions", "OR.TestSetExecutions.Read", "OR.TestSetExecutions.Write",
   "OR.TestDataQueues", "OR.TestDataQueues.Read",
   "OR.Tasks", "OR.Tasks.Read", "OR.Tasks.Write",
+].join(" ");
+
+const DEFAULT_TM_SCOPES = [
   "TM.TestCases", "TM.TestCases.Read", "TM.TestCases.Write",
   "TM.TestSets", "TM.TestSets.Read", "TM.TestSets.Write",
   "TM.TestExecutions", "TM.TestExecutions.Read", "TM.TestExecutions.Write",
   "TM.Projects", "TM.Projects.Read", "TM.Projects.Write", "TM.Users.Read",
-  "AC.Tasks", "AC.Tasks.Read", "AC.Tasks.Write", "AC.Actions",
 ].join(" ");
+
+export const DEFAULT_SCOPES = DEFAULT_OR_SCOPES;
+
+function resolveOrScopes(stored: string | undefined, defaults: string): string {
+  if (!stored) return defaults;
+  const orOnly = stored.split(/\s+/).filter(s => s.startsWith("OR."));
+  return orOnly.length > 0 ? orOnly.join(" ") : defaults;
+}
 
 let cachedConfig: UiPathAuthConfig | null = null;
 let cachedToken: CachedToken | null = null;
+let cachedTmToken: CachedToken | null = null;
 let configLoadedAt = 0;
 const CONFIG_TTL_MS = 30_000;
 
@@ -68,7 +79,8 @@ async function loadConfig(): Promise<UiPathAuthConfig | null> {
   const tenantName = map.get("uipath_tenant_name");
   const clientId = map.get("uipath_client_id");
   const clientSecret = map.get("uipath_client_secret");
-  const scopes = map.get("uipath_scopes") || DEFAULT_SCOPES;
+  const storedScopes = map.get("uipath_scopes");
+  const scopes = resolveOrScopes(storedScopes, DEFAULT_OR_SCOPES);
   const folderId = map.get("uipath_folder_id") || undefined;
   const folderName = map.get("uipath_folder_name") || undefined;
 
@@ -85,7 +97,7 @@ async function loadConfig(): Promise<UiPathAuthConfig | null> {
         tenantName: envTenantName,
         clientId: envClientId,
         clientSecret: envClientSecret,
-        scopes: process.env.UIPATH_SCOPES || DEFAULT_SCOPES,
+        scopes: resolveOrScopes(process.env.UIPATH_SCOPES, DEFAULT_OR_SCOPES),
         folderId: envFolderId,
       };
       configLoadedAt = now;
@@ -100,12 +112,13 @@ async function loadConfig(): Promise<UiPathAuthConfig | null> {
   return cachedConfig;
 }
 
-async function fetchNewToken(config: UiPathAuthConfig): Promise<CachedToken> {
+async function fetchNewToken(config: UiPathAuthConfig, scopeOverride?: string): Promise<CachedToken> {
+  const requestedScopes = scopeOverride || config.scopes;
   const params = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: config.clientId,
     client_secret: config.clientSecret,
-    scope: config.scopes,
+    scope: requestedScopes,
   });
 
   const controller = new AbortController();
@@ -143,7 +156,8 @@ async function fetchNewToken(config: UiPathAuthConfig): Promise<CachedToken> {
   const expiresIn = data.expires_in || 3600;
   const expiresAt = Date.now() + expiresIn * 1000;
 
-  console.log(`[UiPath Auth] Token acquired for client ${maskClientId(config.clientId)}, expires in ${expiresIn}s`);
+  const label = scopeOverride ? "TM" : "OR";
+  console.log(`[UiPath Auth] ${label} token acquired for client ${maskClientId(config.clientId)}, expires in ${expiresIn}s`);
 
   try {
     const jwtParts = data.access_token.split(".");
@@ -155,7 +169,7 @@ async function fetchNewToken(config: UiPathAuthConfig): Promise<CachedToken> {
       const orScopes = tokenScopes.filter((s: string) => s.startsWith("OR."));
       const tmScopes = tokenScopes.filter((s: string) => s.startsWith("TM."));
       const acScopes = tokenScopes.filter((s: string) => s.startsWith("AC."));
-      console.log(`[UiPath Auth] Token scopes: OR=${orScopes.length} [${orScopes.join(", ")}], TM=${tmScopes.length} [${tmScopes.join(", ")}], AC=${acScopes.length} [${acScopes.join(", ")}]`);
+      console.log(`[UiPath Auth] ${label} token scopes: OR=${orScopes.length}, TM=${tmScopes.length}, AC=${acScopes.length}`);
     }
   } catch (decodeErr: any) {
     console.log(`[UiPath Auth] Could not decode JWT payload: ${decodeErr.message}`);
@@ -164,9 +178,9 @@ async function fetchNewToken(config: UiPathAuthConfig): Promise<CachedToken> {
   return { accessToken: data.access_token, expiresAt };
 }
 
-function isTokenValid(): boolean {
-  if (!cachedToken) return false;
-  return Date.now() < cachedToken.expiresAt - TOKEN_REFRESH_BUFFER_MS;
+function isTokenValid(token: CachedToken | null): boolean {
+  if (!token) return false;
+  return Date.now() < token.expiresAt - TOKEN_REFRESH_BUFFER_MS;
 }
 
 export function getBaseUrl(config: UiPathAuthConfig): string {
@@ -179,6 +193,10 @@ export function getTestManagerBaseUrl(config: UiPathAuthConfig): string {
 
 export function invalidateToken(): void {
   cachedToken = null;
+}
+
+export function invalidateTmToken(): void {
+  cachedTmToken = null;
 }
 
 export function invalidateConfig(): void {
@@ -196,12 +214,26 @@ export async function getToken(): Promise<string> {
     throw new UiPathAuthError("UiPath is not configured. Set credentials in Admin > Integrations.");
   }
 
-  if (isTokenValid() && cachedToken) {
+  if (isTokenValid(cachedToken) && cachedToken) {
     return cachedToken.accessToken;
   }
 
   cachedToken = await fetchNewToken(config);
   return cachedToken.accessToken;
+}
+
+export async function getTmToken(): Promise<string> {
+  const config = await loadConfig();
+  if (!config) {
+    throw new UiPathAuthError("UiPath is not configured. Set credentials in Admin > Integrations.");
+  }
+
+  if (isTokenValid(cachedTmToken) && cachedTmToken) {
+    return cachedTmToken.accessToken;
+  }
+
+  cachedTmToken = await fetchNewToken(config, DEFAULT_TM_SCOPES);
+  return cachedTmToken.accessToken;
 }
 
 export async function getHeaders(extraHeaders?: Record<string, string>): Promise<Record<string, string>> {
@@ -220,6 +252,22 @@ export async function getHeaders(extraHeaders?: Record<string, string>): Promise
   if (config.folderId) {
     headers["X-UIPATH-OrganizationUnitId"] = config.folderId;
   }
+
+  return headers;
+}
+
+export async function getTmHeaders(extraHeaders?: Record<string, string>): Promise<Record<string, string>> {
+  const config = await loadConfig();
+  if (!config) {
+    throw new UiPathAuthError("UiPath is not configured.");
+  }
+
+  const token = await getTmToken();
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+    ...extraHeaders,
+  };
 
   return headers;
 }
@@ -282,7 +330,8 @@ export async function makeAuthenticatedRequest(
   options: RequestInit = {},
   retryOn401 = true
 ): Promise<Response> {
-  const headers = await getHeaders();
+  const isTmUrl = url.includes("/testmanager_/") || url.includes("/tmapi_/");
+  const headers = isTmUrl ? await getTmHeaders() : await getHeaders();
   const mergedHeaders = { ...headers, ...(options.headers as Record<string, string> || {}) };
 
   const controller = new AbortController();
@@ -303,7 +352,11 @@ export async function makeAuthenticatedRequest(
 
   if (res.status === 401 && retryOn401) {
     console.log("[UiPath Auth] Got 401, refreshing token and retrying...");
-    invalidateToken();
+    if (isTmUrl) {
+      invalidateTmToken();
+    } else {
+      invalidateToken();
+    }
     return makeAuthenticatedRequest(url, options, false);
   }
 

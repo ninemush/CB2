@@ -1,6 +1,7 @@
 import {
   getToken,
   getHeaders,
+  getTmHeaders,
   getConfig,
   getBaseUrl,
   getTestManagerBaseUrl,
@@ -520,7 +521,7 @@ export async function getTestSets(projectId?: string): Promise<TestSet[]> {
     if (!config) return [];
     const tmBase = getTestManagerBaseUrl(config);
     const filter = projectId ? `?projectId=${projectId}` : "";
-    const headers = await getHeaders();
+    const headers = await getTmHeaders();
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 15000);
     const res = await fetch(`${tmBase}/api/TestSets${filter}`, { headers, signal: controller.signal });
@@ -537,7 +538,7 @@ export async function startTestExecution(testSetId: string): Promise<TestExecuti
   const config = await getConfig();
   if (!config) throw new UiPathAuthError("UiPath is not configured.");
   const tmBase = getTestManagerBaseUrl(config);
-  const headers = await getHeaders();
+  const headers = await getTmHeaders();
 
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), 30000);
@@ -560,7 +561,7 @@ export async function getTestExecution(executionId: string): Promise<TestExecuti
   const config = await getConfig();
   if (!config) throw new UiPathAuthError("UiPath is not configured.");
   const tmBase = getTestManagerBaseUrl(config);
-  const headers = await getHeaders();
+  const headers = await getTmHeaders();
 
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), 15000);
