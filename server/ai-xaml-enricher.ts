@@ -183,12 +183,41 @@ Generate the enriched workflow specification. For each node, provide the specifi
       }
 
       let jsonText = content.text.trim();
-      const fenceMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+      const fenceMatch = jsonText.match(/`{3,}(?:json)?\s*\n([\s\S]*)\n\s*`{3,}\s*$/);
       if (fenceMatch) {
         jsonText = fenceMatch[1].trim();
+      } else {
+        const anyFence = jsonText.match(/`{3,}[^\n]*\n([\s\S]*?)\n\s*`{3,}/);
+        if (anyFence) {
+          jsonText = anyFence[1].trim();
+        } else {
+          const firstBrace = jsonText.indexOf("{");
+          const lastBrace = jsonText.lastIndexOf("}");
+          if (firstBrace !== -1 && lastBrace > firstBrace && firstBrace < 200) {
+            jsonText = jsonText.slice(firstBrace, lastBrace + 1);
+          }
+        }
       }
 
-      const parsed = JSON.parse(jsonText) as EnrichmentResult;
+      jsonText = jsonText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      let sanitized = "";
+      let inStr = false;
+      let esc = false;
+      for (let i = 0; i < jsonText.length; i++) {
+        const ch = jsonText[i];
+        if (esc) { sanitized += ch; esc = false; continue; }
+        if (ch === "\\") { sanitized += ch; esc = true; continue; }
+        if (ch === '"') { inStr = !inStr; sanitized += ch; continue; }
+        if (inStr) {
+          const code = ch.charCodeAt(0);
+          if (code === 0x0A) { sanitized += "\\n"; continue; }
+          if (code === 0x09) { sanitized += "\\t"; continue; }
+          if (code < 0x20) { sanitized += " "; continue; }
+        }
+        sanitized += ch;
+      }
+
+      const parsed = JSON.parse(sanitized) as EnrichmentResult;
 
       if (!parsed.nodes || !Array.isArray(parsed.nodes)) {
         console.log("[AI XAML Enricher] Invalid response structure — missing nodes array");

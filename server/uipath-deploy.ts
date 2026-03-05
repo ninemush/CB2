@@ -86,11 +86,62 @@ export type DeploymentResult = {
   manualSteps?: string[];
 };
 
+function sanitizeJsonString(raw: string): string {
+  let s = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) {
+      result += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      result += ch;
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      result += ch;
+      continue;
+    }
+    if (inString) {
+      const code = ch.charCodeAt(0);
+      if (code === 0x0A) { result += "\\n"; continue; }
+      if (code === 0x09) { result += "\\t"; continue; }
+      if (code < 0x20) { result += " "; continue; }
+    }
+    result += ch;
+  }
+  return result;
+}
+
+function stripCodeFences(text: string): string {
+  let s = text.trim();
+  const fencedMatch = s.match(/`{3,}(?:json|orchestrator_artifacts)?\s*\n([\s\S]*)\n\s*`{3,}\s*$/);
+  if (fencedMatch) {
+    return fencedMatch[1].trim();
+  }
+  const anyFence = s.match(/`{3,}[^\n]*\n([\s\S]*?)\n\s*`{3,}/);
+  if (anyFence) {
+    return anyFence[1].trim();
+  }
+  const firstBrace = s.indexOf("{");
+  const lastBrace = s.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace && firstBrace < 200) {
+    return s.slice(firstBrace, lastBrace + 1);
+  }
+  return s;
+}
+
 export function parseArtifactsFromSDD(sddContent: string): OrchestratorArtifacts | null {
   const exactMatch = sddContent.match(/```orchestrator_artifacts\s*\n([\s\S]*?)\n```/);
   if (exactMatch) {
     try {
-      return JSON.parse(exactMatch[1].trim());
+      return JSON.parse(sanitizeJsonString(exactMatch[1].trim()));
     } catch (e) {
       console.warn("[parseArtifacts] orchestrator_artifacts fence found but JSON parse failed:", (e as Error).message);
     }
@@ -101,7 +152,7 @@ export function parseArtifactsFromSDD(sddContent: string): OrchestratorArtifacts
     for (const fence of jsonFenceMatch) {
       const inner = fence.replace(/```json\s*\n/, "").replace(/\n```$/, "").trim();
       try {
-        const parsed = JSON.parse(inner);
+        const parsed = JSON.parse(sanitizeJsonString(inner));
         if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers) {
           console.log("[parseArtifacts] Found artifacts in json fence block");
           return parsed;
@@ -122,7 +173,7 @@ export function parseArtifactsFromSDD(sddContent: string): OrchestratorArtifacts
         if (depth === 0) { end = i + 1; break; }
       }
       const jsonStr = sddContent.slice(braceStart, end);
-      const parsed = JSON.parse(jsonStr);
+      const parsed = JSON.parse(sanitizeJsonString(jsonStr));
       if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers) {
         console.log("[parseArtifacts] Found artifacts in raw JSON");
         return parsed;
@@ -160,13 +211,12 @@ ${sddContent.slice(0, 12000)}`
     const textBlock = response.content.find((b) => b.type === "text");
     const text = textBlock?.text?.trim() || "";
 
-    let jsonStr = text;
-    const fencedMatch = text.match(/```(?:json|orchestrator_artifacts)?\s*\n?([\s\S]*?)\n?```/);
-    if (fencedMatch) {
-      jsonStr = fencedMatch[1].trim();
+    let jsonStr = stripCodeFences(text);
+    if (jsonStr !== text) {
+      console.warn("[UiPath Deploy] LLM returned fenced JSON despite instructions — stripped fences");
     }
 
-    const raw = JSON.parse(jsonStr);
+    const raw = JSON.parse(sanitizeJsonString(jsonStr));
 
     const validated: OrchestratorArtifacts = {};
     if (Array.isArray(raw.queues)) {
