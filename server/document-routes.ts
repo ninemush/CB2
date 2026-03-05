@@ -215,8 +215,14 @@ Here is the EXACT format:
   "documentUnderstanding": [
     { "name": "ProjectName", "documentTypes": ["Invoice", "Receipt"], "description": "Purpose" }
   ],
+  "requirements": [
+    { "name": "REQ-001: Requirement name", "description": "Business requirement from PDD", "source": "PDD Section X" }
+  ],
   "testCases": [
-    { "name": "Test case name", "description": "What this tests", "steps": [{ "action": "Step action", "expected": "Expected result" }] }
+    { "name": "TC001 - Test case name", "description": "What this tests", "steps": [{ "action": "Step action", "expected": "Expected result" }] }
+  ],
+  "testSets": [
+    { "name": "Happy Path Tests", "description": "Core scenario validation", "testCaseNames": ["TC001 - Test case name"] }
   ]
 }
 \`\`\`
@@ -231,7 +237,9 @@ Rules:
 - Include environments (Production at minimum).
 - Include Action Center task catalogs if the solution uses human-in-the-loop.
 - Include Document Understanding projects if the solution processes documents.
-- Include test cases covering key automation scenarios.
+- Include requirements derived from PDD business rules, compliance constraints, SLAs, and acceptance criteria. Use "REQ-NNN:" prefix for traceability.
+- Include test cases covering key automation scenarios (happy path, exceptions, edge cases, regression). Use "TCNNN - " prefix.
+- Group test cases into logical test sets (e.g. "Happy Path Tests", "Exception Handling Tests", "Regression Tests"). Reference test case names exactly as defined above in the testCaseNames array.
 - Be comprehensive — this specification drives full automated deployment.
 
 Output ONLY "## 9. Orchestrator & Platform Deployment Specification" followed by the fenced artifacts block and any brief supporting prose. Nothing else.`;

@@ -73,6 +73,8 @@ export type OrchestratorArtifacts = {
   documentUnderstanding?: Array<{ name: string; documentTypes: string[]; description?: string }>;
   testCases?: Array<{ name: string; description?: string; labels?: string[]; steps?: Array<{ action: string; expected: string }> }>;
   testDataQueues?: Array<{ name: string; description?: string; jsonSchema?: string; items?: Array<{ name: string; content: string }> }>;
+  requirements?: Array<{ name: string; description?: string; source?: string }>;
+  testSets?: Array<{ name: string; description?: string; testCaseNames?: string[] }>;
 };
 
 export type DeploymentResult = {
@@ -145,10 +147,10 @@ export async function extractArtifactsWithLLM(sddContent: string): Promise<Orche
       system: "You are a UiPath automation consultant. Extract Orchestrator artifact definitions from the SDD and output ONLY valid JSON. No other text, no markdown formatting, no code fences — just the raw JSON object.",
       messages: [{
         role: "user",
-        content: `Extract ALL UiPath Orchestrator and platform artifacts from this Solution Design Document. Output a single JSON object with these keys: queues, assets, machines, triggers, storageBuckets, environments, robotAccounts, actionCenter, documentUnderstanding, testCases, testDataQueues. Include every artifact mentioned or implied. For credential assets use value "". For text/integer/bool assets provide sensible defaults. IMPORTANT: All triggers (Queue and Time) MUST be included — never treat them as manual steps. Generate test cases that cover the key automation scenarios described in the SDD — include labels like "Critical", "Smoke", "Regression" where appropriate. For robotAccounts, include any unattended robot accounts needed to run the automation — if machines are defined, at least one robot account should be defined to operate them. For testDataQueues, include any test data queues needed to supply test data to test cases (e.g. login credentials, input data sets).
+        content: `Extract ALL UiPath Orchestrator and platform artifacts from this Solution Design Document. Output a single JSON object with these keys: queues, assets, machines, triggers, storageBuckets, environments, robotAccounts, actionCenter, documentUnderstanding, testCases, testDataQueues, requirements, testSets. Include every artifact mentioned or implied. For credential assets use value "". For text/integer/bool assets provide sensible defaults. IMPORTANT: All triggers (Queue and Time) MUST be included — never treat them as manual steps. Generate test cases that cover the key automation scenarios described in the SDD — include labels like "Critical", "Smoke", "Regression" where appropriate. For robotAccounts, include any unattended robot accounts needed to run the automation — if machines are defined, at least one robot account should be defined to operate them. For testDataQueues, include any test data queues needed to supply test data to test cases (e.g. login credentials, input data sets). For requirements, extract business requirements from the PDD/SDD — compliance rules, process constraints, SLAs, and acceptance criteria. For testSets, group the test cases into logical sets (e.g. "Happy Path", "Exception Handling", "Regression") and reference test case names.
 
 Expected JSON shape:
-{"queues":[{"name":"...","description":"...","maxRetries":3,"uniqueReference":true}],"assets":[{"name":"...","type":"Text|Integer|Bool|Credential","value":"...","description":"..."}],"machines":[{"name":"...","type":"Unattended|Attended|Development","slots":1,"description":"..."}],"triggers":[{"name":"...","type":"Queue|Time","queueName":"...","cron":"...","description":"..."}],"storageBuckets":[{"name":"...","description":"..."}],"environments":[{"name":"...","type":"Production|Development|Testing","description":"..."}],"robotAccounts":[{"name":"...","type":"Unattended|Attended|Development","description":"..."}],"actionCenter":[{"taskCatalog":"...","assignedRole":"...","sla":"...","escalation":"...","description":"..."}],"documentUnderstanding":[{"name":"ProjectName","documentTypes":["Invoice","Receipt"],"description":"..."}],"testCases":[{"name":"TC_001_TestName","description":"What this tests","labels":["Critical","Smoke"],"steps":[{"action":"Step action","expected":"Expected result"}]}],"testDataQueues":[{"name":"TestDataQueueName","description":"Queue for test data","jsonSchema":"{\"type\":\"object\",\"properties\":{\"field\":{\"type\":\"string\"}}}","items":[{"name":"Record_1","content":"{\"field\":\"value\"}"}]}]}
+{"queues":[{"name":"...","description":"...","maxRetries":3,"uniqueReference":true}],"assets":[{"name":"...","type":"Text|Integer|Bool|Credential","value":"...","description":"..."}],"machines":[{"name":"...","type":"Unattended|Attended|Development","slots":1,"description":"..."}],"triggers":[{"name":"...","type":"Queue|Time","queueName":"...","cron":"...","description":"..."}],"storageBuckets":[{"name":"...","description":"..."}],"environments":[{"name":"...","type":"Production|Development|Testing","description":"..."}],"robotAccounts":[{"name":"...","type":"Unattended|Attended|Development","description":"..."}],"actionCenter":[{"taskCatalog":"...","assignedRole":"...","sla":"...","escalation":"...","description":"..."}],"documentUnderstanding":[{"name":"ProjectName","documentTypes":["Invoice","Receipt"],"description":"..."}],"testCases":[{"name":"TC_001_TestName","description":"What this tests","labels":["Critical","Smoke"],"steps":[{"action":"Step action","expected":"Expected result"}]}],"testDataQueues":[{"name":"TestDataQueueName","description":"Queue for test data","jsonSchema":"{\"type\":\"object\",\"properties\":{\"field\":{\"type\":\"string\"}}}","items":[{"name":"Record_1","content":"{\"field\":\"value\"}"}]}],"requirements":[{"name":"REQ-001: Requirement name","description":"Business requirement","source":"PDD Section X"}],"testSets":[{"name":"Happy Path Tests","description":"Core scenario validation","testCaseNames":["TC_001_TestName"]}]}
 
 SDD content:
 ${sddContent.slice(0, 12000)}`
@@ -203,16 +205,26 @@ ${sddContent.slice(0, 12000)}`
     if (Array.isArray(raw.testDataQueues)) {
       validated.testDataQueues = raw.testDataQueues.filter((q: any) => typeof q?.name === "string" && q.name.length > 0);
     }
+    if (Array.isArray(raw.requirements)) {
+      validated.requirements = raw.requirements.filter((r: any) => typeof r?.name === "string" && r.name.length > 0);
+    }
+    if (Array.isArray(raw.testSets)) {
+      validated.testSets = raw.testSets.filter((s: any) => typeof s?.name === "string" && s.name.length > 0).map((s: any) => ({
+        ...s,
+        testCaseNames: Array.isArray(s.testCaseNames) ? s.testCaseNames.filter((n: any) => typeof n === "string") : undefined,
+      }));
+    }
 
     const hasContent = (validated.queues?.length || 0) + (validated.assets?.length || 0) +
       (validated.triggers?.length || 0) + (validated.machines?.length || 0) +
       (validated.storageBuckets?.length || 0) + (validated.environments?.length || 0) +
       (validated.robotAccounts?.length || 0) + (validated.actionCenter?.length || 0) +
       (validated.documentUnderstanding?.length || 0) + (validated.testCases?.length || 0) +
-      (validated.testDataQueues?.length || 0);
+      (validated.testDataQueues?.length || 0) + (validated.requirements?.length || 0) +
+      (validated.testSets?.length || 0);
 
     if (hasContent > 0) {
-      console.log(`[UiPath Deploy] LLM extracted ${hasContent} validated artifacts (queues:${validated.queues?.length||0}, assets:${validated.assets?.length||0}, machines:${validated.machines?.length||0}, triggers:${validated.triggers?.length||0}, buckets:${validated.storageBuckets?.length||0}, robots:${validated.robotAccounts?.length||0}, actionCenter:${validated.actionCenter?.length||0}, DU:${validated.documentUnderstanding?.length||0}, testCases:${validated.testCases?.length||0}, testDataQueues:${validated.testDataQueues?.length||0})`);
+      console.log(`[UiPath Deploy] LLM extracted ${hasContent} validated artifacts (queues:${validated.queues?.length||0}, assets:${validated.assets?.length||0}, machines:${validated.machines?.length||0}, triggers:${validated.triggers?.length||0}, buckets:${validated.storageBuckets?.length||0}, robots:${validated.robotAccounts?.length||0}, actionCenter:${validated.actionCenter?.length||0}, DU:${validated.documentUnderstanding?.length||0}, testCases:${validated.testCases?.length||0}, testDataQueues:${validated.testDataQueues?.length||0}, requirements:${validated.requirements?.length||0}, testSets:${validated.testSets?.length||0})`);
       return validated;
     }
     console.warn("[UiPath Deploy] LLM returned JSON but no valid artifacts after validation. Raw keys:", Object.keys(raw));
@@ -1651,6 +1663,14 @@ async function provisionDocUnderstanding(
   return results;
 }
 
+type TestCaseProvisionResult = {
+  results: DeploymentResult[];
+  testCaseMap: Record<string, string | number>;
+  projectId: string | number | null;
+  activeTmBase: string | null;
+  tmHdrs: Record<string, string>;
+};
+
 async function provisionTestCases(
   config: UiPathConfig,
   mainToken: string,
@@ -1658,20 +1678,28 @@ async function provisionTestCases(
   processName: string,
   testDataQueues?: OrchestratorArtifacts["testDataQueues"],
   folderId?: string
-): Promise<DeploymentResult[]> {
-  if (!testCases?.length && !testDataQueues?.length) return [];
+): Promise<TestCaseProvisionResult> {
+  const emptyResult: TestCaseProvisionResult = { results: [], testCaseMap: {}, projectId: null, activeTmBase: null, tmHdrs: {} };
+  if (!testCases?.length && !testDataQueues?.length) return emptyResult;
   const results: DeploymentResult[] = [];
+  const testCaseMap: Record<string, string | number> = {};
 
   let tmToken: string;
   try {
     tmToken = await getTmToken();
   } catch (err: any) {
-    return [{
-      artifact: "Test Case",
-      name: `${(testCases?.length || 0) + (testDataQueues?.length || 0)} item(s)`,
-      status: "failed" as const,
-      message: `Could not acquire token with TM scopes: ${err.message}. Ensure TM.* scopes are granted in the UiPath External Application.`,
-    }];
+    return {
+      results: [{
+        artifact: "Test Case",
+        name: `${(testCases?.length || 0) + (testDataQueues?.length || 0)} item(s)`,
+        status: "failed" as const,
+        message: `Could not acquire token with TM scopes: ${err.message}. Ensure TM.* scopes are granted in the UiPath External Application.`,
+      }],
+      testCaseMap: {},
+      projectId: null,
+      activeTmBase: null,
+      tmHdrs: {},
+    };
   }
 
   const primaryTmBase = getTestManagerBaseUrl(config as UiPathAuthConfig);
@@ -1736,12 +1764,18 @@ async function provisionTestCases(
   }
 
   if (!activeTmBase) {
-    return [{
-      artifact: "Test Case",
-      name: `${(testCases?.length || 0)} test case(s)`,
-      status: "skipped" as const,
-      message: `Test Manager not available on this tenant. Test Manager requires an Enterprise license or the service may not be enabled.`,
-    }];
+    return {
+      results: [{
+        artifact: "Test Case",
+        name: `${(testCases?.length || 0)} test case(s)`,
+        status: "skipped" as const,
+        message: `Test Manager not available on this tenant. Test Manager requires an Enterprise license or the service may not be enabled.`,
+      }],
+      testCaseMap: {},
+      projectId: null,
+      activeTmBase: null,
+      tmHdrs: {},
+    };
   }
 
   if (!projectId) {
@@ -1826,15 +1860,21 @@ async function provisionTestCases(
   }
 
   if (!projectId) {
-    return [
-      ...results,
-      ...(testCases || []).map(tc => ({
-        artifact: "Test Case" as const,
-        name: tc.name,
-        status: "failed" as const,
-        message: `Could not find or create test project in Test Manager. Check API permissions.`,
-      })),
-    ];
+    return {
+      results: [
+        ...results,
+        ...(testCases || []).map(tc => ({
+          artifact: "Test Case" as const,
+          name: tc.name,
+          status: "failed" as const,
+          message: `Could not find or create test project in Test Manager. Check API permissions.`,
+        })),
+      ],
+      testCaseMap: {},
+      projectId: null,
+      activeTmBase,
+      tmHdrs,
+    };
   }
 
   if (testCases?.length) {
@@ -1852,7 +1892,31 @@ async function provisionTestCases(
 
     let swaggerProbed = false;
 
+    let existingTestCases: Array<{ id: string | number; name: string }> = [];
+    try {
+      const listRes = await uipathFetch(`${activeTmBase}/api/v2/${projectId}/testcases?$top=200`, {
+        headers: tmHdrsWithTenant, label: "TM List TestCases", maxRetries: 1, redirect: "manual" as any,
+      });
+      if (listRes.ok && listRes.data) {
+        const items = listRes.data?.data || listRes.data?.value || listRes.data?.items || [];
+        existingTestCases = items.map((tc: any) => ({ id: tc.Id || tc.id, name: tc.Name || tc.name })).filter((tc: any) => tc.id && tc.name);
+        console.log(`[UiPath Deploy] Found ${existingTestCases.length} existing test cases in project ${projectId}`);
+        for (const etc of existingTestCases) {
+          testCaseMap[etc.name] = etc.id;
+        }
+      }
+    } catch (err: any) {
+      console.log(`[UiPath Deploy] Could not list existing test cases: ${err.message}`);
+    }
+
     for (const tc of testCases) {
+      const existingMatch = existingTestCases.find(e => e.name.toLowerCase() === tc.name.toLowerCase());
+      if (existingMatch) {
+        testCaseMap[tc.name] = existingMatch.id;
+        results.push({ artifact: "Test Case", name: tc.name, status: "exists", message: `Already exists (ID: ${existingMatch.id})`, id: typeof existingMatch.id === "number" ? existingMatch.id : undefined });
+        continue;
+      }
+
       try {
         const camelBody: Record<string, any> = {
           name: tc.name,
@@ -1992,6 +2056,7 @@ async function provisionTestCases(
               }
 
               results.push({ artifact: "Test Case", name: tc.name, status: "created", message: msg, id: createdId });
+              if (createdId) testCaseMap[tc.name] = createdId;
               created = true;
               break;
             } else if (tcResult.status === 409 || tcResult.text.includes("already exists")) {
@@ -2141,6 +2206,244 @@ async function provisionTestCases(
         status: "failed",
         message: "No folder ID available — TestDataQueues require X-UIPATH-OrganizationUnitId header. Ensure a folder is configured.",
       });
+    }
+  }
+
+  return { results, testCaseMap, projectId, activeTmBase, tmHdrs };
+}
+
+async function provisionRequirements(
+  activeTmBase: string,
+  tmHdrs: Record<string, string>,
+  projectId: string | number,
+  requirements: OrchestratorArtifacts["requirements"],
+  tenantName: string,
+): Promise<{ results: DeploymentResult[]; requirementMap: Record<string, string | number> }> {
+  if (!requirements?.length) return { results: [], requirementMap: {} };
+  const results: DeploymentResult[] = [];
+  const requirementMap: Record<string, string | number> = {};
+
+  const hdrs = { ...tmHdrs, "X-UIPATH-TenantName": tenantName };
+
+  let existingReqs: Array<{ id: string | number; name: string }> = [];
+  const listEndpoints = [
+    `${activeTmBase}/api/v2/${projectId}/requirements?$top=200`,
+    `${activeTmBase}/api/v2/Projects/${projectId}/Requirements?$top=200`,
+  ];
+  for (const url of listEndpoints) {
+    try {
+      const listRes = await uipathFetch(url, { headers: hdrs, label: "TM List Requirements", maxRetries: 1, redirect: "manual" as any });
+      if (listRes.ok && listRes.data) {
+        const items = listRes.data?.data || listRes.data?.value || listRes.data?.items || [];
+        existingReqs = items.map((r: any) => ({ id: r.Id || r.id, name: r.Name || r.name })).filter((r: any) => r.id && r.name);
+        console.log(`[UiPath Deploy] Found ${existingReqs.length} existing requirements in project ${projectId}`);
+        for (const er of existingReqs) {
+          requirementMap[er.name] = er.id;
+        }
+        break;
+      }
+    } catch { continue; }
+  }
+
+  for (const req of requirements) {
+    const existingMatch = existingReqs.find(e => e.name.toLowerCase() === req.name.toLowerCase());
+    if (existingMatch) {
+      requirementMap[req.name] = existingMatch.id;
+      results.push({ artifact: "Requirement", name: req.name, status: "exists", message: `Already exists (ID: ${existingMatch.id})` });
+      continue;
+    }
+
+    const createEndpoints = [
+      `${activeTmBase}/api/v2/${projectId}/requirements`,
+      `${activeTmBase}/api/v2/Projects/${projectId}/Requirements`,
+    ];
+    let created = false;
+    for (const url of createEndpoints) {
+      try {
+        const body = { name: req.name, description: truncDesc(req.description || `${req.source || ""}`) };
+        const createRes = await uipathFetch(url, {
+          method: "POST", headers: hdrs, body: JSON.stringify(body),
+          label: "TM Create Requirement", maxRetries: 1, redirect: "manual" as any,
+        });
+        console.log(`[UiPath Deploy] Requirement "${req.name}" via ${url} -> ${createRes.status}: ${createRes.text.slice(0, 300)}`);
+        if (createRes.status === 200 || createRes.status === 201) {
+          const creation = isValidCreation(createRes.text);
+          if (creation.valid) {
+            const createdId = creation.data?.Id || creation.data?.id;
+            if (createdId) requirementMap[req.name] = createdId;
+            results.push({ artifact: "Requirement", name: req.name, status: "created", message: `Created (ID: ${createdId})` });
+            created = true;
+            break;
+          }
+        } else if (createRes.status === 409 || createRes.text.includes("already exists")) {
+          results.push({ artifact: "Requirement", name: req.name, status: "exists", message: "Already exists" });
+          created = true;
+          break;
+        }
+      } catch { continue; }
+    }
+    if (!created) {
+      results.push({ artifact: "Requirement", name: req.name, status: "failed", message: "All requirement creation endpoints returned errors" });
+    }
+  }
+
+  return { results, requirementMap };
+}
+
+async function provisionTestSets(
+  activeTmBase: string,
+  tmHdrs: Record<string, string>,
+  projectId: string | number,
+  testSets: OrchestratorArtifacts["testSets"],
+  testCaseMap: Record<string, string | number>,
+  tenantName: string,
+): Promise<DeploymentResult[]> {
+  if (!testSets?.length) return [];
+  const results: DeploymentResult[] = [];
+  const hdrs = { ...tmHdrs, "X-UIPATH-TenantName": tenantName };
+
+  let existingTestSets: Array<{ id: string | number; name: string }> = [];
+  const listEndpoints = [
+    `${activeTmBase}/api/v2/${projectId}/testsets?$top=200`,
+    `${activeTmBase}/api/v2/Projects/${projectId}/TestSets?$top=200`,
+  ];
+  for (const url of listEndpoints) {
+    try {
+      const listRes = await uipathFetch(url, { headers: hdrs, label: "TM List TestSets", maxRetries: 1, redirect: "manual" as any });
+      if (listRes.ok && listRes.data) {
+        const items = listRes.data?.data || listRes.data?.value || listRes.data?.items || [];
+        existingTestSets = items.map((s: any) => ({ id: s.Id || s.id, name: s.Name || s.name })).filter((s: any) => s.id && s.name);
+        console.log(`[UiPath Deploy] Found ${existingTestSets.length} existing test sets in project ${projectId}`);
+        break;
+      }
+    } catch { continue; }
+  }
+
+  for (const ts of testSets) {
+    const existingMatch = existingTestSets.find(e => e.name.toLowerCase() === ts.name.toLowerCase());
+    if (existingMatch) {
+      let msg = `Already exists (ID: ${existingMatch.id})`;
+      if (ts.testCaseNames?.length) {
+        const tcIds = ts.testCaseNames
+          .map(name => testCaseMap[name])
+          .filter((id): id is string | number => id !== undefined);
+        if (tcIds.length > 0) {
+          try {
+            const assignRes = await uipathFetch(`${activeTmBase}/api/v2/${projectId}/testsets/${existingMatch.id}/assigntestcases`, {
+              method: "POST", headers: hdrs,
+              body: JSON.stringify({ testCaseIds: tcIds }),
+              label: "TM Assign TestCases to existing TestSet", maxRetries: 1, redirect: "manual" as any,
+            });
+            if (assignRes.ok) {
+              msg += `, ${tcIds.length} test case(s) assigned`;
+            } else {
+              msg += `, test case assignment returned ${assignRes.status}`;
+            }
+          } catch (assignErr: any) {
+            msg += `, assignment error: ${assignErr.message}`;
+          }
+        }
+      }
+      results.push({ artifact: "Test Set", name: ts.name, status: "exists", message: msg });
+      continue;
+    }
+
+    const createEndpoints = [
+      `${activeTmBase}/api/v2/${projectId}/testsets`,
+      `${activeTmBase}/api/v2/Projects/${projectId}/TestSets`,
+    ];
+    let createdSetId: string | number | null = null;
+    let created = false;
+    for (const url of createEndpoints) {
+      try {
+        const body = { name: ts.name, description: truncDesc(ts.description) };
+        const createRes = await uipathFetch(url, {
+          method: "POST", headers: hdrs, body: JSON.stringify(body),
+          label: "TM Create TestSet", maxRetries: 1, redirect: "manual" as any,
+        });
+        console.log(`[UiPath Deploy] Test Set "${ts.name}" via ${url} -> ${createRes.status}: ${createRes.text.slice(0, 300)}`);
+        if (createRes.status === 200 || createRes.status === 201) {
+          const creation = isValidCreation(createRes.text);
+          if (creation.valid) {
+            createdSetId = creation.data?.Id || creation.data?.id;
+            let msg = `Created (ID: ${createdSetId})`;
+
+            if (ts.testCaseNames?.length && createdSetId) {
+              const tcIds = ts.testCaseNames
+                .map(name => testCaseMap[name])
+                .filter((id): id is string | number => id !== undefined);
+              if (tcIds.length > 0) {
+                try {
+                  const assignRes = await uipathFetch(`${activeTmBase}/api/v2/${projectId}/testsets/${createdSetId}/assigntestcases`, {
+                    method: "POST", headers: hdrs,
+                    body: JSON.stringify({ testCaseIds: tcIds }),
+                    label: "TM Assign TestCases to TestSet", maxRetries: 1, redirect: "manual" as any,
+                  });
+                  if (assignRes.ok) {
+                    msg += `, ${tcIds.length} test case(s) assigned`;
+                    console.log(`[UiPath Deploy] Assigned ${tcIds.length} test cases to test set "${ts.name}"`);
+                  } else {
+                    msg += `, test case assignment failed (${assignRes.status})`;
+                    console.log(`[UiPath Deploy] Test case assignment to set "${ts.name}" failed: ${assignRes.status} ${assignRes.text.slice(0, 200)}`);
+                  }
+                } catch (assignErr: any) {
+                  msg += `, test case assignment error: ${assignErr.message}`;
+                }
+              } else {
+                msg += `, 0/${ts.testCaseNames.length} test case names resolved to IDs`;
+              }
+            }
+
+            results.push({ artifact: "Test Set", name: ts.name, status: "created", message: msg });
+            created = true;
+            break;
+          }
+        } else if (createRes.status === 409 || createRes.text.includes("already exists")) {
+          results.push({ artifact: "Test Set", name: ts.name, status: "exists", message: "Already exists" });
+          created = true;
+          break;
+        }
+      } catch { continue; }
+    }
+    if (!created) {
+      results.push({ artifact: "Test Set", name: ts.name, status: "failed", message: "All test set creation endpoints returned errors" });
+    }
+  }
+
+  return results;
+}
+
+async function linkRequirementsToTestCases(
+  activeTmBase: string,
+  tmHdrs: Record<string, string>,
+  projectId: string | number,
+  requirementMap: Record<string, string | number>,
+  testCaseMap: Record<string, string | number>,
+  tenantName: string,
+): Promise<DeploymentResult[]> {
+  const reqEntries = Object.entries(requirementMap);
+  const tcIds = Object.values(testCaseMap);
+  if (reqEntries.length === 0 || tcIds.length === 0) return [];
+
+  const results: DeploymentResult[] = [];
+  const hdrs = { ...tmHdrs, "X-UIPATH-TenantName": tenantName };
+
+  for (const [reqName, reqId] of reqEntries) {
+    try {
+      const assignRes = await uipathFetch(`${activeTmBase}/api/v2/${projectId}/requirements/${reqId}/assigntestcases`, {
+        method: "POST", headers: hdrs,
+        body: JSON.stringify({ testCaseIds: tcIds }),
+        label: `TM Link Requirement "${reqName}" to TestCases`, maxRetries: 1, redirect: "manual" as any,
+      });
+      if (assignRes.ok) {
+        results.push({ artifact: "Requirement Link", name: reqName, status: "created", message: `Linked to ${tcIds.length} test case(s)` });
+        console.log(`[UiPath Deploy] Linked requirement "${reqName}" (${reqId}) to ${tcIds.length} test cases`);
+      } else {
+        console.log(`[UiPath Deploy] Requirement link for "${reqName}" failed: ${assignRes.status} ${assignRes.text.slice(0, 200)}`);
+        results.push({ artifact: "Requirement Link", name: reqName, status: "failed", message: `Link failed (${assignRes.status})` });
+      }
+    } catch (err: any) {
+      results.push({ artifact: "Requirement Link", name: reqName, status: "failed", message: err.message });
     }
   }
 
@@ -2618,8 +2921,37 @@ export async function deployAllArtifacts(
     if (svcAvail && !svcAvail.testManager && ((artifacts.testCases?.length || 0) > 0 || (artifacts.testDataQueues?.length || 0) > 0)) {
       console.log("[UiPath Deploy] Probe says Test Manager unavailable, but attempting provisioning anyway...");
     }
-    const testResults = await provisionTestCases(config, token, artifacts.testCases, releaseName || "Automation", artifacts.testDataQueues, config.folderId);
-    allResults.push(...testResults);
+    const testProvision = await provisionTestCases(config, token, artifacts.testCases, releaseName || "Automation", artifacts.testDataQueues, config.folderId);
+    allResults.push(...testProvision.results);
+
+    if (testProvision.activeTmBase && testProvision.projectId) {
+      const reqProvision = await provisionRequirements(
+        testProvision.activeTmBase, testProvision.tmHdrs, testProvision.projectId,
+        artifacts.requirements, config.tenantName,
+      );
+      allResults.push(...reqProvision.results);
+
+      const testSetResults = await provisionTestSets(
+        testProvision.activeTmBase, testProvision.tmHdrs, testProvision.projectId,
+        artifacts.testSets, testProvision.testCaseMap, config.tenantName,
+      );
+      allResults.push(...testSetResults);
+
+      if (Object.keys(reqProvision.requirementMap).length > 0 && Object.keys(testProvision.testCaseMap).length > 0) {
+        const linkResults = await linkRequirementsToTestCases(
+          testProvision.activeTmBase, testProvision.tmHdrs, testProvision.projectId,
+          reqProvision.requirementMap, testProvision.testCaseMap, config.tenantName,
+        );
+        allResults.push(...linkResults);
+      }
+    } else if ((artifacts.requirements?.length || 0) > 0 || (artifacts.testSets?.length || 0) > 0) {
+      if (artifacts.requirements?.length) {
+        allResults.push({ artifact: "Requirement", name: `${artifacts.requirements.length} requirement(s)`, status: "skipped", message: "Test Manager project not available — requirements require an active TM project" });
+      }
+      if (artifacts.testSets?.length) {
+        allResults.push({ artifact: "Test Set", name: `${artifacts.testSets.length} test set(s)`, status: "skipped", message: "Test Manager project not available — test sets require an active TM project" });
+      }
+    }
 
     const created = allResults.filter(r => r.status === "created").length;
     const existed = allResults.filter(r => r.status === "exists").length;
