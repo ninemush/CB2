@@ -352,38 +352,39 @@ function StageTracker({
                   ${isLast ? "pr-3 sm:pr-4" : "pr-3 sm:pr-4"}
                   transition-all duration-200 select-none
                   ${isCompleted ? "cursor-pointer" : "cursor-default"}
-                  ${isCompleted
-                    ? "bg-cb-teal/15 hover:bg-cb-teal/25 text-cb-teal"
-                    : isCurrent
-                      ? "bg-primary/20 text-primary"
-                      : "bg-muted/10 text-muted-foreground/40"
-                  }
                 `}
                 data-testid={isCompleted ? `button-stage-${index}` : undefined}
                 style={{
                   clipPath: isFirst
-                    ? "polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%)"
+                    ? "polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%)"
                     : isLast
-                      ? "polygon(0 0, 100% 0, 100% 100%, 0 100%, 10px 50%)"
-                      : "polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%, 10px 50%)",
-                  marginLeft: isFirst ? "0" : "-10px",
+                      ? "polygon(0 0, 100% 0, 100% 100%, 0 100%, 12px 50%)"
+                      : "polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%, 12px 50%)",
+                  marginLeft: isFirst ? "0" : "-12px",
+                  backgroundColor: isCompleted
+                    ? "hsl(186 100% 30%)"
+                    : isCurrent
+                      ? "hsl(var(--primary))"
+                      : "hsl(var(--muted))",
                 }}
               >
                 {isCompleted && (
-                  <Check className="h-3 w-3 shrink-0" />
+                  <Check className="h-3 w-3 shrink-0 text-white" />
                 )}
                 {isCurrent && (
-                  <div className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
+                  <div className="w-2 h-2 rounded-full bg-white animate-pulse shrink-0" />
                 )}
                 {isFuture && (
-                  <Lock className="h-2.5 w-2.5 shrink-0 opacity-40" />
+                  <Lock className="h-2.5 w-2.5 shrink-0 text-muted-foreground/60" />
                 )}
                 <span className={`text-[9px] sm:text-[10px] font-semibold tracking-wider whitespace-nowrap leading-none ${
-                  isCurrent ? "text-primary" : isCompleted ? "text-cb-teal" : "text-muted-foreground/40"
+                  isCurrent ? "text-primary-foreground" : isCompleted ? "text-white" : "text-muted-foreground/70"
                 }`}>
                   {label}
                 </span>
-                <span className={`text-[8px] sm:text-[9px] font-medium opacity-60 leading-none`}>
+                <span className={`text-[8px] sm:text-[9px] font-medium leading-none ${
+                  isCompleted ? "text-white/60" : isCurrent ? "text-primary-foreground/60" : "text-muted-foreground/40"
+                }`}>
                   {stageNum}
                 </span>
               </div>
