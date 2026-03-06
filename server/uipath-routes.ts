@@ -299,6 +299,18 @@ export function registerUiPathRoutes(app: Express): void {
             artifacts = await extractArtifactsWithLLM(sdd.content);
           }
 
+          if (artifacts && (!artifacts.actionCenter || artifacts.actionCenter.length === 0)) {
+            const acMentions = (sdd.content.match(/[Aa]ction\s*[Cc]enter|[Hh]uman.*[Ll]oop|[Aa]pproval|[Ee]scalation/gi) || []).length;
+            if (acMentions > 0) {
+              console.log(`[UiPath] SDD has ${acMentions} approval/AC mentions but no actionCenter artifacts — supplementing via LLM...`);
+              const supplemented = await extractArtifactsWithLLM(sdd.content);
+              if (supplemented?.actionCenter?.length) {
+                artifacts.actionCenter = supplemented.actionCenter;
+                console.log(`[UiPath] Supplemented ${supplemented.actionCenter.length} Action Center artifact(s): ${supplemented.actionCenter.map(a => a.taskCatalog).join(", ")}`);
+              }
+            }
+          }
+
           if (artifacts && (
             (artifacts.queues?.length || 0) > 0 ||
             (artifacts.assets?.length || 0) > 0 ||

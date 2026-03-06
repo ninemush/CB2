@@ -194,11 +194,11 @@ export async function extractArtifactsWithLLM(sddContent: string): Promise<Orche
     console.log("[UiPath Deploy] Extracting artifacts from SDD using LLM...");
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 2048,
-      system: "You are a UiPath automation consultant. Extract Orchestrator artifact definitions from the SDD and output ONLY valid JSON. No other text, no markdown formatting, no code fences — just the raw JSON object.",
+      max_tokens: 4096,
+      system: "You are a UiPath automation consultant. Extract Orchestrator artifact definitions from the SDD and output ONLY valid JSON. No other text, no markdown formatting, no code fences — just the raw JSON object. Keep descriptions under 250 characters to minimize output size.",
       messages: [{
         role: "user",
-        content: `Extract ALL UiPath Orchestrator and platform artifacts from this Solution Design Document. Output a single JSON object with these keys: queues, assets, machines, triggers, storageBuckets, environments, robotAccounts, actionCenter, documentUnderstanding, testCases, testDataQueues, requirements, testSets. Include every artifact mentioned or implied. For credential assets use value "". For text/integer/bool assets provide sensible defaults. IMPORTANT: All triggers (Queue and Time) MUST be included — never treat them as manual steps. Generate test cases that cover the key automation scenarios described in the SDD — include labels like "Critical", "Smoke", "Regression" where appropriate. For robotAccounts, include any unattended robot accounts needed to run the automation — if machines are defined, at least one robot account should be defined to operate them. For testDataQueues, include any test data queues needed to supply test data to test cases (e.g. login credentials, input data sets). For requirements, extract business requirements from the PDD/SDD — compliance rules, process constraints, SLAs, and acceptance criteria. For testSets, group the test cases into logical sets (e.g. "Happy Path", "Exception Handling", "Regression") and reference test case names.
+        content: `Extract ALL UiPath Orchestrator and platform artifacts from this Solution Design Document. Output a single JSON object with these keys: queues, assets, machines, triggers, storageBuckets, environments, robotAccounts, actionCenter, documentUnderstanding, testCases, testDataQueues, requirements, testSets. Include every artifact mentioned or implied. For credential assets use value "". For text/integer/bool assets provide sensible defaults. IMPORTANT: All triggers (Queue and Time) MUST be included — never treat them as manual steps. Generate test cases that cover the key automation scenarios described in the SDD — include labels like "Critical", "Smoke", "Regression" where appropriate. For robotAccounts, include any unattended robot accounts needed to run the automation — if machines are defined, at least one robot account should be defined to operate them. For testDataQueues, include any test data queues needed to supply test data to test cases (e.g. login credentials, input data sets). For requirements, extract business requirements from the PDD/SDD — compliance rules, process constraints, SLAs, and acceptance criteria. For testSets, group the test cases into logical sets (e.g. "Happy Path", "Exception Handling", "Regression") and reference test case names. CRITICAL for actionCenter: Any process step involving human approval, review, escalation, manual validation, human-in-the-loop decisions, or exception handling that requires human intervention MUST generate an Action Center task catalog entry. Each distinct approval/review/escalation type should be a separate taskCatalog. For example, if the process has "Manager Approval" and "Exception Review" steps, create two entries.
 
 Expected JSON shape:
 {"queues":[{"name":"...","description":"...","maxRetries":3,"uniqueReference":true}],"assets":[{"name":"...","type":"Text|Integer|Bool|Credential","value":"...","description":"..."}],"machines":[{"name":"...","type":"Unattended|Attended|Development","slots":1,"description":"..."}],"triggers":[{"name":"...","type":"Queue|Time","queueName":"...","cron":"...","description":"..."}],"storageBuckets":[{"name":"...","description":"..."}],"environments":[{"name":"...","type":"Production|Development|Testing","description":"..."}],"robotAccounts":[{"name":"...","type":"Unattended|Attended|Development","description":"..."}],"actionCenter":[{"taskCatalog":"...","assignedRole":"...","sla":"...","escalation":"...","description":"..."}],"documentUnderstanding":[{"name":"ProjectName","documentTypes":["Invoice","Receipt"],"description":"..."}],"testCases":[{"name":"TC_001_TestName","description":"What this tests","labels":["Critical","Smoke"],"steps":[{"action":"Step action","expected":"Expected result"}]}],"testDataQueues":[{"name":"TestDataQueueName","description":"Queue for test data","jsonSchema":"{\"type\":\"object\",\"properties\":{\"field\":{\"type\":\"string\"}}}","items":[{"name":"Record_1","content":"{\"field\":\"value\"}"}]}],"requirements":[{"name":"REQ-001: Requirement name","description":"Business requirement","source":"PDD Section X"}],"testSets":[{"name":"Happy Path Tests","description":"Core scenario validation","testCaseNames":["TC_001_TestName"]}]}
@@ -216,7 +216,40 @@ ${sddContent.slice(0, 12000)}`
       console.warn("[UiPath Deploy] LLM returned fenced JSON despite instructions — stripped fences");
     }
 
-    const raw = JSON.parse(sanitizeJsonString(jsonStr));
+    let raw: any;
+    const sanitized = sanitizeJsonString(jsonStr);
+    try {
+      raw = JSON.parse(sanitized);
+    } catch (parseErr: any) {
+      const posMatch = parseErr.message?.match(/position (\d+)/);
+      const isUnexpectedEnd = /unexpected end/i.test(parseErr.message || "");
+      const truncPos = posMatch ? parseInt(posMatch[1], 10) : (isUnexpectedEnd ? sanitized.length : -1);
+      if (truncPos >= 0) {
+        console.warn(`[UiPath Deploy] JSON parse failed at position ${truncPos}/${sanitized.length}, attempting stack-based recovery...`);
+        let truncated = sanitized.slice(0, truncPos);
+        truncated = truncated.replace(/,\s*$/, "");
+        if (/:\s*$/.test(truncated)) truncated += '""';
+        const stack: string[] = [];
+        let inStr = false;
+        for (let i = 0; i < truncated.length; i++) {
+          if (truncated[i] === '"' && (i === 0 || truncated[i-1] !== '\\')) { inStr = !inStr; continue; }
+          if (inStr) continue;
+          if (truncated[i] === '{') stack.push('}');
+          else if (truncated[i] === '[') stack.push(']');
+          else if (truncated[i] === '}' || truncated[i] === ']') stack.pop();
+        }
+        if (inStr) truncated += '"';
+        const closer = stack.reverse().join("");
+        try {
+          raw = JSON.parse(truncated + closer);
+          console.log(`[UiPath Deploy] JSON recovery succeeded — parsed ${Object.keys(raw).length} top-level keys`);
+        } catch {
+          throw parseErr;
+        }
+      } else {
+        throw parseErr;
+      }
+    }
 
     const validated: OrchestratorArtifacts = {};
     if (Array.isArray(raw.queues)) {
@@ -2507,7 +2540,7 @@ async function linkRequirementsToTestCases(
     try {
       const assignRes = await uipathFetch(`${activeTmBase}/api/v2/${projectId}/requirements/${reqId}/assigntestcases`, {
         method: "POST", headers: hdrs,
-        body: JSON.stringify(tcIds),
+        body: JSON.stringify({ testCaseIds: tcIds }),
         label: `TM Link Requirement "${reqName}" to TestCases`, maxRetries: 1, redirect: "manual" as any,
       });
       if (assignRes.ok) {
@@ -2981,8 +3014,13 @@ export async function deployAllArtifacts(
       allResults.push(...triggerResults);
     }
 
-    if (svcAvail && !svcAvail.actionCenter && (artifacts.actionCenter?.length || 0) > 0) {
-      console.log("[UiPath Deploy] Probe says Action Center unavailable, but attempting provisioning anyway...");
+    if ((artifacts.actionCenter?.length || 0) === 0) {
+      console.log("[UiPath Deploy] No Action Center artifacts extracted from SDD — skipping AC provisioning");
+    } else {
+      if (svcAvail && !svcAvail.actionCenter) {
+        console.log("[UiPath Deploy] Probe says Action Center unavailable, but attempting provisioning anyway...");
+      }
+      console.log(`[UiPath Deploy] Provisioning ${artifacts.actionCenter!.length} Action Center task catalog(s): ${artifacts.actionCenter!.map(a => a.taskCatalog).join(", ")}`);
     }
     const actionCenterResults = await provisionActionCenter(base, hdrs, artifacts.actionCenter, config, svcAvail?.actionCenter);
     allResults.push(...actionCenterResults);
