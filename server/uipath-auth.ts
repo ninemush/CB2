@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { appSettings } from "@shared/schema";
+import { appSettings, uipathConnections } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 export class UiPathAuthError extends Error {
@@ -81,6 +81,23 @@ function maskClientId(clientId: string): string {
 async function loadConfig(): Promise<UiPathAuthConfig | null> {
   const now = Date.now();
   if (cachedConfig && now - configLoadedAt < CONFIG_TTL_MS) {
+    return cachedConfig;
+  }
+
+  const activeRows = await db.select().from(uipathConnections).where(eq(uipathConnections.isActive, true));
+  if (activeRows.length > 0) {
+    const row = activeRows[0];
+    const scopes = resolveOrScopes(row.scopes, RESOURCE_SCOPES.OR);
+    cachedConfig = {
+      orgName: row.orgName,
+      tenantName: row.tenantName,
+      clientId: row.clientId,
+      clientSecret: row.clientSecret,
+      scopes,
+      folderId: row.folderId || undefined,
+      folderName: row.folderName || undefined,
+    };
+    configLoadedAt = now;
     return cachedConfig;
   }
 

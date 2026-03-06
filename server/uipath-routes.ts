@@ -9,8 +9,52 @@ import * as auth from "./uipath-auth";
 import * as orch from "./orchestrator-client";
 import * as prereqs from "./prerequisite-checker";
 import { db } from "./db";
-import { pipelineJobs, provisioningLog, actionTasks, testResults } from "@shared/schema";
-import { eq, desc } from "drizzle-orm";
+import { pipelineJobs, provisioningLog, actionTasks, testResults, uipathConnections, appSettings } from "@shared/schema";
+import { eq, desc, ne } from "drizzle-orm";
+
+function extractOrgSlug(input: string): string {
+  let val = input.trim();
+  val = val.replace(/^https?:\/\//, "");
+  val = val.replace(/^cloud\.uipath\.com\//, "");
+  val = val.replace(/\/+$/, "");
+  val = val.split("/")[0];
+  return val.trim();
+}
+
+let migrationDone = false;
+async function migrateExistingConfigToConnection(): Promise<void> {
+  if (migrationDone) return;
+  const existing = await db.select().from(uipathConnections);
+  if (existing.length > 0) {
+    migrationDone = true;
+    return;
+  }
+  const all = await db.select().from(appSettings);
+  const map = new Map(all.map((r) => [r.key, r.value]));
+  const orgName = map.get("uipath_org_name");
+  const tenantName = map.get("uipath_tenant_name");
+  const clientId = map.get("uipath_client_id");
+  const clientSecret = map.get("uipath_client_secret");
+  if (!orgName || !tenantName || !clientId || !clientSecret) {
+    migrationDone = true;
+    return;
+  }
+  await db.insert(uipathConnections).values({
+    name: `${orgName} / ${tenantName}`,
+    orgName,
+    tenantName,
+    clientId,
+    clientSecret,
+    scopes: map.get("uipath_scopes") || "OR.Default OR.Administration",
+    folderId: map.get("uipath_folder_id") || null,
+    folderName: map.get("uipath_folder_name") || null,
+    isActive: true,
+  });
+  auth.invalidateAllTokens();
+  auth.invalidateConfig();
+  migrationDone = true;
+  console.log("[UiPath] Migrated existing config to uipath_connections table");
+}
 
 function requireAdmin(req: Request, res: Response): boolean {
   if (!req.session.userId) {
@@ -71,6 +115,34 @@ export function registerUiPathRoutes(app: Express): void {
     }
     await saveUiPathConfig({ orgName, tenantName, clientId, clientSecret: clientSecret || undefined, scopes: scopes || undefined });
 
+    const cleanOrg = extractOrgSlug(orgName);
+    const activeRows = await db.select().from(uipathConnections).where(eq(uipathConnections.isActive, true));
+    if (activeRows.length > 0) {
+      const updates: Record<string, any> = {
+        orgName: cleanOrg,
+        tenantName: tenantName.trim(),
+        clientId: clientId.trim(),
+      };
+      if (clientSecret) updates.clientSecret = clientSecret.trim();
+      if (scopes) updates.scopes = scopes.trim();
+      await db.update(uipathConnections).set(updates).where(eq(uipathConnections.id, activeRows[0].id));
+    } else {
+      const secret = clientSecret?.trim() || existingConfig?.clientSecret;
+      if (secret) {
+        await db.insert(uipathConnections).values({
+          name: `${cleanOrg} / ${tenantName.trim()}`,
+          orgName: cleanOrg,
+          tenantName: tenantName.trim(),
+          clientId: clientId.trim(),
+          clientSecret: secret,
+          scopes: scopes?.trim() || "OR.Default OR.Administration",
+          isActive: true,
+        });
+      }
+    }
+    auth.invalidateAllTokens();
+    auth.invalidateConfig();
+
     const testResult = await testUiPathConnection();
     return res.json({
       success: true,
@@ -83,6 +155,160 @@ export function registerUiPathRoutes(app: Express): void {
     if (!requireAdmin(req, res)) return;
     const result = await testUiPathConnection();
     return res.json(result);
+  });
+
+  app.get("/api/settings/uipath/connections", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      await migrateExistingConfigToConnection();
+      const rows = await db.select().from(uipathConnections);
+      const masked = rows.map(r => ({
+        ...r,
+        clientSecret: r.clientSecret ? "••••••••" : "",
+      }));
+      return res.json(masked);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/settings/uipath/connections", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const { name, orgName, tenantName, clientId, clientSecret, scopes, folderId, folderName } = req.body;
+      if (!name || !orgName || !tenantName || !clientId || !clientSecret) {
+        return res.status(400).json({ message: "Name, organization, tenant, client ID, and client secret are required" });
+      }
+      const existing = await db.select().from(uipathConnections);
+      const isFirst = existing.length === 0;
+      const [row] = await db.insert(uipathConnections).values({
+        name: name.trim(),
+        orgName: extractOrgSlug(orgName),
+        tenantName: tenantName.trim(),
+        clientId: clientId.trim(),
+        clientSecret: clientSecret.trim(),
+        scopes: scopes?.trim() || "OR.Default OR.Administration",
+        folderId: folderId || null,
+        folderName: folderName || null,
+        isActive: isFirst,
+      }).returning();
+      if (isFirst) {
+        auth.invalidateAllTokens();
+        auth.invalidateConfig();
+      }
+      return res.json({ ...row, clientSecret: "••••••••" });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/settings/uipath/connections/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await db.select().from(uipathConnections).where(eq(uipathConnections.id, id));
+      if (existing.length === 0) return res.status(404).json({ message: "Connection not found" });
+
+      const { name, orgName, tenantName, clientId, clientSecret, scopes, folderId, folderName } = req.body;
+      const updates: Record<string, any> = {};
+      if (name !== undefined) updates.name = name.trim();
+      if (orgName !== undefined) updates.orgName = extractOrgSlug(orgName);
+      if (tenantName !== undefined) updates.tenantName = tenantName.trim();
+      if (clientId !== undefined) updates.clientId = clientId.trim();
+      if (clientSecret) updates.clientSecret = clientSecret.trim();
+      if (scopes !== undefined) updates.scopes = scopes.trim();
+      if (folderId !== undefined) updates.folderId = folderId || null;
+      if (folderName !== undefined) updates.folderName = folderName || null;
+
+      const [updated] = await db.update(uipathConnections).set(updates).where(eq(uipathConnections.id, id)).returning();
+      if (updated.isActive) {
+        auth.invalidateAllTokens();
+        auth.invalidateConfig();
+      }
+      return res.json({ ...updated, clientSecret: "••••••••" });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/settings/uipath/connections/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await db.select().from(uipathConnections).where(eq(uipathConnections.id, id));
+      if (existing.length === 0) return res.status(404).json({ message: "Connection not found" });
+      if (existing[0].isActive) return res.status(400).json({ message: "Cannot delete the active connection. Switch to another connection first." });
+      await db.delete(uipathConnections).where(eq(uipathConnections.id, id));
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/settings/uipath/connections/:id/activate", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await db.select().from(uipathConnections).where(eq(uipathConnections.id, id));
+      if (existing.length === 0) return res.status(404).json({ message: "Connection not found" });
+      await db.update(uipathConnections).set({ isActive: false }).where(ne(uipathConnections.id, id));
+      const [activated] = await db.update(uipathConnections).set({ isActive: true }).where(eq(uipathConnections.id, id)).returning();
+      auth.invalidateAllTokens();
+      auth.invalidateConfig();
+      return res.json({ ...activated, clientSecret: "••••••••" });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/settings/uipath/connections/:id/test", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const rows = await db.select().from(uipathConnections).where(eq(uipathConnections.id, id));
+      if (rows.length === 0) return res.status(404).json({ message: "Connection not found" });
+      const conn = rows[0];
+
+      const tokenParams = new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: conn.clientId,
+        client_secret: conn.clientSecret,
+        scope: "OR.Default",
+      });
+
+      const tokenRes = await fetch("https://cloud.uipath.com/identity_/connect/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: tokenParams.toString(),
+      });
+
+      if (!tokenRes.ok) {
+        const text = await tokenRes.text().catch(() => "");
+        await db.update(uipathConnections).set({ lastTestedAt: new Date() }).where(eq(uipathConnections.id, id));
+        return res.json({ success: false, message: `Authentication failed (${tokenRes.status}): ${text.slice(0, 200)}` });
+      }
+
+      const tokenData = await tokenRes.json();
+      const baseUrl = `https://cloud.uipath.com/${conn.orgName}/${conn.tenantName}/orchestrator_`;
+      const orchRes = await fetch(`${baseUrl}/odata/Folders?$top=1`, {
+        headers: { Authorization: `Bearer ${tokenData.access_token}`, "Content-Type": "application/json" },
+      });
+
+      await db.update(uipathConnections).set({ lastTestedAt: new Date() }).where(eq(uipathConnections.id, id));
+
+      if (orchRes.ok) {
+        return res.json({ success: true, message: `Connected to ${conn.tenantName}` });
+      } else {
+        const text = await orchRes.text().catch(() => "");
+        return res.json({ success: false, message: `Orchestrator returned ${orchRes.status}: ${text.slice(0, 200)}` });
+      }
+    } catch (err: any) {
+      return res.json({ success: false, message: err.message });
+    }
   });
 
   app.get("/api/settings/uipath/verify-scopes", async (req: Request, res: Response) => {

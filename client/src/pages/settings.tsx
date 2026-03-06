@@ -44,7 +44,12 @@ import {
   ChevronDown,
   ChevronRight,
   Pencil,
+  Plus,
+  Trash2,
+  ArrowRightLeft,
+  Database,
 } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 
 function roleBadgeVariant(role: string): "default" | "secondary" | "outline" | "destructive" {
@@ -904,6 +909,230 @@ function OrchestratorHealthPanel() {
   );
 }
 
+type UipathConnection = {
+  id: number;
+  name: string;
+  orgName: string;
+  tenantName: string;
+  clientId: string;
+  clientSecret: string;
+  scopes: string;
+  folderId: string | null;
+  folderName: string | null;
+  isActive: boolean;
+  lastTestedAt: string | null;
+  createdAt: string;
+};
+
+function ConnectionManagerPanel({ onEditConnection }: { onEditConnection: (conn: UipathConnection) => void }) {
+  const { toast } = useToast();
+
+  const { data: connections, isLoading } = useQuery<UipathConnection[]>({
+    queryKey: ["/api/settings/uipath/connections"],
+  });
+
+  const activateMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("POST", `/api/settings/uipath/connections/${id}/activate`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/uipath/connections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/uipath"] });
+      toast({ title: "Connection switched", description: "Active orchestrator updated. All tokens have been refreshed." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to switch", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/settings/uipath/connections/${id}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/uipath/connections"] });
+      toast({ title: "Connection deleted" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to delete", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("POST", `/api/settings/uipath/connections/${id}/test`);
+      return res.json();
+    },
+    onSuccess: (data: { success: boolean; message: string }, id: number) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/uipath/connections"] });
+      if (data.success) {
+        toast({ title: "Connection test passed", description: data.message });
+      } else {
+        toast({ title: "Connection test failed", description: data.message, variant: "destructive" });
+      }
+    },
+    onError: (error: Error) => {
+      toast({ title: "Test failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: 2 }).map((_, i) => (
+          <Skeleton key={i} className="h-16 w-full" />
+        ))}
+      </div>
+    );
+  }
+
+  if (!connections || connections.length === 0) {
+    return (
+      <div className="text-center py-6 text-sm text-muted-foreground" data-testid="no-connections">
+        <Database className="h-8 w-8 mx-auto mb-2 opacity-40" />
+        <p>No orchestrator connections configured yet.</p>
+        <p className="text-xs mt-1">Use the wizard below to add your first connection.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2" data-testid="connections-list">
+      {connections.map((conn) => (
+        <div
+          key={conn.id}
+          className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+            conn.isActive
+              ? "border-green-600/50 bg-green-500/5"
+              : "border-border bg-card hover:bg-muted/30"
+          }`}
+          data-testid={`connection-card-${conn.id}`}
+        >
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-sm text-foreground truncate" data-testid={`connection-name-${conn.id}`}>
+                {conn.name}
+              </span>
+              {conn.isActive ? (
+                <Badge variant="outline" className="border-green-600 text-green-500 text-[10px] px-1.5 py-0" data-testid={`badge-active-${conn.id}`}>
+                  Active
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="text-muted-foreground text-[10px] px-1.5 py-0" data-testid={`badge-inactive-${conn.id}`}>
+                  Inactive
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
+              <span>{conn.orgName} / {conn.tenantName}</span>
+              {conn.lastTestedAt && (
+                <span className="flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  Tested {new Date(conn.lastTestedAt).toLocaleDateString()}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => testMutation.mutate(conn.id)}
+              disabled={testMutation.isPending}
+              title="Test connection"
+              data-testid={`button-test-connection-${conn.id}`}
+            >
+              {testMutation.isPending && testMutation.variables === conn.id ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Play className="h-3.5 w-3.5" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => onEditConnection(conn)}
+              title="Edit connection"
+              data-testid={`button-edit-connection-${conn.id}`}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            {!conn.isActive && (
+              <>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-[#e8450a]"
+                      title="Switch to this connection"
+                      data-testid={`button-switch-connection-${conn.id}`}
+                    >
+                      <ArrowRightLeft className="h-3.5 w-3.5" />
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Switch Active Connection</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Switch to <strong>{conn.name}</strong> ({conn.orgName}/{conn.tenantName})? All cached tokens will be invalidated and the system will reconnect using this connection's credentials.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => activateMutation.mutate(conn.id)}
+                        data-testid={`confirm-switch-${conn.id}`}
+                      >
+                        Switch
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-destructive"
+                      title="Delete connection"
+                      data-testid={`button-delete-connection-${conn.id}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete Connection</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Delete <strong>{conn.name}</strong>? This action cannot be undone.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => deleteMutation.mutate(conn.id)}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        data-testid={`confirm-delete-${conn.id}`}
+                      >
+                        Delete
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function IntegrationsTab() {
   const { toast } = useToast();
   const [step, setStep] = useState(0);
@@ -912,6 +1141,9 @@ function IntegrationsTab() {
   const [tenantName, setTenantName] = useState("DefaultTenant");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [connectionName, setConnectionName] = useState("");
+  const [editingConnectionId, setEditingConnectionId] = useState<number | null>(null);
+  const [showWizard, setShowWizard] = useState(true);
   const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set(["OR.Default"]));
   const [testResultMsg, setTestResultMsg] = useState<{ success: boolean; message: string } | null>(null);
   const [scopeVerification, setScopeVerification] = useState<{
@@ -973,7 +1205,7 @@ function IntegrationsTab() {
   });
 
   useEffect(() => {
-    if (config?.configured) {
+    if (config?.configured && !editingConnectionId) {
       setOrgName(config.orgName || "");
       setTenantName(config.tenantName || "DefaultTenant");
       setClientId(config.clientId || "");
@@ -982,6 +1214,7 @@ function IntegrationsTab() {
       setSelectedFolderId(config.folderId || null);
       setSelectedFolderName(config.folderName || null);
       setStep(3);
+      setShowWizard(false);
     }
   }, [config]);
 
@@ -1064,20 +1297,31 @@ function IntegrationsTab() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/settings/uipath", {
+      const scopeStr = Array.from(selectedScopes).join(" ");
+      const connPayload = {
+        name: connectionName.trim() || `${extractOrgSlug(orgName)} / ${tenantName.trim()}`,
         orgName: extractOrgSlug(orgName),
         tenantName: tenantName.trim(),
         clientId: clientId.trim(),
         clientSecret: clientSecret.trim() || undefined,
-        scopes: Array.from(selectedScopes).join(" "),
-      });
+        scopes: scopeStr,
+      };
+
+      if (editingConnectionId) {
+        const res = await apiRequest("PATCH", `/api/settings/uipath/connections/${editingConnectionId}`, connPayload);
+        return res.json();
+      }
+
+      const res = await apiRequest("POST", "/api/settings/uipath/connections", connPayload);
       return res.json();
     },
-    onSuccess: (data: { success: boolean; message: string; testResult?: { success: boolean; message: string } }) => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/settings/uipath"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/uipath/connections"] });
       setClientSecret("");
       setScopeProbe(null);
       setAutoDetectResult(null);
+      setEditingConnectionId(null);
       if (data.testResult) {
         setTestResultMsg(data.testResult);
         if (data.testResult.success) {
@@ -1086,7 +1330,7 @@ function IntegrationsTab() {
           toast({ title: "Saved but connection failed", description: data.testResult.message, variant: "destructive" });
         }
       } else {
-        toast({ title: "UiPath configuration saved" });
+        toast({ title: "Connection saved" });
       }
       setStep(3);
     },
@@ -1144,17 +1388,77 @@ function IntegrationsTab() {
 
   const stepLabels = ["Organization", "Credentials", "Scopes", "Confirm"];
 
+  const handleEditConnection = (conn: UipathConnection) => {
+    setEditingConnectionId(conn.id);
+    setConnectionName(conn.name);
+    setOrgName(conn.orgName);
+    setTenantName(conn.tenantName);
+    setClientId(conn.clientId);
+    setClientSecret("");
+    setSelectedScopes(new Set((conn.scopes || "OR.Default").split(" ").filter(Boolean)));
+    setSelectedFolderId(conn.folderId || null);
+    setSelectedFolderName(conn.folderName || null);
+    setTestResultMsg(null);
+    setScopeProbe(null);
+    setAutoDetectResult(null);
+    setErrors({});
+    setShowWizard(true);
+    setStep(0);
+  };
+
+  const handleAddNew = () => {
+    setEditingConnectionId(null);
+    setConnectionName("");
+    setOrgName("");
+    setTenantName("DefaultTenant");
+    setClientId("");
+    setClientSecret("");
+    setSelectedScopes(new Set(["OR.Default"]));
+    setSelectedFolderId(null);
+    setSelectedFolderName(null);
+    setTestResultMsg(null);
+    setScopeProbe(null);
+    setAutoDetectResult(null);
+    setErrors({});
+    setShowWizard(true);
+    setStep(0);
+  };
+
   return (
     <div className="space-y-6 max-w-2xl">
+      <Card className="p-4 sm:p-6 space-y-4" data-testid="card-connections-manager">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Database className="h-5 w-5 text-[#e8450a]" />
+            <h3 className="text-base sm:text-lg font-semibold text-foreground">Orchestrator Connections</h3>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleAddNew}
+            data-testid="button-add-connection"
+          >
+            <Plus className="h-3.5 w-3.5 mr-1.5" />
+            Add Connection
+          </Button>
+        </div>
+        <ConnectionManagerPanel onEditConnection={handleEditConnection} />
+      </Card>
+
+      {showWizard && (
       <Card className="p-4 sm:p-6 space-y-4 sm:space-y-6" data-testid="card-uipath-config">
         <div className="flex flex-col sm:flex-row items-start justify-between gap-2">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <Plug className="h-5 w-5 text-[#e8450a]" />
-              <h3 className="text-base sm:text-lg font-semibold text-foreground">UiPath Orchestrator</h3>
+              <h3 className="text-base sm:text-lg font-semibold text-foreground">
+                {editingConnectionId ? "Edit Connection" : "New Connection"}
+              </h3>
             </div>
             <p className="text-xs sm:text-sm text-muted-foreground">
-              Connect to UiPath Cloud to push automation packages directly.{" "}
+              {editingConnectionId
+                ? "Update this orchestrator connection's settings."
+                : "Connect to UiPath Cloud to push automation packages directly."}{" "}
               <a
                 href="https://cloud.uipath.com"
                 target="_blank"
@@ -1166,11 +1470,15 @@ function IntegrationsTab() {
               </a>
             </p>
           </div>
-          {config?.configured ? (
+          {config?.configured && !editingConnectionId ? (
             <Badge variant="outline" className="border-green-600 text-green-500 gap-1" data-testid="badge-connected">
               <CheckCircle2 className="h-3 w-3" />
               Connected
             </Badge>
+          ) : editingConnectionId ? (
+            <Button variant="ghost" size="sm" onClick={() => { setShowWizard(false); setEditingConnectionId(null); }} data-testid="button-cancel-edit">
+              Cancel
+            </Button>
           ) : (
             <Badge variant="outline" className="border-muted-foreground text-muted-foreground gap-1" data-testid="badge-not-configured">
               <XCircle className="h-3 w-3" />
@@ -1216,6 +1524,17 @@ function IntegrationsTab() {
               <p className="font-medium text-foreground text-sm">Step 1: Organization & Tenant</p>
               <p>Find these in your UiPath Cloud URL: <code className="bg-muted px-1 py-0.5 rounded text-[10px]">cloud.uipath.com/<strong>orgName</strong>/<strong>tenantName</strong></code></p>
               <p>You can paste the full URL — the organization name will be extracted automatically.</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="connectionName">Connection Name</Label>
+              <Input
+                id="connectionName"
+                placeholder="e.g. Production, Staging, Dev"
+                value={connectionName}
+                onChange={(e) => setConnectionName(e.target.value)}
+                data-testid="input-connection-name"
+              />
+              <p className="text-xs text-muted-foreground">A friendly name to identify this connection. Auto-generated if left blank.</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="orgName">Organization Name <span className="text-destructive">*</span></Label>
@@ -1850,6 +2169,7 @@ function IntegrationsTab() {
           </div>
         )}
       </Card>
+      )}
     </div>
   );
 }

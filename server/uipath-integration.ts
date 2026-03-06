@@ -33,25 +33,20 @@ export type UiPathConfig = {
 };
 
 export async function getUiPathConfig(): Promise<UiPathConfig | null> {
-  const rows = await db.select().from(appSettings).where(
-    eq(appSettings.key, "uipath_org_name")
-  );
-  if (rows.length === 0) return null;
-
-  const all = await db.select().from(appSettings);
-  const map = new Map(all.map((r) => [r.key, r.value]));
-
-  const orgName = map.get("uipath_org_name");
-  const tenantName = map.get("uipath_tenant_name");
-  const clientId = map.get("uipath_client_id");
-  const clientSecret = map.get("uipath_client_secret");
-  const scopes = map.get("uipath_scopes") || "OR.Default OR.Administration";
-  const folderId = map.get("uipath_folder_id") || undefined;
-  const folderName = map.get("uipath_folder_name") || undefined;
-
-  if (!orgName || !tenantName || !clientId || !clientSecret) return null;
-
-  return { orgName, tenantName, clientId, clientSecret, scopes, folderId, folderName };
+  const { getConfig } = await import("./uipath-auth");
+  const authConfig = await getConfig();
+  if (authConfig) {
+    return {
+      orgName: authConfig.orgName,
+      tenantName: authConfig.tenantName,
+      clientId: authConfig.clientId,
+      clientSecret: authConfig.clientSecret,
+      scopes: authConfig.scopes,
+      folderId: authConfig.folderId,
+      folderName: authConfig.folderName,
+    };
+  }
+  return null;
 }
 
 function extractOrgName(input: string): string {
@@ -86,6 +81,9 @@ export async function saveUiPathConfig(config: { orgName: string; tenantName: st
       await db.insert(appSettings).values(entry);
     }
   }
+
+  const { invalidateConfig } = await import("./uipath-auth");
+  invalidateConfig();
 }
 
 async function upsertSetting(key: string, value: string): Promise<void> {
@@ -111,6 +109,19 @@ export async function saveUiPathFolder(folderId: string | null, folderName: stri
       await db.delete(appSettings).where(eq(appSettings.key, "uipath_folder_name"));
     }
   }
+
+  const { uipathConnections } = await import("@shared/schema");
+  const { eq: eqOp } = await import("drizzle-orm");
+  const activeRows = await db.select().from(uipathConnections).where(eqOp(uipathConnections.isActive, true));
+  if (activeRows.length > 0) {
+    await db.update(uipathConnections).set({
+      folderId: folderId || null,
+      folderName: folderName || null,
+    }).where(eqOp(uipathConnections.id, activeRows[0].id));
+  }
+
+  const { invalidateConfig } = await import("./uipath-auth");
+  invalidateConfig();
 }
 
 export async function fetchUiPathFolders(): Promise<{ success: boolean; folders?: { id: number; displayName: string; fullyQualifiedName: string }[]; message?: string }> {
