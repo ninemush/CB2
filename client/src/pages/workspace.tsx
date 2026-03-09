@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode, type MutableRefObject } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -500,7 +500,7 @@ function parseMessageMeta(content: string): { docType?: "PDD" | "SDD"; docId?: n
   return { displayContent: stripStepTags(content) };
 }
 
-function ChatPanel({ idea }: { idea: Idea }) {
+function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProcessMapViewRef: MutableRefObject<((view: "as-is" | "to-be" | "sdd") => void) | null> }) {
   const { toast } = useToast();
   const [streamingMsg, setStreamingMsg] = useState<ChatMsg | null>(null);
   const [pendingUserMsg, setPendingUserMsg] = useState<ChatMsg | null>(null);
@@ -806,19 +806,12 @@ function ChatPanel({ idea }: { idea: Idea }) {
       if (finalContent) {
         const viewStepSets = parseStepsByView(finalContent);
 
+        let firstCreatedView: string | null = null;
+
         for (const { viewType, steps } of viewStepSets) {
           if (steps.length === 0) continue;
 
-          const hasStartNode = steps.some(s => s.nodeType === "start");
-          const hasEndNode = steps.some(s => s.nodeType === "end");
-          const isFullRegeneration = hasStartNode && hasEndNode && steps.length >= 5;
-
-          const existingMap = await fetch(`/api/ideas/${idea.id}/process-map?view=${viewType}`, { credentials: "include" })
-            .then((r) => r.json());
-          const existingNodes: any[] = existingMap.nodes || [];
-
           const normalizeName = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
-
           const hasStepNumbers = steps.some(s => s.stepNumber);
 
           let dedupedSteps: typeof steps;
@@ -836,146 +829,77 @@ function ChatPanel({ idea }: { idea: Idea }) {
             });
           }
 
-          const dedupedHasStart = dedupedSteps.some(s => s.nodeType === "start");
-          const dedupedHasEnd = dedupedSteps.some(s => s.nodeType === "end");
-          const safeToRegenerate = isFullRegeneration && dedupedHasStart && dedupedHasEnd && dedupedSteps.length >= 3;
+          const hasStartNode = dedupedSteps.some(s => s.nodeType === "start");
+          const hasEndNode = dedupedSteps.some(s => s.nodeType === "end");
+          const clearExisting = hasStartNode && hasEndNode && dedupedSteps.length >= 3;
 
-          if (safeToRegenerate && existingNodes.length > 0) {
-            console.log(`[ProcessMap] Full regeneration detected (${dedupedSteps.length} deduped steps with start+end). Clearing existing ${existingNodes.length} nodes for view=${viewType}`);
-            await fetch(`/api/ideas/${idea.id}/process-map/clear?view=${viewType}`, {
-              method: "DELETE",
-              credentials: "include",
-            });
-          }
+          const bulkNodes = dedupedSteps.map((step, i) => ({
+            name: step.name,
+            role: step.role,
+            system: step.system,
+            nodeType: step.nodeType,
+            orderIndex: i,
+          }));
 
-          const remainingNodes = safeToRegenerate ? [] : existingNodes;
+          const stepNumberToIndex: Record<string, number> = {};
+          dedupedSteps.forEach((step, i) => {
+            if (step.stepNumber) stepNumberToIndex[step.stepNumber] = i;
+          });
 
-          const nameToId: Record<string, number> = {};
-          for (const n of remainingNodes) {
-            nameToId[normalizeName(n.name)] = n.id;
-          }
-
-          const findMatch = (stepName: string, _stepType: string): number | null => {
-            if (safeToRegenerate) return null;
-            const norm = normalizeName(stepName);
-            if (nameToId[norm]) return nameToId[norm];
-            return null;
-          };
-
-          const stepNumberToNodeId: Record<string, number> = {};
-          const createdNodes: { name: string; id: number; stepNumber?: string; from?: string; fromStepNumber?: string; edgeLabel?: string }[] = [];
+          const seenEdgePairs = new Set<string>();
+          const bulkEdges: { sourceIndex: number; targetIndex: number; label: string }[] = [];
 
           for (let i = 0; i < dedupedSteps.length; i++) {
             const step = dedupedSteps[i];
-            const existingId = findMatch(step.name, step.nodeType);
+            let sourceIndex: number | null = null;
+            let label = step.edgeLabel || "";
 
-            if (existingId) {
-              await fetch(`/api/process-nodes/${existingId}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                credentials: "include",
-                body: JSON.stringify({
-                  name: step.name,
-                  role: step.role,
-                  system: step.system,
-                  nodeType: step.nodeType,
-                }),
+            if (step.fromStepNumber) {
+              sourceIndex = stepNumberToIndex[step.fromStepNumber] ?? null;
+              if (sourceIndex === null) {
+                const fallback = dedupedSteps.findIndex(s => s.stepNumber === step.fromStepNumber);
+                if (fallback >= 0) sourceIndex = fallback;
+              }
+            } else if (step.from) {
+              const fromNorm = normalizeName(step.from);
+              const match = dedupedSteps.findIndex(s => {
+                const n = normalizeName(s.name);
+                return n === fromNorm || n.includes(fromNorm) || fromNorm.includes(n);
               });
-              createdNodes.push({
-                name: step.name,
-                id: existingId,
-                stepNumber: step.stepNumber,
-                from: step.from,
-                fromStepNumber: step.fromStepNumber,
-                edgeLabel: step.edgeLabel,
-              });
-              if (step.stepNumber) stepNumberToNodeId[step.stepNumber] = existingId;
+              if (match >= 0) sourceIndex = match;
             } else {
-              const res = await fetch(`/api/ideas/${idea.id}/process-nodes`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                credentials: "include",
-                body: JSON.stringify({
-                  viewType,
-                  name: step.name,
-                  role: step.role,
-                  system: step.system,
-                  nodeType: step.nodeType,
-                  orderIndex: i,
-                }),
-              });
-              const created = await res.json();
-              createdNodes.push({
-                name: step.name,
-                id: created.id,
-                stepNumber: step.stepNumber,
-                from: step.from,
-                fromStepNumber: step.fromStepNumber,
-                edgeLabel: step.edgeLabel,
-              });
-              nameToId[normalizeName(step.name)] = created.id;
-              if (step.stepNumber) stepNumberToNodeId[step.stepNumber] = created.id;
+              if (i > 0) sourceIndex = i - 1;
+            }
+
+            if (sourceIndex !== null && sourceIndex !== i) {
+              const pairKey = `${sourceIndex}->${i}`;
+              if (!seenEdgePairs.has(pairKey)) {
+                seenEdgePairs.add(pairKey);
+                bulkEdges.push({ sourceIndex, targetIndex: i, label });
+              }
             }
           }
 
-          const seenEdgePairs = new Set<string>();
+          console.log(`[ProcessMap] Bulk creating ${bulkNodes.length} nodes, ${bulkEdges.length} edges for view=${viewType} (clear=${clearExisting})`);
 
-          const resolveFrom = (fromName: string): number | null => {
-            const normalized = normalizeName(fromName);
-            if (nameToId[normalized]) return nameToId[normalized];
-            const keys = Object.keys(nameToId);
-            const partial = keys.find(k => k.includes(normalized) || normalized.includes(k));
-            if (partial) return nameToId[partial];
-            return null;
-          };
+          const bulkRes = await fetch(`/api/ideas/${idea.id}/process-map/bulk`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ viewType, nodes: bulkNodes, edges: bulkEdges, clearExisting }),
+          });
 
-          for (let i = 0; i < createdNodes.length; i++) {
-            const node = createdNodes[i];
-            let sourceId: number | null = null;
-            let label = node.edgeLabel || "";
-
-            if (node.fromStepNumber) {
-              sourceId = stepNumberToNodeId[node.fromStepNumber] || null;
-              if (!sourceId) {
-                const fallbackName = createdNodes.find(n => n.stepNumber === node.fromStepNumber)?.name;
-                if (fallbackName) sourceId = resolveFrom(fallbackName);
-                if (!sourceId) {
-                  console.warn(`[ProcessMap] FROM step# "${node.fromStepNumber}" not found for step "${node.name}", skipping edge`);
-                  continue;
-                }
-              }
-            } else if (node.from) {
-              sourceId = resolveFrom(node.from);
-              if (!sourceId) {
-                console.warn(`[ProcessMap] FROM "${node.from}" not found for step "${node.name}", skipping edge`);
-                continue;
-              }
-            } else {
-              if (i > 0) {
-                sourceId = createdNodes[i - 1].id;
-              }
-            }
-
-            if (sourceId) {
-              const edgePairKey = `${sourceId}->${node.id}`;
-              if (seenEdgePairs.has(edgePairKey)) continue;
-              seenEdgePairs.add(edgePairKey);
-
-              await fetch(`/api/ideas/${idea.id}/process-edges`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                credentials: "include",
-                body: JSON.stringify({
-                  viewType,
-                  sourceNodeId: sourceId,
-                  targetNodeId: node.id,
-                  label,
-                }),
-              });
-            }
+          if (!bulkRes.ok) {
+            console.error(`[ProcessMap] Bulk create failed for ${viewType}: ${bulkRes.status}`);
+            continue;
           }
 
+          if (!firstCreatedView) firstCreatedView = viewType;
           queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "process-map", viewType] });
+        }
+
+        if (firstCreatedView && switchProcessMapViewRef.current) {
+          switchProcessMapViewRef.current(firstCreatedView as "as-is" | "to-be" | "sdd");
         }
       }
     }
@@ -1300,7 +1224,12 @@ function ChatPanel({ idea }: { idea: Idea }) {
             return (
               <div key={msg.id} className="flex justify-start" data-testid={`chat-message-${msg.id}`}>
                 <div className="max-w-[95%] w-full">
-                  <UiPathPackageCard packageData={msg.uipathData} ideaId={idea.id} />
+                  <UiPathPackageCard
+                    packageData={msg.uipathData}
+                    ideaId={idea.id}
+                    onDeployProgress={(step) => setDeployStep(step)}
+                    onDeployComplete={() => setDeployStep("")}
+                  />
                 </div>
               </div>
             );
@@ -1406,9 +1335,7 @@ function ChatPanel({ idea }: { idea: Idea }) {
 
         {(() => {
           const hasUiPath = displayMessages.some((m) => m.uipathData);
-          const hasSddApproval = displayMessages.some(
-            (m) => m.content.includes("SDD approved") && m.role === "assistant"
-          );
+          const hasSddApproval = !!(sddApprovalData?.approval);
           if (hasSddApproval && !hasUiPath && !isGeneratingDoc) {
             return (
               <div className="flex justify-center py-2" data-testid="uipath-generate-section">
@@ -1682,6 +1609,7 @@ export default function Workspace() {
   const [editTitle, setEditTitle] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const switchProcessMapViewRef = useRef<((view: "as-is" | "to-be" | "sdd") => void) | null>(null);
   const { toast } = useToast();
   const isMobile = useIsMobile();
   const [mobileTab, setMobileTab] = useState<MobileTab>("chat");
@@ -1818,10 +1746,11 @@ export default function Workspace() {
         }
       }}
       onViewChange={(view) => { currentProcessView = view; }}
+      onSwitchViewReady={(fn) => { switchProcessMapViewRef.current = fn; }}
     />
   );
 
-  const chatPanel = <ChatPanel idea={idea} />;
+  const chatPanel = <ChatPanel idea={idea} switchProcessMapViewRef={switchProcessMapViewRef} />;
 
   const mobileTabs = [
     { id: "stages" as MobileTab, label: "Stages", icon: ListChecks },

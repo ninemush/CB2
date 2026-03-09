@@ -555,6 +555,7 @@ interface ProcessMapPanelProps {
   onApproved?: () => void;
   onCompletenessChange?: (pct: number) => void;
   onViewChange?: (view: ProcessView) => void;
+  onSwitchViewReady?: (fn: (view: ProcessView) => void) => void;
 }
 
 function getNodeDimensions(nodeType: string): { width: number; height: number } {
@@ -2963,7 +2964,7 @@ function SDDInlineViewer({ ideaId, onApproved }: { ideaId: string; onApproved?: 
   );
 }
 
-export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onCompletenessChange, onViewChange }: ProcessMapPanelProps) {
+export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onCompletenessChange, onViewChange, onSwitchViewReady }: ProcessMapPanelProps) {
   const [activeView, setActiveView] = useState<ProcessView>("as-is");
   const [detailLevel, setDetailLevel] = useState<DetailLevel>("L2");
 
@@ -2972,6 +2973,10 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
     setDetailLevel("L2");
     onViewChange?.(view);
   }, [onViewChange]);
+
+  useEffect(() => {
+    onSwitchViewReady?.(handleViewChange);
+  }, [onSwitchViewReady, handleViewChange]);
 
   const { data: mapData } = useQuery<ProcessMapData>({
     queryKey: ["/api/ideas", ideaId, "process-map", activeView],

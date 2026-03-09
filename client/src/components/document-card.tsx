@@ -397,9 +397,11 @@ export function DocumentCard({ docType, docId, content, ideaId, isApproved, vers
 interface UiPathPackageCardProps {
   packageData: any;
   ideaId: string;
+  onDeployProgress?: (step: string) => void;
+  onDeployComplete?: () => void;
 }
 
-export function UiPathPackageCard({ packageData, ideaId }: UiPathPackageCardProps) {
+export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDeployComplete }: UiPathPackageCardProps) {
   const [expanded, setExpanded] = useState(true);
   const [pushResult, setPushResult] = useState<{ success: boolean; details?: any } | null>(null);
   const [jobState, setJobState] = useState<{ id?: number; state?: string; polling?: boolean } | null>(null);
@@ -414,10 +416,13 @@ export function UiPathPackageCard({ packageData, ideaId }: UiPathPackageCardProp
 
   const pushMutation = useMutation({
     mutationFn: async () => {
+      onDeployProgress?.("Deploying to Orchestrator...");
       const res = await apiRequest("POST", `/api/ideas/${ideaId}/push-uipath`);
       return res.json();
     },
     onSuccess: (data: { success: boolean; message: string; details?: any }) => {
+      onDeployProgress?.("");
+      onDeployComplete?.();
       if (data.success) {
         setPushResult(data);
         const d = data.details;
@@ -429,6 +434,8 @@ export function UiPathPackageCard({ packageData, ideaId }: UiPathPackageCardProp
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "messages"] });
     },
     onError: (error: Error) => {
+      onDeployProgress?.("");
+      onDeployComplete?.();
       toast({ title: "Push failed", description: error.message, variant: "destructive" });
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "messages"] });
     },

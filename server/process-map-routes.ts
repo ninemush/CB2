@@ -342,6 +342,81 @@ export function registerProcessMapRoutes(app: Express): void {
     }
   });
 
+  app.post("/api/ideas/:ideaId/process-map/bulk", async (req: Request, res: Response) => {
+    const ideaId = await verifyIdeaAccess(req, res);
+    if (!ideaId) return;
+
+    const { viewType = "as-is", nodes = [], edges = [], clearExisting = false } = req.body;
+
+    try {
+      if (clearExisting) {
+        await processMapStorage.clearAllForView(ideaId, viewType);
+      }
+
+      const existingNodes = clearExisting ? [] : await processMapStorage.getNodesByIdeaId(ideaId, viewType);
+      const nameToId: Record<string, number> = {};
+      for (const n of existingNodes) {
+        nameToId[n.name.toLowerCase().replace(/\s+/g, " ").trim()] = n.id;
+      }
+
+      const createdNodeIds: number[] = [];
+      const indexToId: Record<number, number> = {};
+
+      for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+        const normName = (node.name || "").toLowerCase().replace(/\s+/g, " ").trim();
+        const existingId = nameToId[normName];
+
+        if (existingId && !clearExisting) {
+          await processMapStorage.updateNode(existingId, {
+            name: node.name,
+            role: node.role || "",
+            system: node.system || "",
+            nodeType: node.nodeType || "task",
+            ideaId,
+            isGhost: false,
+          });
+          createdNodeIds.push(existingId);
+          indexToId[i] = existingId;
+        } else {
+          const created = await processMapStorage.createNode({
+            ideaId,
+            viewType,
+            name: node.name,
+            role: node.role || "",
+            system: node.system || "",
+            nodeType: node.nodeType || "task",
+            orderIndex: node.orderIndex ?? i,
+          });
+          createdNodeIds.push(created.id);
+          indexToId[i] = created.id;
+          nameToId[normName] = created.id;
+        }
+      }
+
+      const createdEdgeIds: number[] = [];
+      for (const edge of edges) {
+        const sourceId = indexToId[edge.sourceIndex];
+        const targetId = indexToId[edge.targetIndex];
+        if (sourceId && targetId) {
+          const created = await processMapStorage.createEdge({
+            ideaId,
+            viewType,
+            sourceNodeId: sourceId,
+            targetNodeId: targetId,
+            label: edge.label || "",
+          });
+          createdEdgeIds.push(created.id);
+        }
+      }
+
+      return res.status(201).json({ nodeIds: createdNodeIds, edgeIds: createdEdgeIds, indexToId });
+    } catch (err: any) {
+      console.error(`[ProcessMap] Bulk create failed:`, err?.message);
+      return res.status(500).json({ message: "Failed to bulk create process map" });
+    }
+  });
+
   app.post("/api/ideas/:ideaId/process-edges", async (req: Request, res: Response) => {
     const ideaId = await verifyIdeaAccess(req, res);
     if (!ideaId) return;

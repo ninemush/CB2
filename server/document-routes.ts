@@ -870,7 +870,7 @@ ${content}`
       const sdd = await documentStorage.getLatestDocument(ideaId, "SDD");
       const sddContent = sdd?.content || "";
 
-      const { aggregateGaps: aggGaps } = require("./xaml-generator");
+      const aggGaps = aggGapsImport;
       const workflows = pkg.workflows || [];
       const allXamlResults: any[] = [];
       for (const wf of workflows) {
