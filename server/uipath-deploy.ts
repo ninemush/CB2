@@ -1097,11 +1097,12 @@ async function provisionStorageBuckets(
           let shouldCreateBucket = false;
           if (descChanged) {
             try {
-              const updateBody: Record<string, any> = {
-                Name: b.name,
-                Description: newDesc,
-              };
-              if (existing.StorageProvider) updateBody.StorageProvider = existing.StorageProvider;
+              const updateBody: Record<string, any> = { ...existing };
+              delete updateBody["@odata.context"];
+              delete updateBody["@odata.id"];
+              delete updateBody["Id"];
+              delete updateBody["Identifier"];
+              updateBody.Description = newDesc;
 
               const putRes = await fetch(`${base}/odata/Buckets(${existingId})`, {
                 method: "PUT",
@@ -2199,7 +2200,7 @@ async function provisionDocUnderstanding(
           } else if (res.status === 404 || res.status === 405) {
             continue;
           } else {
-            results.push({ artifact: "Document Understanding", name: project.name, status: "skipped", message: `${ep.label} returned HTTP ${res.status}. Doc types needed: ${project.documentTypes?.join(", ") || "N/A"}. Create the DU project manually.` });
+            results.push({ artifact: "Document Understanding", name: project.name, status: "manual", message: `${ep.label} returned HTTP ${res.status}. Doc types needed: ${project.documentTypes?.join(", ") || "N/A"}. Create the DU project manually in Document Understanding service.` });
             created = true;
             break;
           }
@@ -2207,7 +2208,7 @@ async function provisionDocUnderstanding(
       }
 
       if (!created) {
-        results.push({ artifact: "Document Understanding", name: project.name, status: "skipped", message: `Could not create DU project via API. Doc types needed: ${project.documentTypes?.join(", ") || "N/A"}. Create manually in Document Understanding service.` });
+        results.push({ artifact: "Document Understanding", name: project.name, status: "manual", message: `Could not create DU project via API. Doc types needed: ${project.documentTypes?.join(", ") || "N/A"}. Create manually in Document Understanding service.` });
       }
     } catch (err: any) {
       results.push({ artifact: "Document Understanding", name: project.name, status: "failed", message: `API error: ${err.message}` });

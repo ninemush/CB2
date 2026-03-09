@@ -19,6 +19,7 @@ import {
   Clock,
   RefreshCw,
   History,
+  BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -402,6 +403,9 @@ export function UiPathPackageCard({ packageData, ideaId }: UiPathPackageCardProp
   const [expanded, setExpanded] = useState(true);
   const [pushResult, setPushResult] = useState<{ success: boolean; details?: any } | null>(null);
   const [jobState, setJobState] = useState<{ id?: number; state?: string; polling?: boolean } | null>(null);
+  const [dhgOpen, setDhgOpen] = useState(false);
+  const [dhgContent, setDhgContent] = useState<string | null>(null);
+  const [dhgLoading, setDhgLoading] = useState(false);
   const { toast } = useToast();
 
   const { data: orchestratorStatus } = useQuery<{ configured: boolean }>({
@@ -557,14 +561,42 @@ export function UiPathPackageCard({ packageData, ideaId }: UiPathPackageCardProp
       </div>
 
       <div className="px-4 py-3 border-t border-border/30 space-y-2">
-        <a
-          href={`/api/ideas/${ideaId}/download-uipath`}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-medium transition-colors w-full justify-center"
-          data-testid="button-download-uipath"
-        >
-          <Download className="h-3.5 w-3.5" />
-          Download Package
-        </a>
+        <div className="flex gap-2">
+          <a
+            href={`/api/ideas/${ideaId}/download-uipath`}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-medium transition-colors flex-1 justify-center"
+            data-testid="button-download-uipath"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Package
+          </a>
+          <button
+            onClick={async () => {
+              setDhgContent(null);
+              setDhgLoading(true);
+              setDhgOpen(true);
+              try {
+                const res = await fetch(`/api/ideas/${ideaId}/dhg`, { credentials: "include" });
+                if (!res.ok) {
+                  const err = await res.json();
+                  throw new Error(err.message || "Failed to load");
+                }
+                const data = await res.json();
+                setDhgContent(data.content);
+              } catch (err: any) {
+                toast({ title: "Could not load Handoff Guide", description: err.message, variant: "destructive" });
+                setDhgOpen(false);
+              } finally {
+                setDhgLoading(false);
+              }
+            }}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-cb-teal/20 hover:bg-cb-teal/30 text-cb-teal text-xs font-medium transition-colors flex-1 justify-center border border-cb-teal/30"
+            data-testid="button-view-dhg"
+          >
+            <BookOpen className="h-3.5 w-3.5" />
+            Handoff Guide
+          </button>
+        </div>
         {orchestratorStatus?.configured && (
           <button
             onClick={() => pushMutation.mutate()}
@@ -646,6 +678,56 @@ export function UiPathPackageCard({ packageData, ideaId }: UiPathPackageCardProp
           </div>
         )}
       </div>
+
+      {dhgOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" data-testid="dhg-overlay" onClick={() => setDhgOpen(false)}>
+          <div className="relative w-[90vw] max-w-4xl max-h-[85vh] bg-card rounded-xl border border-border shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-border/50">
+              <div className="flex items-center gap-2">
+                <BookOpen className="h-4 w-4 text-cb-teal" />
+                <h3 className="text-sm font-semibold text-foreground">Developer Handoff Guide</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {dhgContent && (
+                  <button
+                    onClick={() => {
+                      const blob = new Blob([dhgContent], { type: "text/markdown" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = "DeveloperHandoffGuide.md";
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                    data-testid="button-download-dhg"
+                  >
+                    <Download className="h-3 w-3" />
+                    Download .md
+                  </button>
+                )}
+                <button onClick={() => setDhgOpen(false)} className="p-1 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors" data-testid="button-close-dhg">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              {dhgLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-cb-teal" />
+                  <span className="ml-2 text-sm text-muted-foreground">Generating Handoff Guide...</span>
+                </div>
+              ) : dhgContent ? (
+                <div className="prose prose-sm dark:prose-invert max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-strong:text-foreground prose-code:text-cb-teal prose-code:bg-muted/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-li:text-muted-foreground prose-table:text-xs" data-testid="dhg-content">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{dhgContent}</ReactMarkdown>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-8">No content available.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

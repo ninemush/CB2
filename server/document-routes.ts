@@ -912,6 +912,63 @@ ${content}`
     }
   });
 
+  app.get("/api/ideas/:ideaId/dhg", async (req: Request, res: Response) => {
+    const ideaId = await verifyIdeaAccess(req, res);
+    if (!ideaId) return;
+
+    try {
+      const idea = await storage.getIdea(ideaId);
+      if (!idea) return res.status(404).json({ message: "Idea not found" });
+
+      const messages = await chatStorage.getMessagesByIdeaId(ideaId);
+      const uipathMsg = [...messages].reverse().find((m) => m.content.startsWith("[UIPATH:"));
+      if (!uipathMsg) {
+        return res.status(404).json({ message: "No UiPath package found. Generate the package first." });
+      }
+
+      const jsonStr = uipathMsg.content.slice(8, -1);
+      let pkg;
+      try {
+        pkg = JSON.parse(jsonStr);
+      } catch {
+        return res.status(500).json({ message: "Invalid package data" });
+      }
+
+      const sdd = await documentStorage.getLatestDocument(ideaId, "SDD");
+      const sddContent = sdd?.content || "";
+
+      const { aggregateGaps: aggGaps } = require("./xaml-generator");
+      const workflows = pkg.workflows || [];
+      const allXamlResults: any[] = [];
+      for (const wf of workflows) {
+        const result = generateRichXamlFromSpec(wf, sddContent || undefined);
+        allXamlResults.push(result);
+      }
+
+      const allGapsForDhg = aggGaps(allXamlResults);
+      const depMap: Record<string, string> = {};
+      for (const d of (pkg.dependencies || [])) depMap[d] = "*";
+      const wfNamesForDhg = workflows.map((wf: any) => (wf.name || "Workflow").replace(/\s+/g, "_"));
+
+      const dhgContent = generateDeveloperHandoffGuide({
+        projectName: pkg.projectName || idea.title.replace(/\s+/g, "_"),
+        description: pkg.description || idea.description,
+        gaps: allGapsForDhg,
+        usedPackages: Object.keys(depMap),
+        workflowNames: wfNamesForDhg,
+        sddContent: sddContent || undefined,
+        automationType: idea.automationType as "rpa" | "agent" | "hybrid" || undefined,
+      });
+
+      res.json({ content: dhgContent, projectName: pkg.projectName || idea.title });
+    } catch (error) {
+      console.error("Error generating DHG:", error);
+      if (!res.headersSent) {
+        return res.status(500).json({ message: "Failed to generate Developer Handoff Guide" });
+      }
+    }
+  });
+
   app.get("/api/ideas/:ideaId/export", async (req: Request, res: Response) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });

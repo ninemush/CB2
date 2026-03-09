@@ -733,7 +733,6 @@ function ChatPanel({ idea }: { idea: Idea }) {
                 setDeployStep("");
               }
               if (data.docProgress) {
-                console.log(`[Chat SSE] docProgress event:`, data.docProgress);
                 if (data.docProgress.started) {
                   setIsGeneratingDoc(true);
                   setGeneratingDocType(data.docProgress.docType || "PDD");
@@ -745,7 +744,6 @@ function ChatPanel({ idea }: { idea: Idea }) {
                 }
               }
               if (data.deployStatus) {
-                console.log(`[Chat SSE] deployStatus event:`, data.deployStatus);
                 if (data.deployComplete) {
                   setDeployStep("");
                   setStreamingMsg(null);

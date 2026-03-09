@@ -559,7 +559,11 @@ export function registerChatRoutes(app: Express): void {
       }
 
       let earlyDocType: "PDD" | "SDD" | null = null;
-      if (classifiedIntent === "PDD" || classifiedIntent === "PDD_SDD") {
+      if (chatApprovalDone && approvalIntent === "PDD") {
+        earlyDocType = "SDD";
+        try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "SDD" } })}\n\n`); } catch {}
+        console.log(`[Chat] PDD approved — emitting early docProgress.started for SDD auto-generation`);
+      } else if (classifiedIntent === "PDD" || classifiedIntent === "PDD_SDD") {
         earlyDocType = "PDD";
         try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "PDD" } })}\n\n`); } catch {}
       } else if (classifiedIntent === "SDD") {
@@ -980,6 +984,7 @@ export function registerChatRoutes(app: Express): void {
             const existed = deployResults.filter(r => r.status === "exists");
             const failed = deployResults.filter(r => r.status === "failed");
             const skipped = deployResults.filter(r => r.status === "skipped");
+            const manual = deployResults.filter(r => r.status === "manual");
             let verifiedSummary = `VERIFIED DEPLOYMENT RESULTS (use ONLY these facts when discussing this deployment):\n`;
             verifiedSummary += `- Package: ${d?.packageId} v${d?.version}\n`;
             verifiedSummary += `- Process: ${d?.processName || "N/A"}\n`;
@@ -990,6 +995,9 @@ export function registerChatRoutes(app: Express): void {
             }
             if (skipped.length > 0) {
               verifiedSummary += `- SKIPPED (service unavailable): ${skipped.length} (${skipped.map(r => `${r.artifact}: ${r.name} — ${r.message}`).join("; ")})\n`;
+            }
+            if (manual.length > 0) {
+              verifiedSummary += `- MANUAL SETUP REQUIRED: ${manual.length} (${manual.map(r => `${r.artifact}: ${r.name} — ${r.message}`).join("; ")})\n`;
             }
 
             await chatStorage.createMessage(ideaId, "system", verifiedSummary);
