@@ -46,6 +46,7 @@ export interface EnrichmentResult {
     processName: string;
   };
   dhgNotes: string[];
+  arguments?: Array<{ name: string; direction: string; type: string; required?: boolean }>;
 }
 
 const ENRICHMENT_PROMPT = `You are a senior UiPath RPA architect. Given a process map and SDD content, produce a detailed technical specification for generating UiPath XAML workflows.
@@ -78,7 +79,8 @@ RULES:
 7. For data processing, use ForEachRow with proper column references
 8. Determine if REFramework should be used (when queues are involved for transaction processing)
 9. Suggest workflow decomposition: group related steps into sub-workflows by system or function
-10. Include these operational properties for each activity:
+10. Define workflow arguments: For each sub-workflow (not Main), specify InArgument/OutArgument/InOutArgument entries with direction-prefixed names (in_, out_, io_), .NET types, and whether required. Include in_TransactionItem for performer workflows, io_Config for all workflows.
+11. Include these operational properties for each activity:
     - Timeout: default 30000ms for UI activities, higher for long-running operations
     - ContinueOnError: "True" for non-critical activities (logging, notifications), "False" for critical activities (data processing, login, validation)
     - DelayBefore/DelayAfter: specify when system-specific timing needs exist (e.g. SAP page loads need 1000-2000ms delay, web transitions need 500ms)
@@ -120,7 +122,10 @@ OUTPUT FORMAT — respond with ONLY valid JSON matching this schema:
   ],
   "useReFramework": true|false,
   "reframeworkConfig": { "queueName": "<from SDD>", "maxRetries": 3, "processName": "<name>" },
-  "dhgNotes": ["<architecture decision or risk note>"]
+  "dhgNotes": ["<architecture decision or risk note>"],
+  "arguments": [
+    { "name": "in_TransactionItem", "direction": "InArgument", "type": "x:String", "required": true }
+  ]
 }`;
 
 export async function enrichWithAI(
@@ -259,6 +264,7 @@ Generate the enriched workflow specification. For each node, provide the specifi
       if (!parsed.decomposition) parsed.decomposition = [];
       if (!parsed.dhgNotes) parsed.dhgNotes = [];
       if (typeof parsed.useReFramework !== "boolean") parsed.useReFramework = false;
+      if (!Array.isArray(parsed.arguments)) parsed.arguments = [];
 
       console.log(`[AI XAML Enricher] Successfully enriched ${parsed.nodes.length} nodes, REFramework=${parsed.useReFramework}, ${parsed.decomposition?.length || 0} sub-workflows`);
       return parsed;

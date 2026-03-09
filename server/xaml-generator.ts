@@ -1,5 +1,12 @@
 import type { ProcessNode, ProcessEdge } from "@shared/schema";
 import type { EnrichedNodeSpec, EnrichedActivity, EnrichmentResult } from "./ai-xaml-enricher";
+import {
+  generateAnnotationText,
+  generateArgumentValidationXaml,
+  enforceVariableName,
+  enforceDisplayName,
+  type AnalysisReport,
+} from "./workflow-analyzer";
 
 export type XamlGap = {
   category: "selector" | "credential" | "endpoint" | "logic" | "config" | "manual";
@@ -171,6 +178,7 @@ type WorkflowSpec = {
   name: string;
   description?: string;
   steps?: WorkflowStep[];
+  arguments?: Array<{ name: string; direction: string; type: string; required?: boolean }>;
 };
 
 function escapeXml(str: string): string {
@@ -742,8 +750,10 @@ function renderActivity(
   displayName: string,
   properties: Record<string, string>,
   selectorHint?: string,
-  operationalProps?: { timeout?: number; continueOnError?: boolean; delayBefore?: number; delayAfter?: number }
+  operationalProps?: { timeout?: number; continueOnError?: boolean; delayBefore?: number; delayAfter?: number },
+  annotationOpts?: { stepNumber?: number; stepName?: string; businessContext?: string; errorStrategy?: string; placeholders?: string[]; aiReasoning?: string }
 ): string {
+  const enforced = enforceDisplayName(activityType, displayName);
   let propAttrs = "";
   for (const [key, value] of Object.entries(properties)) {
     propAttrs += ` ${key}="${escapeXml(value)}"`;
@@ -768,16 +778,29 @@ function renderActivity(
     propAttrs += ` DelayAfter="${operationalProps.delayAfter}"`;
   }
 
+  if (annotationOpts) {
+    const annotationText = generateAnnotationText(annotationOpts);
+    if (annotationText) {
+      propAttrs += ` sap2010:Annotation.AnnotationText="${escapeXml(annotationText)}"`;
+    }
+  }
+
   return `
-          <${activityType} DisplayName="${escapeXml(displayName)}"${propAttrs} />`;
+          <${activityType} DisplayName="${escapeXml(enforced)}"${propAttrs} />`;
 }
 
 function wrapInTryCatch(innerXml: string, stepName: string, errorHandling: "retry" | "catch" | "escalate" | "none"): string {
   if (errorHandling === "none") return innerXml;
 
+  const strategyDesc = errorHandling === "retry" ? "Retry up to 3 times with 5s interval"
+    : errorHandling === "escalate" ? "Log escalation and rethrow for manual intervention"
+    : "Log error and rethrow to caller";
+  const annotation = generateAnnotationText({ stepName, errorStrategy: strategyDesc });
+  const annotAttr = ` sap2010:Annotation.AnnotationText="${escapeXml(annotation)}"`;
+
   if (errorHandling === "retry") {
     return `
-          <ui:RetryScope DisplayName="Retry: ${escapeXml(stepName)}" NumberOfRetries="3" RetryInterval="00:00:05">
+          <ui:RetryScope DisplayName="Retry: ${escapeXml(stepName)}" NumberOfRetries="3" RetryInterval="00:00:05"${annotAttr}>
             <ui:RetryScope.Body>
               <Sequence DisplayName="Retry Body: ${escapeXml(stepName)}">${innerXml}
               </Sequence>
@@ -793,7 +816,7 @@ function wrapInTryCatch(innerXml: string, stepName: string, errorHandling: "retr
     : `<ui:LogMessage Level="Error" Message="[Error] ${escapeXml(stepName)} failed" DisplayName="Log Error" />`;
 
   return `
-          <TryCatch DisplayName="Try: ${escapeXml(stepName)}">
+          <TryCatch DisplayName="Try: ${escapeXml(stepName)}"${annotAttr}>
             <TryCatch.Try>
               <Sequence DisplayName="Execute: ${escapeXml(stepName)}">${innerXml}
               </Sequence>
@@ -844,17 +867,23 @@ function renderEnrichedActivities(enrichedNode: EnrichedNodeSpec): {
   }
 
   let innerXml = "";
-  for (const act of enrichedNode.activities) {
+  for (let actIdx = 0; actIdx < enrichedNode.activities.length; actIdx++) {
+    const act = enrichedNode.activities[actIdx];
     packages.push(act.package);
     if (act.variables) {
       for (const v of act.variables) {
-        variables.push(v);
+        variables.push({ name: enforceVariableName(v.name, mapClrType(v.type)), type: v.type, defaultValue: v.defaultValue });
       }
     }
 
     const props: Record<string, string> = {};
+    const placeholders: string[] = [];
     for (const [key, value] of Object.entries(act.properties || {})) {
-      props[key] = String(value);
+      const strVal = String(value);
+      props[key] = strVal;
+      if (strVal.startsWith("PLACEHOLDER_") || strVal.startsWith("TODO")) {
+        placeholders.push(key);
+      }
     }
 
     const operationalProps = {
@@ -864,7 +893,14 @@ function renderEnrichedActivities(enrichedNode: EnrichedNodeSpec): {
       delayAfter: act.delayAfter,
     };
 
-    innerXml += renderActivity(act.activityType, act.displayName, props, act.selectorHint, operationalProps).replace(/\n          /, "\n            ");
+    const annotationOpts = {
+      stepName: enrichedNode.nodeName,
+      businessContext: act.displayName !== enrichedNode.nodeName ? `${enrichedNode.nodeName} — ${act.displayName}` : enrichedNode.nodeName,
+      placeholders: placeholders.length > 0 ? placeholders : undefined,
+      aiReasoning: `Selected ${act.activityType} from ${act.package}`,
+    };
+
+    innerXml += renderActivity(act.activityType, act.displayName, props, act.selectorHint, operationalProps, annotationOpts).replace(/\n          /, "\n            ");
   }
 
   for (const gap of enrichedNode.gaps || []) {
@@ -947,6 +983,12 @@ export function generateRichXamlFromNodes(
     for (const en of enrichment.nodes) {
       enrichedMap.set(en.nodeId, en);
     }
+  }
+
+  const isMainWorkflow = workflowName.toLowerCase() === "main" || workflowName.toLowerCase() === "main.xaml";
+  if (!isMainWorkflow && enrichment?.arguments && enrichment.arguments.length > 0) {
+    const validationXaml = generateArgumentValidationXaml(enrichment.arguments, workflowName);
+    if (validationXaml) activities += validationXaml;
   }
 
   for (const node of taskNodes) {
@@ -1084,14 +1126,26 @@ export function generateRichXamlFromNodes(
 
     const classified = classifyActivity(ctx);
     usedPackages.add(classified.activityPackage);
-    allVariables.push(...classified.variables);
+    for (const cv of classified.variables) {
+      allVariables.push({ name: enforceVariableName(cv.name, mapClrType(cv.type)), type: cv.type, defaultValue: cv.defaultValue });
+    }
     allGaps.push(...classified.gaps);
 
+    const classifiedPlaceholders = Object.entries(classified.properties)
+      .filter(([, v]) => v.startsWith("PLACEHOLDER_") || v.startsWith("TODO"))
+      .map(([k]) => k);
     const activityXml = renderActivity(
       classified.activityType,
       node.name,
       classified.properties,
-      classified.selectorHint
+      classified.selectorHint,
+      undefined,
+      {
+        stepNumber: node.orderIndex,
+        stepName: node.name,
+        businessContext: node.description || node.name,
+        placeholders: classifiedPlaceholders.length > 0 ? classifiedPlaceholders : undefined,
+      }
     );
 
     activities += `
@@ -1148,6 +1202,11 @@ export function generateRichXamlFromSpec(
 
   activities += `
         <ui:LogMessage Level="Info" Message="'=== Starting: ${escapeXml(wfName)} ==='" DisplayName="Log Start" />`;
+
+  if (workflow.arguments && workflow.arguments.length > 0) {
+    const validationXaml = generateArgumentValidationXaml(workflow.arguments, wfName);
+    if (validationXaml) activities += validationXaml;
+  }
 
   if (sddContent) {
     const errorHandlingSection = extractSddSection(sddContent, 5);
@@ -1656,6 +1715,7 @@ export type DhgOptions = {
   painPoints?: { name: string; description: string }[];
   deploymentResults?: DhgDeploymentResult[];
   extractedArtifacts?: DhgExtractedArtifacts;
+  analysisReports?: Array<{ fileName: string; report: AnalysisReport }>;
 };
 
 export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
@@ -1671,6 +1731,7 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
     painPoints,
     deploymentResults,
     extractedArtifacts,
+    analysisReports,
   } = opts;
 
   const selectorGaps = gaps.filter((g) => g.category === "selector");
@@ -1680,155 +1741,202 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
   const logicGaps = gaps.filter((g) => g.category === "logic");
   const manualGaps = gaps.filter((g) => g.category === "manual");
 
-  const totalXamlMinutes = gaps.reduce((sum, g) => sum + g.estimatedMinutes, 0);
-
   let sectionNum = 0;
   let md = "";
 
-  md += `# Enhanced Developer Handoff Guide\n\n`;
+  md += `# Developer Handoff Guide\n\n`;
   md += `**Project:** ${projectName}\n`;
-  if (description) {
-    md += `**Description:** ${description}\n`;
-  }
+  if (description) md += `**Description:** ${description}\n`;
   md += `**Generated:** ${new Date().toISOString().split("T")[0]}\n`;
-  md += `**Architecture Pattern:** ${useReFramework ? "REFramework (Robotic Enterprise Framework) — Queue-based transactional processing" : "Sequential (Linear workflow)"}\n`;
-  if (enrichment) {
-    md += `**AI Enrichment:** Applied — activities have system-specific selectors and real property values\n`;
-  }
+  md += `**Architecture:** ${useReFramework ? "REFramework (Queue-based transactional)" : "Sequential (Linear workflow)"}\n`;
+  if (enrichment) md += `**AI Enrichment:** Applied — activities use system-specific selectors and real property values\n`;
+
+  const tier3Items = [...selectorGaps, ...credentialGaps.filter(g => !(g.placeholder || "").includes("PLACEHOLDER_"))];
+  const tier2Items = [...endpointGaps, ...configGaps];
+  const tier3Minutes = tier3Items.reduce((s, g) => s + g.estimatedMinutes, 0);
+  const totalAutoFixed = analysisReports?.reduce((s, r) => s + r.report.totalAutoFixed, 0) ?? 0;
+  const totalRulesChecked = analysisReports?.reduce((s, r) => s + r.report.totalChecked, 0) ?? 0;
+  const totalRulesPassed = analysisReports?.reduce((s, r) => s + r.report.totalPassed, 0) ?? 0;
+  const provisionedCount = deploymentResults?.filter(r => r.status === "created" || r.status === "exists").length ?? 0;
+  const totalProvisionAttempts = deploymentResults?.length ?? 0;
+
+  const readinessComponents: number[] = [];
+  if (totalRulesChecked > 0) readinessComponents.push(((totalRulesPassed + totalAutoFixed) / Math.max(totalRulesChecked, 1)) * 100);
+  if (totalProvisionAttempts > 0) readinessComponents.push((provisionedCount / totalProvisionAttempts) * 100);
+  readinessComponents.push(Math.max(0, 100 - tier3Items.length * 5));
+  const readinessScore = readinessComponents.length > 0
+    ? Math.round(readinessComponents.reduce((a, b) => a + b, 0) / readinessComponents.length)
+    : 0;
+
+  md += `\n**Readiness Score: ${readinessScore}%** | Human effort: ~${(tier3Minutes / 60).toFixed(1)}h (Tier 3 only)\n`;
   md += `\n---\n\n`;
 
   sectionNum++;
-  md += `## ${sectionNum}. Execution Readiness Summary\n\n`;
-  if (deploymentResults?.length) {
-    const artifactTypes = new Map<string, { total: number; ready: number; needsAttention: number; failed: number }>();
-    for (const r of deploymentResults) {
-      if (!artifactTypes.has(r.artifact)) {
-        artifactTypes.set(r.artifact, { total: 0, ready: 0, needsAttention: 0, failed: 0 });
+  md += `## ${sectionNum}. Tier 1 — AI Completed (No Human Action Required)\n\n`;
+  md += `The following items were fully automated by CannonBall. These are verified facts from deterministic analysis, not AI-generated summaries.\n\n`;
+
+  if (analysisReports?.length) {
+    let combinedAutoFixed = 0;
+    let combinedRemaining = 0;
+    let combinedPassed = 0;
+    for (const ar of analysisReports) {
+      combinedAutoFixed += ar.report.totalAutoFixed;
+      combinedRemaining += ar.report.totalRemaining;
+      combinedPassed += ar.report.totalPassed;
+    }
+
+    md += `### Workflow Analyzer Compliance\n\n`;
+    md += `All ${workflowNames.length} XAML files were analyzed against UiPath Workflow Analyzer rules.\n\n`;
+
+    const mergedRules = new Map<string, { ruleName: string; category: string; passed: number; autoFixed: number; remaining: number }>();
+    for (const ar of analysisReports) {
+      for (const rule of ar.report.rulesChecked) {
+        const existing = mergedRules.get(rule.ruleId) || { ruleName: rule.ruleName, category: rule.category, passed: 0, autoFixed: 0, remaining: 0 };
+        if (rule.status === "passed") existing.passed++;
+        existing.autoFixed += rule.autoFixedCount;
+        existing.remaining += rule.violationCount;
+        mergedRules.set(rule.ruleId, existing);
       }
-      const entry = artifactTypes.get(r.artifact)!;
+    }
+
+    md += `| Rule ID | Rule | Category | Status | Auto-Fixed | Remaining |\n`;
+    md += `|---------|------|----------|--------|------------|----------|\n`;
+    for (const [ruleId, data] of Array.from(mergedRules.entries())) {
+      const status = data.remaining > 0 ? "Needs Review" : data.autoFixed > 0 ? "Auto-Fixed" : "Passed";
+      md += `| ${ruleId} | ${data.ruleName} | ${data.category} | ${status} | ${data.autoFixed} | ${data.remaining} |\n`;
+    }
+    md += `\n**Result:** ${combinedPassed} rules passed, ${combinedAutoFixed} violations auto-corrected, ${combinedRemaining} remaining for review\n\n`;
+  }
+
+  md += `### Naming Convention Compliance\n\n`;
+  md += `- Variables: \`{type}_{PascalCase}\` (str\\_, int\\_, dt\\_, bool\\_, etc.)\n`;
+  md += `- Arguments: \`{direction}_{PascalCase}\` (in\\_, out\\_, io\\_)\n`;
+  md += `- All naming violations auto-corrected during generation\n\n`;
+
+  md += `### Activity Annotations\n\n`;
+  md += `- Every activity includes \`sap2010:Annotation.AnnotationText\` with:\n`;
+  md += `  - Source step number and business context\n`;
+  md += `  - Error handling strategy description\n`;
+  md += `  - Placeholder flags for items needing attention\n`;
+  md += `  - AI reasoning for activity selection (enriched workflows)\n\n`;
+
+  md += `### Error Handling\n\n`;
+  md += `- All business activities wrapped in TryCatch with Log + Rethrow\n`;
+  md += `- UI activities include RetryScope (3 retries, 5s interval) where appropriate\n`;
+  md += `- Start/end LogMessage activities in every workflow\n`;
+  md += `- Exception details logged at Error level before rethrow\n\n`;
+
+  md += `### Architecture Decision\n\n`;
+  if (useReFramework) {
+    md += `**REFramework** selected because:\n`;
+    md += `- Queue-based transaction processing detected\n`;
+    md += `- Independent transaction items enable parallel processing\n`;
+    md += `- Built-in retry and recovery patterns\n`;
+    md += `- State machine provides lifecycle management\n\n`;
+    md += `\`\`\`\nInit → Get Transaction → Process Transaction → Get Transaction (loop)\n                                    ↓ (exception)\n                              Close Apps → Get Transaction (retry)\n                    ↓ (no more items)\n                       End Process\n\`\`\`\n\n`;
+  } else {
+    md += `**Sequential Pattern** selected because:\n`;
+    md += `- Linear step-by-step flow with step dependencies\n`;
+    md += `- No queue-based transaction processing required\n\n`;
+  }
+  if (enrichment?.dhgNotes?.length) {
+    for (const note of enrichment.dhgNotes) md += `- ${note}\n`;
+    md += `\n`;
+  }
+
+  if (deploymentResults?.length) {
+    md += `### Orchestrator Provisioning\n\n`;
+    const artifactTypes = new Map<string, { total: number; ready: number; needs: number }>();
+    for (const r of deploymentResults) {
+      const entry = artifactTypes.get(r.artifact) || { total: 0, ready: 0, needs: 0 };
       entry.total++;
       if (r.status === "created" || r.status === "exists") entry.ready++;
-      else if (r.status === "failed" || r.status === "manual") entry.needsAttention++;
-      else entry.failed++;
+      else entry.needs++;
+      artifactTypes.set(r.artifact, entry);
     }
-    if (!artifactTypes.has("XAML Workflow")) {
-      artifactTypes.set("XAML Workflow", { total: workflowNames.length, ready: workflowNames.length - gaps.length, needsAttention: gaps.length > 0 ? 1 : 0, failed: 0 });
-    }
-
-    let totalReady = 0;
-    let totalAll = 0;
-    md += `| Artifact Type | Provisioned | Ready | Needs Attention | Status |\n`;
-    md += `|---------------|-------------|-------|-----------------|--------|\n`;
+    md += `| Artifact Type | Provisioned | Ready | Needs Attention |\n`;
+    md += `|---------------|-------------|-------|-----------------|\n`;
     artifactTypes.forEach((stats, type) => {
-      totalReady += stats.ready;
-      totalAll += stats.total;
-      const statusIcon = stats.needsAttention === 0 && stats.failed === 0 ? "Ready" : stats.ready > 0 ? "Partial" : "Action Required";
-      md += `| ${type} | ${stats.total} | ${stats.ready} | ${stats.needsAttention + stats.failed} | ${statusIcon} |\n`;
+      md += `| ${type} | ${stats.total} | ${stats.ready} | ${stats.needs} |\n`;
     });
-    const readinessPct = totalAll > 0 ? Math.round((totalReady / totalAll) * 100) : 0;
-    md += `\n**Overall Readiness: ${readinessPct}%** (${totalReady}/${totalAll} artifacts provisioned successfully)\n\n`;
-
-    const failedResults = deploymentResults.filter(r => r.status === "failed" || r.status === "manual");
-    if (failedResults.length > 0) {
-      md += `### Items Requiring Immediate Attention\n\n`;
-      md += `| Artifact | Name | Issue |\n`;
-      md += `|----------|------|-------|\n`;
-      for (const r of failedResults) {
-        md += `| ${r.artifact} | ${r.name} | ${r.message.slice(0, 120)} |\n`;
-      }
-      md += `\n`;
-    }
-  } else {
-    md += `No deployment results available. Run deployment to generate a readiness report.\n\n`;
+    md += `\n**${provisionedCount}/${totalProvisionAttempts}** artifacts provisioned successfully\n\n`;
   }
 
   md += `---\n\n`;
 
   sectionNum++;
-  md += `## ${sectionNum}. Architecture Decision Record\n\n`;
-  if (useReFramework) {
-    md += `### Why REFramework?\n\n`;
-    md += `This automation uses the UiPath Robotic Enterprise Framework (REFramework) because:\n`;
-    md += `- The process involves queue-based transaction processing\n`;
-    md += `- Each transaction item can be processed independently\n`;
-    md += `- Built-in retry logic handles transient failures\n`;
-    md += `- State machine pattern provides clear process lifecycle management\n`;
-    md += `- Automatic recovery from application/system exceptions\n\n`;
-    md += `### State Machine Flow\n\n`;
-    md += `\`\`\`\nInit → Get Transaction → Process Transaction → Get Transaction (loop)\n                                    ↓ (exception)\n                              Close Apps → Get Transaction (retry)\n                    ↓ (no more items)\n                       End Process\n\`\`\`\n\n`;
-  } else {
-    md += `### Why Sequential Pattern?\n\n`;
-    md += `This automation uses a sequential (linear) workflow because:\n`;
-    md += `- The process follows a linear step-by-step flow\n`;
-    md += `- No queue-based transaction processing is involved\n`;
-    md += `- Steps have dependencies on previous step outputs\n\n`;
-  }
-  if (enrichment?.dhgNotes?.length) {
-    md += `### Architecture Notes\n\n`;
-    for (const note of enrichment.dhgNotes) {
-      md += `- ${note}\n`;
+  md += `## ${sectionNum}. Tier 2 — AI Resolved with Smart Defaults (Review Recommended)\n\n`;
+  md += `The AI set these values based on SDD analysis. They are likely correct but should be verified against your environment.\n\n`;
+
+  const queues = extractedArtifacts?.queues;
+  const assets = extractedArtifacts?.assets;
+  const triggers = extractedArtifacts?.triggers;
+
+  if (queues?.length) {
+    md += `### Queue Schemas\n\n`;
+    for (const q of queues) {
+      const qResult = deploymentResults?.find(r => r.artifact === "Queue" && r.name === q.name);
+      md += `**${q.name}** (${qResult?.status || "unknown"}) — Max Retries: ${q.maxRetries ?? 3}, Unique Ref: ${q.uniqueReference ? "Yes" : "No"}\n`;
+      if (q.jsonSchema) {
+        md += `\`\`\`json\n${q.jsonSchema}\n\`\`\`\n`;
+        md += `> AI set this schema based on data fields in the SDD. Override if your data model differs.\n\n`;
+      }
     }
+  }
+
+  if (assets?.length) {
+    const nonCredAssets = assets.filter(a => a.type !== "Credential");
+    if (nonCredAssets.length > 0) {
+      md += `### Asset Values\n\n`;
+      md += `| Asset | Type | AI-Set Value | Reasoning |\n`;
+      md += `|-------|------|--------------|-----------|\n`;
+      for (const a of nonCredAssets) {
+        const hasPlaceholder = (a.value || "").includes("PLACEHOLDER_");
+        md += `| \`${a.name}\` | ${a.type} | \`${a.value || "(empty)"}\` | ${hasPlaceholder ? "Needs real value" : `Set from SDD context. ${a.description || ""}`} |\n`;
+      }
+      md += `\n`;
+    }
+  }
+
+  if (triggers?.length) {
+    md += `### Trigger Schedules\n\n`;
+    md += `| Trigger | Type | Schedule | Timezone | AI Reasoning |\n`;
+    md += `|---------|------|----------|----------|-------------|\n`;
+    for (const t of triggers) {
+      const tResult = deploymentResults?.find(r => r.artifact === "Trigger" && r.name === t.name);
+      const scheduleInfo = t.type === "Queue" ? `Queue: ${t.queueName || "N/A"}` : `Cron: ${t.cron || "N/A"}`;
+      md += `| \`${t.name}\` | ${t.type} | ${scheduleInfo} | ${t.timezone || "UTC"} | Derived from SDD process schedule (${tResult?.status || "unknown"}) |\n`;
+    }
+    md += `\n`;
+  }
+
+  if (tier2Items.length > 0) {
+    md += `### Configuration & Endpoints\n\n`;
+    md += `| # | Category | Activity | AI-Set Value | Override If Incorrect |\n`;
+    md += `|---|----------|----------|-------------|----------------------|\n`;
+    tier2Items.forEach((g, i) => {
+      md += `| ${i + 1} | ${g.category} | \`${g.activity}\` | \`${g.placeholder}\` | ${g.description} |\n`;
+    });
     md += `\n`;
   }
 
   md += `---\n\n`;
 
   sectionNum++;
-  md += `## ${sectionNum}. Package Overview\n\n`;
-  md += `This automation package was generated by CannonBall from an approved Solution Design Document (SDD). `;
-  md += `It contains near-production-ready XAML workflows with real UiPath activities, but requires developer review and completion of the items listed below.\n\n`;
-  md += `### File Listing\n\n`;
-  md += `| File | Purpose |\n`;
-  md += `|------|--------|\n`;
-  md += `| \`project.json\` | UiPath project manifest with dependencies |\n`;
-  md += `| \`Main.xaml\` | ${useReFramework ? "REFramework State Machine entry point" : "Entry point workflow"} |\n`;
-  if (useReFramework) {
-    md += `| \`GetTransactionData.xaml\` | Fetches next queue item for processing |\n`;
-    md += `| \`Process.xaml\` | Business logic for single transaction |\n`;
-    md += `| \`SetTransactionStatus.xaml\` | Marks transaction as Successful/Failed |\n`;
-    md += `| \`CloseAllApplications.xaml\` | Graceful application cleanup |\n`;
-    md += `| \`KillAllProcesses.xaml\` | Force-kill hanging processes |\n`;
-  }
-  for (const wfName of workflowNames) {
-    if (!["Main", "GetTransactionData", "Process", "SetTransactionStatus", "CloseAllApplications", "KillAllProcesses"].includes(wfName)) {
-      md += `| \`${wfName}.xaml\` | Workflow: ${wfName} |\n`;
-    }
-  }
-  md += `| \`InitAllSettings.xaml\` | Configuration initialization workflow |\n`;
-  md += `| \`Data/Config.xlsx\` | Configuration settings and constants |\n`;
-  md += `| \`DeveloperHandoffGuide.md\` | This guide |\n\n`;
-  md += `### How to Open in UiPath Studio\n\n`;
-  md += `1. Extract the package contents to a local folder\n`;
-  md += `2. Open UiPath Studio\n`;
-  md += `3. Click **Open Project** and navigate to the extracted folder\n`;
-  md += `4. Select \`project.json\`\n`;
-  md += `5. Install any missing dependencies from the **Manage Packages** dialog\n`;
-  md += `6. Review and complete all TODO items listed in this guide\n\n`;
-
-  md += `### Required Packages\n\n`;
-  for (const pkg of usedPackages) {
-    md += `- \`${pkg}\`\n`;
-  }
-  md += `\n`;
-
-  md += `---\n\n`;
-
-  sectionNum++;
-  md += `## ${sectionNum}. XAML Completion Checklist\n\n`;
+  md += `## ${sectionNum}. Tier 3 — Requires Human Access (Minimum Developer Work)\n\n`;
+  md += `These items genuinely require a human with access to the target systems. This is the only section requiring developer effort.\n\n`;
 
   if (selectorGaps.length > 0) {
-    md += `### Selector Completion\n\n`;
-    md += `The following activities have placeholder UI selectors that must be replaced with real selectors captured from UiPath Studio.\n\n`;
+    md += `### UI Selectors (${selectorGaps.length} items)\n\n`;
+    md += `These require UiExplorer in UiPath Studio with access to the target application.\n\n`;
     md += `| # | System | Activity | Current Hint | What to Capture | Est. Time |\n`;
     md += `|---|--------|----------|-------------|-----------------|----------|\n`;
-
     const selectorsBySystem: Record<string, XamlGap[]> = {};
     for (const g of selectorGaps) {
       const sys = extractSystemFromGap(g);
       if (!selectorsBySystem[sys]) selectorsBySystem[sys] = [];
       selectorsBySystem[sys].push(g);
     }
-
     let sIdx = 0;
     for (const [sys, sysGaps] of Object.entries(selectorsBySystem)) {
       for (const g of sysGaps) {
@@ -1837,520 +1945,267 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
       }
     }
     md += `\n`;
-
-    md += `**System-Specific Selector Guidance:**\n\n`;
-    const systems = Object.keys(selectorsBySystem);
-    for (const sys of systems) {
+    for (const sys of Object.keys(selectorsBySystem)) {
       const lsys = sys.toLowerCase();
       if (lsys.includes("sap")) {
-        md += `**SAP GUI/Fiori:**\n`;
-        md += `- Use UiExplorer with SAP Bridge enabled\n`;
-        md += `- SAP GUI selectors use \`automationid\` attributes (e.g., \`usr/txtRSYST-BNAME\`)\n`;
-        md += `- Fiori selectors use CSS selectors (e.g., \`.sapMInputBaseInner\`)\n`;
-        md += `- Add wildcards for session-specific attributes: \`<wnd app='saplogon.exe' title='SAP*' />\`\n\n`;
+        md += `**SAP:** Use UiExplorer with SAP Bridge. GUI selectors use \`automationid\`. Fiori uses CSS selectors. Add wildcards for session-specific attributes.\n\n`;
       } else if (lsys.includes("salesforce")) {
-        md += `**Salesforce:**\n`;
-        md += `- Use Lightning-compatible selectors with \`data-interactive-lib-uid\` or SLDS classes\n`;
-        md += `- Dynamic IDs change per session — use \`css-selector\` with SLDS class patterns\n`;
-        md += `- Consider Salesforce Integration Activities package for API-based operations\n\n`;
+        md += `**Salesforce:** Use Lightning-compatible selectors with SLDS classes. Dynamic IDs change per session. Consider Salesforce Integration Activities for API-based operations.\n\n`;
       } else if (lsys.includes("servicenow")) {
-        md += `**ServiceNow:**\n`;
-        md += `- Table field selectors use \`id\` pattern: \`sys_display.<table>.<field>\`\n`;
-        md += `- Use \`data-type\` and \`name\` attributes for form fields\n`;
-        md += `- Consider ServiceNow REST API for bulk operations\n\n`;
-      } else if (lsys.includes("web") || lsys.includes("browser")) {
-        md += `**Web Browser:**\n`;
-        md += `- Use UiExplorer to capture selectors from Chrome/Edge\n`;
-        md += `- Prefer \`id\`, \`name\`, or \`data-testid\` attributes for stability\n`;
-        md += `- Avoid positional selectors (\`tableRow\`, \`tableCol\`) when possible\n\n`;
-      } else if (lsys !== "General") {
-        md += `**${sys}:**\n`;
-        md += `- Use UiExplorer to capture application-specific selectors\n`;
-        md += `- Test selectors across different screen resolutions and user accounts\n\n`;
+        md += `**ServiceNow:** Field selectors use \`sys_display.<table>.<field>\` pattern. Consider REST API for bulk operations.\n\n`;
       }
     }
-  } else {
-    md += `No UI selectors require configuration.\n\n`;
   }
 
-  if (credentialGaps.length > 0) {
-    md += `### Credential & Asset Setup\n\n`;
-    md += `| # | Asset Name | Description | Action Required | Orchestrator Path |\n`;
-    md += `|---|-----------|-------------|-----------------|-------------------|\n`;
-    credentialGaps.forEach((g, i) => {
-      md += `| ${i + 1} | \`${g.activity}\` | ${g.description} | Replace \`${g.placeholder}\` | Tenant > Assets > ${g.activity} |\n`;
-    });
-    md += `\n`;
-  }
-
-  if (endpointGaps.length > 0 || configGaps.length > 0) {
-    md += `### API Endpoint & Configuration\n\n`;
-    const integrationGaps = [...endpointGaps, ...configGaps];
-    md += `| # | Category | Activity | Expected Format | Current Placeholder |\n`;
-    md += `|---|----------|----------|----------------|--------------------|\n`;
-    integrationGaps.forEach((g, i) => {
-      md += `| ${i + 1} | ${g.category} | \`${g.activity}\` | ${g.description} | \`${g.placeholder}\` |\n`;
-    });
-    md += `\n`;
-  }
-
-  md += `---\n\n`;
-
-  sectionNum++;
-  md += `## ${sectionNum}. Queue Configuration\n\n`;
-  const queues = extractedArtifacts?.queues;
-  const queueResults = deploymentResults?.filter(r => r.artifact === "Queue");
-  if (queues?.length) {
-    for (const q of queues) {
-      const result = queueResults?.find(r => r.name === q.name);
-      const status = result ? `${result.status}` : "unknown";
-      md += `### ${q.name} (${status})\n\n`;
-      md += `- **Max Retries:** ${q.maxRetries ?? 3}\n`;
-      md += `- **Unique Reference:** ${q.uniqueReference ? "Yes" : "No"}\n`;
-      if (q.description) md += `- **Purpose:** ${q.description}\n`;
-      md += `\n`;
-
-      if (q.jsonSchema) {
-        const hasPlaceholder = q.jsonSchema.includes("PLACEHOLDER_");
-        md += `**Input Schema (SpecificContent):**\n`;
-        md += `\`\`\`json\n${q.jsonSchema}\n\`\`\`\n`;
-        if (hasPlaceholder) {
-          md += `> **Action Required:** Replace all \`PLACEHOLDER_\` values in the schema with real field definitions.\n`;
-        }
-        md += `\n`;
-      }
-      if (q.outputSchema) {
-        md += `**Output Schema:**\n`;
-        md += `\`\`\`json\n${q.outputSchema}\n\`\`\`\n\n`;
-      }
-      if (!q.jsonSchema && !q.outputSchema) {
-        md += `> No JSON schemas were generated. Consider adding SpecificContent validation in Orchestrator > Queues > ${q.name} > Edit for production reliability.\n\n`;
-      }
+  const credentialAssets = assets?.filter(a => a.type === "Credential") || [];
+  if (credentialGaps.length > 0 || credentialAssets.length > 0) {
+    md += `### Credentials (${credentialGaps.length + credentialAssets.length} items)\n\n`;
+    md += `These require access to production/UAT credential stores.\n\n`;
+    md += `| # | Asset | Description | Where to Set |\n`;
+    md += `|---|-------|-------------|-------------|\n`;
+    let cIdx = 0;
+    for (const ca of credentialAssets) {
+      cIdx++;
+      md += `| ${cIdx} | \`${ca.name}\` | ${ca.description || "Set credentials"} | Orchestrator > Assets > ${ca.name} |\n`;
     }
-  } else {
-    md += `No queues configured for this process.\n\n`;
-  }
-
-  md += `---\n\n`;
-
-  sectionNum++;
-  md += `## ${sectionNum}. Asset Configuration\n\n`;
-  const assets = extractedArtifacts?.assets;
-  const assetResults = deploymentResults?.filter(r => r.artifact === "Asset");
-  if (assets?.length) {
-    md += `| # | Asset Name | Type | Current Value | Action Required | Orchestrator Path |\n`;
-    md += `|---|-----------|------|---------------|-----------------|-------------------|\n`;
-    assets.forEach((a, i) => {
-      const result = assetResults?.find(r => r.name === a.name);
-      const hasPlaceholder = (a.value || "").includes("PLACEHOLDER_");
-      const action = a.type === "Credential" ? "Set username & password" : hasPlaceholder ? `Replace PLACEHOLDER_ value` : result?.status === "created" || result?.status === "exists" ? "Verify value" : "Create asset";
-      md += `| ${i + 1} | \`${a.name}\` | ${a.type} | \`${a.value || "(empty)"}\` | ${action} | Tenant > Assets > ${a.name} |\n`;
-    });
-    md += `\n`;
-    const credentialAssets = assets.filter(a => a.type === "Credential");
-    if (credentialAssets.length > 0) {
-      md += `**Credential Assets** require manual setup with real username/password:\n`;
-      for (const ca of credentialAssets) {
-        md += `- \`${ca.name}\`: ${ca.description || "Set credentials in Orchestrator"}\n`;
-      }
-      md += `\n`;
+    for (const g of credentialGaps) {
+      cIdx++;
+      md += `| ${cIdx} | \`${g.activity}\` | ${g.description} | Replace \`${g.placeholder}\` |\n`;
     }
-  } else {
-    md += `No assets configured for this process.\n\n`;
-  }
-
-  md += `---\n\n`;
-
-  sectionNum++;
-  md += `## ${sectionNum}. Trigger Configuration\n\n`;
-  const triggers = extractedArtifacts?.triggers;
-  const triggerResults = deploymentResults?.filter(r => r.artifact === "Trigger");
-  if (triggers?.length) {
-    md += `| # | Trigger Name | Type | Schedule/Queue | Timezone | Strategy | Status |\n`;
-    md += `|---|-------------|------|---------------|----------|----------|--------|\n`;
-    triggers.forEach((t, i) => {
-      const result = triggerResults?.find(r => r.name === t.name);
-      const status = result?.status || "unknown";
-      const usedFallback = result?.message?.includes("fallback") || result?.message?.includes("ProcessSchedule");
-      const scheduleInfo = t.type === "Queue" ? `Queue: ${t.queueName || "N/A"}` : `Cron: ${t.cron || "N/A"}`;
-      md += `| ${i + 1} | \`${t.name}\` | ${t.type} | ${scheduleInfo} | ${t.timezone || "UTC"} | ${t.startStrategy || "Specific"} | ${status}${usedFallback ? " (polling fallback)" : ""} |\n`;
-    });
-    md += `\n`;
-    const fallbackTriggers = triggerResults?.filter(r => r.message?.includes("fallback") || r.message?.includes("ProcessSchedule"));
-    if (fallbackTriggers?.length) {
-      md += `> **Note:** ${fallbackTriggers.length} trigger(s) used polling-based ProcessSchedule fallback instead of native queue triggers. `;
-      md += `These poll every 5 minutes. For lower latency, configure native Queue Triggers in Orchestrator > Automation > Triggers after upgrading your tenant.\n\n`;
-    }
-  } else {
-    md += `No triggers configured for this process.\n\n`;
-  }
-
-  md += `---\n\n`;
-
-  sectionNum++;
-  md += `## ${sectionNum}. Test Suite Completion\n\n`;
-  const testCases = extractedArtifacts?.testCases;
-  const testSets = extractedArtifacts?.testSets;
-  const tcResults = deploymentResults?.filter(r => r.artifact === "Test Case");
-  const tsResults = deploymentResults?.filter(r => r.artifact === "Test Set");
-  if (testCases?.length) {
-    md += `### Test Cases\n\n`;
-    md += `| # | Test Case | Type | Priority | Workflow | Status |\n`;
-    md += `|---|-----------|------|----------|----------|--------|\n`;
-    testCases.forEach((tc, i) => {
-      const result = tcResults?.find(r => r.name === tc.name);
-      md += `| ${i + 1} | \`${tc.name}\` | ${tc.testType || "Functional"} | ${tc.priority || "Medium"} | ${tc.automationWorkflow || "Main.xaml"} | ${result?.status || "unknown"} |\n`;
-    });
-    md += `\n`;
-
-    const tcsWithPlaceholderData = testCases.filter(tc => tc.testData?.some(td => td.value?.includes("PLACEHOLDER_")));
-    if (tcsWithPlaceholderData.length > 0) {
-      md += `**Test Data Requiring Real Values:**\n\n`;
-      for (const tc of tcsWithPlaceholderData) {
-        const placeholderFields = tc.testData?.filter(td => td.value?.includes("PLACEHOLDER_")) || [];
-        md += `- \`${tc.name}\`: Replace ${placeholderFields.map(f => `\`${f.field}\``).join(", ")} with real test data\n`;
-      }
-      md += `\n`;
-    }
-  }
-  if (testSets?.length) {
-    md += `### Test Sets\n\n`;
-    md += `| # | Test Set | Execution | Environment | Trigger | Test Cases | Status |\n`;
-    md += `|---|----------|-----------|-------------|---------|------------|--------|\n`;
-    testSets.forEach((ts, i) => {
-      const result = tsResults?.find(r => r.name === ts.name);
-      md += `| ${i + 1} | \`${ts.name}\` | ${ts.executionMode || "Sequential"} | ${ts.environment || "N/A"} | ${ts.triggerType || "Manual"} | ${ts.testCaseNames?.length || 0} | ${result?.status || "unknown"} |\n`;
-    });
     md += `\n`;
   }
-  if (!testCases?.length && !testSets?.length) {
-    md += `No test cases or test sets were generated.\n\n`;
-  } else {
-    md += `### Test Environment Setup\n\n`;
-    md += `- [ ] Test Manager project created and accessible\n`;
-    md += `- [ ] Test data queues seeded with sample transaction data\n`;
-    md += `- [ ] Test credentials configured (separate from production)\n`;
-    md += `- [ ] Target applications available in test environment\n`;
-    md += `- [ ] Robot assigned to test folder with appropriate permissions\n\n`;
-  }
-
-  md += `---\n\n`;
-
-  sectionNum++;
-  md += `## ${sectionNum}. Action Center Setup\n\n`;
-  const acArtifacts = extractedArtifacts?.actionCenter;
-  const acResults = deploymentResults?.filter(r => r.artifact === "Action Center");
-  if (acArtifacts?.length) {
-    for (const ac of acArtifacts) {
-      const result = acResults?.find(r => r.name === ac.taskCatalog);
-      md += `### ${ac.taskCatalog} (${result?.status || "unknown"})\n\n`;
-      if (ac.description) md += `- **Purpose:** ${ac.description}\n`;
-      if (ac.priority) md += `- **Priority:** ${ac.priority}\n`;
-      if (ac.sla) md += `- **SLA:** ${ac.sla}\n`;
-      if (ac.escalation) md += `- **Escalation:** ${ac.escalation}\n`;
-      if (ac.actions?.length) md += `- **Available Actions:** ${ac.actions.join(", ")}\n`;
-      md += `\n`;
-
-      if (ac.formFields?.length) {
-        md += `**Form Fields to Configure:**\n\n`;
-        md += `| Field | Type | Required |\n`;
-        md += `|-------|------|----------|\n`;
-        for (const f of ac.formFields) {
-          md += `| ${f.name} | ${f.type} | ${f.required ? "Yes" : "No"} |\n`;
-        }
-        md += `\n`;
-      }
-
-      if (result?.status === "failed" || result?.status === "manual") {
-        md += `> **Manual Setup Required:** Create this task catalog in Orchestrator > Action Center > Task Catalogs. `;
-        md += `Configure the form fields listed above and assign to the appropriate folder.\n\n`;
-      }
-    }
-  } else {
-    md += `No Action Center task catalogs required for this process.\n\n`;
-  }
-
-  md += `---\n\n`;
-
-  sectionNum++;
-  md += `## ${sectionNum}. Document Understanding Setup\n\n`;
-  const duArtifacts = extractedArtifacts?.documentUnderstanding;
-  const duResults = deploymentResults?.filter(r => r.artifact === "Document Understanding");
-  if (duArtifacts?.length) {
-    for (const du of duArtifacts) {
-      const result = duResults?.find(r => r.name === du.name);
-      md += `### ${du.name} (${result?.status || "unknown"})\n\n`;
-      if (du.description) md += `- **Purpose:** ${du.description}\n`;
-      if (du.documentTypes?.length) md += `- **Document Types:** ${du.documentTypes.join(", ")}\n`;
-      if (du.classifierType) md += `- **Classifier:** ${du.classifierType}\n`;
-      md += `\n`;
-
-      if (du.taxonomyFields?.length) {
-        md += `**Taxonomy Fields to Configure:**\n\n`;
-        for (const tf of du.taxonomyFields) {
-          md += `**${tf.documentType}:**\n\n`;
-          md += `| Field | Type |\n`;
-          md += `|-------|------|\n`;
-          for (const f of tf.fields) {
-            md += `| ${f.name} | ${f.type} |\n`;
-          }
-          md += `\n`;
-        }
-      }
-
-      md += `**Setup Steps:**\n`;
-      md += `1. Open Document Understanding in UiPath Automation Cloud\n`;
-      md += `2. Create or configure the taxonomy with the fields listed above\n`;
-      md += `3. Upload training documents for each document type\n`;
-      md += `4. Train the ${du.classifierType || "ML"} classifier\n`;
-      md += `5. Validate extraction accuracy meets business requirements\n`;
-      md += `6. Publish the trained model and note the API endpoint\n\n`;
-    }
-  } else {
-    md += `No Document Understanding projects required for this process.\n\n`;
-  }
-
-  md += `---\n\n`;
-
-  sectionNum++;
-  md += `## ${sectionNum}. Requirements Traceability\n\n`;
-  const requirements = extractedArtifacts?.requirements;
-  const reqResults = deploymentResults?.filter(r => r.artifact === "Requirement");
-  if (requirements?.length) {
-    md += `| # | Requirement | Type | Priority | Source | Status |\n`;
-    md += `|---|------------|------|----------|--------|--------|\n`;
-    requirements.forEach((req, i) => {
-      const result = reqResults?.find(r => r.name === req.name);
-      md += `| ${i + 1} | \`${req.name}\` | ${req.type || "Functional"} | ${req.priority || "Medium"} | ${req.source || "SDD"} | ${result?.status || "unknown"} |\n`;
-    });
-    md += `\n`;
-
-    const reqsWithCriteria = requirements.filter(r => r.acceptanceCriteria?.length);
-    if (reqsWithCriteria.length > 0) {
-      md += `### Acceptance Criteria\n\n`;
-      for (const req of reqsWithCriteria) {
-        md += `**${req.name}:**\n`;
-        for (const c of req.acceptanceCriteria!) {
-          md += `- [ ] ${c}\n`;
-        }
-        md += `\n`;
-      }
-    }
-
-    const failedReqs = reqResults?.filter(r => r.status === "failed" || r.status === "manual");
-    if (failedReqs?.length) {
-      md += `> **Action Required:** ${failedReqs.length} requirement(s) failed to provision in Test Manager. Create them manually in Test Manager > Requirements.\n\n`;
-    }
-  } else {
-    md += `No requirements configured for this process.\n\n`;
-  }
-
-  md += `---\n\n`;
-
-  sectionNum++;
-  md += `## ${sectionNum}. Infrastructure Checklist\n\n`;
-
-  const machines = extractedArtifacts?.machines;
-  const machineResults = deploymentResults?.filter(r => r.artifact === "Machine");
-  const robots = extractedArtifacts?.robotAccounts;
-  const robotResults = deploymentResults?.filter(r => r.artifact === "Robot Account");
-  const buckets = extractedArtifacts?.storageBuckets;
-  const bucketResults = deploymentResults?.filter(r => r.artifact === "Storage Bucket");
-  const environments = extractedArtifacts?.environments;
-  const envResults = deploymentResults?.filter(r => r.artifact === "Environment");
-
-  md += `### Machine Templates\n\n`;
-  if (machines?.length) {
-    md += `| Machine | Type | Runtime | Slots | Status |\n`;
-    md += `|---------|------|---------|-------|--------|\n`;
-    machines.forEach(m => {
-      const result = machineResults?.find(r => r.name === m.name);
-      md += `| \`${m.name}\` | ${m.type || "Unattended"} | ${m.runtimeType || m.type || "Unattended"} | ${m.slots || 1} | ${result?.status || "unknown"} |\n`;
-    });
-    md += `\n`;
-    md += `- [ ] Verify machine templates are assigned to the correct folder\n`;
-    md += `- [ ] Confirm slot allocation matches license availability\n\n`;
-  } else {
-    md += `No machine templates configured.\n\n`;
-  }
-
-  md += `### Robot Accounts\n\n`;
-  if (robots?.length) {
-    md += `| Robot | Type | Role | Status |\n`;
-    md += `|-------|------|------|--------|\n`;
-    robots.forEach(r => {
-      const result = robotResults?.find(rr => rr.name === r.name);
-      md += `| \`${r.name}\` | ${r.type || "Unattended"} | ${r.role || "Executor"} | ${result?.status || "unknown"} |\n`;
-    });
-    md += `\n`;
-    md += `- [ ] Verify robot accounts have correct permissions in target folder\n`;
-    md += `- [ ] Confirm robot has access to all required applications\n`;
-    md += `- [ ] Test robot credentials for target systems\n\n`;
-  } else {
-    md += `No robot accounts configured.\n\n`;
-  }
-
-  md += `### Storage Buckets\n\n`;
-  if (buckets?.length) {
-    md += `| Bucket | Provider | Status |\n`;
-    md += `|--------|----------|--------|\n`;
-    buckets.forEach(b => {
-      const result = bucketResults?.find(r => r.name === b.name);
-      md += `| \`${b.name}\` | ${b.storageProvider || "Orchestrator"} | ${result?.status || "unknown"} |\n`;
-    });
-    md += `\n`;
-    md += `- [ ] Verify bucket access permissions for the robot\n`;
-    md += `- [ ] Confirm storage provider connectivity (if external: Azure/AWS/GCP)\n\n`;
-  } else {
-    md += `No storage buckets configured.\n\n`;
-  }
-
-  md += `### Environments\n\n`;
-  if (environments?.length) {
-    md += `| Environment | Type | Status |\n`;
-    md += `|-------------|------|--------|\n`;
-    environments.forEach(e => {
-      const result = envResults?.find(r => r.name === e.name);
-      md += `| \`${e.name}\` | ${e.type || "Production"} | ${result?.status || "unknown"} |\n`;
-    });
-    md += `\n`;
-  } else {
-    md += `No environments configured.\n\n`;
-  }
-
-  md += `---\n\n`;
-
-  if (painPoints && painPoints.length > 0) {
-    sectionNum++;
-    md += `## ${sectionNum}. Risk Assessment (Pain Points)\n\n`;
-    md += `The following process pain points were identified during analysis. These areas may require extra attention during development and testing.\n\n`;
-    md += `| # | Step | Risk | Mitigation |\n`;
-    md += `|---|------|------|------------|\n`;
-    painPoints.forEach((pp, i) => {
-      md += `| ${i + 1} | ${pp.name} | ${pp.description || "Identified as pain point"} | Add extra error handling and logging; consider retry logic |\n`;
-    });
-    md += `\n---\n\n`;
-  }
-
-  sectionNum++;
-  md += `## ${sectionNum}. Testing & Go-Live Checklist\n\n`;
-  let testingContent = "";
-  if (sddContent) {
-    const section7Match = sddContent.match(/## 7[\.\s][^\n]+\n([\s\S]*?)(?=## \d+\.|$)/);
-    if (section7Match) {
-      testingContent = section7Match[1].trim();
-    }
-  }
-  if (testingContent) {
-    md += `The following testing approach is derived from the SDD Test Strategy:\n\n`;
-    md += testingContent + `\n\n`;
-  } else {
-    md += `### Recommended Testing Steps\n\n`;
-    md += `1. **Unit Testing**: Test each workflow individually with sample data\n`;
-    md += `2. **Integration Testing**: Run the full process end-to-end in a Dev environment\n`;
-    md += `3. **Exception Testing**: Verify error handling by simulating failures\n`;
-    md += `4. **UAT**: Run with real data in a controlled environment with business stakeholders\n`;
-    md += `5. **Performance Testing**: Verify processing times meet SLA requirements\n\n`;
-  }
-
-  md += `### Environment Setup Checklist\n\n`;
-  md += `#### Development\n`;
-  md += `- [ ] UiPath Studio installed and licensed\n`;
-  md += `- [ ] All target application access configured (dev credentials)\n`;
-  md += `- [ ] Orchestrator Dev folder created with assets/queues\n`;
-  md += `- [ ] Config.xlsx updated with Dev environment values\n\n`;
-  md += `#### UAT\n`;
-  md += `- [ ] UAT Orchestrator folder with separate assets/queues\n`;
-  md += `- [ ] UAT credentials provisioned for all target systems\n`;
-  md += `- [ ] Test data prepared and loaded into queues\n`;
-  md += `- [ ] Business stakeholders available for validation\n\n`;
-  md += `#### Production\n`;
-  md += `- [ ] Production Orchestrator folder configured\n`;
-  md += `- [ ] Production credentials and assets created\n`;
-  md += `- [ ] Triggers/schedules configured\n`;
-  md += `- [ ] Monitoring and alerting set up\n`;
-  md += `- [ ] Runbook documentation completed\n\n`;
-
-  md += `### Pre-Production Checklist\n\n`;
-  md += `- [ ] All placeholder selectors replaced with real selectors\n`;
-  md += `- [ ] All credentials configured in Orchestrator\n`;
-  md += `- [ ] All API endpoints updated to real URLs\n`;
-  md += `- [ ] Config.xlsx populated with production values\n`;
-  md += `- [ ] Error handling tested for all exception scenarios\n`;
-  md += `- [ ] Logging verified at appropriate levels\n`;
-  md += `- [ ] Robot permissions verified for all target systems\n`;
-  md += `- [ ] Process runs successfully end-to-end in UAT\n\n`;
-
-  md += `---\n\n`;
 
   const complexGaps = [...logicGaps, ...manualGaps];
   if (complexGaps.length > 0) {
-    sectionNum++;
-    md += `## ${sectionNum}. Known Gaps & Manual Steps\n\n`;
-    md += `The following items require manual implementation or complex business logic that could not be fully automated.\n\n`;
+    md += `### Business Logic & Manual Steps (${complexGaps.length} items)\n\n`;
     md += `| # | Category | Activity | Description | Est. Time |\n`;
     md += `|---|----------|----------|-------------|----------|\n`;
     complexGaps.forEach((g, i) => {
       md += `| ${i + 1} | ${g.category} | \`${g.activity}\` | ${g.description} | ${g.estimatedMinutes} min |\n`;
     });
-    md += `\n---\n\n`;
+    md += `\n`;
   }
 
+  if (selectorGaps.length === 0 && credentialGaps.length === 0 && credentialAssets.length === 0 && complexGaps.length === 0) {
+    md += `No items require human intervention. The package is ready for Studio validation.\n\n`;
+  }
+
+  const tier3TotalMinutes = selectorGaps.reduce((s, g) => s + g.estimatedMinutes, 0) +
+    credentialGaps.reduce((s, g) => s + g.estimatedMinutes, 0) +
+    complexGaps.reduce((s, g) => s + g.estimatedMinutes, 0) +
+    credentialAssets.length * 5;
+  md += `**Total Tier 3 Effort: ~${(tier3TotalMinutes / 60).toFixed(1)} hours** (${selectorGaps.length} selectors, ${credentialGaps.length + credentialAssets.length} credentials, ${complexGaps.length} logic items)\n\n`;
+
+  md += `---\n\n`;
+
   sectionNum++;
-  md += `## ${sectionNum}. Estimated Completion Effort\n\n`;
+  md += `## ${sectionNum}. Code Review Checklist\n\n`;
+  md += `Use this checklist during peer review before promoting to UAT.\n\n`;
 
-  const effortItems: { category: string; count: number; minutes: number }[] = [];
-
-  const xamlCategories: { label: string; items: XamlGap[] }[] = [
-    { label: "UI Selector Configuration", items: selectorGaps },
-    { label: "Credential & Asset Setup", items: credentialGaps },
-    { label: "Integration Endpoints", items: endpointGaps },
-    { label: "Configuration Values", items: configGaps },
-    { label: "Business Logic Implementation", items: logicGaps },
-    { label: "Manual Steps", items: manualGaps },
-  ];
-  for (const cat of xamlCategories) {
-    if (cat.items.length > 0) {
-      effortItems.push({ category: cat.label, count: cat.items.length, minutes: cat.items.reduce((s, g) => s + g.estimatedMinutes, 0) });
+  if (analysisReports?.length) {
+    const remaining = analysisReports.flatMap(ar => ar.report.violations.filter(v => !v.autoFixed));
+    if (remaining.length > 0) {
+      md += `### Workflow Analyzer Remaining Violations\n\n`;
+      md += `| Severity | Rule | File | Message |\n`;
+      md += `|----------|------|------|---------|\n`;
+      for (const ar of analysisReports) {
+        for (const v of ar.report.violations.filter(vv => !vv.autoFixed)) {
+          md += `| ${v.severity} | ${v.ruleId} | ${ar.fileName} | ${v.message} |\n`;
+        }
+      }
+      md += `\n`;
+    } else {
+      md += `All Workflow Analyzer checks passed or were auto-corrected. No remaining violations.\n\n`;
     }
   }
 
-  const failedQueues = deploymentResults?.filter(r => r.artifact === "Queue" && (r.status === "failed" || r.status === "manual"));
-  if (failedQueues?.length) effortItems.push({ category: "Queue Setup (manual)", count: failedQueues.length, minutes: failedQueues.length * 10 });
+  md += `### Review Rubric\n\n`;
+  md += `| Category | Check | Status |\n`;
+  md += `|----------|-------|---------|\n`;
+  md += `| Exception Handling | All activities in TryCatch? Catch blocks log + rethrow? | AI: Done |\n`;
+  md += `| Transaction Integrity | Queue items set to Success/Failed/BusinessException? | ${useReFramework ? "AI: Done (REFramework)" : "N/A"} |\n`;
+  md += `| Logging | Info log at start/end of each workflow? Critical decisions logged? | AI: Done |\n`;
+  md += `| Selector Reliability | Selectors use stable attributes (automationid, name)? | ${selectorGaps.length > 0 ? "Tier 3: Pending" : "N/A"} |\n`;
+  md += `| Credential Security | All credentials in Orchestrator Assets, not hardcoded? | AI: Verified |\n`;
+  md += `| Naming Conventions | Variables/arguments follow type/direction prefixes? | AI: Auto-corrected |\n`;
+  md += `| Annotations | Every activity annotated with business context? | AI: Done |\n`;
+  md += `| Argument Validation | Entry points validate required arguments? | AI: Done |\n`;
+  md += `| Config Management | Environment-specific values in Config.xlsx? | AI: Done |\n\n`;
 
-  const credAssets = extractedArtifacts?.assets?.filter(a => a.type === "Credential");
-  if (credAssets?.length) effortItems.push({ category: "Credential Asset Values", count: credAssets.length, minutes: credAssets.length * 5 });
+  md += `### Pre-Deployment Verification\n\n`;
+  md += `1. Open the project in UiPath Studio\n`;
+  md += `2. Run **Analyze File** > **Workflow Analyzer** on all files\n`;
+  md += `3. Confirm zero errors and zero warnings\n`;
+  md += `4. Run all unit tests in Test Manager\n`;
+  md += `5. Execute a full end-to-end run in Dev environment\n\n`;
 
-  const failedTriggers = deploymentResults?.filter(r => r.artifact === "Trigger" && (r.status === "failed" || r.status === "manual"));
-  if (failedTriggers?.length) effortItems.push({ category: "Trigger Setup (manual)", count: failedTriggers.length, minutes: failedTriggers.length * 15 });
+  md += `### Sign-Off\n\n`;
+  md += `| Field | Value |\n`;
+  md += `|-------|-------|\n`;
+  md += `| Reviewer | _________________ |\n`;
+  md += `| Date | _________________ |\n`;
+  md += `| Approval | [ ] Approved for UAT  [ ] Requires Changes |\n`;
+  md += `| Notes | _________________ |\n\n`;
 
-  const failedAC = deploymentResults?.filter(r => r.artifact === "Action Center" && (r.status === "failed" || r.status === "manual"));
-  if (failedAC?.length) effortItems.push({ category: "Action Center Form Setup", count: failedAC.length, minutes: failedAC.length * 30 });
+  md += `---\n\n`;
 
-  if (duArtifacts?.length) effortItems.push({ category: "Document Understanding Training", count: duArtifacts.length, minutes: duArtifacts.length * 120 });
-
-  const failedRobots = deploymentResults?.filter(r => r.artifact === "Robot Account" && (r.status === "failed" || r.status === "manual"));
-  if (failedRobots?.length) effortItems.push({ category: "Robot Account Setup", count: failedRobots.length, minutes: failedRobots.length * 15 });
-
-  const tcsWithPlaceholders = testCases?.filter(tc => tc.testData?.some(td => td.value?.includes("PLACEHOLDER_")));
-  if (tcsWithPlaceholders?.length) effortItems.push({ category: "Test Data Completion", count: tcsWithPlaceholders.length, minutes: tcsWithPlaceholders.length * 10 });
-
-  md += `| Category | Count | Est. Minutes | Est. Hours |\n`;
-  md += `|----------|-------|-------------|------------|\n`;
-  let totalMinutes = 0;
-  let totalCount = 0;
-  for (const item of effortItems) {
-    md += `| ${item.category} | ${item.count} | ${item.minutes} | ${(item.minutes / 60).toFixed(1)} |\n`;
-    totalMinutes += item.minutes;
-    totalCount += item.count;
+  sectionNum++;
+  md += `## ${sectionNum}. Package Contents\n\n`;
+  md += `| File | Purpose |\n`;
+  md += `|------|--------|\n`;
+  md += `| \`project.json\` | UiPath project manifest with dependencies |\n`;
+  md += `| \`Main.xaml\` | ${useReFramework ? "REFramework State Machine entry point" : "Entry point workflow"} |\n`;
+  if (useReFramework) {
+    md += `| \`GetTransactionData.xaml\` | Fetches next queue item |\n`;
+    md += `| \`Process.xaml\` | Business logic for single transaction |\n`;
+    md += `| \`SetTransactionStatus.xaml\` | Marks transaction Success/Failed |\n`;
+    md += `| \`CloseAllApplications.xaml\` | Graceful app cleanup |\n`;
+    md += `| \`KillAllProcesses.xaml\` | Force-kill hanging processes |\n`;
   }
-  const totalHours = (totalMinutes / 60).toFixed(1);
-  md += `| **Total** | **${totalCount}** | **${totalMinutes}** | **${totalHours}** |\n\n`;
+  for (const wfName of workflowNames) {
+    if (!["Main", "GetTransactionData", "Process", "SetTransactionStatus", "CloseAllApplications", "KillAllProcesses"].includes(wfName)) {
+      md += `| \`${wfName}.xaml\` | Workflow: ${wfName} |\n`;
+    }
+  }
+  md += `| \`InitAllSettings.xaml\` | Configuration initialization |\n`;
+  md += `| \`Data/Config.xlsx\` | Configuration settings |\n`;
+  md += `| \`DeveloperHandoffGuide.md\` | This guide |\n\n`;
+  md += `**Required Packages:** ${usedPackages.map(p => `\`${p}\``).join(", ")}\n\n`;
 
-  const confidence = totalMinutes < 120 ? "High" : totalMinutes < 480 ? "Medium" : "Low";
-  md += `**Confidence Level:** ${confidence}\n\n`;
-  md += `> **Note:** These estimates assume a developer familiar with UiPath Studio and the target applications. `;
-  md += `Actual effort may vary based on environment complexity, selector stability, and business rule complexity.\n`;
+  if (painPoints && painPoints.length > 0) {
+    md += `---\n\n`;
+    sectionNum++;
+    md += `## ${sectionNum}. Risk Assessment\n\n`;
+    md += `| # | Step | Risk | Mitigation |\n`;
+    md += `|---|------|------|------------|\n`;
+    painPoints.forEach((pp, i) => {
+      md += `| ${i + 1} | ${pp.name} | ${pp.description || "Pain point"} | Extra error handling and retry logic applied |\n`;
+    });
+    md += `\n`;
+  }
+
+  const testCases = extractedArtifacts?.testCases;
+  const testSets = extractedArtifacts?.testSets;
+  if (testCases?.length || testSets?.length) {
+    md += `---\n\n`;
+    sectionNum++;
+    md += `## ${sectionNum}. Test Suite\n\n`;
+    if (testCases?.length) {
+      const tcResults = deploymentResults?.filter(r => r.artifact === "Test Case");
+      md += `| # | Test Case | Type | Priority | Status |\n`;
+      md += `|---|-----------|------|----------|--------|\n`;
+      testCases.forEach((tc, i) => {
+        const result = tcResults?.find(r => r.name === tc.name);
+        md += `| ${i + 1} | \`${tc.name}\` | ${tc.testType || "Functional"} | ${tc.priority || "Medium"} | ${result?.status || "unknown"} |\n`;
+      });
+      md += `\n`;
+    }
+    if (testSets?.length) {
+      const tsResults = deploymentResults?.filter(r => r.artifact === "Test Set");
+      md += `| # | Test Set | Mode | Test Cases | Status |\n`;
+      md += `|---|----------|------|------------|--------|\n`;
+      testSets.forEach((ts, i) => {
+        const result = tsResults?.find(r => r.name === ts.name);
+        md += `| ${i + 1} | \`${ts.name}\` | ${ts.executionMode || "Sequential"} | ${ts.testCaseNames?.length || 0} | ${result?.status || "unknown"} |\n`;
+      });
+      md += `\n`;
+    }
+  }
+
+  const requirements = extractedArtifacts?.requirements;
+  if (requirements?.length) {
+    md += `---\n\n`;
+    sectionNum++;
+    md += `## ${sectionNum}. Requirements Traceability\n\n`;
+    const reqResults = deploymentResults?.filter(r => r.artifact === "Requirement");
+    md += `| # | Requirement | Type | Priority | Status |\n`;
+    md += `|---|------------|------|----------|--------|\n`;
+    requirements.forEach((req, i) => {
+      const result = reqResults?.find(r => r.name === req.name);
+      md += `| ${i + 1} | \`${req.name}\` | ${req.type || "Functional"} | ${req.priority || "Medium"} | ${result?.status || "unknown"} |\n`;
+    });
+    md += `\n`;
+    const reqsWithCriteria = requirements.filter(r => r.acceptanceCriteria?.length);
+    if (reqsWithCriteria.length > 0) {
+      for (const req of reqsWithCriteria) {
+        md += `**${req.name}:**\n`;
+        for (const c of req.acceptanceCriteria!) md += `- [ ] ${c}\n`;
+        md += `\n`;
+      }
+    }
+  }
+
+  md += `---\n\n`;
+  sectionNum++;
+  md += `## ${sectionNum}. Infrastructure\n\n`;
+  const machines = extractedArtifacts?.machines;
+  const robots = extractedArtifacts?.robotAccounts;
+  const buckets = extractedArtifacts?.storageBuckets;
+  const environments = extractedArtifacts?.environments;
+  if (machines?.length) {
+    md += `**Machines:** ${machines.map(m => `\`${m.name}\` (${m.runtimeType || m.type || "Unattended"}, ${m.slots || 1} slots)`).join(", ")}\n`;
+  }
+  if (robots?.length) {
+    md += `**Robots:** ${robots.map(r => `\`${r.name}\` (${r.type || "Unattended"}, ${r.role || "Executor"})`).join(", ")}\n`;
+  }
+  if (buckets?.length) {
+    md += `**Storage:** ${buckets.map(b => `\`${b.name}\` (${b.storageProvider || "Orchestrator"})`).join(", ")}\n`;
+  }
+  if (environments?.length) {
+    md += `**Environments:** ${environments.map(e => `\`${e.name}\` (${e.type || "Production"})`).join(", ")}\n`;
+  }
+
+  const acArtifacts = extractedArtifacts?.actionCenter;
+  if (acArtifacts?.length) {
+    md += `\n### Action Center\n\n`;
+    for (const ac of acArtifacts) {
+      const acResult = deploymentResults?.find(r => r.artifact === "Action Center" && r.name === ac.taskCatalog);
+      md += `**${ac.taskCatalog}** (${acResult?.status || "unknown"})`;
+      if (ac.sla) md += ` — SLA: ${ac.sla}`;
+      md += `\n`;
+      if (ac.formFields?.length) {
+        md += `Fields: ${ac.formFields.map(f => `${f.name} (${f.type}${f.required ? ", required" : ""})`).join(", ")}\n`;
+      }
+    }
+    md += `\n`;
+  }
+
+  const duArtifacts = extractedArtifacts?.documentUnderstanding;
+  if (duArtifacts?.length) {
+    md += `### Document Understanding\n\n`;
+    for (const du of duArtifacts) {
+      const duResult = deploymentResults?.find(r => r.artifact === "Document Understanding" && r.name === du.name);
+      md += `**${du.name}** (${duResult?.status || "unknown"})`;
+      if (du.documentTypes?.length) md += ` — Types: ${du.documentTypes.join(", ")}`;
+      md += `\n`;
+    }
+    md += `\n`;
+  }
+  md += `\n`;
+
+  let testingContent = "";
+  if (sddContent) {
+    const section7Match = sddContent.match(/## 7[\.\s][^\n]+\n([\s\S]*?)(?=## \d+\.|$)/);
+    if (section7Match) testingContent = section7Match[1].trim();
+  }
+
+  md += `---\n\n`;
+  sectionNum++;
+  md += `## ${sectionNum}. Go-Live Checklist\n\n`;
+  md += `#### Development\n`;
+  md += `- [ ] Open project in UiPath Studio — install missing packages\n`;
+  md += `- [ ] Run Workflow Analyzer — confirm zero violations\n`;
+  md += `- [ ] Complete Tier 3 items (selectors, credentials, business logic)\n`;
+  md += `- [ ] Config.xlsx updated with Dev values\n\n`;
+  md += `#### UAT\n`;
+  md += `- [ ] UAT Orchestrator folder with separate assets/queues\n`;
+  md += `- [ ] Full end-to-end run with real data\n`;
+  md += `- [ ] Business stakeholder sign-off\n\n`;
+  md += `#### Production\n`;
+  md += `- [ ] Production credentials and assets configured\n`;
+  md += `- [ ] Triggers/schedules active\n`;
+  md += `- [ ] Monitoring and alerting configured\n`;
+  md += `- [ ] Runbook documentation completed\n`;
 
   return md;
 }

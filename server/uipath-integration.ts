@@ -21,6 +21,7 @@ import {
   type XamlGap,
 } from "./xaml-generator";
 import { enrichWithAI, type EnrichmentResult } from "./ai-xaml-enricher";
+import { analyzeAndFix, type AnalysisReport } from "./workflow-analyzer";
 
 export type UiPathConfig = {
   orgName: string;
@@ -399,6 +400,17 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<{
       }
     }
 
+    const analysisReports: { fileName: string; report: AnalysisReport }[] = [];
+    function compliancePass(rawXaml: string, fileName: string): string {
+      const compliant = makeUiPathCompliant(rawXaml);
+      const { fixed, report } = analyzeAndFix(compliant);
+      analysisReports.push({ fileName, report });
+      if (report.totalAutoFixed > 0) {
+        console.log(`[UiPath Analyzer] ${fileName}: ${report.totalAutoFixed} auto-fixed, ${report.totalRemaining} remaining`);
+      }
+      return fixed;
+    }
+
     const workflows = pkg.workflows || [];
     let hasMain = false;
 
@@ -419,7 +431,7 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<{
             enrichment
           );
           xamlResults.push(result);
-          archive.append(makeUiPathCompliant(result.xaml), { name: `${libPath}/${wfName}.xaml` });
+          archive.append(compliancePass(result.xaml, `${wfName}.xaml`), { name: `${libPath}/${wfName}.xaml` });
           if (wfName === "Main") hasMain = true;
           console.log(`[UiPath] Generated decomposed workflow "${wfName}": ${decompNodes.length} nodes, ${result.gaps.length} gaps`);
         }
@@ -430,7 +442,7 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<{
       const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
       const result = generateRichXamlFromSpec(wf, sddContent || undefined);
       xamlResults.push(result);
-      archive.append(makeUiPathCompliant(result.xaml), { name: `${libPath}/${wfName}.xaml` });
+      archive.append(compliancePass(result.xaml, `${wfName}.xaml`), { name: `${libPath}/${wfName}.xaml` });
       if (wfName === "Main") hasMain = true;
       console.log(`[UiPath] Generated rich XAML for "${wfName}": ${result.gaps.length} gaps, ${result.usedPackages.length} packages`);
     }
@@ -445,30 +457,30 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<{
       );
       xamlResults.push(processResult);
       const processFileName = useReFramework ? "Process" : projectName;
-      archive.append(makeUiPathCompliant(processResult.xaml), { name: `${libPath}/${processFileName}.xaml` });
+      archive.append(compliancePass(processResult.xaml, `${processFileName}.xaml`), { name: `${libPath}/${processFileName}.xaml` });
       console.log(`[UiPath] Generated process XAML from ${processNodes.length} map nodes: ${processResult.gaps.length} gaps`);
     }
 
     const initXaml = generateInitAllSettingsXaml(orchestratorArtifacts);
-    archive.append(makeUiPathCompliant(initXaml), { name: `${libPath}/InitAllSettings.xaml` });
+    archive.append(compliancePass(initXaml, "InitAllSettings.xaml"), { name: `${libPath}/InitAllSettings.xaml` });
 
     if (useReFramework && !hasMain) {
       console.log(`[UiPath] Generating REFramework structure (queue: ${queueName})`);
       const mainXaml = generateReframeworkMainXaml(projectName, queueName);
-      archive.append(makeUiPathCompliant(mainXaml), { name: `${libPath}/Main.xaml` });
+      archive.append(compliancePass(mainXaml, "Main.xaml"), { name: `${libPath}/Main.xaml` });
       hasMain = true;
 
       const getTransXaml = generateGetTransactionDataXaml(queueName);
-      archive.append(makeUiPathCompliant(getTransXaml), { name: `${libPath}/GetTransactionData.xaml` });
+      archive.append(compliancePass(getTransXaml, "GetTransactionData.xaml"), { name: `${libPath}/GetTransactionData.xaml` });
 
       const setStatusXaml = generateSetTransactionStatusXaml();
-      archive.append(makeUiPathCompliant(setStatusXaml), { name: `${libPath}/SetTransactionStatus.xaml` });
+      archive.append(compliancePass(setStatusXaml, "SetTransactionStatus.xaml"), { name: `${libPath}/SetTransactionStatus.xaml` });
 
       const closeAppsXaml = generateCloseAllApplicationsXaml();
-      archive.append(makeUiPathCompliant(closeAppsXaml), { name: `${libPath}/CloseAllApplications.xaml` });
+      archive.append(compliancePass(closeAppsXaml, "CloseAllApplications.xaml"), { name: `${libPath}/CloseAllApplications.xaml` });
 
       const killXaml = generateKillAllProcessesXaml();
-      archive.append(makeUiPathCompliant(killXaml), { name: `${libPath}/KillAllProcesses.xaml` });
+      archive.append(compliancePass(killXaml, "KillAllProcesses.xaml"), { name: `${libPath}/KillAllProcesses.xaml` });
     } else if (!hasMain) {
       let mainActivities = `
         <ui:InvokeWorkflowFile DisplayName="Initialize Settings" WorkflowFileName="InitAllSettings.xaml" />`;
@@ -496,10 +508,10 @@ async function buildNuGetPackage(pkg: any, version: string = "1.0.0"): Promise<{
         <ui:LogMessage Level="Info" Message="'Process completed successfully'" DisplayName="Log Completion" />`;
 
       const closeAppsXaml = generateCloseAllApplicationsXaml();
-      archive.append(makeUiPathCompliant(closeAppsXaml), { name: `${libPath}/CloseAllApplications.xaml` });
+      archive.append(compliancePass(closeAppsXaml, "CloseAllApplications.xaml"), { name: `${libPath}/CloseAllApplications.xaml` });
 
       const mainXaml = buildXaml("Main", `${projectName} - Main Workflow`, mainActivities);
-      archive.append(makeUiPathCompliant(mainXaml), { name: `${libPath}/Main.xaml` });
+      archive.append(compliancePass(mainXaml, "Main.xaml"), { name: `${libPath}/Main.xaml` });
     }
 
     const configCsv = generateConfigXlsx(pkg, sddContent || undefined, orchestratorArtifacts);
@@ -629,6 +641,7 @@ ${depEntries}
       painPoints,
       deploymentResults: pkg._deploymentResults || undefined,
       extractedArtifacts: orchestratorArtifacts || undefined,
+      analysisReports,
     });
     archive.append(dhg, { name: `${libPath}/DeveloperHandoffGuide.md` });
     console.log(`[UiPath] Generated Developer Handoff Guide: ${allGaps.length} gaps, ~${(allGaps.reduce((s: number, g: XamlGap) => s + g.estimatedMinutes, 0) / 60).toFixed(1)}h effort, REFramework=${useReFramework}`);
