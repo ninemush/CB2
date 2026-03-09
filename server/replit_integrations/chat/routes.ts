@@ -561,10 +561,34 @@ export function registerChatRoutes(app: Express): void {
         messages: chatMessages,
       });
 
+      const userMsg = (chatMessages[chatMessages.length - 1]?.content || "").toLowerCase().trim();
+      const prevAssistantMsg = chatMessages.length >= 2
+        ? (chatMessages[chatMessages.length - 2]?.role === "assistant" ? chatMessages[chatMessages.length - 2].content.toLowerCase() : "")
+        : "";
+      const isShortAffirmative = userMsg.length < 60 && /^(yes|yeah|yep|sure|ok|okay|go ahead|do it|proceed|approved|confirm|absolutely|please|go for it|sounds good|let'?s do it|yes.*both|yes.*go|yes.*ahead|yes.*please|yes.*sure)/.test(userMsg);
+      const prevMentionsDoc = /pdd|sdd|process design|solution design|regenerat|document/.test(prevAssistantMsg);
+      const userExplicitDoc = /(?:re)?generat(?:e|ing)?\s+(?:the\s+)?(?:a\s+)?(?:new\s+)?(?:pdd|sdd)|rewrite\s+(?:the\s+)?(?:pdd|sdd)|redo\s+(?:the\s+)?(?:pdd|sdd)|create\s+(?:the\s+)?(?:pdd|sdd)/i.test(userMsg);
+      const prevMentionsDeploy = /deploy|push.*uipath|orchestrator|push.*to/i.test(prevAssistantMsg);
+      const userExplicitDeploy = /deploy|push.*uipath|push.*to.*orchestrator/i.test(userMsg);
+
+      let earlyDocType: "PDD" | "SDD" | null = null;
+      if (userExplicitDoc || (isShortAffirmative && prevMentionsDoc)) {
+        if (/sdd|solution design/i.test(userMsg) || (/sdd|solution design/i.test(prevAssistantMsg) && !/pdd|process design/i.test(prevAssistantMsg))) {
+          earlyDocType = "SDD";
+        } else {
+          earlyDocType = "PDD";
+        }
+        try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: earlyDocType } })}\n\n`); } catch { /* ignore */ }
+        console.log(`[Chat] Early doc-generation detection: ${earlyDocType} (affirmative=${isShortAffirmative}, explicit=${userExplicitDoc})`);
+      } else if (userExplicitDeploy || (isShortAffirmative && prevMentionsDeploy)) {
+        try { res.write(`data: ${JSON.stringify({ deployStatus: "Preparing deployment to UiPath Orchestrator..." })}\n\n`); } catch { /* ignore */ }
+        console.log(`[Chat] Early deploy detection (affirmative=${isShortAffirmative}, explicit=${userExplicitDeploy})`);
+      }
+
       let fullResponse = "";
       let stopReason = "";
-      let docProgressDocType: "PDD" | "SDD" | null = null;
-      let docProgressStarted = false;
+      let docProgressDocType: "PDD" | "SDD" | null = earlyDocType;
+      let docProgressStarted = earlyDocType !== null;
       let lastEmittedSectionNumber = -1;
 
       for await (const event of stream) {
