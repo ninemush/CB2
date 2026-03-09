@@ -2522,7 +2522,7 @@ function parseSddSections(content: string): SDDSection[] {
   return sections;
 }
 
-function SDDInlineViewer({ ideaId }: { ideaId: string }) {
+function SDDInlineViewer({ ideaId, onApproved }: { ideaId: string; onApproved?: () => void }) {
   const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0]));
   const [selectedVersionIdx, setSelectedVersionIdx] = useState<number>(0);
 
@@ -2531,6 +2531,31 @@ function SDDInlineViewer({ ideaId }: { ideaId: string }) {
   });
 
   const currentSdd = sddVersions?.length ? sddVersions[selectedVersionIdx] || sddVersions[0] : null;
+  const latestSdd = sddVersions?.length ? sddVersions[0] : null;
+
+  const approveSddMutation = useMutation({
+    mutationFn: async () => {
+      if (!latestSdd) throw new Error("No SDD to approve");
+      const res = await fetch(`/api/ideas/${ideaId}/documents/${latestSdd.id}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Approval failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "documents", "versions", "SDD"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "messages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "approval-summary"] });
+      onApproved?.();
+    },
+  });
+
+  const showSddApproveButton = latestSdd && latestSdd.status !== "approved";
 
   if (isLoading) {
     return (
@@ -2659,6 +2684,24 @@ function SDDInlineViewer({ ideaId }: { ideaId: string }) {
           );
         })}
       </div>
+
+      {showSddApproveButton && (
+        <div className="px-4 py-2.5 border-t border-zinc-800/80 flex items-center justify-between bg-zinc-950/50">
+          <Button
+            size="sm"
+            className="text-xs rounded-lg shadow-sm bg-cb-teal shadow-cb-teal/20"
+            onClick={() => approveSddMutation.mutate()}
+            disabled={approveSddMutation.isPending}
+            data-testid="button-approve-sdd"
+          >
+            {approveSddMutation.isPending ? (
+              <><Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> Approving...</>
+            ) : (
+              <><Check className="h-3 w-3 mr-1.5" /> Approve SDD</>
+            )}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -3182,7 +3225,7 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
       )}
 
       {activeView === "sdd" ? (
-        <SDDInlineViewer ideaId={ideaId} />
+        <SDDInlineViewer ideaId={ideaId} onApproved={onApproved} />
       ) : (
         <ReactFlowErrorBoundary>
           <ReactFlowProvider>

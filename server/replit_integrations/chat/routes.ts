@@ -751,6 +751,33 @@ export function registerChatRoutes(app: Express): void {
             let statusMsg = `Deployment complete — ${d?.packageId} v${d?.version}`;
             if (d?.processName) statusMsg += ` — Process "${d.processName}" ready.`;
             const deployResults: Array<{artifact: string; name: string; status: string; message: string}> = d?.deploymentResults || [];
+
+            const coreResults: Array<{artifact: string; name: string; status: string; message: string}> = [];
+            if (d?.packageId) {
+              const alreadyHasPackage = deployResults.some(r => r.artifact === "Package");
+              if (!alreadyHasPackage) {
+                coreResults.push({
+                  artifact: "Package",
+                  name: d.packageId,
+                  status: "created",
+                  message: `Package uploaded v${d.version || "1.0.0"}`,
+                });
+              }
+            }
+            if (d?.processName) {
+              const alreadyHasProcess = deployResults.some(r => r.artifact === "Process");
+              if (!alreadyHasProcess) {
+                coreResults.push({
+                  artifact: "Process",
+                  name: d.processName,
+                  status: "created",
+                  message: `Process linked to package ${d.packageId || ""}`,
+                });
+              }
+            }
+
+            const allResults = [...coreResults, ...deployResults];
+
             const deployReport = {
               packageId: d?.packageId,
               version: d?.version,
@@ -758,7 +785,7 @@ export function registerChatRoutes(app: Express): void {
               orgName: d?.orgName,
               tenantName: d?.tenantName,
               folderName: d?.folderName,
-              results: deployResults,
+              results: allResults,
               summary: d?.deploymentSummary || "",
             };
 

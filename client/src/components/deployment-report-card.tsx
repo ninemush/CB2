@@ -65,15 +65,16 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
 
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
+    const results = report.results || [];
     const autoCollapseGroups = new Set<string>();
-    for (const r of report.results) {
+    for (const r of results) {
       const art = r.artifact || "Other";
       if (r.status === "skipped") autoCollapseGroups.add(art);
     }
-    for (const r of report.results) {
+    for (const r of results) {
       const art = r.artifact || "Other";
       if (initial[art] === undefined) {
-        const hasManual = report.results.some(rr => (rr.artifact || "Other") === art && rr.status === "manual");
+        const hasManual = results.some(rr => (rr.artifact || "Other") === art && rr.status === "manual");
         initial[art] = infraGroups.includes(art) || (autoCollapseGroups.has(art) && !hasManual) ? false : true;
       }
     }
@@ -81,19 +82,26 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
   });
   const [expandedMessages, setExpandedMessages] = useState<Record<string, boolean>>({});
 
+  const resultsToDisplay = report.results && report.results.length > 0
+    ? report.results
+    : [
+        ...(report.packageId ? [{ artifact: "Package", name: report.packageId, status: "created", message: `Package uploaded v${report.version || "1.0.0"}` }] : []),
+        ...(report.processName ? [{ artifact: "Process", name: report.processName, status: "created", message: `Process linked to package` }] : []),
+      ];
+
   const grouped: Record<string, DeploymentResult[]> = {};
-  for (const r of report.results) {
+  for (const r of resultsToDisplay) {
     const key = r.artifact || "Other";
     if (!grouped[key]) grouped[key] = [];
     grouped[key].push({ ...r, name: r.name || "Unknown", artifact: r.artifact || "Other" });
   }
 
   const counts = {
-    created: report.results.filter((r) => r.status === "created").length,
-    exists: report.results.filter((r) => r.status === "exists").length,
-    skipped: report.results.filter((r) => r.status === "skipped").length,
-    manual: report.results.filter((r) => r.status === "manual").length,
-    failed: report.results.filter((r) => r.status === "failed").length,
+    created: resultsToDisplay.filter((r) => r.status === "created").length,
+    exists: resultsToDisplay.filter((r) => r.status === "exists").length,
+    skipped: resultsToDisplay.filter((r) => r.status === "skipped").length,
+    manual: resultsToDisplay.filter((r) => r.status === "manual").length,
+    failed: resultsToDisplay.filter((r) => r.status === "failed").length,
   };
 
   const allSuccess = counts.failed === 0 && counts.skipped === 0 && counts.manual === 0;

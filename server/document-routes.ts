@@ -1033,6 +1033,194 @@ ${content}`
             }
           }
 
+          // BPMN-style Process Flow Narrative
+          if (nodes.length && edges.length) {
+            docChildren.push(new Paragraph({
+              heading: HeadingLevel.HEADING_2,
+              children: [new TextRun({ text: "Process Flow Narrative", bold: true, size: 26 })],
+              spacing: { before: 300, after: 100 },
+            }));
+            docChildren.push(new Paragraph({
+              children: [new TextRun({ text: `The following narrative describes the ${typeLower === "as-is" ? "current (As-Is)" : "target (To-Be)"} process flow from start to completion.`, italics: true, size: 20, color: "666666" })],
+              spacing: { after: 150 },
+            }));
+
+            const nodeMap = new Map(nodes.map(n => [n.id, n]));
+            const outgoingEdges = new Map<number, typeof edges>();
+            for (const edge of edges) {
+              if (!outgoingEdges.has(edge.sourceNodeId)) {
+                outgoingEdges.set(edge.sourceNodeId, []);
+              }
+              outgoingEdges.get(edge.sourceNodeId)!.push(edge);
+            }
+
+            const startNode = nodes.find(n => (n.nodeType || "").toLowerCase() === "start");
+            const visited = new Set<number>();
+            const narrativeSteps: { node: typeof nodes[0]; outEdges: typeof edges; depth: number }[] = [];
+
+            const walkProcess = (nodeId: number, depth: number): void => {
+              if (visited.has(nodeId)) return;
+              visited.add(nodeId);
+              const node = nodeMap.get(nodeId);
+              if (!node) return;
+              const out = outgoingEdges.get(nodeId) || [];
+              narrativeSteps.push({ node, outEdges: out, depth });
+              for (const edge of out) {
+                walkProcess(edge.targetNodeId, depth + (node.nodeType === "decision" ? 1 : 0));
+              }
+            }
+
+            if (startNode) {
+              walkProcess(startNode.id, 0);
+            } else {
+              const targetIds = new Set(edges.map(e => e.targetNodeId));
+              const rootNodes = nodes.filter(n => !targetIds.has(n.id));
+              for (const root of rootNodes) {
+                walkProcess(root.id, 0);
+              }
+              for (const node of sortedNodes) {
+                if (!visited.has(node.id)) {
+                  walkProcess(node.id, 0);
+                }
+              }
+            }
+
+            let stepNumber = 0;
+            for (const { node, outEdges } of narrativeSteps) {
+              const nType = (node.nodeType || "task").toLowerCase();
+
+              if (nType === "start") {
+                docChildren.push(new Paragraph({
+                  children: [
+                    new TextRun({ text: "Process Initiation: ", bold: true, size: 20 }),
+                    new TextRun({ text: `The process begins at "${node.name}".`, size: 20 }),
+                    ...(node.description ? [new TextRun({ text: ` ${node.description}`, size: 20, color: "555555" })] : []),
+                    ...(node.role ? [new TextRun({ text: ` (Initiated by: ${node.role})`, size: 20, italics: true, color: "666666" })] : []),
+                  ],
+                  spacing: { after: 80 },
+                }));
+              } else if (nType === "end") {
+                docChildren.push(new Paragraph({
+                  children: [
+                    new TextRun({ text: "Process Completion: ", bold: true, size: 20 }),
+                    new TextRun({ text: `The process concludes at "${node.name}".`, size: 20 }),
+                    ...(node.description ? [new TextRun({ text: ` ${node.description}`, size: 20, color: "555555" })] : []),
+                  ],
+                  spacing: { after: 80 },
+                }));
+              } else if (nType === "decision") {
+                stepNumber++;
+                const branches = outEdges.map(e => {
+                  const target = nodeMap.get(e.targetNodeId);
+                  return `${e.label || "Branch"}: proceed to "${target?.name || "next step"}"`;
+                });
+                docChildren.push(new Paragraph({
+                  children: [
+                    new TextRun({ text: `Step ${stepNumber} — Decision Point: `, bold: true, size: 20 }),
+                    new TextRun({ text: `"${node.name}"`, bold: true, size: 20, color: ORANGE }),
+                    ...(node.role ? [new TextRun({ text: ` [${node.role}]`, size: 20, italics: true, color: "666666" })] : []),
+                  ],
+                  spacing: { before: 60, after: 40 },
+                }));
+                if (node.description) {
+                  docChildren.push(new Paragraph({
+                    children: [new TextRun({ text: node.description, size: 20, color: "555555" })],
+                    spacing: { after: 40 },
+                  }));
+                }
+                for (const branch of branches) {
+                  docChildren.push(new Paragraph({
+                    children: [
+                      new TextRun({ text: "    " }),
+                      new TextRun({ text: "◆  ", color: ORANGE }),
+                      new TextRun({ text: branch, size: 20 }),
+                    ],
+                    spacing: { after: 30 },
+                  }));
+                }
+              } else {
+                stepNumber++;
+                const systemInfo = node.system ? ` using ${node.system}` : "";
+                const roleInfo = node.role ? ` performed by ${node.role}` : "";
+                docChildren.push(new Paragraph({
+                  children: [
+                    new TextRun({ text: `Step ${stepNumber}: `, bold: true, size: 20 }),
+                    new TextRun({ text: `"${node.name}"`, bold: true, size: 20 }),
+                    new TextRun({ text: `${roleInfo}${systemInfo}.`, size: 20 }),
+                    ...(node.isPainPoint ? [new TextRun({ text: " [Pain Point]", bold: true, size: 20, color: "DC2626" })] : []),
+                  ],
+                  spacing: { before: 40, after: 40 },
+                }));
+                if (node.description) {
+                  docChildren.push(new Paragraph({
+                    children: [new TextRun({ text: node.description, size: 20, color: "555555" })],
+                    spacing: { after: 40 },
+                  }));
+                }
+                if (outEdges.length === 1 && outEdges[0].label) {
+                  const target = nodeMap.get(outEdges[0].targetNodeId);
+                  docChildren.push(new Paragraph({
+                    children: [
+                      new TextRun({ text: "    " }),
+                      new TextRun({ text: `Transition [${outEdges[0].label}]: proceed to "${target?.name || "next step"}".`, size: 20, italics: true, color: "666666" }),
+                    ],
+                    spacing: { after: 40 },
+                  }));
+                }
+              }
+            }
+          }
+
+          // Process Assumptions
+          docChildren.push(new Paragraph({
+            heading: HeadingLevel.HEADING_2,
+            children: [new TextRun({ text: "Process Assumptions", bold: true, size: 26 })],
+            spacing: { before: 300, after: 100 },
+          }));
+
+          const painPoints = sortedNodes.filter(n => n.isPainPoint);
+          const systemsUsed = Array.from(new Set(sortedNodes.map(n => n.system).filter(Boolean)));
+          const rolesInvolved = Array.from(new Set(sortedNodes.map(n => n.role).filter(Boolean)));
+          const decisionNodes = sortedNodes.filter(n => (n.nodeType || "").toLowerCase() === "decision");
+          const nodeDescriptions = sortedNodes.filter(n => n.description && n.description.trim().length > 0);
+
+          const assumptions: string[] = [];
+
+          assumptions.push(`The process involves ${rolesInvolved.length || "one or more"} role${rolesInvolved.length !== 1 ? "s" : ""}: ${rolesInvolved.length ? rolesInvolved.join(", ") : "to be confirmed"}.`);
+
+          if (systemsUsed.length > 0) {
+            assumptions.push(`The process relies on the following system(s): ${systemsUsed.join(", ")}. It is assumed these systems are available and accessible.`);
+          } else {
+            assumptions.push("No specific systems have been identified. It is assumed the process is primarily manual or system dependencies are yet to be confirmed.");
+          }
+
+          if (decisionNodes.length > 0) {
+            assumptions.push(`There ${decisionNodes.length === 1 ? "is" : "are"} ${decisionNodes.length} decision point${decisionNodes.length !== 1 ? "s" : ""} in the process. It is assumed that decision criteria are well-defined and consistently applied.`);
+          }
+
+          if (painPoints.length > 0) {
+            assumptions.push(`${painPoints.length} step${painPoints.length !== 1 ? "s have" : " has"} been identified as pain point${painPoints.length !== 1 ? "s" : ""}: ${painPoints.map(p => `"${p.name}"`).join(", ")}. It is assumed these areas are candidates for improvement or automation.`);
+          }
+
+          assumptions.push("The process steps documented represent the standard flow; exception handling and edge cases may require additional detail.");
+          assumptions.push("Stakeholders have validated that the process map accurately reflects current operations.");
+          assumptions.push("Process volumes and frequency are assumed to be consistent with historical patterns unless otherwise stated.");
+
+          for (const desc of nodeDescriptions) {
+            if (desc.description.toLowerCase().includes("assum") || desc.description.toLowerCase().includes("note")) {
+              assumptions.push(`From "${desc.name}": ${desc.description}`);
+            }
+          }
+
+          for (const assumption of assumptions) {
+            docChildren.push(new Paragraph({
+              children: [new TextRun({ text: assumption, size: 20 })],
+              bullet: { level: 0 },
+              spacing: { after: 40 },
+            }));
+          }
+          docChildren.push(new Paragraph({ spacing: { after: 200 } }));
+
           const mapApproval = await documentStorage.getApproval(ideaId, typeLower === "as-is" ? "as-is-map" : "to-be-map");
           docChildren.push(new Paragraph({ spacing: { before: 200 } }));
           if (mapApproval) {

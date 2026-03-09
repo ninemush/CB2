@@ -1271,7 +1271,7 @@ function ChatPanel({ idea }: { idea: Idea }) {
             );
           }
 
-          if (msg.deployReport && msg.deployReport.results?.length > 0) {
+          if (msg.deployReport && (msg.deployReport.results?.length > 0 || msg.deployReport.packageId || msg.deployReport.processName)) {
             return (
               <div key={msg.id} className="flex justify-start" data-testid={`chat-message-${msg.id}`}>
                 <div className="max-w-[95%] w-full space-y-2">
@@ -1367,30 +1367,6 @@ function ChatPanel({ idea }: { idea: Idea }) {
           <DocProgressIndicator docType={generatingDocType} onCancel={cancelDocGeneration} />
         )}
 
-        {(() => {
-          const hasSdd = displayMessages.some((m) => m.docType === "SDD");
-          const hasPddApprovalMsg = displayMessages.some(
-            (m) => m.content.includes("PDD approved") && m.role === "assistant"
-          );
-          if (hasPddApprovalMsg && !hasSdd && !isGeneratingDoc) {
-            return (
-              <div className="flex justify-center py-2" data-testid="sdd-generate-section">
-                <Button
-                  className="bg-cb-teal hover:bg-cb-teal/90 text-white text-xs"
-                  onClick={() => {
-                    sddTriggeredRef.current = true;
-                    generateDocument("SDD");
-                  }}
-                  data-testid="button-generate-sdd"
-                >
-                  <FileText className="h-3.5 w-3.5 mr-1.5" />
-                  Generate SDD
-                </Button>
-              </div>
-            );
-          }
-          return null;
-        })()}
 
         {(() => {
           const hasUiPath = displayMessages.some((m) => m.uipathData);
