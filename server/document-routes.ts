@@ -11,8 +11,9 @@ import { z } from "zod";
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel,
   Table, TableRow, TableCell, WidthType, BorderStyle,
-  AlignmentType, ShadingType,
+  AlignmentType, ShadingType, ImageRun,
 } from "docx";
+import { renderProcessMapImage } from "./process-map-renderer";
 
 const anthropic = new Anthropic({
   apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
@@ -974,6 +975,34 @@ ${content}`
               spacing: { after: 200 },
             }));
             continue;
+          }
+
+          try {
+            const mapImage = await renderProcessMapImage(nodes, edges, viewType);
+            if (mapImage) {
+              docChildren.push(new Paragraph({
+                children: [
+                  new ImageRun({
+                    data: mapImage.buffer,
+                    transformation: { width: mapImage.width, height: mapImage.height },
+                    type: "png",
+                  }),
+                ],
+                spacing: { before: 100, after: 200 },
+                alignment: AlignmentType.CENTER,
+              }));
+            } else {
+              docChildren.push(new Paragraph({
+                children: [new TextRun({ text: "[Process map image could not be generated]", italics: true, color: "888888" })],
+                spacing: { before: 100, after: 200 },
+              }));
+            }
+          } catch (imgErr: any) {
+            console.error("[Document Export] Process map image generation failed:", imgErr.message);
+            docChildren.push(new Paragraph({
+              children: [new TextRun({ text: "[Process map image could not be generated]", italics: true, color: "888888" })],
+              spacing: { before: 100, after: 200 },
+            }));
           }
 
           docChildren.push(new Paragraph({
