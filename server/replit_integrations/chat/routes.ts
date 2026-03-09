@@ -87,7 +87,7 @@ FILE UPLOAD HANDLING:
 - Analyze the extracted content to identify process steps, business rules, decision points, inputs/outputs, roles, systems, and exceptions.
 - Proactively generate [STEP:] tags from document content to build the process map automatically.
 - If the document is a PDD, SDD, or process description, use it as the primary source for process mapping and skip redundant questions.
-- For images/videos where content cannot be extracted as text, ask the user to describe what's shown.
+- When an image is attached to a user message, you can see it directly. Extract all visible text, process steps, business rules, and structure from the image. Use the extracted content to drive the automation pipeline just as you would with text-based document uploads. Proactively generate [STEP:] tags from image content to build the process map automatically.
 
 STAGE BEHAVIOR:
 - Idea: Extract the process with targeted single questions. Identify who does it, what triggers it, what systems are involved, what the pain points are, and what a successful outcome looks like.
@@ -397,9 +397,14 @@ export function registerChatRoutes(app: Express): void {
       return res.status(401).json({ message: "Not authenticated" });
     }
 
-    const { ideaId, content } = req.body;
+    const { ideaId, content, imageData } = req.body;
     if (!ideaId || !content) {
       return res.status(400).json({ error: "ideaId and content are required" });
+    }
+
+    const allowedImageTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
+    if (imageData && (!imageData.base64 || !imageData.mediaType || !allowedImageTypes.includes(imageData.mediaType))) {
+      return res.status(400).json({ error: "Invalid image data. Supported types: PNG, JPEG, WebP, GIF" });
     }
 
     let heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -611,11 +616,27 @@ export function registerChatRoutes(app: Express): void {
 
       const systemPrompt = buildSystemPrompt(idea.title, idea.stage, docContext, serviceAvailability, (idea.automationType as AutomationType) || null) + intentOverride;
 
+      let finalMessages: Array<{ role: "user" | "assistant"; content: string | Array<{ type: string; [key: string]: any }> }> = chatMessages;
+      if (imageData?.base64 && imageData?.mediaType) {
+        finalMessages = chatMessages.map((m, i) => {
+          if (i === chatMessages.length - 1 && m.role === "user") {
+            return {
+              ...m,
+              content: [
+                { type: "image", source: { type: "base64", media_type: imageData.mediaType, data: imageData.base64 } },
+                { type: "text", text: m.content },
+              ],
+            };
+          }
+          return m;
+        });
+      }
+
       const stream = anthropic.messages.stream({
         model: "claude-sonnet-4-6",
         max_tokens: 8192,
         system: systemPrompt,
-        messages: chatMessages,
+        messages: finalMessages as any,
       });
 
       let fullResponse = "";

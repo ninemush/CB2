@@ -512,7 +512,7 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
   const [generatingDocType, setGeneratingDocType] = useState<string>("");
   const [docProgressSection, setDocProgressSection] = useState<string>("");
   const [deployStep, setDeployStep] = useState<string>("");
-  const [messageQueue, setMessageQueue] = useState<Array<{ id: string; text: string }>>([]);
+  const [messageQueue, setMessageQueue] = useState<Array<{ id: string; text: string; imageData?: { base64: string; mediaType: string } }>>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initialScrollDoneRef = useRef(false);
 
@@ -660,7 +660,7 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
     };
   }, [savedMessages, isStreaming, isGeneratingDoc, idea.id]);
 
-  const sendMessageDirect = useCallback(async (text: string) => {
+  const sendMessageDirect = useCallback(async (text: string, imageData?: { base64: string; mediaType: string }) => {
     const userMsg: ChatMsg = {
       id: `user-${Date.now()}`,
       role: "user",
@@ -689,7 +689,7 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         credentials: "include",
-        body: JSON.stringify({ ideaId: idea.id, content: text }),
+        body: JSON.stringify({ ideaId: idea.id, content: text, ...(imageData ? { imageData } : {}) }),
       });
 
       if (!res.ok) {
@@ -989,7 +989,7 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
     if (!isStreaming && !isGeneratingDoc && messageQueue.length > 0) {
       const [next, ...rest] = messageQueue;
       setMessageQueue(rest);
-      sendMessageDirect(next.text);
+      sendMessageDirect(next.text, next.imageData);
     }
   }, [isStreaming, isGeneratingDoc, messageQueue, sendMessageDirect]);
 
@@ -1046,6 +1046,7 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
   const handleSend = useCallback(async () => {
     let text = inputValue.trim();
     if (!text && !attachedFile) return;
+    let pendingImageData: { base64: string; mediaType: string } | null = null;
 
     if (attachedFile) {
       const extractableTypes = [
@@ -1081,6 +1082,25 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
         } finally {
           setIsUploading(false);
         }
+      } else if (attachedFile.type.startsWith("image/")) {
+        try {
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const result = reader.result as string;
+              resolve(result.split(",")[1]);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(attachedFile);
+          });
+          pendingImageData = { base64, mediaType: attachedFile.type };
+          const fileNote = `[UPLOADED_FILE: ${attachedFile.name} (${attachedFile.type})] — Image attached for AI analysis`;
+          text = text ? `${text}\n\n${fileNote}` : fileNote;
+        } catch (err) {
+          console.error("Image read error:", err);
+          const fileNote = `[UPLOADED_FILE: ${attachedFile.name} (${attachedFile.type})]\n\n(User uploaded an image but it could not be read.)`;
+          text = text ? `${text}\n\n${fileNote}` : fileNote;
+        }
       } else {
         const fileNote = `[UPLOADED_FILE: ${attachedFile.name} (${attachedFile.type})]\n\n(User uploaded a media file: "${attachedFile.name}". This file type cannot be parsed as text. Please ask the user to describe the process or steps shown in this file so you can create a process map and documentation.)`;
         text = text ? `${text}\n\n${fileNote}` : fileNote;
@@ -1091,11 +1111,11 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
     clearAttachedFile();
 
     if (isStreaming || isGeneratingDoc) {
-      setMessageQueue(prev => [...prev, { id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, text }]);
+      setMessageQueue(prev => [...prev, { id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, text, ...(pendingImageData ? { imageData: pendingImageData } : {}) }]);
       return;
     }
 
-    sendMessageDirect(text);
+    sendMessageDirect(text, pendingImageData || undefined);
   }, [inputValue, attachedFile, isStreaming, isGeneratingDoc, sendMessageDirect, clearAttachedFile]);
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -1132,15 +1152,19 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
   function handlePaste(e: React.ClipboardEvent) {
     const items = e.clipboardData?.items;
     if (!items) return;
+    let hasText = false;
+    let imageItem: DataTransferItem | null = null;
     for (let i = 0; i < items.length; i++) {
-      if (items[i].type.startsWith("image/")) {
-        e.preventDefault();
-        const file = items[i].getAsFile();
-        if (file) {
-          const named = new File([file], `screenshot-${Date.now()}.png`, { type: file.type });
-          attachFile(named);
-        }
-        return;
+      if (items[i].type === "text/plain") hasText = true;
+      if (items[i].type.startsWith("image/") && !imageItem) imageItem = items[i];
+    }
+    if (hasText) return;
+    if (imageItem) {
+      e.preventDefault();
+      const file = imageItem.getAsFile();
+      if (file) {
+        const named = new File([file], `screenshot-${Date.now()}.png`, { type: file.type });
+        attachFile(named);
       }
     }
   }
