@@ -563,6 +563,9 @@ export function registerChatRoutes(app: Express): void {
 
       let fullResponse = "";
       let stopReason = "";
+      let docProgressDocType: "PDD" | "SDD" | null = null;
+      let docProgressStarted = false;
+      let lastEmittedSectionNumber = -1;
 
       for await (const event of stream) {
         if (clientDisconnected) {
@@ -575,6 +578,30 @@ export function registerChatRoutes(app: Express): void {
           if (text) {
             fullResponse += text;
             try { res.write(`data: ${JSON.stringify({ token: text })}\n\n`); } catch { break; }
+
+            if (!docProgressStarted) {
+              const docTagMatch = fullResponse.match(/\[DOC:(PDD|SDD):/);
+              if (docTagMatch) {
+                docProgressDocType = docTagMatch[1] as "PDD" | "SDD";
+                docProgressStarted = true;
+                try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: docProgressDocType } })}\n\n`); } catch { /* ignore */ }
+              }
+            }
+
+            if (docProgressStarted && docProgressDocType) {
+              const sectionRe = /## (?:(\d+)[\.\)]\s+)?([^\n]+)/g;
+              let sMatch: RegExpExecArray | null;
+              let highestFound = lastEmittedSectionNumber;
+              while ((sMatch = sectionRe.exec(fullResponse)) !== null) {
+                const sectionNumber = sMatch[1] ? parseInt(sMatch[1], 10) : (highestFound + 1);
+                highestFound = Math.max(highestFound, sectionNumber);
+                if (sectionNumber > lastEmittedSectionNumber) {
+                  lastEmittedSectionNumber = sectionNumber;
+                  const sectionName = sMatch[2].trim();
+                  try { res.write(`data: ${JSON.stringify({ docProgress: { section: sectionName, sectionNumber, docType: docProgressDocType } })}\n\n`); } catch { /* ignore */ }
+                }
+              }
+            }
           }
         }
         if (event.type === "message_delta" && (event as any).delta?.stop_reason) {
@@ -632,6 +659,22 @@ export function registerChatRoutes(app: Express): void {
                 if (text) {
                   continuation += text;
                   try { res.write(`data: ${JSON.stringify({ token: text })}\n\n`); } catch { break; }
+
+                  if (docProgressStarted && docProgressDocType) {
+                    const combinedText = fullResponse + "\n" + continuation;
+                    const contSectionRe = /## (?:(\d+)[\.\)]\s+)?([^\n]+)/g;
+                    let csMatch: RegExpExecArray | null;
+                    let contHighest = lastEmittedSectionNumber;
+                    while ((csMatch = contSectionRe.exec(combinedText)) !== null) {
+                      const sectionNumber = csMatch[1] ? parseInt(csMatch[1], 10) : (contHighest + 1);
+                      contHighest = Math.max(contHighest, sectionNumber);
+                      if (sectionNumber > lastEmittedSectionNumber) {
+                        lastEmittedSectionNumber = sectionNumber;
+                        const sectionName = csMatch[2].trim();
+                        try { res.write(`data: ${JSON.stringify({ docProgress: { section: sectionName, sectionNumber, docType: docProgressDocType } })}\n\n`); } catch { /* ignore */ }
+                      }
+                    }
+                  }
                 }
               }
             }

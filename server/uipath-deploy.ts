@@ -628,6 +628,7 @@ async function provisionQueues(
             (desiredJsonSchema && existing.SpecificDataJsonSchema !== desiredJsonSchema) ||
             (desiredOutputSchema && existing.OutputDataJsonSchema !== desiredOutputSchema);
 
+          let shouldCreate = false;
           if (needsUpdate) {
             const updateBody: Record<string, any> = {
               Name: q.name,
@@ -650,6 +651,9 @@ async function provisionQueues(
 
               if (putRes.ok) {
                 results.push({ artifact: "Queue", name: q.name, status: "updated", message: `Updated existing queue (ID: ${existingId})`, id: existingId });
+              } else if (putRes.status === 404 || putText.toLowerCase().includes("does not exist")) {
+                console.log(`[UiPath Deploy] Queue "${q.name}" PUT returned 404 (ID ${existingId} likely in different folder) — falling back to create in current folder`);
+                shouldCreate = true;
               } else {
                 results.push({ artifact: "Queue", name: q.name, status: "failed", message: `Update failed (ID: ${existingId}): ${sanitizeErrorMessage(putRes.status, putText)}`, id: existingId });
               }
@@ -659,7 +663,7 @@ async function provisionQueues(
           } else {
             results.push({ artifact: "Queue", name: q.name, status: "exists", message: `Already exists (ID: ${existingId}) — no changes needed`, id: existingId });
           }
-          continue;
+          if (!shouldCreate) continue;
         }
       }
 
@@ -799,12 +803,16 @@ async function provisionAssets(
           const updateText = await updateRes.text();
           console.log(`[UiPath Deploy] Asset "${a.name}" UPDATE -> ${updateRes.status}: ${updateText.slice(0, 500)}`);
 
+          let shouldCreateAsset = false;
           if (updateRes.ok) {
             results.push({ artifact: "Asset", name: a.name, status: "updated", message: `Updated (ID: ${existingId}). Changes: ${changes.join(", ")}`, id: existingId });
+          } else if (updateRes.status === 404 || updateText.toLowerCase().includes("does not exist")) {
+            console.log(`[UiPath Deploy] Asset "${a.name}" PUT returned 404 (ID ${existingId} likely in different folder) — falling back to create in current folder`);
+            shouldCreateAsset = true;
           } else {
             results.push({ artifact: "Asset", name: a.name, status: "failed", message: `Update failed: ${sanitizeErrorMessage(updateRes.status, updateText)}`, id: existingId });
           }
-          continue;
+          if (!shouldCreateAsset) continue;
         }
       }
 
@@ -943,6 +951,7 @@ async function provisionMachines(
           const descChanged = (existing.Description || "") !== newDesc;
           const slotsChanged = (existing[desiredSlotField] || 0) !== newSlots;
 
+          let shouldCreateMachine = false;
           if (descChanged || slotsChanged) {
             const updateBody: Record<string, any> = {
               Name: m.name,
@@ -970,8 +979,10 @@ async function provisionMachines(
                 const folderNote = folderAssign.success ? folderAssign.message : `Folder assignment note: ${folderAssign.message}`;
                 results.push({ artifact: "Machine", name: m.name, status: "updated", message: `Updated (ID: ${machineId}). Changed: ${changes.join(", ")}. ${folderNote}`, id: machineId ?? undefined });
                 continue;
+              } else if (putRes.status === 404 || putText.toLowerCase().includes("does not exist")) {
+                console.log(`[UiPath Deploy] Machine "${m.name}" PUT returned 404 (ID ${machineId} likely in different folder) — falling back to create in current folder`);
+                shouldCreateMachine = true;
               } else {
-                const putText = await putRes.text().catch(() => "");
                 console.warn(`[UiPath Deploy] Machine "${m.name}" update failed (${putRes.status})`);
                 results.push({ artifact: "Machine", name: m.name, status: "failed", message: `Update failed (ID: ${machineId}, ${putRes.status}): ${putText.slice(0, 200)}`, id: machineId ?? undefined });
                 continue;
@@ -983,12 +994,14 @@ async function provisionMachines(
             }
           }
 
-          const folderAssign = await assignMachineToFolder(base, hdrs, machineId!);
-          const folderNote = folderAssign.success
-            ? folderAssign.message
-            : `Not in current folder — assign manually: Orchestrator > Folder Settings > Machines. ${folderAssign.message}`;
-          results.push({ artifact: "Machine", name: m.name, status: "exists", message: `Already exists at tenant level (ID: ${machineId}). ${folderNote}`, id: machineId ?? undefined });
-          continue;
+          if (!shouldCreateMachine) {
+            const folderAssign = await assignMachineToFolder(base, hdrs, machineId!);
+            const folderNote = folderAssign.success
+              ? folderAssign.message
+              : `Not in current folder — assign manually: Orchestrator > Folder Settings > Machines. ${folderAssign.message}`;
+            results.push({ artifact: "Machine", name: m.name, status: "exists", message: `Already exists at tenant level (ID: ${machineId}). ${folderNote}`, id: machineId ?? undefined });
+            continue;
+          }
         }
       }
 
@@ -1076,6 +1089,7 @@ async function provisionStorageBuckets(
           const newDesc = truncDesc(b.description);
           const descChanged = (existing.Description || "") !== newDesc;
 
+          let shouldCreateBucket = false;
           if (descChanged) {
             try {
               const updateBody: Record<string, any> = {
@@ -1096,8 +1110,10 @@ async function provisionStorageBuckets(
               if (putRes.ok) {
                 results.push({ artifact: "Storage Bucket", name: b.name, status: "updated", message: `Updated Description (ID: ${existingId})`, id: existingId });
                 continue;
+              } else if (putRes.status === 404 || putText.toLowerCase().includes("does not exist")) {
+                console.log(`[UiPath Deploy] Bucket "${b.name}" PUT returned 404 (ID ${existingId} likely in different folder) — falling back to create in current folder`);
+                shouldCreateBucket = true;
               } else {
-                const putText = await putRes.text().catch(() => "");
                 console.warn(`[UiPath Deploy] Bucket "${b.name}" update failed (${putRes.status})`);
                 results.push({ artifact: "Storage Bucket", name: b.name, status: "failed", message: `Update failed (ID: ${existingId}, ${putRes.status}): ${putText.slice(0, 200)}`, id: existingId });
                 continue;
@@ -1109,8 +1125,10 @@ async function provisionStorageBuckets(
             }
           }
 
-          results.push({ artifact: "Storage Bucket", name: b.name, status: "exists", message: `Already exists (ID: ${existingId})`, id: existingId });
-          continue;
+          if (!shouldCreateBucket) {
+            results.push({ artifact: "Storage Bucket", name: b.name, status: "exists", message: `Already exists (ID: ${existingId})`, id: existingId });
+            continue;
+          }
         }
       }
 
@@ -1381,6 +1399,7 @@ async function provisionTriggers(
             if (existing.MinNumberOfItems !== undefined && existing.MinNumberOfItems !== 1) { updateBody.MinNumberOfItems = 1; changed = true; }
             if (existing.MaxNumberOfItems !== undefined && existing.MaxNumberOfItems !== 100) { updateBody.MaxNumberOfItems = 100; changed = true; }
             if (existing.RuntimeType !== runtimeType) { updateBody.RuntimeType = runtimeType; changed = true; }
+            let triggerShouldCreate = false;
             if (changed) {
               try {
                 const putRes = await fetch(`${base}/odata/QueueTriggers(${existingId})`, {
@@ -1393,6 +1412,9 @@ async function provisionTriggers(
                 if (putRes.ok) {
                   const changedFields = Object.keys(updateBody).join(", ");
                   results.push({ artifact: "Trigger", name: t.name, status: "updated", message: `Updated (ID: ${existingId}). Changed: ${changedFields}`, id: existingId });
+                } else if (putRes.status === 404 || putText.toLowerCase().includes("does not exist")) {
+                  console.log(`[UiPath Deploy] Queue Trigger "${t.name}" PUT returned 404 (ID ${existingId} likely in different folder) — falling back to create in current folder`);
+                  triggerShouldCreate = true;
                 } else {
                   results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `Update failed (ID: ${existingId}, ${putRes.status}): ${putText.slice(0, 200)}`, id: existingId });
                 }
@@ -1402,7 +1424,7 @@ async function provisionTriggers(
             } else {
               results.push({ artifact: "Trigger", name: t.name, status: "exists", message: `Already exists (ID: ${existingId}), no changes needed`, id: existingId });
             }
-            alreadyExists = true;
+            if (!triggerShouldCreate) alreadyExists = true;
           }
         }
         if (!alreadyExists && (checkRes.status === 404 || checkRes.status === 405 || !checkRes.ok)) {
@@ -1420,6 +1442,7 @@ async function provisionTriggers(
               const desiredSchedJobsCount = (t.maxJobsCount && t.maxJobsCount > 0) ? t.maxJobsCount : 1;
               if (existingSched.JobsCount !== undefined && existingSched.JobsCount !== desiredSchedJobsCount) { schedUpdateBody.JobsCount = desiredSchedJobsCount; schedChanged = true; }
               if (existingSched.RuntimeType !== runtimeType) { schedUpdateBody.RuntimeType = runtimeType; schedChanged = true; }
+              let schedShouldCreate = false;
               if (schedChanged) {
                 try {
                   const putRes = await fetch(`${base}/odata/ProcessSchedules(${existingSchedId})`, {
@@ -1432,6 +1455,9 @@ async function provisionTriggers(
                   if (putRes.ok) {
                     const changedFields = Object.keys(schedUpdateBody).join(", ");
                     results.push({ artifact: "Trigger", name: t.name, status: "updated", message: `Updated queue-polling trigger (ID: ${existingSchedId}). Changed: ${changedFields}. Native queue triggers not available — polling every 5 min.`, id: existingSchedId });
+                  } else if (putRes.status === 404 || putText.toLowerCase().includes("does not exist")) {
+                    console.log(`[UiPath Deploy] ProcessSchedule "${t.name}" PUT returned 404 (ID ${existingSchedId} likely in different folder) — falling back to create in current folder`);
+                    schedShouldCreate = true;
                   } else {
                     results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `Queue-polling trigger update failed (ID: ${existingSchedId}, ${putRes.status}): ${putText.slice(0, 200)}`, id: existingSchedId });
                   }
@@ -1441,7 +1467,7 @@ async function provisionTriggers(
               } else {
                 results.push({ artifact: "Trigger", name: t.name, status: "exists", message: `Already exists as queue-polling trigger (ID: ${existingSchedId}), no changes needed. Native queue triggers not available — polling every 5 min.`, id: existingSchedId });
               }
-              alreadyExists = true;
+              if (!schedShouldCreate) alreadyExists = true;
             }
           }
         }
@@ -1574,6 +1600,7 @@ async function provisionTriggers(
             if (existingTime.TimeZoneId !== timeTz) { timeUpdateBody.TimeZoneId = timeTz; timeUpdateBody.TimeZoneIana = timeTzIana; timeChanged = true; }
             const desiredTimeJobsCount = (t.maxJobsCount && t.maxJobsCount > 0) ? t.maxJobsCount : undefined;
             if (desiredTimeJobsCount !== undefined && existingTime.JobsCount !== desiredTimeJobsCount) { timeUpdateBody.JobsCount = desiredTimeJobsCount; timeChanged = true; }
+            let timeShouldCreate = false;
             if (timeChanged) {
               if (timeUpdateBody.StartProcessCron) {
                 timeUpdateBody.StartProcessCronDetails = JSON.stringify({
@@ -1592,6 +1619,9 @@ async function provisionTriggers(
                 if (putRes.ok) {
                   const changedFields = Object.keys(timeUpdateBody).filter(k => k !== "StartProcessCronDetails" && k !== "TimeZoneIana").join(", ");
                   results.push({ artifact: "Trigger", name: t.name, status: "updated", message: `Updated (ID: ${existingTimeId}). Changed: ${changedFields}`, id: existingTimeId });
+                } else if (putRes.status === 404 || putText.toLowerCase().includes("does not exist")) {
+                  console.log(`[UiPath Deploy] Time Trigger "${t.name}" PUT returned 404 (ID ${existingTimeId} likely in different folder) — falling back to create in current folder`);
+                  timeShouldCreate = true;
                 } else {
                   results.push({ artifact: "Trigger", name: t.name, status: "failed", message: `Time trigger update failed (ID: ${existingTimeId}, ${putRes.status}): ${putText.slice(0, 200)}`, id: existingTimeId });
                 }
@@ -1601,7 +1631,7 @@ async function provisionTriggers(
             } else {
               results.push({ artifact: "Trigger", name: t.name, status: "exists", message: `Already exists (ID: ${existingTimeId}), no changes needed`, id: existingTimeId });
             }
-            continue;
+            if (!timeShouldCreate) continue;
           }
         }
 

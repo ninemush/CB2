@@ -47,56 +47,77 @@ import { DocumentCard, UiPathPackageCard } from "@/components/document-card";
 
 let currentProcessView: "as-is" | "to-be" | "sdd" = "as-is";
 
-function ThinkingIndicator({ context }: { context?: "uipath" | "default" }) {
+interface StreamingProgressProps {
+  mode: "thinking" | "doc" | "deploy";
+  docType?: string;
+  currentSection?: string;
+  deployStep?: string;
+  onCancel?: () => void;
+}
+
+function StreamingProgressIndicator({ mode, docType, currentSection, deployStep, onCancel }: StreamingProgressProps) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setElapsed((prev) => prev + 1);
-    }, 1000);
+    const interval = setInterval(() => setElapsed((p) => p + 1), 1000);
     return () => clearInterval(interval);
   }, []);
 
-  const getMessage = () => {
-    if (context === "uipath") {
-      if (elapsed >= 30) return "Complex packages take a moment, almost there...";
-      if (elapsed >= 15) return "Building workflows and packaging...";
-      if (elapsed >= 5) return "Preparing automation package...";
-      return "Processing deployment request...";
-    }
+  const steps = DOC_PROGRESS_STEPS[docType || "PDD"] || DOC_PROGRESS_STEPS.PDD;
+  const stepDuration = docType === "UiPath" ? 10 : 6;
+  const fallbackStep = steps[Math.min(Math.floor(elapsed / stepDuration), steps.length - 1)];
+
+  const getThinkingMessage = () => {
     if (elapsed >= 15) return "This is taking longer than usual, hang tight...";
     if (elapsed >= 5) return "Still working on this...";
     return "Thinking";
   };
 
-  return (
-    <div className="flex justify-start" data-testid="thinking-indicator">
-      <div className="max-w-[85%] rounded-lg px-3 py-3 bg-card border border-card-border rounded-bl-sm">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1">
-            <span
-              className="w-[5px] h-[5px] rounded-full bg-muted-foreground/40"
-              style={{
-                animation: "thinkingPulse 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite",
-                animationDelay: "0ms",
-              }}
-            />
-            <span
-              className="w-[5px] h-[5px] rounded-full bg-muted-foreground/40"
-              style={{
-                animation: "thinkingPulse 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite",
-                animationDelay: "200ms",
-              }}
-            />
-            <span
-              className="w-[5px] h-[5px] rounded-full bg-muted-foreground/40"
-              style={{
-                animation: "thinkingPulse 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite",
-                animationDelay: "400ms",
-              }}
-            />
+  if (mode === "thinking") {
+    return (
+      <div className="flex justify-start" data-testid="thinking-indicator">
+        <div className="max-w-[85%] rounded-lg px-3 py-3 bg-card border border-card-border rounded-bl-sm">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1">
+              <span className="w-[5px] h-[5px] rounded-full bg-muted-foreground/40" style={{ animation: "thinkingPulse 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite", animationDelay: "0ms" }} />
+              <span className="w-[5px] h-[5px] rounded-full bg-muted-foreground/40" style={{ animation: "thinkingPulse 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite", animationDelay: "200ms" }} />
+              <span className="w-[5px] h-[5px] rounded-full bg-muted-foreground/40" style={{ animation: "thinkingPulse 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite", animationDelay: "400ms" }} />
+            </div>
+            <span className="text-[11px] text-muted-foreground/70 font-medium">{getThinkingMessage()}</span>
           </div>
-          <span className="text-[11px] text-muted-foreground/70 font-medium">{getMessage()}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const statusText = mode === "deploy"
+    ? (deployStep || "Preparing deployment...")
+    : (currentSection ? `Now writing: ${currentSection}` : fallbackStep);
+
+  const title = mode === "deploy"
+    ? "Deploying to UiPath..."
+    : `Generating ${docType || "document"}...`;
+
+  return (
+    <div className="flex justify-start" data-testid={mode === "deploy" ? "deploy-progress-indicator" : "doc-generation-loading"}>
+      <div className="max-w-[85%] rounded-lg px-3 py-2.5 bg-card border border-card-border rounded-bl-sm">
+        <div className="flex items-center gap-2">
+          <CannonballSpinner />
+          <div className="flex flex-col gap-0.5">
+            <p className="text-xs text-foreground/80 font-medium">{title}</p>
+            <p className="text-[10px] text-muted-foreground">
+              {statusText} <span className="text-muted-foreground/50">({elapsed}s elapsed)</span>
+            </p>
+          </div>
+          {onCancel && (
+            <button
+              onClick={onCancel}
+              className="text-[10px] text-muted-foreground hover:text-foreground underline ml-2 shrink-0"
+              data-testid="button-cancel-doc-gen"
+            >
+              Cancel
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -138,44 +159,6 @@ const DOC_PROGRESS_STEPS: Record<string, string[]> = {
   ],
 };
 
-function DocProgressIndicator({ docType, onCancel }: { docType: string; onCancel: () => void }) {
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    const interval = setInterval(() => setElapsed((p) => p + 1), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const steps = DOC_PROGRESS_STEPS[docType] || DOC_PROGRESS_STEPS.PDD;
-  const stepDuration = docType === "UiPath" ? 10 : 6;
-  const currentStepIndex = Math.min(Math.floor(elapsed / stepDuration), steps.length - 1);
-  const currentStep = steps[currentStepIndex];
-
-  return (
-    <div className="flex justify-start" data-testid="doc-generation-loading">
-      <div className="max-w-[85%] rounded-lg px-3 py-2.5 bg-card border border-card-border rounded-bl-sm">
-        <div className="flex items-center gap-2">
-          <CannonballSpinner />
-          <div className="flex flex-col gap-0.5">
-            <p className="text-xs text-foreground/80 font-medium">
-              Generating {docType}...
-            </p>
-            <p className="text-[10px] text-muted-foreground">
-              {currentStep} <span className="text-muted-foreground/50">({elapsed}s elapsed)</span>
-            </p>
-          </div>
-          <button
-            onClick={onCancel}
-            className="text-[10px] text-muted-foreground hover:text-foreground underline ml-2 shrink-0"
-            data-testid="button-cancel-doc-gen"
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function getStageBadgeClass(stage: string): string {
   const approvalStages = ["CoE Approval", "Governance / Security Scan"];
@@ -527,6 +510,8 @@ function ChatPanel({ idea }: { idea: Idea }) {
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
   const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
   const [generatingDocType, setGeneratingDocType] = useState<string>("");
+  const [docProgressSection, setDocProgressSection] = useState<string>("");
+  const [deployStep, setDeployStep] = useState<string>("");
   const [messageQueue, setMessageQueue] = useState<Array<{ id: string; text: string }>>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initialScrollDoneRef = useRef(false);
@@ -752,24 +737,26 @@ function ChatPanel({ idea }: { idea: Idea }) {
                 setStreamingMsg((prev) =>
                   prev ? { ...prev, isStreaming: false } : prev
                 );
+                setDocProgressSection("");
+                setDeployStep("");
+              }
+              if (data.docProgress) {
+                if (data.docProgress.started) {
+                  setIsGeneratingDoc(true);
+                  setGeneratingDocType(data.docProgress.docType || "PDD");
+                  setDocProgressSection("");
+                }
+                if (data.docProgress.section) {
+                  setDocProgressSection(data.docProgress.section);
+                }
               }
               if (data.deployStatus) {
                 if (data.deployComplete) {
-                  if (data.deployReport) {
-                    setStreamingMsg(null);
-                    queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
-                  } else {
-                    setStreamingMsg(null);
-                    queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
-                  }
+                  setDeployStep("");
+                  setStreamingMsg(null);
+                  queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
                 } else {
-                  setStreamingMsg({
-                    id: `deploy-${Date.now()}`,
-                    role: "assistant",
-                    content: data.deployStatus,
-                    timestamp: new Date(),
-                    isStreaming: true,
-                  });
+                  setDeployStep(data.deployStatus);
                 }
               }
               if (data.transition) {
@@ -815,6 +802,8 @@ function ChatPanel({ idea }: { idea: Idea }) {
       setIsStreaming(false);
       setIsGeneratingDoc(false);
       setGeneratingDocType("");
+      setDocProgressSection("");
+      setDeployStep("");
       setPendingUserMsg(null);
       const finalContent = streamingMsgRef.current;
       setStreamingMsg(null);
@@ -1302,17 +1291,16 @@ function ChatPanel({ idea }: { idea: Idea }) {
             );
           }
 
-          if (msg.isStreaming && !msg.content && isGeneratingDoc) {
-            return null;
-          }
-
-          if (msg.isStreaming && !msg.content && !isGeneratingDoc && msg.role === "assistant") {
-            const lastUserMsg = displayMessages.filter(m => m.role === "user").pop();
-            const lastUserText = (lastUserMsg?.content || "").toLowerCase();
-            const isUiPathContext = /uipath|deploy|package|push.*uipath|orchestrator|push to|regenerate.*package/.test(lastUserText);
-            return (
-              <ThinkingIndicator key={msg.id} context={isUiPathContext ? "uipath" : "default"} />
-            );
+          if (msg.isStreaming && msg.role === "assistant") {
+            if (deployStep) {
+              return <StreamingProgressIndicator key={`${msg.id}-deploy`} mode="deploy" deployStep={deployStep} />;
+            }
+            if (isGeneratingDoc) {
+              return <StreamingProgressIndicator key={`${msg.id}-doc-${generatingDocType}`} mode="doc" docType={generatingDocType} currentSection={docProgressSection} onCancel={cancelDocGeneration} />;
+            }
+            if (!msg.content) {
+              return <StreamingProgressIndicator key={`${msg.id}-thinking`} mode="thinking" />;
+            }
           }
 
           return (
@@ -1367,10 +1355,12 @@ function ChatPanel({ idea }: { idea: Idea }) {
             </div>
           );
         })}
-        {isGeneratingDoc && (
-          <DocProgressIndicator docType={generatingDocType} onCancel={cancelDocGeneration} />
+        {isGeneratingDoc && !streamingMsg && (
+          <StreamingProgressIndicator mode="doc" docType={generatingDocType} currentSection={docProgressSection} onCancel={cancelDocGeneration} />
         )}
-
+        {deployStep && !streamingMsg && (
+          <StreamingProgressIndicator mode="deploy" deployStep={deployStep} />
+        )}
 
         {(() => {
           const hasUiPath = displayMessages.some((m) => m.uipathData);
@@ -1466,7 +1456,7 @@ function ChatPanel({ idea }: { idea: Idea }) {
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder={isGeneratingDoc ? `Generating ${generatingDocType}... Type to queue your next message` : isStreaming ? "Type to queue your next message..." : "Describe your process..."}
+            placeholder={deployStep ? "Deploying... Type to queue your next message" : isGeneratingDoc ? `Generating ${generatingDocType}... Type to queue your next message` : isStreaming ? "Type to queue your next message..." : "Describe your process..."}
             className="min-h-[36px] max-h-[120px] resize-none border-0 bg-transparent focus-visible:ring-0 p-0 text-xs placeholder:text-muted-foreground/50"
             rows={1}
             data-testid="input-chat-message"
