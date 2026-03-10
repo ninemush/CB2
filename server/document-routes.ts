@@ -10,7 +10,7 @@ import { analyzeAndFix } from "./workflow-analyzer";
 import { evaluateTransition } from "./stage-transition";
 import { approveDocument } from "./document-service";
 import { escapeXml } from "./lib/xml-utils";
-import { trySanitizeAndParseJson } from "./lib/json-utils";
+import { sanitizeAndParseJson, trySanitizeAndParseJson, stripCodeFences, sanitizeJsonString } from "./lib/json-utils";
 import { z } from "zod";
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel,
@@ -85,6 +85,8 @@ IMPORTANT RULES:
 
 Return ONLY the JSON object, no other text.`;
 
+const VALID_ERROR_HANDLING = new Set(["retry", "catch", "escalate", "none"]);
+
 const uipathPackageSchema = z.object({
   projectName: z.string().default("UiPathPackage"),
   description: z.string().default(""),
@@ -95,7 +97,7 @@ const uipathPackageSchema = z.object({
     variables: z.array(z.object({
       name: z.string().default("variable"),
       type: z.string().default("String"),
-      defaultValue: z.string().optional().default(""),
+      defaultValue: z.preprocess(v => v == null ? "" : String(v), z.string().default("")),
       scope: z.string().optional().default("workflow"),
     })).optional().default([]),
     steps: z.array(z.object({
@@ -103,12 +105,97 @@ const uipathPackageSchema = z.object({
       activityType: z.string().optional().default("ui:Comment"),
       activityPackage: z.string().optional().default("UiPath.System.Activities"),
       properties: z.record(z.unknown()).default({}),
-      selectorHint: z.string().nullable().optional().default(null),
-      errorHandling: z.enum(["retry", "catch", "escalate", "none"]).optional().default("none"),
-      notes: z.string().default(""),
+      selectorHint: z.preprocess(
+        v => typeof v === "object" && v !== null ? JSON.stringify(v) : v,
+        z.string().nullable().optional().default(null)
+      ),
+      errorHandling: z.preprocess(
+        v => {
+          const normalized = typeof v === "string" ? v.trim().toLowerCase() : "";
+          return VALID_ERROR_HANDLING.has(normalized) ? normalized : "none";
+        },
+        z.enum(["retry", "catch", "escalate", "none"]).optional().default("none")
+      ),
+      notes: z.preprocess(v => v == null ? "" : String(v), z.string().default("")),
     })).default([]),
   })).default([]),
 });
+
+function repairTruncatedPackageJson(rawText: string): any | null {
+  try {
+    let text = rawText.trim();
+    const fenceStart = text.match(/```(?:json)?\s*\n/);
+    if (fenceStart) {
+      text = text.slice(fenceStart.index! + fenceStart[0].length);
+      const fenceEnd = text.lastIndexOf("```");
+      if (fenceEnd > 0) text = text.slice(0, fenceEnd);
+    }
+
+    const firstBrace = text.indexOf("{");
+    if (firstBrace === -1) return null;
+    text = text.slice(firstBrace);
+
+    let inString = false;
+    let escaped = false;
+    let lastSafePos = 0;
+    const stack: string[] = [];
+
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (escaped) { escaped = false; continue; }
+      if (ch === "\\") { escaped = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === "{" || ch === "[") {
+        stack.push(ch === "{" ? "}" : "]");
+      } else if (ch === "}" || ch === "]") {
+        if (stack.length > 0) stack.pop();
+      }
+      if (ch === "," || ch === "}" || ch === "]") {
+        lastSafePos = i;
+      }
+    }
+
+    if (inString) {
+      text = text.slice(0, text.lastIndexOf('"'));
+    }
+
+    for (let attempts = 0; attempts < 30; attempts++) {
+      text = text.replace(/,\s*$/, "");
+
+      let s = false, esc = false;
+      const st: string[] = [];
+      for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (esc) { esc = false; continue; }
+        if (c === "\\") { esc = true; continue; }
+        if (c === '"') { s = !s; continue; }
+        if (s) continue;
+        if (c === "{") st.push("}");
+        else if (c === "[") st.push("]");
+        else if (c === "}" || c === "]") { if (st.length > 0) st.pop(); }
+      }
+
+      if (s) {
+        text = text.slice(0, text.lastIndexOf('"'));
+        continue;
+      }
+
+      const closing = st.reverse().join("");
+      try {
+        return JSON.parse(text + closing);
+      } catch {
+        const cutPoints = [text.lastIndexOf(","), text.lastIndexOf("}")].filter(p => p > 0);
+        const cutAt = Math.max(...cutPoints, -1);
+        if (cutAt <= 0) return null;
+        text = text.slice(0, cutAt);
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 async function verifyIdeaAccess(req: Request, res: Response): Promise<string | null> {
   if (!req.session.userId) {
@@ -676,7 +763,10 @@ ${content}`
       if (existingUiPath && !req.query.force) {
         try {
           const existingData = JSON.parse(existingUiPath.content.slice(8, -1));
-          return res.json({ package: existingData });
+          if ((existingData.workflows || []).length > 0) {
+            return res.json({ package: existingData });
+          }
+          console.log(`[UiPath] Cached package for ${ideaId} has 0 workflows — regenerating`);
         } catch { /* fall through to regeneration */ }
       }
 
@@ -699,7 +789,7 @@ ${content}`
 
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
-        max_tokens: 8192,
+        max_tokens: 16384,
         system: systemCtx,
         messages: [{ role: "user", content: UIPATH_PROMPT }],
       });
@@ -707,13 +797,34 @@ ${content}`
       const textBlock = response.content.find((b) => b.type === "text");
       const rawText = textBlock?.text || "{}";
 
+      if (response.stop_reason === "max_tokens") {
+        console.warn(`[UiPath] LLM response truncated at max_tokens for ${ideaId} — attempting repair`);
+      }
+
       let packageJson;
       try {
-        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-        const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : rawText);
+        const parsed = sanitizeAndParseJson(rawText);
         packageJson = uipathPackageSchema.parse(parsed);
-      } catch {
-        packageJson = uipathPackageSchema.parse({ projectName: idea.title.replace(/\s+/g, "_"), description: idea.description });
+      } catch (parseErr: any) {
+        const repaired = repairTruncatedPackageJson(rawText);
+        if (repaired) {
+          try {
+            packageJson = uipathPackageSchema.parse(repaired);
+            console.log(`[UiPath] Repaired truncated JSON for ${ideaId}: ${(repaired.workflows || []).length} workflows recovered`);
+          } catch (repairErr: any) {
+            console.error(`[UiPath] Repair also failed for ${ideaId}:`, repairErr?.message);
+          }
+        }
+        if (!packageJson) {
+          console.error(`[UiPath] Package parse/validation failed for ${ideaId}:`, parseErr?.message || parseErr);
+          console.error(`[UiPath] Raw LLM response (first 500 chars):`, rawText.slice(0, 500));
+          return res.status(500).json({ message: "Failed to parse AI-generated package. Please try again." });
+        }
+      }
+
+      if (!packageJson.workflows || packageJson.workflows.length === 0) {
+        console.error(`[UiPath] Generated package for ${ideaId} has 0 workflows — not storing`);
+        return res.status(500).json({ message: "AI generated a package with no workflows. Please try again." });
       }
 
       await chatStorage.createMessage(
