@@ -10,6 +10,7 @@ import { sql } from "drizzle-orm";
 
 const toBeGenerationLocks = new Set<string>();
 const bulkCreatedToBeViews = new Set<string>();
+const bulkWriteLocks = new Map<string, Promise<void>>();
 
 async function consolidateDuplicateEndNodes(ideaId?: string, viewType?: string): Promise<number> {
   let totalMerged = 0;
@@ -118,6 +119,60 @@ async function cleanupDuplicateProcessNodes(): Promise<void> {
           await db.execute(sql`DELETE FROM process_edges WHERE source_node_id = ${row.id}`);
           await db.execute(sql`DELETE FROM process_nodes WHERE id = ${row.id}`);
           totalDeleted++;
+        }
+      }
+    }
+
+    const multiStartResult = await db.execute(sql`
+      SELECT idea_id, view_type, array_agg(id ORDER BY id) as ids
+      FROM process_nodes
+      WHERE node_type = 'start'
+      GROUP BY idea_id, view_type
+      HAVING COUNT(*) > 1
+    `);
+    const multiStartRows = multiStartResult.rows || multiStartResult || [];
+    if (Array.isArray(multiStartRows)) {
+      for (const row of multiStartRows) {
+        const ids: number[] = Array.isArray(row.ids) ? row.ids : [];
+        if (ids.length < 2) continue;
+        const extraStartIds = ids.slice(1);
+        for (const startId of extraStartIds) {
+          const reachable = await db.execute(sql`
+            WITH RECURSIVE tree AS (
+              SELECT ${startId}::int AS node_id
+              UNION
+              SELECT e.target_node_id AS node_id
+              FROM process_edges e
+              INNER JOIN tree t ON e.source_node_id = t.node_id
+            )
+            SELECT node_id FROM tree
+          `);
+          const treeRows = reachable.rows || reachable || [];
+          const keepStart = ids[0];
+          if (Array.isArray(treeRows)) {
+            const treeNodeIds = treeRows.map((r: any) => r.node_id as number);
+            const alsoReachableFromKept = await db.execute(sql`
+              WITH RECURSIVE tree AS (
+                SELECT ${keepStart}::int AS node_id
+                UNION
+                SELECT e.target_node_id AS node_id
+                FROM process_edges e
+                INNER JOIN tree t ON e.source_node_id = t.node_id
+              )
+              SELECT node_id FROM tree
+            `);
+            const keptTreeIds = new Set((alsoReachableFromKept.rows || []).map((r: any) => r.node_id as number));
+            for (const nodeId of treeNodeIds) {
+              if (nodeId === startId) continue;
+              if (keptTreeIds.has(nodeId)) continue;
+              await db.execute(sql`DELETE FROM process_edges WHERE source_node_id = ${nodeId} OR target_node_id = ${nodeId}`);
+              await db.execute(sql`DELETE FROM process_nodes WHERE id = ${nodeId}`);
+              totalDeleted++;
+            }
+            await db.execute(sql`DELETE FROM process_edges WHERE source_node_id = ${startId} OR target_node_id = ${startId}`);
+            await db.execute(sql`DELETE FROM process_nodes WHERE id = ${startId}`);
+            totalDeleted++;
+          }
         }
       }
     }
@@ -570,6 +625,21 @@ export function registerProcessMapRoutes(app: Express): void {
 
     const shouldClear = clearExisting || viewType === "to-be" || viewType === "sdd";
 
+    const lockKey = `${ideaId}:${viewType}`;
+    const existingLock = bulkWriteLocks.get(lockKey);
+    if (existingLock) {
+      await existingLock;
+    }
+
+    let resolveLock: () => void;
+    const lockPromise = new Promise<void>((resolve) => { resolveLock = resolve; });
+    bulkWriteLocks.set(lockKey, lockPromise);
+
+    if (viewType === "to-be") {
+      toBeGenerationLocks.add(ideaId);
+      bulkCreatedToBeViews.add(ideaId);
+    }
+
     try {
       if (shouldClear) {
         await processMapStorage.clearAllForView(ideaId, viewType);
@@ -632,16 +702,18 @@ export function registerProcessMapRoutes(app: Express): void {
         }
       }
 
-      if (viewType === "to-be" && createdNodeIds.length > 0) {
-        bulkCreatedToBeViews.add(ideaId);
-      }
-
       await cleanupOrphanedNodes(ideaId, viewType);
 
       return res.status(201).json({ nodeIds: createdNodeIds, edgeIds: createdEdgeIds, indexToId });
     } catch (err: any) {
       console.error(`[ProcessMap] Bulk create failed:`, err?.message);
       return res.status(500).json({ message: "Failed to bulk create process map" });
+    } finally {
+      if (viewType === "to-be") {
+        toBeGenerationLocks.delete(ideaId);
+      }
+      resolveLock!();
+      bulkWriteLocks.delete(lockKey);
     }
   });
 
