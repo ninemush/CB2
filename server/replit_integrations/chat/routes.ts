@@ -172,9 +172,9 @@ BRANCHING RULES (CRITICAL — real processes are NOT linear):
 - Decision nodes MUST have 2 or more children. Each child step FROM the decision's step number with a LABEL like "Yes", "No", "Approved", "Rejected", "Pass", "Fail", "Above Threshold", "Below Threshold", etc.
 - THREE-WAY DECISIONS are common: step 5.0 "Claim Decision" → children 6.0 (Approved), 6.1 (Rejected), 6.2 (More Info Required). All three FROM: 5.0 with different LABELs.
 - LOOPS: To create a loop, have a step's FROM point BACK to an earlier step number. Example: step 4.1 FROM: 3.0 where 3.0 is an earlier step — this creates a loop edge.
-- MERGE POINTS: Branches can converge. After parallel paths complete, a single step can FROM the last step of one branch.
+- MERGE POINTS (PREFERRED): Branches should converge back into a common path whenever they lead to the same outcome. Instead of creating separate end nodes for each branch, merge branches into a single step that leads to one shared end node. Example: both the "auto-approve" and "manager approval → approved" paths should merge into a single "Schedule Payment" step rather than each having their own end node.
 - PARALLEL PATHS: If two tasks happen simultaneously after a step, both FROM the same parent step number (no decision needed — just two children with no LABEL).
-- MULTIPLE END NODES: Use separate End nodes for each terminal outcome (e.g., "Claim Approved End", "Claim Rejected End").
+- END NODES — MINIMIZE (CRITICAL): Use the FEWEST end nodes possible. Most processes have only 2 end nodes (success and failure). Use a separate End node ONLY for a genuinely distinct terminal business outcome — NOT for each branch path. If two branches both end in "invoice processed", they MUST merge into ONE end node, not two. Maximum 2-3 End nodes per process unless there are truly 4+ distinct outcomes. NEVER create end nodes with suffixes like "End B", "End C", "End 2" — each end node must have a unique, meaningful business outcome name.
 - NEVER output all steps in a linear chain when the process has decisions. EVERY process has decisions — insurance claims, invoice processing, onboarding, purchase orders, IT service requests — ALL of them branch.
 
 MAP OUTPUT FORMAT (CRITICAL — the visual map only renders from [STEP:] tags):
@@ -192,6 +192,15 @@ DUPLICATE PREVENTION (CRITICAL):
 - When adding steps to an existing map, check what already exists. Reference existing step numbers in FROM fields — do not recreate them.
 - If regenerating a full process, output a single coherent graph. Do not output leftover steps from a previous version.
 - End nodes: use distinct names for genuinely different outcomes (e.g., "Approved End", "Rejected End"). Do NOT create multiple end nodes for the same outcome.
+
+SELF-CHECK (MANDATORY — run this mentally before finalizing your [STEP:] output):
+1. Exactly 1 Start node (step 1.0, no FROM field).
+2. Every non-Start node has a FROM field pointing to a valid step number.
+3. No more than 3 End nodes unless the process genuinely has 4+ distinct terminal business outcomes.
+4. No duplicate node names. No suffixed duplicates like "End B" or "Task 2".
+5. Every End node is reachable — it has a chain of FROM references leading back to Start.
+6. Every decision node has 2+ children (steps that FROM it with different LABELs).
+7. Branches that lead to the same outcome MERGE into a shared path before the End node.
 
 EXAMPLE 1 — Insurance claim with 3-way decision and loop:
 [STEP: 1.0 Customer Submits Claim | ROLE: Customer | SYSTEM: Claims Portal | TYPE: start]
@@ -217,21 +226,22 @@ EXAMPLE 1 — Insurance claim with 3-way decision and loop:
 [STEP: 11.5 Send Rejection Notice | ROLE: System | SYSTEM: Email | TYPE: task | FROM: 11.4]
 [STEP: 11.6 Claim Rejected End | ROLE: System | SYSTEM: Claims App | TYPE: end | FROM: 11.5]
 
-EXAMPLE 2 — Invoice processing with approval loop:
+EXAMPLE 2 — Invoice processing with branch convergence (note: only 2 end nodes, branches merge):
 [STEP: 1.0 Invoice Received | ROLE: System | SYSTEM: Email/Portal | TYPE: start]
 [STEP: 2.0 Extract Invoice Data | ROLE: System | SYSTEM: Document Understanding | TYPE: task | FROM: 1.0]
 [STEP: 3.0 Data Valid? | ROLE: System | SYSTEM: ERP | TYPE: decision | FROM: 2.0]
 [STEP: 4.0 Flag for Manual Entry | ROLE: AP Clerk | SYSTEM: ERP | TYPE: task | FROM: 3.0 | LABEL: No]
 [STEP: 4.1 Three-Way Match | ROLE: System | SYSTEM: ERP | TYPE: task | FROM: 3.0 | LABEL: Yes]
 [STEP: 5.0 Match OK? | ROLE: System | SYSTEM: ERP | TYPE: decision | FROM: 4.1]
-[STEP: 6.0 Route to Exception Queue | ROLE: System | SYSTEM: ERP | TYPE: task | FROM: 5.0 | LABEL: No]
+[STEP: 6.0 Route to Exception Queue | ROLE: AP Clerk | SYSTEM: ERP | TYPE: task | FROM: 5.0 | LABEL: No]
 [STEP: 6.1 Amount Within Limit? | ROLE: System | SYSTEM: ERP | TYPE: decision | FROM: 5.0 | LABEL: Yes]
-[STEP: 7.0 Auto-Approve | ROLE: System | SYSTEM: ERP | TYPE: task | FROM: 6.1 | LABEL: Yes]
+[STEP: 7.0 Auto-Approve Invoice | ROLE: System | SYSTEM: ERP | TYPE: task | FROM: 6.1 | LABEL: Yes]
 [STEP: 7.1 Manager Approval | ROLE: Manager | SYSTEM: Action Center | TYPE: task | FROM: 6.1 | LABEL: No]
 [STEP: 8.0 Approved? | ROLE: Manager | SYSTEM: Action Center | TYPE: decision | FROM: 7.1]
-[STEP: 9.0 Schedule Payment | ROLE: System | SYSTEM: ERP | TYPE: task | FROM: 8.0 | LABEL: Yes]
-[STEP: 9.1 Return to Requester | ROLE: System | SYSTEM: Email | TYPE: task | FROM: 8.0 | LABEL: No]
-[STEP: 10.0 Payment Complete End | ROLE: System | SYSTEM: ERP | TYPE: end | FROM: 9.0]
+[STEP: 9.0 Return to Requester | ROLE: System | SYSTEM: Email | TYPE: task | FROM: 8.0 | LABEL: No]
+[STEP: 9.1 Invoice Rejected End | ROLE: System | SYSTEM: ERP | TYPE: end | FROM: 9.0]
+[STEP: 10.0 Schedule Payment | ROLE: System | SYSTEM: ERP | TYPE: task | FROM: 8.0 | LABEL: Yes]
+[STEP: 10.1 Invoice Processed End | ROLE: System | SYSTEM: ERP | TYPE: end | FROM: 10.0]
 
 DOCUMENT GENERATION:
 - When you generate or regenerate a PDD or SDD, you MUST start your response with exactly [DOC:PDD:0] or [DOC:SDD:0] followed immediately by the full document content. The system uses this tag to save the document as a new version. Without the tag, the document will NOT be saved and deployment will use stale content.

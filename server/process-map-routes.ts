@@ -13,6 +13,8 @@ const bulkCreatedToBeViews = new Set<string>();
 
 async function cleanupDuplicateProcessNodes(): Promise<void> {
   try {
+    let totalDeleted = 0;
+
     const dupResult = await db.execute(sql`
       SELECT idea_id, view_type, LOWER(TRIM(name)) as norm_name, COUNT(*) as cnt,
              array_agg(id ORDER BY id) as ids
@@ -22,29 +24,64 @@ async function cleanupDuplicateProcessNodes(): Promise<void> {
       HAVING COUNT(*) > 1
     `);
 
-    const rows = dupResult.rows || dupResult || [];
-    if (!Array.isArray(rows) || rows.length === 0) {
-      console.log("[ProcessMap] Cleanup: No duplicate nodes found.");
-      return;
+    const dupRows = dupResult.rows || dupResult || [];
+    if (Array.isArray(dupRows)) {
+      for (const row of dupRows) {
+        const ids: number[] = Array.isArray(row.ids) ? row.ids : [];
+        if (ids.length < 2) continue;
+        const deleteIds = ids.slice(1);
+        for (const delId of deleteIds) {
+          await db.execute(sql`DELETE FROM process_edges WHERE source_node_id = ${delId} OR target_node_id = ${delId}`);
+          await db.execute(sql`DELETE FROM process_nodes WHERE id = ${delId}`);
+          totalDeleted++;
+        }
+      }
     }
 
-    let totalDeleted = 0;
-    for (const row of rows) {
-      const ids: number[] = Array.isArray(row.ids) ? row.ids : [];
-      if (ids.length < 2) continue;
-      const keepId = ids[0];
-      const deleteIds = ids.slice(1);
+    const orphanResult = await db.execute(sql`
+      SELECT n.id, n.idea_id, n.view_type, n.name, n.node_type
+      FROM process_nodes n
+      LEFT JOIN process_edges e_in ON n.id = e_in.target_node_id
+      LEFT JOIN process_edges e_out ON n.id = e_out.source_node_id
+      WHERE e_in.id IS NULL AND e_out.id IS NULL AND n.node_type != 'start'
+    `);
 
-      for (const delId of deleteIds) {
-        await db.execute(sql`DELETE FROM process_edges WHERE source_node_id = ${delId} OR target_node_id = ${delId}`);
-        await db.execute(sql`DELETE FROM process_nodes WHERE id = ${delId}`);
+    const orphanRows = orphanResult.rows || orphanResult || [];
+    if (Array.isArray(orphanRows)) {
+      for (const row of orphanRows) {
+        await db.execute(sql`DELETE FROM process_nodes WHERE id = ${row.id}`);
         totalDeleted++;
       }
     }
 
-    console.log(`[ProcessMap] Cleanup: Removed ${totalDeleted} duplicate nodes from to-be/sdd views.`);
+    if (totalDeleted > 0) {
+      console.log(`[ProcessMap] Cleanup: Removed ${totalDeleted} duplicate/orphaned nodes.`);
+    }
   } catch (err: any) {
     console.error("[ProcessMap] Cleanup error:", err?.message);
+  }
+}
+
+async function cleanupOrphanedNodes(ideaId: string, viewType: string): Promise<void> {
+  try {
+    const orphanResult = await db.execute(sql`
+      SELECT n.id, n.name, n.node_type
+      FROM process_nodes n
+      LEFT JOIN process_edges e_in ON n.id = e_in.target_node_id
+      LEFT JOIN process_edges e_out ON n.id = e_out.source_node_id
+      WHERE n.idea_id = ${ideaId} AND n.view_type = ${viewType}
+        AND e_in.id IS NULL AND e_out.id IS NULL AND n.node_type != 'start'
+    `);
+
+    const rows = orphanResult.rows || orphanResult || [];
+    if (Array.isArray(rows) && rows.length > 0) {
+      for (const row of rows) {
+        await db.execute(sql`DELETE FROM process_nodes WHERE id = ${row.id}`);
+      }
+      console.log(`[ProcessMap] Removed ${rows.length} orphaned nodes from ${viewType} view of idea ${ideaId}`);
+    }
+  } catch (err: any) {
+    console.error("[ProcessMap] Orphan cleanup error:", err?.message);
   }
 }
 
@@ -471,6 +508,8 @@ export function registerProcessMapRoutes(app: Express): void {
       if (viewType === "to-be" && createdNodeIds.length > 0) {
         bulkCreatedToBeViews.add(ideaId);
       }
+
+      await cleanupOrphanedNodes(ideaId, viewType);
 
       return res.status(201).json({ nodeIds: createdNodeIds, edgeIds: createdEdgeIds, indexToId });
     } catch (err: any) {
