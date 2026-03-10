@@ -11,6 +11,57 @@ import { sql } from "drizzle-orm";
 const toBeGenerationLocks = new Set<string>();
 const bulkCreatedToBeViews = new Set<string>();
 
+async function consolidateDuplicateEndNodes(ideaId?: string, viewType?: string): Promise<number> {
+  let totalMerged = 0;
+  try {
+    const query = (ideaId && viewType)
+      ? sql`
+        SELECT idea_id, view_type, LOWER(TRIM(name)) as norm_name,
+               array_agg(id ORDER BY id) as ids
+        FROM process_nodes
+        WHERE node_type = 'end' AND idea_id = ${ideaId} AND view_type = ${viewType}
+        GROUP BY idea_id, view_type, LOWER(TRIM(name))
+        HAVING COUNT(*) > 1
+      `
+      : sql`
+        SELECT idea_id, view_type, LOWER(TRIM(name)) as norm_name,
+               array_agg(id ORDER BY id) as ids
+        FROM process_nodes
+        WHERE node_type = 'end'
+        GROUP BY idea_id, view_type, LOWER(TRIM(name))
+        HAVING COUNT(*) > 1
+      `;
+
+    const result = await db.execute(query);
+    const rows = result.rows || result || [];
+    if (!Array.isArray(rows)) return 0;
+
+    for (const row of rows) {
+      const ids: number[] = Array.isArray(row.ids) ? row.ids : [];
+      if (ids.length < 2) continue;
+      const keepId = ids[0];
+      const deleteIds = ids.slice(1);
+
+      for (const delId of deleteIds) {
+        await db.execute(sql`
+          UPDATE process_edges SET target_node_id = ${keepId}
+          WHERE target_node_id = ${delId}
+            AND source_node_id NOT IN (
+              SELECT source_node_id FROM process_edges WHERE target_node_id = ${keepId}
+            )
+        `);
+        await db.execute(sql`DELETE FROM process_edges WHERE target_node_id = ${delId}`);
+        await db.execute(sql`DELETE FROM process_edges WHERE source_node_id = ${delId}`);
+        await db.execute(sql`DELETE FROM process_nodes WHERE id = ${delId}`);
+        totalMerged++;
+      }
+    }
+  } catch (err: any) {
+    console.error("[ProcessMap] End node consolidation error:", err?.message);
+  }
+  return totalMerged;
+}
+
 async function cleanupDuplicateProcessNodes(): Promise<void> {
   try {
     let totalDeleted = 0;
@@ -33,6 +84,39 @@ async function cleanupDuplicateProcessNodes(): Promise<void> {
         for (const delId of deleteIds) {
           await db.execute(sql`DELETE FROM process_edges WHERE source_node_id = ${delId} OR target_node_id = ${delId}`);
           await db.execute(sql`DELETE FROM process_nodes WHERE id = ${delId}`);
+          totalDeleted++;
+        }
+      }
+    }
+
+    const endMerged = await consolidateDuplicateEndNodes();
+    totalDeleted += endMerged;
+
+    const suffixResult = await db.execute(sql`
+      SELECT id, idea_id, view_type, name
+      FROM process_nodes
+      WHERE node_type = 'end'
+        AND (LOWER(TRIM(name)) ~ ' [b-z]$' OR LOWER(TRIM(name)) ~ ' \d+$')
+    `);
+    const suffixRows = suffixResult.rows || suffixResult || [];
+    if (Array.isArray(suffixRows)) {
+      for (const row of suffixRows) {
+        const baseName = (row.name as string).replace(/\s+[B-Zb-z]$/, '').replace(/\s+\d+$/, '').trim();
+        const baseResult = await db.execute(sql`
+          SELECT id FROM process_nodes
+          WHERE idea_id = ${row.idea_id} AND view_type = ${row.view_type}
+            AND node_type = 'end' AND LOWER(TRIM(name)) = ${baseName.toLowerCase().trim()}
+          LIMIT 1
+        `);
+        const baseRows = baseResult.rows || baseResult || [];
+        if (Array.isArray(baseRows) && baseRows.length > 0) {
+          const keepId = baseRows[0].id;
+          await db.execute(sql`
+            UPDATE process_edges SET target_node_id = ${keepId}
+            WHERE target_node_id = ${row.id}
+          `);
+          await db.execute(sql`DELETE FROM process_edges WHERE source_node_id = ${row.id}`);
+          await db.execute(sql`DELETE FROM process_nodes WHERE id = ${row.id}`);
           totalDeleted++;
         }
       }
@@ -62,8 +146,51 @@ async function cleanupDuplicateProcessNodes(): Promise<void> {
   }
 }
 
+async function consolidateSuffixEndNodes(ideaId: string, viewType: string): Promise<number> {
+  let merged = 0;
+  try {
+    const suffixResult = await db.execute(sql`
+      SELECT id, idea_id, view_type, name
+      FROM process_nodes
+      WHERE node_type = 'end' AND idea_id = ${ideaId} AND view_type = ${viewType}
+        AND (LOWER(TRIM(name)) ~ ' [b-z]$' OR LOWER(TRIM(name)) ~ ' \d+$')
+    `);
+    const rows = suffixResult.rows || suffixResult || [];
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        const baseName = (row.name as string).replace(/\s+[B-Zb-z]$/, '').replace(/\s+\d+$/, '').trim();
+        const baseResult = await db.execute(sql`
+          SELECT id FROM process_nodes
+          WHERE idea_id = ${row.idea_id} AND view_type = ${row.view_type}
+            AND node_type = 'end' AND LOWER(TRIM(name)) = ${baseName.toLowerCase().trim()}
+          LIMIT 1
+        `);
+        const baseRows = baseResult.rows || baseResult || [];
+        if (Array.isArray(baseRows) && baseRows.length > 0) {
+          const keepId = baseRows[0].id;
+          await db.execute(sql`
+            UPDATE process_edges SET target_node_id = ${keepId}
+            WHERE target_node_id = ${row.id}
+              AND source_node_id NOT IN (SELECT source_node_id FROM process_edges WHERE target_node_id = ${keepId})
+          `);
+          await db.execute(sql`DELETE FROM process_edges WHERE target_node_id = ${row.id}`);
+          await db.execute(sql`DELETE FROM process_edges WHERE source_node_id = ${row.id}`);
+          await db.execute(sql`DELETE FROM process_nodes WHERE id = ${row.id}`);
+          merged++;
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error("[ProcessMap] Suffix end node cleanup error:", err?.message);
+  }
+  return merged;
+}
+
 async function cleanupOrphanedNodes(ideaId: string, viewType: string): Promise<void> {
   try {
+    await consolidateDuplicateEndNodes(ideaId, viewType);
+    await consolidateSuffixEndNodes(ideaId, viewType);
+
     const orphanResult = await db.execute(sql`
       SELECT n.id, n.name, n.node_type
       FROM process_nodes n

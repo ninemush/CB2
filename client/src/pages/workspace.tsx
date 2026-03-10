@@ -795,19 +795,24 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
             });
           }
 
+          const endNameToFirst = new Map<string, number>();
+          const endDupTargetRemap = new Map<number, number>();
+          for (let i = 0; i < dedupedSteps.length; i++) {
+            if (dedupedSteps[i].nodeType === "end") {
+              const norm = normalizeName(dedupedSteps[i].name);
+              if (endNameToFirst.has(norm)) {
+                endDupTargetRemap.set(i, endNameToFirst.get(norm)!);
+              } else {
+                endNameToFirst.set(norm, i);
+              }
+            }
+          }
+
           const hasStartNode = dedupedSteps.some(s => s.nodeType === "start");
           const hasEndNode = dedupedSteps.some(s => s.nodeType === "end");
           const clearExisting = viewType === "to-be"
             ? true
             : (hasStartNode && hasEndNode && dedupedSteps.length >= 3);
-
-          const bulkNodes = dedupedSteps.map((step, i) => ({
-            name: step.name,
-            role: step.role,
-            system: step.system,
-            nodeType: step.nodeType,
-            orderIndex: i,
-          }));
 
           const stepNumberToIndex: Record<string, number> = {};
           dedupedSteps.forEach((step, i) => {
@@ -840,21 +845,54 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
             }
 
             if (sourceIndex !== null && sourceIndex !== i) {
-              const pairKey = `${sourceIndex}->${i}`;
+              let targetIndex = i;
+              if (endDupTargetRemap.has(targetIndex)) {
+                targetIndex = endDupTargetRemap.get(targetIndex)!;
+              }
+              const pairKey = `${sourceIndex}->${targetIndex}`;
               if (!seenEdgePairs.has(pairKey)) {
                 seenEdgePairs.add(pairKey);
-                bulkEdges.push({ sourceIndex, targetIndex: i, label });
+                bulkEdges.push({ sourceIndex, targetIndex, label });
               }
             }
           }
 
-          console.log(`[ProcessMap] Bulk creating ${bulkNodes.length} nodes, ${bulkEdges.length} edges for view=${viewType} (clear=${clearExisting})`);
+          const dupIndices = new Set(endDupTargetRemap.keys());
+          const filteredSteps = dedupedSteps.filter((_, i) => !dupIndices.has(i));
+          const oldToNewIdx = new Map<number, number>();
+          let newI = 0;
+          for (let i = 0; i < dedupedSteps.length; i++) {
+            if (!dupIndices.has(i)) {
+              oldToNewIdx.set(i, newI++);
+            } else {
+              oldToNewIdx.set(i, oldToNewIdx.get(endDupTargetRemap.get(i)!)!);
+            }
+          }
+          const remappedEdges = bulkEdges.map(e => ({
+            sourceIndex: oldToNewIdx.get(e.sourceIndex) ?? e.sourceIndex,
+            targetIndex: oldToNewIdx.get(e.targetIndex) ?? e.targetIndex,
+            label: e.label,
+          }));
+          dedupedSteps = filteredSteps;
+
+          const bulkNodes = dedupedSteps.map((step, i) => ({
+            name: step.name,
+            role: step.role,
+            system: step.system,
+            nodeType: step.nodeType,
+            orderIndex: i,
+          }));
+
+          if (endDupTargetRemap.size > 0) {
+            console.log(`[ProcessMap] Merged ${endDupTargetRemap.size} duplicate end nodes for view=${viewType}`);
+          }
+          console.log(`[ProcessMap] Bulk creating ${bulkNodes.length} nodes, ${remappedEdges.length} edges for view=${viewType} (clear=${clearExisting})`);
 
           const bulkRes = await fetch(`/api/ideas/${idea.id}/process-map/bulk`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
-            body: JSON.stringify({ viewType, nodes: bulkNodes, edges: bulkEdges, clearExisting }),
+            body: JSON.stringify({ viewType, nodes: bulkNodes, edges: remappedEdges, clearExisting }),
           });
 
           if (!bulkRes.ok) {
