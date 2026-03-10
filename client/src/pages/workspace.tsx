@@ -517,7 +517,9 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
 
   const pddTriggeredRef = useRef(false);
   const sddTriggeredRef = useRef(false);
+  const uipathTriggeredRef = useRef(false);
   const generateDocRef = useRef<((type: "PDD" | "SDD") => void) | null>(null);
+  const generateUiPathRef = useRef<(() => void) | null>(null);
 
   const guidance = STAGE_GUIDANCE[idea.stage];
 
@@ -601,8 +603,20 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
     if (hasPddApproval && !hasSdd && !sddTriggeredRef.current && !isGeneratingDoc) {
       sddTriggeredRef.current = true;
       generateDocRef.current?.("SDD");
+      return;
     }
-  }, [savedMessages, isGeneratingDoc]);
+
+    const hasSddApproval = savedMessages.some(
+      (m) => m.role === "assistant" && m.content.includes("SDD approved")
+    );
+    const hasUiPath = savedMessages.some(
+      (m) => m.content.startsWith("[UIPATH:")
+    );
+    if (hasSddApproval && !hasUiPath && !uipathTriggeredRef.current && !isGeneratingDoc && !isStreaming) {
+      uipathTriggeredRef.current = true;
+      setTimeout(() => generateUiPathRef.current?.(), 500);
+    }
+  }, [savedMessages, isGeneratingDoc, isStreaming]);
 
   useEffect(() => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
@@ -924,12 +938,15 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
   generateDocRef.current = generateDocument;
 
   const generateUiPath = useCallback(async () => {
-    if (isGeneratingDoc || isStreaming) return;
+    if (isGeneratingDoc || isStreaming) {
+      uipathTriggeredRef.current = false;
+      return;
+    }
     setIsGeneratingDoc(true);
     setGeneratingDocType("UiPath");
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 120000);
+      const timeout = setTimeout(() => controller.abort(), 180000);
       const res = await fetch(`/api/ideas/${idea.id}/generate-uipath`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -973,6 +990,8 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
     }
   }, [idea.id, isGeneratingDoc, isStreaming]);
 
+  generateUiPathRef.current = generateUiPath;
+
   const [approvedDocIds, setApprovedDocIds] = useState<Set<number>>(new Set());
 
   const handleDocApproved = useCallback(async (docType: "PDD" | "SDD", docId?: number) => {
@@ -984,6 +1003,10 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
     if (docType === "PDD" && !sddTriggeredRef.current) {
       sddTriggeredRef.current = true;
       setTimeout(() => generateDocRef.current?.("SDD"), 500);
+    }
+    if (docType === "SDD" && !uipathTriggeredRef.current) {
+      uipathTriggeredRef.current = true;
+      setTimeout(() => generateUiPathRef.current?.(), 500);
     }
   }, [idea.id]);
 
