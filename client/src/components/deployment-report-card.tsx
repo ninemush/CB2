@@ -63,6 +63,7 @@ const statusConfig: Record<string, { icon: typeof CheckCircle2; color: string; b
   created: { icon: CheckCircle2, color: "text-green-400", bg: "bg-green-500/10", label: "Created" },
   updated: { icon: RefreshCw, color: "text-cyan-400", bg: "bg-cyan-500/10", label: "Updated" },
   exists: { icon: Info, color: "text-blue-400", bg: "bg-blue-500/10", label: "Exists" },
+  in_package: { icon: Package, color: "text-amber-400", bg: "bg-amber-500/10", label: "In Package" },
   skipped: { icon: Info, color: "text-slate-400", bg: "bg-slate-500/10", label: "Not Available" },
   manual: { icon: HandMetal, color: "text-amber-400", bg: "bg-amber-500/10", label: "Manual Setup" },
   failed: { icon: XCircle, color: "text-red-400", bg: "bg-red-500/10", label: "Failed" },
@@ -108,13 +109,14 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
     created: resultsToDisplay.filter((r) => r.status === "created").length,
     updated: resultsToDisplay.filter((r) => r.status === "updated").length,
     exists: resultsToDisplay.filter((r) => r.status === "exists").length,
+    in_package: resultsToDisplay.filter((r) => r.status === "in_package").length,
     skipped: resultsToDisplay.filter((r) => r.status === "skipped").length,
     manual: resultsToDisplay.filter((r) => r.status === "manual").length,
     failed: resultsToDisplay.filter((r) => r.status === "failed").length,
   };
 
-  const allSuccess = counts.failed === 0 && counts.skipped === 0 && counts.manual === 0;
-  const partialSuccess = counts.failed === 0 && (counts.skipped > 0 || counts.manual > 0);
+  const allSuccess = counts.failed === 0 && counts.skipped === 0 && counts.manual === 0 && counts.in_package === 0;
+  const partialSuccess = counts.failed === 0 && (counts.skipped > 0 || counts.manual > 0 || counts.in_package > 0);
 
   const toggleGroup = (key: string) => {
     setExpandedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -179,6 +181,12 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
             {counts.exists} existing
           </span>
         )}
+        {counts.in_package > 0 && (
+          <span className="flex items-center gap-1 text-xs text-amber-400" data-testid="text-deploy-in-package-count">
+            <Package className="h-3 w-3" />
+            {counts.in_package} in package
+          </span>
+        )}
         {counts.manual > 0 && (
           <span className="flex items-center gap-1 text-xs text-amber-400" data-testid="text-deploy-manual-count">
             <HandMetal className="h-3 w-3" />
@@ -206,7 +214,8 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
           const groupFailed = items.filter((i) => i.status === "failed").length;
           const groupSkipped = items.filter((i) => i.status === "skipped").length;
           const groupManual = items.filter((i) => i.status === "manual").length;
-          const allOk = groupFailed === 0 && groupSkipped === 0 && groupManual === 0;
+          const groupInPackage = items.filter((i) => i.status === "in_package").length;
+          const allOk = groupFailed === 0 && groupSkipped === 0 && groupManual === 0 && groupInPackage === 0;
 
           return (
             <div key={artifactType}>
@@ -232,6 +241,9 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
                       {groupFailed > 0 && (
                         <span className="text-red-400">{groupFailed} failed</span>
                       )}
+                      {groupInPackage > 0 && (
+                        <span className="text-amber-400">{groupInPackage} in pkg</span>
+                      )}
                       {groupManual > 0 && (
                         <span className="text-amber-400">{groupManual} manual</span>
                       )}
@@ -252,7 +264,7 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
                     const msgExpanded = expandedMessages[itemKey];
                     const hasDetailMessage = item.message && item.message.length > 60;
                     const showExpandable = hasDetailMessage && item.status !== "created";
-                    const showMessage = item.status === "failed" || item.status === "skipped" || item.status === "manual" || item.status === "updated" || (item.status === "exists" && item.message && item.message.includes("polling"));
+                    const showMessage = item.status === "failed" || item.status === "skipped" || item.status === "manual" || item.status === "updated" || item.status === "in_package" || (item.status === "exists" && item.message && item.message.includes("polling"));
 
                     return (
                       <div
@@ -297,9 +309,16 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
             All artifacts provisioned successfully
           </span>
         ) : partialSuccess ? (
-          <span className="flex items-center gap-1">
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            Core artifacts provisioned.{counts.failed > 0 ? ` ${counts.failed} API-limited.` : ""}{counts.manual > 0 ? ` ${counts.manual} need manual setup.` : ""}{counts.skipped > 0 ? ` ${counts.skipped} not available.` : ""}
+          <span className="flex flex-col gap-1">
+            <span className="flex items-center gap-1">
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+              Core artifacts provisioned.{counts.failed > 0 ? ` ${counts.failed} API-limited.` : ""}{counts.manual > 0 ? ` ${counts.manual} need manual setup.` : ""}{counts.skipped > 0 ? ` ${counts.skipped} not available.` : ""}
+            </span>
+            {counts.in_package > 0 && (
+              <span className="text-amber-400/80 text-[10px] leading-tight" data-testid="text-deploy-in-package-note">
+                Agent artifacts generated in downloadable package. See Handoff Guide for import and configuration steps.
+              </span>
+            )}
           </span>
         ) : (
           <span className="flex items-center gap-1">

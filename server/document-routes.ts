@@ -6,6 +6,7 @@ import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
 import { getPlatformCapabilities } from "./uipath-integration";
 import { generateRichXamlFromSpec, generateDeveloperHandoffGuide, aggregateGaps as aggGapsImport } from "./xaml-generator";
+import { analyzeAndFix } from "./workflow-analyzer";
 import { evaluateTransition } from "./stage-transition";
 import { approveDocument } from "./document-service";
 import { z } from "zod";
@@ -822,6 +823,13 @@ ${content}`
       }
       archive.append(readme, { name: "README.md" });
 
+      const analysisReports: Array<{ fileName: string; report: any }> = [];
+      for (let i = 0; i < allXamlResults.length; i++) {
+        const wfName = (workflows[i]?.name || "Workflow").replace(/\s+/g, "_");
+        const { report } = analyzeAndFix(allXamlResults[i].xaml);
+        analysisReports.push({ fileName: `${wfName}.xaml`, report });
+      }
+
       const allGapsForDhg = aggGapsImport(allXamlResults);
       const allUsedPkgsForDhg = Object.keys(depMap);
       const wfNamesForDhg = workflows.map((wf: any) => (wf.name || "Workflow").replace(/\s+/g, "_"));
@@ -833,8 +841,29 @@ ${content}`
         workflowNames: wfNamesForDhg,
         sddContent: sddContent || undefined,
         automationType: idea.automationType as "rpa" | "agent" | "hybrid" || undefined,
+        analysisReports,
       });
       archive.append(dhgContent, { name: "DeveloperHandoffGuide.md" });
+
+      const autoType = idea.automationType as string || "";
+      if (autoType === "agent" || autoType === "hybrid") {
+        const agentName = (pkg.projectName || idea.title).replace(/\s+/g, "_");
+
+        const systemPrompt = extractAgentPrompt(sddContent, "system", pkg);
+        archive.append(systemPrompt, { name: "prompts/system_prompt.txt" });
+
+        const userPromptTemplate = extractAgentPrompt(sddContent, "user", pkg);
+        archive.append(userPromptTemplate, { name: "prompts/user_prompt_template.txt" });
+
+        const toolDefs = extractToolDefinitions(sddContent, pkg);
+        archive.append(JSON.stringify(toolDefs, null, 2), { name: "tools/tool_definitions.json" });
+
+        const kbPlaceholder = generateKBPlaceholder(sddContent, pkg);
+        archive.append(kbPlaceholder, { name: "knowledge/kb_placeholder.md" });
+
+        const agentConfig = generateAgentConfig(agentName, sddContent, pkg);
+        archive.append(JSON.stringify(agentConfig, null, 2), { name: `agents/${agentName}_config.json` });
+      }
 
       await archive.finalize();
     } catch (error) {
@@ -878,6 +907,13 @@ ${content}`
         allXamlResults.push(result);
       }
 
+      const analysisReports: Array<{ fileName: string; report: any }> = [];
+      for (let i = 0; i < allXamlResults.length; i++) {
+        const wfName = (workflows[i]?.name || "Workflow").replace(/\s+/g, "_");
+        const { report } = analyzeAndFix(allXamlResults[i].xaml);
+        analysisReports.push({ fileName: `${wfName}.xaml`, report });
+      }
+
       const allGapsForDhg = aggGaps(allXamlResults);
       const depMap: Record<string, string> = {};
       for (const d of (pkg.dependencies || [])) depMap[d] = "*";
@@ -891,6 +927,7 @@ ${content}`
         workflowNames: wfNamesForDhg,
         sddContent: sddContent || undefined,
         automationType: idea.automationType as "rpa" | "agent" | "hybrid" || undefined,
+        analysisReports,
       });
 
       res.json({ content: dhgContent, projectName: pkg.projectName || idea.title });
@@ -1437,4 +1474,152 @@ function generateXamlStub(workflow: any, sddContent?: string): string {
 
 function escapeXml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+function extractSddSection(sddContent: string, heading: string): string {
+  const lines = sddContent.split("\n");
+  let capture = false;
+  let result: string[] = [];
+  for (const line of lines) {
+    if (line.toLowerCase().includes(heading.toLowerCase()) && (line.startsWith("#") || line.startsWith("**"))) {
+      capture = true;
+      continue;
+    }
+    if (capture && (line.startsWith("# ") || line.startsWith("## "))) break;
+    if (capture) result.push(line);
+  }
+  return result.join("\n").trim();
+}
+
+function extractAgentPrompt(sddContent: string, type: "system" | "user", pkg: any): string {
+  const projectName = pkg.projectName || "Automation";
+  const description = pkg.description || "";
+
+  if (type === "system") {
+    let prompt = `You are an AI agent for the "${projectName}" automation process.\n\n`;
+    prompt += `## Purpose\n${description}\n\n`;
+
+    const agentSection = extractSddSection(sddContent, "agent") || extractSddSection(sddContent, "AI");
+    if (agentSection) {
+      prompt += `## Context from Solution Design\n${agentSection.slice(0, 2000)}\n\n`;
+    }
+
+    prompt += `## Behavioral Guidelines\n`;
+    prompt += `- Follow the process steps defined in the automation workflow\n`;
+    prompt += `- Escalate to a human operator when confidence is below threshold\n`;
+    prompt += `- Log all decisions and actions for audit trail\n`;
+    prompt += `- Do not perform actions outside the defined scope\n\n`;
+
+    const guardrails = pkg.agents?.[0]?.guardrails || [];
+    if (guardrails.length > 0) {
+      prompt += `## Guardrails\n`;
+      for (const g of guardrails) prompt += `- ${g}\n`;
+      prompt += `\n`;
+    }
+
+    return prompt;
+  }
+
+  let template = `## Task\nProcess the following input according to the "${projectName}" workflow.\n\n`;
+  template += `## Input\n{{input_data}}\n\n`;
+  template += `## Expected Output Format\n`;
+  template += `Provide your response as structured JSON with the following fields:\n`;
+  template += `- decision: The action decision (approve/reject/escalate)\n`;
+  template += `- confidence: Confidence score (0.0 to 1.0)\n`;
+  template += `- reasoning: Brief explanation of the decision\n`;
+  template += `- next_steps: Array of recommended next actions\n\n`;
+  template += `## Additional Context\n{{additional_context}}\n`;
+  return template;
+}
+
+function extractToolDefinitions(sddContent: string, pkg: any): any[] {
+  const tools: any[] = [];
+
+  const agentTools = pkg.agents?.[0]?.tools || [];
+  for (const tool of agentTools) {
+    if (typeof tool === "string") {
+      tools.push({
+        name: tool,
+        description: `UiPath activity: ${tool}`,
+        input_schema: { type: "object", properties: {}, required: [] },
+        output_schema: { type: "object", properties: {} },
+        action: "AUTHORIZE",
+      });
+    } else if (typeof tool === "object") {
+      tools.push({
+        name: tool.name || "unknown_tool",
+        description: tool.description || "",
+        input_schema: tool.inputSchema || { type: "object", properties: {} },
+        output_schema: tool.outputSchema || { type: "object", properties: {} },
+        action: "AUTHORIZE",
+      });
+    }
+  }
+
+  if (tools.length === 0) {
+    tools.push(
+      { name: "read_document", description: "Read and extract content from a document", input_schema: { type: "object", properties: { document_path: { type: "string" } }, required: ["document_path"] }, output_schema: { type: "object", properties: { content: { type: "string" } } }, action: "CONFIGURE" },
+      { name: "query_database", description: "Execute a read-only query against the business database", input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }, output_schema: { type: "object", properties: { results: { type: "array" } } }, action: "AUTHORIZE" },
+      { name: "send_notification", description: "Send a notification or escalation message", input_schema: { type: "object", properties: { recipient: { type: "string" }, message: { type: "string" } }, required: ["recipient", "message"] }, output_schema: { type: "object", properties: { sent: { type: "boolean" } } }, action: "CONFIGURE" },
+    );
+  }
+
+  return tools;
+}
+
+function generateKBPlaceholder(sddContent: string, pkg: any): string {
+  const projectName = pkg.projectName || "Automation";
+  let md = `# Knowledge Base — ${projectName}\n\n`;
+  md += `This folder should contain the documents the agent needs for retrieval-augmented generation (RAG).\n\n`;
+  md += `## Recommended Documents\n\n`;
+
+  const kbs = pkg.knowledgeBases || pkg.agents?.[0]?.knowledgeBases || [];
+  if (kbs.length > 0) {
+    for (const kb of kbs) {
+      const name = typeof kb === "string" ? kb : kb.name || kb;
+      md += `- ${name}\n`;
+    }
+  } else {
+    md += `- Standard Operating Procedures (SOPs) for ${projectName}\n`;
+    md += `- Business rules and exception handling documentation\n`;
+    md += `- Reference data tables and lookup values\n`;
+    md += `- Previous process execution logs and examples\n`;
+  }
+
+  md += `\n## Setup Steps\n\n`;
+  md += `1. Upload documents to the UiPath AI Center knowledge base\n`;
+  md += `2. Configure indexing and chunking strategy\n`;
+  md += `3. Test retrieval with representative queries\n`;
+  md += `4. Verify agent can cite relevant document sections\n`;
+  return md;
+}
+
+function generateAgentConfig(agentName: string, sddContent: string, pkg: any): any {
+  const agent = pkg.agents?.[0] || {};
+  return {
+    name: agentName,
+    description: agent.description || pkg.description || "",
+    systemPromptFile: "prompts/system_prompt.txt",
+    userPromptTemplateFile: "prompts/user_prompt_template.txt",
+    toolDefinitionsFile: "tools/tool_definitions.json",
+    knowledgeBaseFolder: "knowledge/",
+    configuration: {
+      temperature: { value: agent.temperature ?? 0.3, action: "TUNE" },
+      maxIterations: { value: agent.maxIterations || 10, action: "TUNE" },
+      model: { value: "gpt-4o", action: "CONFIGURE" },
+      escalationThreshold: { value: 0.7, action: "TUNE" },
+    },
+    guardrails: (agent.guardrails || []).map((g: string) => ({ rule: g, action: "REVIEW" })),
+    escalationRules: (agent.escalationRules || []).map((r: any) => ({
+      condition: typeof r === "string" ? r : r.condition,
+      target: typeof r === "string" ? "human_operator" : r.target,
+      action: "REVIEW",
+    })),
+    tools: (agent.tools || []).map((t: any) => ({
+      name: typeof t === "string" ? t : t.name,
+      action: "AUTHORIZE",
+    })),
+    provisionedBy: "CannonBall",
+    importInstructions: "Import this configuration into UiPath Agent Builder. See DeveloperHandoffGuide.md Section 2a for step-by-step instructions.",
+  };
 }

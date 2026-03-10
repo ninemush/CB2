@@ -99,7 +99,7 @@ export type OrchestratorArtifacts = {
 export type DeploymentResult = {
   artifact: string;
   name: string;
-  status: "created" | "exists" | "updated" | "failed" | "skipped" | "manual";
+  status: "created" | "exists" | "updated" | "failed" | "skipped" | "manual" | "in_package";
   message: string;
   id?: number;
   manualSteps?: string[];
@@ -2053,7 +2053,8 @@ async function provisionDocUnderstanding(
 
   const cloudBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
   const duConsoleUrl = `${cloudBase}/du_`;
-  const DEFAULT_DU_PROJECT = "CannonBall Test";
+  const PREDEFINED_DU_PROJECT_ID = "00000000-0000-0000-0000-000000000000";
+  const PREDEFINED_DU_PROJECT_NAME = "Predefined";
 
   let duToken: string;
   try {
@@ -2085,7 +2086,7 @@ async function provisionDocUnderstanding(
       const genuineCheck = isGenuineServiceResponse(listText);
       if (genuineCheck.genuine) {
         const listData = JSON.parse(listText);
-        discoveredProjects = listData.value || listData.items || (Array.isArray(listData) ? listData : []);
+        discoveredProjects = listData.projects || listData.value || listData.items || (Array.isArray(listData) ? listData : []);
         discoverySuccess = true;
         console.log(`[UiPath Deploy] DU Discovery found ${discoveredProjects.length} project(s): ${discoveredProjects.map((p: any) => p.name || p.Name).join(", ")}`);
       }
@@ -2105,7 +2106,11 @@ async function provisionDocUnderstanding(
     }));
   }
 
-  const defaultProject = discoveredProjects.find((p: any) => (p.name || p.Name) === DEFAULT_DU_PROJECT);
+  const defaultProject = discoveredProjects.find((p: any) => {
+    const pId = (p.id || p.Id || "").toString();
+    const pName = p.name || p.Name || "";
+    return pId === PREDEFINED_DU_PROJECT_ID || pName === PREDEFINED_DU_PROJECT_NAME;
+  });
 
   for (const artifact of du) {
     const exactMatch = discoveredProjects.find((p: any) => (p.name || p.Name) === artifact.name);
@@ -2136,7 +2141,7 @@ async function provisionDocUnderstanding(
 
     if (defaultProject) {
       const projId = defaultProject.id || defaultProject.Id;
-      let details = `Linked to default DU project "${DEFAULT_DU_PROJECT}" (ID: ${projId})`;
+      let details = `Linked to predefined DU project "${PREDEFINED_DU_PROJECT_NAME}" (ID: ${projId})`;
 
       try {
         const detailRes = await fetch(`${cloudBase}/du_/api/framework/projects/${projId}?api-version=1`, { headers: hdrs });
@@ -3420,8 +3425,8 @@ async function provisionAgentArtifacts(
           results.push({
             artifact: "Knowledge Base",
             name: kb.name,
-            status: "created",
-            message: `Created config asset "${assetName}" (ID: ${creation.data?.Id || "unknown"}). Populate with actual documents in Orchestrator.`,
+            status: "in_package",
+            message: `Config asset "${assetName}" created (ID: ${creation.data?.Id || "unknown"}). Knowledge base configuration included in downloadable package — see Handoff Guide for import steps.`,
             id: creation.data?.Id,
             manualSteps: [
               `Upload knowledge base documents to Storage Bucket or external source`,
@@ -3476,7 +3481,7 @@ async function provisionAgentArtifacts(
         });
         if (createRes.status >= 200 && createRes.status < 300) {
           const creation = isValidCreation(createRes.text);
-          results.push({ artifact: "Prompt Template", name: pt.name, status: "created", message: `Created asset "${assetName}" (ID: ${creation.data?.Id || "unknown"})`, id: creation.data?.Id });
+          results.push({ artifact: "Prompt Template", name: pt.name, status: "in_package", message: `Config asset "${assetName}" created (ID: ${creation.data?.Id || "unknown"}). Prompt template included in downloadable package — see Handoff Guide for configuration steps.`, id: creation.data?.Id });
         } else {
           results.push({ artifact: "Prompt Template", name: pt.name, status: "failed", message: `Creation failed (${createRes.status}): ${createRes.text.slice(0, 200)}` });
         }
@@ -3540,8 +3545,8 @@ async function provisionAgentArtifacts(
           results.push({
             artifact: "Agent",
             name: agent.name,
-            status: "created",
-            message: `Created config asset "${assetName}" (ID: ${creation.data?.Id || "unknown"}). Agent definition stored — configure in Autopilot/Agent Builder.`,
+            status: "in_package",
+            message: `Config asset "${assetName}" created (ID: ${creation.data?.Id || "unknown"}). Agent configuration included in downloadable package — see Handoff Guide for Agent Builder import and setup steps.`,
             id: creation.data?.Id,
             manualSteps,
           });
@@ -3735,8 +3740,10 @@ export async function deployAllArtifacts(
     const existed = allResults.filter(r => r.status === "exists").length;
     const failed = allResults.filter(r => r.status === "failed").length;
     const skipped = allResults.filter(r => r.status === "skipped").length;
+    const inPackage = allResults.filter(r => r.status === "in_package").length;
 
     let summary = `Deployment complete: ${created} created, ${existed} already existed`;
+    if (inPackage > 0) summary += `, ${inPackage} in downloadable package`;
     if (skipped > 0) summary += `, ${skipped} skipped (service unavailable)`;
     if (failed > 0) summary += `, ${failed} failed`;
 
@@ -3761,6 +3768,8 @@ export function formatDeploymentReport(results: DeploymentResult[]): string {
     switch (s) {
       case "created": return "✅";
       case "exists": return "🔵";
+      case "updated": return "🔄";
+      case "in_package": return "📦";
       case "skipped": return "⚠️";
       case "manual": return "🔧";
       case "failed": return "❌";

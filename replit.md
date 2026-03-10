@@ -36,7 +36,7 @@ The application employs a modern web stack for scalability and an intuitive user
 -   **Workflow Analyzer Compliance Engine**: Static analysis for 11 Workflow Analyzer rules with auto-correction and comprehensive reporting.
 -   **UiPath Naming Convention Enforcement**: Standardized naming conventions for variables and arguments enforced throughout XAML generation.
 -   **Argument Validation**: Automated argument validation at workflow entry points.
--   **Three-Tier Developer Handoff Guide (DHG)**: Restructured with an AI-first philosophy (Tier 1: AI Completed, Tier 2: Smart Defaults, Tier 3: Human Required), including readiness score, compliance report, and code review rubric.
+-   **Three-Tier Developer Handoff Guide (DHG)**: Restructured with an AI-first philosophy (Tier 1: AI Completed, Tier 2: Smart Defaults, Tier 3: Human Required), including readiness score, Workflow Analyzer compliance report, code review rubric, and Section 2a for agent artifact import/configuration (agent/hybrid types).
 -   **UiPath Integration Layer**: Manages UiPath's multi-resource token architecture with proactive refresh, typed Orchestrator API client, and robust artifact provisioning.
 -   **Unified Probe Architecture**: Single source of truth for platform service availability with caching and automated configuration changes.
 -   **Consolidated Streaming Progress Indicator**: A unified component for displaying real-time progress during AI chat, document generation, and deployment.
@@ -44,7 +44,7 @@ The application employs a modern web stack for scalability and an intuitive user
 -   **Document Approval**: Supports approval of PDD/SDD via dedicated buttons or chat phrases, with a pending-approval banner for unapproved documents.
 -   **Artifact Upsert on Re-deployment**: Deployment uses create-or-update logic for all artifact types in UiPath Orchestrator, including PUT-404 fallback to POST.
 -   **SSE Deploy Streaming**: Button-triggered deploy (`POST /api/ideas/:ideaId/push-uipath`) uses Server-Sent Events to stream real-time per-artifact progress to the client. `deployAllArtifacts` accepts an `onProgress` callback. The deploy report is saved as an assistant chat message with `[DEPLOY_REPORT:{...}]` tag for both chat-triggered and button-triggered deploys.
--   **Document Understanding — Discovery-Based Provisioning**: Manages DU project provisioning by discovering existing projects via API, as direct project creation is not supported.
+-   **Document Understanding — Discovery-Based Provisioning**: Manages DU project provisioning by discovering existing projects via API (parses `projects`, `value`, `items` response formats), with fallback to the predefined DU project (ID `00000000-...`, name "Predefined"). Direct project creation is not supported.
 -   **Integration Status Bar**: Displays live UiPath connection status, robot count, pending tasks, and latency.
 -   **File Upload Content Extraction**: Server-side extraction from various document types (DOCX, PDF, XLSX, TXT, CSV) for AI context.
 -   **Image/Screenshot Vision**: Processes image files (PNG, JPEG, WebP, GIF) via Claude's vision API for text extraction and process analysis.

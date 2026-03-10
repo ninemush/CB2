@@ -1891,7 +1891,7 @@ export function aggregatePackages(results: XamlGeneratorResult[]): string[] {
 export type DhgDeploymentResult = {
   artifact: string;
   name: string;
-  status: "created" | "exists" | "updated" | "failed" | "skipped" | "manual";
+  status: "created" | "exists" | "updated" | "failed" | "skipped" | "manual" | "in_package";
   message: string;
   id?: number;
 };
@@ -1972,7 +1972,7 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
   const totalAutoFixed = analysisReports?.reduce((s, r) => s + r.report.totalAutoFixed, 0) ?? 0;
   const totalRulesChecked = analysisReports?.reduce((s, r) => s + r.report.totalChecked, 0) ?? 0;
   const totalRulesPassed = analysisReports?.reduce((s, r) => s + r.report.totalPassed, 0) ?? 0;
-  const provisionedCount = deploymentResults?.filter(r => r.status === "created" || r.status === "exists" || r.status === "updated").length ?? 0;
+  const provisionedCount = deploymentResults?.filter(r => r.status === "created" || r.status === "exists" || r.status === "updated" || r.status === "in_package").length ?? 0;
   const totalProvisionAttempts = deploymentResults?.length ?? 0;
 
   const readinessComponents: number[] = [];
@@ -2065,7 +2065,7 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
     for (const r of deploymentResults) {
       const entry = artifactTypes.get(r.artifact) || { total: 0, ready: 0, needs: 0 };
       entry.total++;
-      if (r.status === "created" || r.status === "exists" || r.status === "updated") entry.ready++;
+      if (r.status === "created" || r.status === "exists" || r.status === "updated" || r.status === "in_package") entry.ready++;
       else entry.needs++;
       artifactTypes.set(r.artifact, entry);
     }
@@ -2165,6 +2165,51 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
       }
     }
     md += `\n`;
+  }
+
+  if (automationType === "agent" || automationType === "hybrid") {
+    md += `### Agent Artifacts in Package\n\n`;
+    md += `The following agent configuration files are included in the downloadable package:\n\n`;
+    md += `| File | Purpose | Action |\n`;
+    md += `|------|---------|--------|\n`;
+    md += `| \`prompts/system_prompt.txt\` | System prompt defining agent behavior and guardrails | REVIEW |\n`;
+    md += `| \`prompts/user_prompt_template.txt\` | Parameterized user prompt template with input placeholders | REVIEW |\n`;
+    md += `| \`tools/tool_definitions.json\` | Tool names, descriptions, and input/output schemas | AUTHORIZE |\n`;
+    md += `| \`knowledge/kb_placeholder.md\` | Instructions for knowledge base document upload | CONFIGURE |\n`;
+    md += `| \`agents/*_config.json\` | Agent configuration with temperature, iterations, guardrails | TUNE |\n\n`;
+
+    md += `#### Import into UiPath Agent Builder\n\n`;
+    md += `1. Open **UiPath Automation Cloud** → **AI Center** → **Agent Builder**\n`;
+    md += `2. Create a new agent using the name from \`agents/*_config.json\`\n`;
+    md += `3. Copy the system prompt from \`prompts/system_prompt.txt\` into the agent's system prompt field\n`;
+    md += `4. Register each tool from \`tools/tool_definitions.json\`:\n`;
+    md += `   - For each tool, set the name, description, and input schema\n`;
+    md += `   - Grant the required permissions (marked as AUTHORIZE)\n`;
+    md += `5. Upload knowledge base documents per instructions in \`knowledge/kb_placeholder.md\`\n`;
+    md += `6. Apply configuration values from the agent config file\n\n`;
+
+    md += `#### Configuration Checklist\n\n`;
+    md += `| # | Item | File | Action | Notes |\n`;
+    md += `|---|------|------|--------|-------|\n`;
+    md += `| 1 | System prompt | \`prompts/system_prompt.txt\` | REVIEW | Verify tone, scope, and safety constraints |\n`;
+    md += `| 2 | User prompt template | \`prompts/user_prompt_template.txt\` | REVIEW | Confirm input/output format matches your data |\n`;
+    md += `| 3 | Tool permissions | \`tools/tool_definitions.json\` | AUTHORIZE | Grant each tool access in Agent Builder |\n`;
+    md += `| 4 | Knowledge base | \`knowledge/kb_placeholder.md\` | CONFIGURE | Upload and index actual business documents |\n`;
+    md += `| 5 | Temperature / iterations | \`agents/*_config.json\` | TUNE | Adjust for accuracy vs. creativity tradeoff |\n`;
+    md += `| 6 | Guardrails | \`agents/*_config.json\` | REVIEW | Verify safety constraints are appropriate |\n`;
+    md += `| 7 | Escalation rules | \`agents/*_config.json\` | REVIEW | Confirm human-handoff triggers |\n\n`;
+
+    md += `#### What Works Out of the Box\n\n`;
+    md += `- System prompt with process-specific context derived from SDD\n`;
+    md += `- Tool definitions with correct schemas\n`;
+    md += `- Agent config with recommended defaults (temperature, max iterations)\n`;
+    md += `- Guardrail definitions from process analysis\n\n`;
+
+    md += `#### Requires Human Action\n\n`;
+    md += `- Tool authorization in Agent Builder (security review required)\n`;
+    md += `- Knowledge base document upload (actual SOPs and reference materials)\n`;
+    md += `- Production prompt tuning after testing with real data\n`;
+    md += `- Escalation rule validation with stakeholders\n\n`;
   }
 
   md += `---\n\n`;
@@ -2516,7 +2561,7 @@ export function generateDhgSummary(gaps: XamlGap[], deploymentResults?: DhgDeplo
 
   if (deploymentResults?.length) {
     const failed = deploymentResults.filter(r => r.status === "failed" || r.status === "manual");
-    const created = deploymentResults.filter(r => r.status === "created" || r.status === "exists" || r.status === "updated");
+    const created = deploymentResults.filter(r => r.status === "created" || r.status === "exists" || r.status === "updated" || r.status === "in_package");
     lines.push(`  Orchestrator: ${created.length}/${deploymentResults.length} artifacts provisioned`);
     if (failed.length > 0) {
       lines.push(`  ${failed.length} artifact(s) need manual setup — see DHG for details`);
