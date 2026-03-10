@@ -3344,6 +3344,8 @@ async function provisionAgentArtifacts(
       const existing = isGenuineApiResponse(checkRes.text) ? JSON.parse(checkRes.text) : null;
       const existingId = existing?.value?.[0]?.Id;
 
+      let shouldCreateKB = !existingId;
+
       if (existingId) {
         try {
           const putRes = await uipathFetch(`${base}/odata/Assets(${existingId})`, {
@@ -3353,13 +3355,18 @@ async function provisionAgentArtifacts(
           });
           if (putRes.status >= 200 && putRes.status < 300) {
             results.push({ artifact: "Knowledge Base", name: kb.name, status: "updated", message: `Updated config asset "${assetName}" (ID: ${existingId})`, id: existingId });
+          } else if (putRes.status === 404 || putRes.text.toLowerCase().includes("does not exist")) {
+            console.log(`[UiPath Deploy] Knowledge Base "${kb.name}" PUT returned 404 (ID ${existingId} likely in different folder) — falling back to create in current folder`);
+            shouldCreateKB = true;
           } else {
             results.push({ artifact: "Knowledge Base", name: kb.name, status: "failed", message: `Update failed (${putRes.status}): ${putRes.text.slice(0, 200)}`, id: existingId });
           }
         } catch (putErr: any) {
           results.push({ artifact: "Knowledge Base", name: kb.name, status: "failed", message: `Update error: ${putErr.message}`, id: existingId });
         }
-      } else {
+      }
+
+      if (shouldCreateKB) {
         const createRes = await uipathFetch(`${base}/odata/Assets`, {
           method: "POST",
           headers: { ...hdrs, "Content-Type": "application/json" },
@@ -3403,6 +3410,8 @@ async function provisionAgentArtifacts(
       const existing = isGenuineApiResponse(checkRes.text) ? JSON.parse(checkRes.text) : null;
       const existingId = existing?.value?.[0]?.Id;
 
+      let shouldCreatePT = !existingId;
+
       if (existingId) {
         try {
           const putRes = await uipathFetch(`${base}/odata/Assets(${existingId})`, {
@@ -3412,13 +3421,18 @@ async function provisionAgentArtifacts(
           });
           if (putRes.status >= 200 && putRes.status < 300) {
             results.push({ artifact: "Prompt Template", name: pt.name, status: "updated", message: `Updated asset "${assetName}" (ID: ${existingId})`, id: existingId });
+          } else if (putRes.status === 404 || putRes.text.toLowerCase().includes("does not exist")) {
+            console.log(`[UiPath Deploy] Prompt Template "${pt.name}" PUT returned 404 (ID ${existingId} likely in different folder) — falling back to create in current folder`);
+            shouldCreatePT = true;
           } else {
             results.push({ artifact: "Prompt Template", name: pt.name, status: "failed", message: `Update failed (${putRes.status}): ${putRes.text.slice(0, 200)}`, id: existingId });
           }
         } catch (putErr: any) {
           results.push({ artifact: "Prompt Template", name: pt.name, status: "failed", message: `Update error: ${putErr.message}`, id: existingId });
         }
-      } else {
+      }
+
+      if (shouldCreatePT) {
         const createRes = await uipathFetch(`${base}/odata/Assets`, {
           method: "POST",
           headers: { ...hdrs, "Content-Type": "application/json" },
@@ -3457,6 +3471,8 @@ async function provisionAgentArtifacts(
       const existing = isGenuineApiResponse(checkRes.text) ? JSON.parse(checkRes.text) : null;
       const existingId = existing?.value?.[0]?.Id;
 
+      let shouldCreateAgent = !existingId;
+
       if (existingId) {
         try {
           const putRes = await uipathFetch(`${base}/odata/Assets(${existingId})`, {
@@ -3466,13 +3482,18 @@ async function provisionAgentArtifacts(
           });
           if (putRes.status >= 200 && putRes.status < 300) {
             results.push({ artifact: "Agent", name: agent.name, status: "updated", message: `Updated config asset "${assetName}" (ID: ${existingId})`, id: existingId });
+          } else if (putRes.status === 404 || putRes.text.toLowerCase().includes("does not exist")) {
+            console.log(`[UiPath Deploy] Agent "${agent.name}" PUT returned 404 (ID ${existingId} likely in different folder) — falling back to create in current folder`);
+            shouldCreateAgent = true;
           } else {
             results.push({ artifact: "Agent", name: agent.name, status: "failed", message: `Update failed (${putRes.status}): ${putRes.text.slice(0, 200)}`, id: existingId });
           }
         } catch (putErr: any) {
           results.push({ artifact: "Agent", name: agent.name, status: "failed", message: `Update error: ${putErr.message}`, id: existingId });
         }
-      } else {
+      }
+
+      if (shouldCreateAgent) {
         const createRes = await uipathFetch(`${base}/odata/Assets`, {
           method: "POST",
           headers: { ...hdrs, "Content-Type": "application/json" },

@@ -495,7 +495,7 @@ function filterNodesForLevel(
   });
 
   allNodes.forEach(n => {
-    if ((n.nodeType === "decision" || n.nodeType === "agent-decision") && (outDegree[n.id] || 0) >= 3) {
+    if (n.nodeType === "decision" || n.nodeType === "agent-decision") {
       keepIds.add(n.id);
     }
   });

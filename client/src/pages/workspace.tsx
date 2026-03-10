@@ -536,6 +536,8 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
     setPendingUserMsg(null);
   }, []);
 
+  const isGeneratingDocRef = useRef(false);
+  const generatingDocTypeRef = useRef("");
   const pddTriggeredRef = useRef(false);
   const sddTriggeredRef = useRef(false);
   const uipathTriggeredRef = useRef(false);
@@ -720,9 +722,11 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
               if (data.token) {
                 streamingMsgRef.current += data.token;
                 const docTagMatch = streamingMsgRef.current.match(/^\[DOC:(PDD|SDD):/);
-                if (docTagMatch && !isGeneratingDoc) {
+                if (docTagMatch && !isGeneratingDocRef.current) {
                   setIsGeneratingDoc(true);
                   setGeneratingDocType(docTagMatch[1]);
+                  isGeneratingDocRef.current = true;
+                  generatingDocTypeRef.current = docTagMatch[1];
                 }
                 setStreamingMsg((prev) =>
                   prev ? { ...prev, content: prev.content + data.token } : prev
@@ -739,6 +743,8 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
                 if (data.docProgress.started) {
                   setIsGeneratingDoc(true);
                   setGeneratingDocType(data.docProgress.docType || "PDD");
+                  isGeneratingDocRef.current = true;
+                  generatingDocTypeRef.current = data.docProgress.docType || "PDD";
                   setDocProgressSection("");
                   setStreamingMsg((prev) => prev ? { ...prev } : prev);
                 }
@@ -799,6 +805,8 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
       setIsStreaming(false);
       setIsGeneratingDoc(false);
       setGeneratingDocType("");
+      isGeneratingDocRef.current = false;
+      generatingDocTypeRef.current = "";
       setDocProgressSection("");
       setDeployStep("");
       setPendingUserMsg(null);
@@ -972,6 +980,8 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
     if (isGeneratingDoc || isStreaming) return;
     setIsGeneratingDoc(true);
     setGeneratingDocType(type);
+    isGeneratingDocRef.current = true;
+    generatingDocTypeRef.current = type;
     const prompt = type === "PDD"
       ? "Generate the Process Design Document (PDD) now. Start your response with [DOC:PDD:0] followed by the full document. Include all sections: 1) Executive Summary, 2) Process Scope, 3) As-Is Process Description, 4) To-Be Process Description, 5) Pain Points and Inefficiencies, 6) Automation Opportunity Assessment, 7) Assumptions and Exceptions, 8) Data and System Requirements. Write as a professional document using ## headings."
       : "Generate the Solution Design Document (SDD) now. Start your response with [DOC:SDD:0] followed by the full document. Include the orchestrator_artifacts JSON block in Section 9 with all artifact definitions (queues, assets, machines, triggers, storageBuckets, environments, actionCenter, testCases). Write as a professional technical specification using ## headings.";
@@ -1407,8 +1417,9 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
             if (deployStep) {
               return <StreamingProgressIndicator key={`${msg.id}-deploy`} mode="deploy" deployStep={deployStep} />;
             }
-            if (isGeneratingDoc) {
-              return <StreamingProgressIndicator key={`${msg.id}-doc-${generatingDocType}`} mode="doc" docType={generatingDocType} currentSection={docProgressSection} onCancel={cancelDocGeneration} />;
+            if (isGeneratingDoc || isGeneratingDocRef.current) {
+              const docType = generatingDocType || generatingDocTypeRef.current || "PDD";
+              return <StreamingProgressIndicator key={`${msg.id}-doc-${docType}`} mode="doc" docType={docType} currentSection={docProgressSection} onCancel={cancelDocGeneration} />;
             }
             if (!msg.content) {
               return <StreamingProgressIndicator key={`${msg.id}-thinking`} mode="thinking" stage={idea.stage} />;

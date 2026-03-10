@@ -648,7 +648,15 @@ export function registerChatRoutes(app: Express): void {
           const classifyRes = await anthropic.messages.create({
             model: "claude-sonnet-4-6",
             max_tokens: 20,
-            system: `You classify user intent in a UiPath automation pipeline chat. The pipeline sequence is: as-is process map → to-be process map → PDD (Process Design Document) → SDD (Solution Design Document) → UiPath package generation → deployment to Orchestrator. Given the recent conversation, determine what the user is requesting. Reply with EXACTLY one of: PDD, SDD, PDD_SDD, DEPLOY, or CHAT. Only classify as PDD/SDD/PDD_SDD if the user is clearly requesting GENERATION or REGENERATION of a document (e.g. "generate the PDD", "write the SDD", "regenerate PDD"). If the user is APPROVING a document (e.g. "I approve", "looks good", "approved"), classify as CHAT — approvals are not generation requests. If both documents are being requested for generation, reply PDD_SDD.`,
+            system: `You classify user intent in a UiPath automation pipeline chat. The pipeline sequence is: as-is process map → to-be process map → PDD (Process Design Document) → SDD (Solution Design Document) → UiPath package generation → deployment to Orchestrator. Given the recent conversation, determine what the user is requesting. Reply with EXACTLY one of: PDD, SDD, PDD_SDD, DEPLOY, or CHAT.
+
+CRITICAL RULES:
+- Classify as PDD, SDD, or PDD_SDD ONLY when the user's LATEST message contains an EXPLICIT request to generate, write, create, produce, or regenerate a document. Look for action verbs like "generate", "write", "create", "produce", "draft", "regenerate", "build", "make" paired with "PDD", "SDD", "document", "design document".
+- Short responses, feedback, confirmations, opinions, or general discussion about the process should ALWAYS be classified as CHAT. Examples of CHAT: "no i think they make sense in this scenario", "yes that looks right", "I agree", "sounds good", "let's go with that", "what about edge cases?", "can you explain more?", "that's correct".
+- If the user is APPROVING a document (e.g. "I approve", "looks good, approved"), classify as CHAT — approvals are not generation requests.
+- DEPLOY should only be used when the user explicitly requests deployment (e.g. "deploy", "push to orchestrator").
+- When in doubt, ALWAYS classify as CHAT. It is much better to incorrectly classify as CHAT than to incorrectly trigger document generation.
+- If both documents are being requested for generation, reply PDD_SDD.`,
             messages: recentMessages,
           });
           const rawClassify = (classifyRes.content[0]?.type === "text" ? classifyRes.content[0].text : "").trim();

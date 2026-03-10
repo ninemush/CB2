@@ -67,11 +67,11 @@ async function cleanupDuplicateProcessNodes(): Promise<void> {
     let totalDeleted = 0;
 
     const dupResult = await db.execute(sql`
-      SELECT idea_id, view_type, LOWER(TRIM(name)) as norm_name, COUNT(*) as cnt,
+      SELECT idea_id, view_type, node_type, LOWER(TRIM(name)) as norm_name, COUNT(*) as cnt,
              array_agg(id ORDER BY id) as ids
       FROM process_nodes
       WHERE view_type IN ('to-be', 'sdd')
-      GROUP BY idea_id, view_type, LOWER(TRIM(name))
+      GROUP BY idea_id, view_type, node_type, LOWER(TRIM(name))
       HAVING COUNT(*) > 1
     `);
 
