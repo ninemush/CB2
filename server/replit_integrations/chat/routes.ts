@@ -130,6 +130,7 @@ Examples:
 ${automationType && automationType !== "rpa" ? `CURRENT AUTOMATION TYPE: ${automationType.toUpperCase()}
 This idea has been assessed as "${automationType}" automation. All subsequent design, documentation, and deployment must reflect this:
 - AS-IS maps represent the CURRENT manual/human process BEFORE automation. NEVER use agent-task or agent-decision node types in AS-IS maps. AS-IS maps MUST only use: task, decision, start, end.
+- TO-BE maps represent the AUTOMATED future state that REPLACES the manual process. Do NOT copy or duplicate AS-IS manual steps into the TO-BE map. The TO-BE map must show the new automated workflow, not a repeat of the current process with minor changes.
 ${automationType === "agent" ? `- Design the TO-BE as an AI Agent workflow. Steps should primarily use agent-task and agent-decision node types.
 - The agent handles unstructured reasoning, natural language interpretation, and context-dependent decisions autonomously.
 - RPA task nodes are only used for structured system interactions the agent delegates to (API calls, database updates, file operations).` : ""}${automationType === "hybrid" ? `- Design the TO-BE as a HYBRID workflow. Use standard task/decision nodes for structured RPA steps and agent-task/agent-decision nodes for judgment-heavy steps.
@@ -217,6 +218,7 @@ SELF-CHECK (MANDATORY — run this mentally before finalizing your [STEP:] outpu
 7. Branches that lead to the same outcome MERGE into a shared path before the End node.
 8. Trace EVERY path from EVERY decision outcome forward. Each path must reach an End node or loop back to an earlier step. If any path dead-ends at a non-end node with no outgoing edge, add the missing connection.
 9. If outputting both AS-IS and TO-BE maps: EACH section has its own complete [STEP:] tags (not prose). AS-IS uses ONLY task/decision/start/end types. agent-task and agent-decision are ONLY in TO-BE.
+10. TO-BE map does NOT duplicate AS-IS manual steps. The TO-BE map shows the new automated workflow that replaces the manual process.
 
 EXAMPLE 1 — Insurance claim with 3-way decision and loop:
 [STEP: 1.0 Customer Submits Claim | ROLE: Customer | SYSTEM: Claims Portal | TYPE: start]
@@ -879,6 +881,58 @@ export function registerChatRoutes(app: Express): void {
             console.log(`[Chat] Continuation added ${continuation.length} chars. Total doc: ${fullResponse.length} chars.`);
           } catch (contErr: any) {
             console.error(`[Chat] Continuation failed:`, contErr?.message);
+          }
+        }
+      }
+
+      const isMapResponse = /\[STEP:\s*\d/.test(fullResponse);
+      if (!isDocResponse && isMapResponse && stopReason === "max_tokens") {
+        const MAX_MAP_CONTINUATIONS = 3;
+        let mapContRound = 0;
+        let contStopReason = stopReason;
+
+        while (contStopReason === "max_tokens" && mapContRound < MAX_MAP_CONTINUATIONS && !clientDisconnected) {
+          mapContRound++;
+          console.log(`[Chat] Map response truncated at max_tokens (round ${mapContRound}, len=${fullResponse.length}). Auto-continuing...`);
+          res.write(`data: ${JSON.stringify({ token: `\n\n*[Continuing map generation (part ${mapContRound + 1})...]*\n\n` })}\n\n`);
+
+          const continueMapMessages = [
+            ...chatMessages,
+            { role: "assistant" as const, content: fullResponse },
+            { role: "user" as const, content: "Continue exactly where you left off. Output the remaining [STEP:] tags. Do NOT repeat any steps already generated. Do NOT add prose — only [STEP:] tags." },
+          ];
+
+          try {
+            const mapContStream = anthropic.messages.stream({
+              model: "claude-sonnet-4-6",
+              max_tokens: 8192,
+              system: systemPrompt,
+              messages: continueMapMessages,
+            });
+            let mapContinuation = "";
+            contStopReason = "end_turn";
+            for await (const evt of mapContStream) {
+              if (clientDisconnected) {
+                console.log(`[Chat] Client disconnected during map continuation — aborting`);
+                mapContStream.abort();
+                break;
+              }
+              if (evt.type === "content_block_delta" && evt.delta.type === "text_delta") {
+                const text = evt.delta.text;
+                if (text) {
+                  mapContinuation += text;
+                  try { res.write(`data: ${JSON.stringify({ token: text })}\n\n`); } catch { break; }
+                }
+              }
+              if (evt.type === "message_delta" && (evt as any).delta?.stop_reason) {
+                contStopReason = (evt as any).delta.stop_reason;
+              }
+            }
+            fullResponse += "\n" + mapContinuation;
+            console.log(`[Chat] Map continuation round ${mapContRound} added ${mapContinuation.length} chars. Total: ${fullResponse.length} chars. stopReason=${contStopReason}`);
+          } catch (contErr: any) {
+            console.error(`[Chat] Map continuation round ${mapContRound} failed:`, contErr?.message);
+            break;
           }
         }
       }

@@ -9,7 +9,6 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 
 const toBeGenerationLocks = new Set<string>();
-const bulkCreatedToBeViews = new Set<string>();
 const bulkWriteLocks = new Map<string, Promise<void>>();
 
 async function consolidateDuplicateEndNodes(ideaId?: string, viewType?: string): Promise<number> {
@@ -538,16 +537,12 @@ export function registerProcessMapRoutes(app: Express): void {
     ]);
 
     if (viewType === "to-be" && nodes.length === 0) {
-      if (bulkCreatedToBeViews.has(ideaId)) {
-        const recheckBulk = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
-        if (recheckBulk.length > 0) {
-          nodes = recheckBulk;
-          edges = await processMapStorage.getEdgesByIdeaId(ideaId, "to-be");
-        } else {
-          bulkCreatedToBeViews.delete(ideaId);
-        }
+      const recheckBulk = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
+      if (recheckBulk.length > 0) {
+        nodes = recheckBulk;
+        edges = await processMapStorage.getEdgesByIdeaId(ideaId, "to-be");
       }
-      if (nodes.length === 0 && !bulkCreatedToBeViews.has(ideaId)) {
+      if (nodes.length === 0) {
       const asIsApproval = await processMapStorage.getApproval(ideaId, "as-is");
       if (asIsApproval) {
         const recheck = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
@@ -770,9 +765,6 @@ export function registerProcessMapRoutes(app: Express): void {
     const viewType = (req.query.view as string) || "as-is";
     try {
       const result = await processMapStorage.clearAllForView(ideaId, viewType);
-      if (viewType === "to-be") {
-        bulkCreatedToBeViews.delete(ideaId);
-      }
       return res.json({ success: true, ...result });
     } catch (err: any) {
       console.error(`[ProcessMap] Clear failed:`, err?.message);
@@ -800,7 +792,6 @@ export function registerProcessMapRoutes(app: Express): void {
 
     if (viewType === "to-be") {
       toBeGenerationLocks.add(ideaId);
-      bulkCreatedToBeViews.add(ideaId);
     }
 
     try {
@@ -973,7 +964,6 @@ export function registerProcessMapRoutes(app: Express): void {
         await processMapStorage.invalidateApprovals(ideaId, "sdd", "As-Is map was re-approved (v" + nextVersion + ")");
         await processMapStorage.clearAllForView(ideaId, "to-be");
         await processMapStorage.clearAllForView(ideaId, "sdd");
-        bulkCreatedToBeViews.delete(ideaId);
         try { await documentStorage.deleteApproval(ideaId, "PDD"); } catch {}
         try { await documentStorage.deleteApproval(ideaId, "SDD"); } catch {}
         console.log(`[ProcessMap] Cascade invalidation: As-Is v${nextVersion} invalidated To-Be, PDD, SDD for idea=${ideaId}`);

@@ -344,7 +344,7 @@ function generateConfigXlsx(pkg: any, sddContent?: string, orchestratorArtifacts
   return `Settings\n${csvSettings}\n\nConstants\n${csvConstants}`;
 }
 
-async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ideaId?: string): Promise<{ buffer: Buffer; gaps: XamlGap[]; usedPackages: string[]; cacheHit?: boolean }> {
+export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ideaId?: string): Promise<{ buffer: Buffer; gaps: XamlGap[]; usedPackages: string[]; cacheHit?: boolean }> {
   const projectName = (pkg.projectName || "Automation").replace(/\s+/g, "_");
   const sddContent = pkg._sddContent || "";
   const orchestratorArtifacts = pkg._orchestratorArtifacts || null;

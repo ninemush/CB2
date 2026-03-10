@@ -4,7 +4,7 @@ import { documentStorage } from "./document-storage";
 import { processMapStorage } from "./process-map-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
-import { getPlatformCapabilities } from "./uipath-integration";
+import { getPlatformCapabilities, buildNuGetPackage } from "./uipath-integration";
 import { generateRichXamlFromSpec, generateDeveloperHandoffGuide, aggregateGaps as aggGapsImport } from "./xaml-generator";
 import { analyzeAndFix } from "./workflow-analyzer";
 import { evaluateTransition } from "./stage-transition";
@@ -868,7 +868,37 @@ ${content}`
         `[UIPATH:${JSON.stringify(packageJson)}]`
       );
 
-      sendProgress("Package stored successfully");
+      sendProgress("Package spec stored. Pre-building .nupkg with AI enrichment...");
+
+      try {
+        const enrichPkg = { ...packageJson } as any;
+        if (sdd?.content) enrichPkg._sddContent = sdd.content;
+        if (idea.automationType) enrichPkg._automationType = idea.automationType;
+        if (mapNodes.length > 0) {
+          enrichPkg._processNodes = mapNodes;
+          const allEdges = await processMapStorage.getEdgesByIdeaId(ideaId, toBeNodes.length > 0 ? "to-be" : "as-is");
+          enrichPkg._processEdges = allEdges;
+        }
+        if (sdd?.content) {
+          const { parseArtifactsFromSDD, extractArtifactsWithLLM } = await import("./uipath-deploy");
+          let artifacts = parseArtifactsFromSDD(sdd.content);
+          if (!artifacts) artifacts = await extractArtifactsWithLLM(sdd.content);
+          if (artifacts) enrichPkg._orchestratorArtifacts = artifacts;
+        }
+
+        const now = new Date();
+        const patch = now.getFullYear() * 10000 + (now.getMonth() + 1) * 100 + now.getDate();
+        const version = `1.0.${patch}`;
+
+        sendProgress("AI-enriching XAML workflows...");
+        const buildResult = await buildNuGetPackage(enrichPkg, version, ideaId);
+        console.log(`[UiPath] Pre-built .nupkg for "${idea.title}" — ${buildResult.buffer.length} bytes, ${buildResult.gaps.length} gaps`);
+        sendProgress(`Pre-build complete: ${packageJson.workflows.length} workflow(s) enriched`);
+      } catch (prebuildErr: any) {
+        console.error(`[UiPath] Pre-build failed (deploy will rebuild):`, prebuildErr?.message);
+        sendProgress("Pre-build skipped — deploy will build on demand");
+      }
+
       res.write(`data: ${JSON.stringify({ done: true, package: packageJson })}\n\n`);
       return res.end();
     } catch (error) {
