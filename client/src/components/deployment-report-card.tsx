@@ -22,26 +22,7 @@ import {
   BookOpen,
   MessageSquare,
 } from "lucide-react";
-
-interface DeploymentResult {
-  artifact: string;
-  name: string;
-  status: string;
-  message: string;
-  id?: number;
-  manualSteps?: string[];
-}
-
-interface DeployReport {
-  packageId?: string;
-  version?: string;
-  processName?: string;
-  orgName?: string;
-  tenantName?: string;
-  folderName?: string;
-  results: DeploymentResult[];
-  summary?: string;
-}
+import type { DeploymentResult, DeployReport } from "@shared/models/deployment";
 
 const artifactIcon = (artifact: string) => {
   const lower = artifact.toLowerCase();
@@ -94,8 +75,8 @@ export function DeploymentReportCard({ report, onDismiss }: { report: DeployRepo
   const resultsToDisplay = report.results && report.results.length > 0
     ? report.results
     : [
-        ...(report.packageId ? [{ artifact: "Package", name: report.packageId, status: "created", message: `Package uploaded v${report.version || "1.0.0"}` }] : []),
-        ...(report.processName ? [{ artifact: "Process", name: report.processName, status: "created", message: `Process linked to package` }] : []),
+        ...(report.packageId ? [{ artifact: "Package", name: report.packageId, status: "created" as const, message: `Package uploaded v${report.version || "1.0.0"}` }] : []),
+        ...(report.processName ? [{ artifact: "Process", name: report.processName, status: "created" as const, message: `Process linked to package` }] : []),
       ];
 
   const grouped: Record<string, DeploymentResult[]> = {};

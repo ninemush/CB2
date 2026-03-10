@@ -22,6 +22,7 @@ import {
   Map,
   MessageSquare,
 } from "lucide-react";
+import { formatDate } from "@/lib/utils";
 
 interface ReviewIdea extends Idea {
   nodeCount?: number;
@@ -29,15 +30,6 @@ interface ReviewIdea extends Idea {
   hasMapApproval?: boolean;
   hasPdd?: boolean;
   hasSdd?: boolean;
-}
-
-function formatDate(date: string | Date): string {
-  return new Date(date).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function ReviewCard({

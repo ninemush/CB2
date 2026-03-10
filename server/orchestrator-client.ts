@@ -9,6 +9,7 @@ import {
   UiPathAuthError,
   type UiPathAuthConfig,
 } from "./uipath-auth";
+import { sleep } from "./lib/utils";
 
 export class OrchestratorAPIError extends Error {
   constructor(
@@ -30,10 +31,6 @@ interface RetryOptions {
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_TIMEOUT_MS = 30000;
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503]);
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function odataEscape(value: string): string {
   return value.replace(/'/g, "''");

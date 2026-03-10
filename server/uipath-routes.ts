@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { getUiPathConfig, getAccessToken, saveUiPathConfig, testUiPathConnection, pushToUiPath, getLastTestedAt, fetchUiPathFolders, saveUiPathFolder, createProcess, listMachines, listRobots, listProcesses, startJob, getJobStatus, runHealthCheck, verifyUiPathScopes, probeUiPathScopes, autoDetectUiPathScopes, clearProbeCache } from "./uipath-integration";
+import { getUiPathConfig, getAccessToken, saveUiPathConfig, testUiPathConnection, pushToUiPath, getLastTestedAt, fetchUiPathFolders, saveUiPathFolder, createProcess, listMachines, listRobots, listProcesses, startJob, getJobStatus, verifyUiPathScopes, probeUiPathScopes, autoDetectUiPathScopes, clearProbeCache } from "./uipath-integration";
 import { parseArtifactsFromSDD, extractArtifactsWithLLM, deployAllArtifacts, formatDeploymentReport } from "./uipath-deploy";
 import { documentStorage } from "./document-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
@@ -359,11 +359,8 @@ export function registerUiPathRoutes(app: Express): void {
     return res.json(result);
   });
 
-  app.get("/api/settings/uipath/health-check", async (req: Request, res: Response) => {
-    if (!requireAdmin(req, res)) return;
-    const packageId = req.query.packageId as string | undefined;
-    const result = await runHealthCheck(packageId || undefined);
-    return res.json(result);
+  app.get("/api/settings/uipath/health-check", (req: Request, res: Response) => {
+    res.redirect(307, "/api/uipath/diagnostics");
   });
 
   app.post("/api/ideas/:ideaId/create-process", async (req: Request, res: Response) => {
@@ -651,7 +648,11 @@ export function registerUiPathRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/admin/uipath-diagnostic", async (req: Request, res: Response) => {
+  app.get("/api/admin/uipath-diagnostic", (req: Request, res: Response) => {
+    res.redirect(307, "/api/uipath/diagnostics");
+  });
+
+  app.get("/api/admin/uipath-diagnostic-deep", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
     const config = await getUiPathConfig();
     if (!config) return res.json({ error: "UiPath not configured" });

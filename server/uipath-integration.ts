@@ -22,6 +22,7 @@ import {
 } from "./xaml-generator";
 import { enrichWithAI, type EnrichmentResult } from "./ai-xaml-enricher";
 import { analyzeAndFix, type AnalysisReport } from "./workflow-analyzer";
+import { escapeXml } from "./lib/xml-utils";
 
 export type UiPathConfig = {
   orgName: string;
@@ -649,10 +650,6 @@ ${depEntries}
 
     archive.finalize();
   });
-}
-
-function escapeXml(str: string): string {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
 async function uploadToOrchestrator(

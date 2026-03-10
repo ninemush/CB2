@@ -1,5 +1,6 @@
 import dagreImport from "@dagrejs/dagre";
 import sharp from "sharp";
+import { escapeXml } from "./lib/xml-utils";
 
 const dagre = (dagreImport as any).default || dagreImport;
 
@@ -45,15 +46,6 @@ function getNodeDimensions(nodeType: string): { width: number; height: number } 
   if (t === "start" || t === "end") return { width: 44, height: 44 };
   if (t === "decision") return { width: 52, height: 52 };
   return { width: 240, height: 70 };
-}
-
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
 }
 
 function truncate(str: string, maxLen: number): string {

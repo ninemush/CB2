@@ -9,6 +9,8 @@ import { generateRichXamlFromSpec, generateDeveloperHandoffGuide, aggregateGaps 
 import { analyzeAndFix } from "./workflow-analyzer";
 import { evaluateTransition } from "./stage-transition";
 import { approveDocument } from "./document-service";
+import { escapeXml } from "./lib/xml-utils";
+import { trySanitizeAndParseJson } from "./lib/json-utils";
 import { z } from "zod";
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel,
@@ -254,22 +256,18 @@ function parseArtifactBlock(text: string): string | null {
 
   const jsonFenceMatch = text.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
   if (jsonFenceMatch) {
-    try {
-      const parsed = JSON.parse(jsonFenceMatch[1].trim());
-      if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers) {
-        return "```orchestrator_artifacts\n" + JSON.stringify(parsed, null, 2) + "\n```";
-      }
-    } catch { /* not valid JSON */ }
+    const parsed = trySanitizeAndParseJson(jsonFenceMatch[1].trim());
+    if (parsed && (parsed.queues || parsed.assets || parsed.machines || parsed.triggers)) {
+      return "```orchestrator_artifacts\n" + JSON.stringify(parsed, null, 2) + "\n```";
+    }
   }
 
   const rawJsonMatch = text.match(/\{[\s\S]*"queues"[\s\S]*\}/);
   if (rawJsonMatch) {
-    try {
-      const parsed = JSON.parse(rawJsonMatch[0]);
-      if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers) {
-        return "```orchestrator_artifacts\n" + JSON.stringify(parsed, null, 2) + "\n```";
-      }
-    } catch { /* not valid JSON */ }
+    const parsed = trySanitizeAndParseJson(rawJsonMatch[0]);
+    if (parsed && (parsed.queues || parsed.assets || parsed.machines || parsed.triggers)) {
+      return "```orchestrator_artifacts\n" + JSON.stringify(parsed, null, 2) + "\n```";
+    }
   }
 
   return null;
@@ -1470,10 +1468,6 @@ ${content}`
 function generateXamlStub(workflow: any, sddContent?: string): string {
   const result = generateRichXamlFromSpec(workflow, sddContent);
   return result.xaml;
-}
-
-function escapeXml(str: string): string {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
 function extractSddSection(sddContent: string, heading: string): string {

@@ -7,6 +7,8 @@ import {
   enforceDisplayName,
   type AnalysisReport,
 } from "./workflow-analyzer";
+import { escapeXml } from "./lib/xml-utils";
+import type { DeploymentResult } from "@shared/models/deployment";
 
 export type XamlGap = {
   category: "selector" | "credential" | "endpoint" | "logic" | "config" | "manual" | "agent";
@@ -182,15 +184,6 @@ type WorkflowSpec = {
   steps?: WorkflowStep[];
   arguments?: Array<{ name: string; direction: string; type: string; required?: boolean }>;
 };
-
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
 
 function classifyActivity(ctx: ActivityContext): {
   activityType: string;
@@ -1888,13 +1881,7 @@ export function aggregatePackages(results: XamlGeneratorResult[]): string[] {
   return Array.from(pkgs);
 }
 
-export type DhgDeploymentResult = {
-  artifact: string;
-  name: string;
-  status: "created" | "exists" | "updated" | "failed" | "skipped" | "manual" | "in_package";
-  message: string;
-  id?: number;
-};
+export type DhgDeploymentResult = DeploymentResult;
 
 export type DhgExtractedArtifacts = {
   queues?: Array<{ name: string; description?: string; jsonSchema?: string; outputSchema?: string; maxRetries?: number; uniqueReference?: boolean }>;

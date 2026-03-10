@@ -52,7 +52,9 @@ The application employs a modern web stack for scalability and an intuitive user
 -   **Admin & Review Panels**: Dedicated interfaces for CoE review and administrative tasks.
 -   **Role-Based Access**: Authorization enforced based on user ownership and roles for process maps and documents.
 -   **Multi-Orchestrator Connection Management**: Supports storing and managing multiple UiPath Orchestrator connection profiles.
--   **JSON Sanitization**: Robust parsing of AI-generated JSON with error recovery.
+-   **JSON Sanitization**: Robust parsing of AI-generated JSON with error recovery via canonical `sanitizeAndParseJson` in `server/lib/json-utils.ts`.
+-   **Shared Utilities**: Common server utilities consolidated in `server/lib/` (`xml-utils.ts` for `escapeXml`, `utils.ts` for `sleep`, `json-utils.ts` for JSON sanitization). Common client utilities in `client/src/lib/utils.ts` (`formatTimestamp`, `formatDate`, `formatEST`, `getStageBadgeClass`). Shared types in `shared/models/deployment.ts` (`DeploymentResult`, `DeployReport`).
+-   **Process Map Auto-Clone Guard**: To-be auto-clone from as-is is suppressed when AI has already bulk-created to-be nodes, preventing duplicate trees. Guard is cleared on explicit clear or cascade invalidation.
 
 ## External Dependencies
 -   **AI Service**: Anthropic Claude (via Replit AI Integrations)

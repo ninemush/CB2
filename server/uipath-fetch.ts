@@ -1,3 +1,5 @@
+import { sleep } from "./lib/utils";
+
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503]);
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
@@ -89,10 +91,6 @@ function parseResponseData(text: string): any {
   } catch {
     return null;
   }
-}
-
-async function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 export async function uipathFetch(

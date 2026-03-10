@@ -44,6 +44,7 @@ import { PIPELINE_STAGES, type Idea, type PipelineStage, type ChatMessage as DBC
 import ProcessMapPanel from "@/components/process-map-panel";
 import { parseStepsFromText, parseStepsByView } from "@/lib/step-parser";
 import { DocumentCard, UiPathPackageCard } from "@/components/document-card";
+import { formatEST, getStageBadgeClass } from "@/lib/utils";
 
 let currentProcessView: "as-is" | "to-be" | "sdd" = "as-is";
 
@@ -159,17 +160,6 @@ const DOC_PROGRESS_STEPS: Record<string, string[]> = {
   ],
 };
 
-
-function getStageBadgeClass(stage: string): string {
-  const approvalStages = ["CoE Approval", "Governance / Security Scan"];
-  const actionStages = ["Idea", "Feasibility Assessment"];
-  if (approvalStages.includes(stage))
-    return "bg-cb-gold/15 text-cb-gold border-cb-gold/25";
-  if (actionStages.includes(stage))
-    return "bg-primary/15 text-primary border-primary/25";
-  return "bg-cb-teal/15 text-cb-teal border-cb-teal/25";
-}
-
 const STAGE_GUIDANCE: Record<string, { action: string; hint: string }> = {
   Idea: {
     action: "Describe Your Process",
@@ -212,30 +202,6 @@ const STAGE_GUIDANCE: Record<string, { action: string; hint: string }> = {
     hint: "This automation is live. Track performance metrics, exception rates, and optimization opportunities.",
   },
 };
-
-function formatEST(date: Date): { short: string; full: string } {
-  const opts: Intl.DateTimeFormatOptions = {
-    timeZone: "America/New_York",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  };
-  const fullOpts: Intl.DateTimeFormatOptions = {
-    timeZone: "America/New_York",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-    timeZoneName: "short",
-  };
-  return {
-    short: date.toLocaleDateString("en-US", opts),
-    full: date.toLocaleString("en-US", fullOpts),
-  };
-}
 
 const STAGE_ARTIFACTS: Record<string, string[]> = {
   "Design": ["as-is-map"],
@@ -831,7 +797,9 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
 
           const hasStartNode = dedupedSteps.some(s => s.nodeType === "start");
           const hasEndNode = dedupedSteps.some(s => s.nodeType === "end");
-          const clearExisting = hasStartNode && hasEndNode && dedupedSteps.length >= 3;
+          const clearExisting = viewType === "to-be"
+            ? true
+            : (hasStartNode && hasEndNode && dedupedSteps.length >= 3);
 
           const bulkNodes = dedupedSteps.map((step, i) => ({
             name: step.name,
