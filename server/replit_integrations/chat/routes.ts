@@ -14,10 +14,25 @@ const anthropic = new Anthropic({
   baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
 });
 
+function hasMapApprovalIntent(userMessage: string): boolean {
+  const msg = userMessage.toLowerCase().trim();
+  const hasMapRef = [/\bto[\s-]be\b/, /\bas[\s-]is\b/, /\bprocess\s+map\b/, /\bmaps?\b/].some(p => p.test(msg));
+  if (!hasMapRef) return false;
+  const approvePatterns = [
+    /\bapprove\b/,
+    /\bapproved\b/,
+    /\bi\s+approve\b/,
+    /\blooks?\s+good\b.*\bapprove\b/,
+    /\bapprove\b.*\blooks?\s+good\b/,
+    /\bsign\s*off\b/,
+    /\blgtm\b/,
+  ];
+  return approvePatterns.some(p => p.test(msg));
+}
+
 function hasApprovalIntent(userMessage: string): boolean {
   const msg = userMessage.toLowerCase().trim();
-  const mapExclusions = [/\bto[\s-]be\b/, /\bas[\s-]is\b/, /\bprocess\s+map\b/, /\bmap\b/];
-  if (mapExclusions.some(p => p.test(msg))) return false;
+  if (hasMapApprovalIntent(userMessage)) return false;
   const approvePatterns = [
     /\bapprove\b/,
     /\bapproved\b/,
@@ -535,6 +550,94 @@ export function registerChatRoutes(app: Express): void {
         }
       }
 
+      let mapApprovalDone = false;
+      let mapApprovalViews: string[] = [];
+      if (!chatApprovalDone && hasMapApprovalIntent(content)) {
+        try {
+          const user = await storage.getUser(req.session.userId!);
+          if (user) {
+            const viewsToApprove: Array<"as-is" | "to-be"> = ["as-is", "to-be"];
+            for (const vt of viewsToApprove) {
+              const nodes = await processMapStorage.getNodesByIdeaId(ideaId, vt);
+              if (nodes.length < 3) continue;
+              const edges = await processMapStorage.getEdgesByIdeaId(ideaId, vt);
+              const existingApproval = await processMapStorage.getApproval(ideaId, vt);
+              if (existingApproval) {
+                const snapshot = existingApproval.snapshotJson;
+                const oldData = typeof snapshot === "string" ? JSON.parse(snapshot) : snapshot;
+                const oldNodes = oldData?.nodes || [];
+                const oldEdges = oldData?.edges || [];
+                const nodesChanged = oldNodes.length !== nodes.length || nodes.some((n: any, i: number) => oldNodes[i]?.name !== n.name || oldNodes[i]?.nodeType !== n.nodeType);
+                const edgesChanged = oldEdges.length !== edges.length;
+                if (!nodesChanged && !edgesChanged) {
+                  mapApprovalViews.push(vt);
+                  continue;
+                }
+                await processMapStorage.invalidateApprovals(ideaId, vt, `Superseded by chat approval`);
+              }
+              const nextVersion = await processMapStorage.getNextVersion(ideaId, vt);
+              const snapshot = JSON.stringify({ nodes, edges });
+              await processMapStorage.createApproval({
+                ideaId,
+                viewType: vt,
+                version: nextVersion,
+                userId: user.id,
+                userRole: (req.session.activeRole || user.role) as string,
+                userName: user.displayName,
+                snapshotJson: snapshot,
+                invalidated: false,
+              });
+              mapApprovalViews.push(vt);
+              console.log(`[Chat] ${vt} map approved via chat by ${user.displayName} (v${nextVersion})`);
+
+              if (vt === "as-is") {
+                const existingToBeNodes = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
+                if (existingToBeNodes.length === 0) {
+                  const idMap: Record<number, number> = {};
+                  for (const node of nodes) {
+                    const toBeNode = await processMapStorage.createNode({
+                      ideaId,
+                      name: node.name,
+                      role: node.role,
+                      system: node.system,
+                      nodeType: node.nodeType,
+                      description: node.isPainPoint ? `[AUTOMATED] ${node.description || node.name}` : node.description,
+                      isGhost: node.isGhost,
+                      isPainPoint: false,
+                      viewType: "to-be",
+                      orderIndex: node.orderIndex,
+                      positionX: node.positionX,
+                      positionY: node.positionY,
+                    });
+                    idMap[node.id] = toBeNode.id;
+                  }
+                  for (const edge of edges) {
+                    if (idMap[edge.sourceNodeId] && idMap[edge.targetNodeId]) {
+                      await processMapStorage.createEdge({
+                        ideaId,
+                        sourceNodeId: idMap[edge.sourceNodeId],
+                        targetNodeId: idMap[edge.targetNodeId],
+                        label: edge.label,
+                        viewType: "to-be",
+                      });
+                    }
+                  }
+                  console.log(`[Chat] Cloned ${nodes.length} as-is nodes to to-be for idea=${ideaId}`);
+                }
+              }
+            }
+            if (mapApprovalViews.length > 0) {
+              mapApprovalDone = true;
+              await chatStorage.createMessage(ideaId, "system",
+                `[MAP_APPROVAL] ${mapApprovalViews.map(v => v === "as-is" ? "As-Is" : "To-Be").join(" and ")} process map(s) approved by ${user.displayName} via chat.`
+              );
+            }
+          }
+        } catch (mapApprovalErr: any) {
+          console.error("[Chat] Map approval via chat failed:", mapApprovalErr?.message);
+        }
+      }
+
       const history = await chatStorage.getRecentMessagesByIdeaId(ideaId, 80);
       const filteredHistory = history.filter((m) => m.role === "user" || m.role === "assistant");
 
@@ -725,9 +828,13 @@ CRITICAL RULES:
       }
 
       let intentOverride = "";
-      if (chatApprovalDone && approvalIntent) {
+      if (mapApprovalDone && mapApprovalViews.length > 0) {
+        const approvedLabels = mapApprovalViews.map(v => v === "as-is" ? "As-Is" : "To-Be");
+        const phrases = approvedLabels.map(l => `${l} process map approved`).join(" and ");
+        intentOverride = `\n\nMAP APPROVAL CONFIRMATION DIRECTIVE: The user approved process maps via chat. The following maps were approved: ${approvedLabels.join(", ")}. Respond with a brief confirmation (1-3 sentences). You MUST include the exact phrase "${phrases}" in your response. After map approval, the PDD will be generated automatically — tell the user the next step is PDD generation. Do NOT generate any documents or use [DOC:] tags in this response.`;
+      } else if (chatApprovalDone && approvalIntent) {
         const nextStep = approvalIntent === "PDD" ? "I'll now generate the SDD." : approvalIntent === "SDD" ? "I'll now generate the UiPath automation package." : "";
-        intentOverride = `\n\nAPPROVAL CONFIRMATION DIRECTIVE: The ${approvalIntent} has just been approved via the user's chat message. Respond with a brief confirmation (1-3 sentences). You MUST include the exact phrase "${approvalIntent} approved" in your response. ${nextStep} Do NOT generate any documents or use [DOC:] tags in this response — the next step will be triggered automatically.`;
+        intentOverride = `\n\nAPPROVAL CONFIRMATION DIRECTIVE: The ${approvalIntent} has just been approved via the user's chat message. Respond with a brief confirmation (1-3 sentences). You MUST include the exact phrase "${approvalIntent} approved" in your response. ${nextStep} Do NOT generate any documents or use [DOC:] tags in this response — the next step will be triggered automatically. IMPORTANT: You MUST NOT generate an SDD or PDD or any document in this response. Only confirm the approval. The client will handle the next step.`;
       } else if (classifiedIntent === "PDD") {
         intentOverride = "\n\nDOCUMENT GENERATION DIRECTIVE: The user is requesting a PDD (Process Design Document). You MUST generate a PDD using the [DOC:PDD:0] tag. Do NOT generate an SDD. Start your response with [DOC:PDD:0] followed by the full PDD content.";
       } else if (classifiedIntent === "SDD") {
@@ -788,6 +895,20 @@ CRITICAL RULES:
                 docProgressDocType = docTagMatch[1] as "PDD" | "SDD";
                 docProgressStarted = true;
                 try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: docProgressDocType } })}\n\n`); } catch { /* ignore */ }
+              } else if (fullResponse.length > 800 && /## \d+[\.\)]\s/.test(fullResponse)) {
+                const looksLikeSdd = /orchestrator_artifacts|Automation Architecture|Solution Design/i.test(fullResponse);
+                const looksLikePdd = /Executive Summary|Process Scope|Automation Opportunity/i.test(fullResponse);
+                if (looksLikeSdd) {
+                  docProgressDocType = "SDD";
+                  docProgressStarted = true;
+                  try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "SDD" } })}\n\n`); } catch { /* ignore */ }
+                  console.log(`[Chat] Detected inline SDD generation (no [DOC:] tag) — enabling doc progress`);
+                } else if (looksLikePdd) {
+                  docProgressDocType = "PDD";
+                  docProgressStarted = true;
+                  try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "PDD" } })}\n\n`); } catch { /* ignore */ }
+                  console.log(`[Chat] Detected inline PDD generation (no [DOC:] tag) — enabling doc progress`);
+                }
               }
             } else if (expectSddAfterPdd && docProgressDocType === "PDD" && /\[DOC:SDD:/.test(fullResponse)) {
               docProgressDocType = "SDD";
@@ -1255,6 +1376,10 @@ CRITICAL RULES:
         if (transitionResult.transitioned) {
           res.write(`data: ${JSON.stringify({ transition: transitionResult })}\n\n`);
         }
+      }
+
+      if (mapApprovalDone && mapApprovalViews.length > 0) {
+        res.write(`data: ${JSON.stringify({ mapApproval: { views: mapApprovalViews } })}\n\n`);
       }
 
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);

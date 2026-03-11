@@ -762,6 +762,11 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
                   setStreamingMsg((prev) => prev ? { ...prev } : prev);
                 }
               }
+              if (data.mapApproval) {
+                queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "process-approval-history"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "approval-summary"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "process-map"] });
+              }
               if (data.transition) {
                 queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
                 queryClient.invalidateQueries({ queryKey: ["/api/ideas"] });
@@ -1350,7 +1355,7 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
 
       <div className="flex-1 overflow-y-auto scrollbar-thin px-3 py-3 space-y-3" data-testid="chat-messages">
         {displayMessages.map((msg) => {
-          if (msg.docType && msg.docId) {
+          if (msg.docType && msg.docId != null) {
             const latestDocOfType = [...displayMessages]
               .filter((m) => m.docType === msg.docType)
               .pop();
