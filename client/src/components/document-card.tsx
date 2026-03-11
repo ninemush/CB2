@@ -40,7 +40,13 @@ interface DocumentSection {
 }
 
 function parseDocumentSections(content: string): DocumentSection[] {
-  const lines = content.split("\n");
+  const cleaned = content
+    .replace(/\[AUTOMATION_TYPE:\s*[^\]]+\]/gi, "")
+    .replace(/\[STEP:\s*[\d.]+\s+[^\]]*\]/g, "")
+    .replace(/\[DOC:(PDD|SDD):\d+\]/g, "")
+    .replace(/\[DEPLOY_UIPATH\]/g, "")
+    .replace(/\[STAGE_BACK:\s*[^\]]+\]/g, "");
+  const lines = cleaned.split("\n");
   const sections: DocumentSection[] = [];
   let currentTitle = "";
   let currentContent: string[] = [];
@@ -62,8 +68,8 @@ function parseDocumentSections(content: string): DocumentSection[] {
     sections.push({ title: currentTitle, content: currentContent.join("\n").trim() });
   }
 
-  if (sections.length === 0 && content.trim()) {
-    sections.push({ title: "Document Content", content: content.trim() });
+  if (sections.length === 0 && cleaned.trim()) {
+    sections.push({ title: "Document Content", content: cleaned.trim() });
   }
 
   return sections;

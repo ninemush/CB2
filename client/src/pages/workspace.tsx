@@ -605,11 +605,12 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
 
   useEffect(() => {
     if (!savedMessages || savedMessages.length === 0) return;
+    if (isGeneratingDocRef.current) return;
     const hasMapApproval = savedMessages.some(
       (m) => m.role === "assistant" && (m.content.includes("As-Is process map approved") || m.content.includes("To-Be process map approved"))
     );
     const hasPdd = savedMessages.some(
-      (m) => m.content.startsWith("[DOC:PDD:")
+      (m) => m.content.startsWith("[DOC:PDD:") || (m as any).docType === "PDD"
     );
     if (hasMapApproval && !hasPdd && !pddTriggeredRef.current && !isGeneratingDoc) {
       pddTriggeredRef.current = true;
@@ -622,7 +623,7 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
       (m) => (m.role === "assistant" || m.role === "system") && pddApprovalPatterns.some(p => m.content.includes(p))
     );
     const hasSdd = savedMessages.some(
-      (m) => m.content.startsWith("[DOC:SDD:")
+      (m) => m.content.startsWith("[DOC:SDD:") || (m as any).docType === "SDD"
     );
     if (hasPddApproval && !hasSdd && !sddTriggeredRef.current && !isGeneratingDoc) {
       sddTriggeredRef.current = true;
