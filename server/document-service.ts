@@ -84,9 +84,17 @@ export async function approveDocument(opts: ApproveDocumentOptions): Promise<App
               if (artifacts.assets?.length) parts.push(`${artifacts.assets.length} asset(s)`);
               if (artifacts.machines?.length) parts.push(`${artifacts.machines.length} machine template(s)`);
               if (artifacts.triggers?.length) parts.push(`${artifacts.triggers.length} trigger(s)`);
+              if (artifacts.storageBuckets?.length) parts.push(`${artifacts.storageBuckets.length} storage bucket(s)`);
+              if (artifacts.robotAccounts?.length) parts.push(`${artifacts.robotAccounts.length} robot account(s)`);
               if (artifacts.actionCenter?.length) parts.push(`${artifacts.actionCenter.length} Action Center catalog(s)`);
               if (artifacts.documentUnderstanding?.length) parts.push(`${artifacts.documentUnderstanding.length} DU project(s)`);
               if (artifacts.testCases?.length) parts.push(`${artifacts.testCases.length} test case(s)`);
+              if (artifacts.testDataQueues?.length) parts.push(`${artifacts.testDataQueues.length} test data queue(s)`);
+              if (artifacts.testSets?.length) parts.push(`${artifacts.testSets.length} test set(s)`);
+              if (artifacts.requirements?.length) parts.push(`${artifacts.requirements.length} requirement(s)`);
+              if (artifacts.agents?.length) parts.push(`${artifacts.agents.length} agent(s)`);
+              if (artifacts.knowledgeBases?.length) parts.push(`${artifacts.knowledgeBases.length} knowledge base(s)`);
+              if (artifacts.promptTemplates?.length) parts.push(`${artifacts.promptTemplates.length} prompt template(s)`);
               if (artifacts.folder) artifactSummary += `Target folder: **${artifacts.folder}**\n`;
               if (parts.length) artifactSummary += `Artifacts to provision: ${parts.join(", ")}`;
             } catch {}

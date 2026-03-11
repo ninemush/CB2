@@ -542,8 +542,10 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
 
   const isGeneratingDocRef = useRef(false);
   const generatingDocTypeRef = useRef("");
+  const docGenIdRef = useRef(0);
 
   const startDocStreaming = useCallback((type: string) => {
+    docGenIdRef.current++;
     setIsGeneratingDoc(true);
     setGeneratingDocType(type);
     isGeneratingDocRef.current = true;
@@ -555,7 +557,8 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
     streamingDocElapsedRef.current = setInterval(() => setStreamingDocElapsed(p => p + 1), 1000);
   }, []);
 
-  const stopDocStreaming = useCallback(() => {
+  const stopDocStreaming = useCallback((opts?: { force?: boolean }) => {
+    if (!opts?.force && !isGeneratingDocRef.current) return;
     setIsGeneratingDoc(false);
     setGeneratingDocType("");
     isGeneratingDocRef.current = false;
@@ -574,7 +577,7 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    stopDocStreaming();
+    stopDocStreaming({ force: true });
     setIsStreaming(false);
     setStreamingMsg(null);
     setPendingUserMsg(null);
@@ -708,6 +711,7 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
   }, [savedMessages, isStreaming, isGeneratingDoc, idea.id]);
 
   const sendMessageDirect = useCallback(async (text: string, imageData?: { base64: string; mediaType: string }) => {
+    let docGenIdAtStart = docGenIdRef.current;
     const userMsg: ChatMsg = {
       id: `user-${Date.now()}`,
       role: "user",
@@ -766,6 +770,7 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
                 const docTagMatch = streamingMsgRef.current.match(/^\[DOC:(PDD|SDD):/);
                 if (docTagMatch && !isGeneratingDocRef.current) {
                   startDocStreaming(docTagMatch[1]);
+                  docGenIdAtStart = docGenIdRef.current;
                 }
                 if (isGeneratingDocRef.current) {
                   const raw = streamingMsgRef.current;
@@ -787,6 +792,7 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
               if (data.docProgress) {
                 if (data.docProgress.started && !isGeneratingDocRef.current) {
                   startDocStreaming(data.docProgress.docType || "PDD");
+                  docGenIdAtStart = docGenIdRef.current;
                 }
                 if (data.docProgress.section) {
                   setDocProgressSection(data.docProgress.section);
@@ -824,7 +830,7 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
               if (data.error) {
                 streamingMsgRef.current = "";
                 setStreamingMsg(null);
-                stopDocStreaming();
+                stopDocStreaming({ force: true });
                 toast({
                   title: "Message failed",
                   description: "Something went wrong. Please try sending your message again.",
@@ -849,7 +855,9 @@ function ChatPanel({ idea, switchProcessMapViewRef }: { idea: Idea; switchProces
       });
     } finally {
       setIsStreaming(false);
-      stopDocStreaming();
+      if (docGenIdRef.current === docGenIdAtStart) {
+        stopDocStreaming();
+      }
       setDeployStep("");
       setPendingUserMsg(null);
       const finalContent = streamingMsgRef.current;
