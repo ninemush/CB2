@@ -611,7 +611,11 @@ export function registerUiPathRoutes(app: Express): void {
             (artifacts.testDataQueues?.length || 0) > 0 ||
             (artifacts.robotAccounts?.length || 0) > 0 ||
             (artifacts.requirements?.length || 0) > 0 ||
-            (artifacts.testSets?.length || 0) > 0
+            (artifacts.testSets?.length || 0) > 0 ||
+            (artifacts.agents?.length || 0) > 0 ||
+            (artifacts.knowledgeBases?.length || 0) > 0 ||
+            (artifacts.promptTemplates?.length || 0) > 0 ||
+            (artifacts.maestroProcesses?.length || 0) > 0
           )) {
             sendEvent({ deployStatus: "Reconciling artifacts with previous deployment..." });
             const previousManifest = await getPreviousManifest(ideaId);

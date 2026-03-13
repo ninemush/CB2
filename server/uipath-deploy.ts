@@ -103,6 +103,51 @@ export type OrchestratorArtifacts = {
   promptTemplates?: PromptTemplateDef[];
   dataFabricEntities?: Array<{ name: string; description?: string; fields: Array<{ name: string; type: string; required?: boolean; isKey?: boolean; description?: string }>; referencedBy?: string[] }>;
   apps?: Array<{ name: string; description?: string; appId?: string; linkedProcesses?: string[]; linkedEntities?: string[] }>;
+  maestroProcesses?: MaestroProcessDef[];
+};
+
+export type MaestroBpmnTask = {
+  id: string;
+  name: string;
+  type: "serviceTask" | "userTask" | "scriptTask" | "sendTask" | "receiveTask";
+  processReference?: string;
+  actionCenterCatalog?: string;
+  formFields?: Array<{ name: string; type: string; required?: boolean }>;
+  description?: string;
+};
+
+export type MaestroBpmnGateway = {
+  id: string;
+  name: string;
+  type: "exclusive" | "parallel" | "inclusive" | "eventBased";
+  conditions?: Array<{ targetRef: string; expression: string; label?: string }>;
+};
+
+export type MaestroBpmnEvent = {
+  id: string;
+  name: string;
+  type: "startEvent" | "endEvent" | "intermediateThrowEvent" | "intermediateCatchEvent" | "boundaryEvent";
+  trigger?: "timer" | "message" | "signal" | "error" | "none";
+  timerDefinition?: string;
+  description?: string;
+};
+
+export type MaestroBpmnSequenceFlow = {
+  id: string;
+  sourceRef: string;
+  targetRef: string;
+  conditionExpression?: string;
+  label?: string;
+};
+
+export type MaestroProcessDef = {
+  name: string;
+  description?: string;
+  tasks?: MaestroBpmnTask[];
+  gateways?: MaestroBpmnGateway[];
+  events?: MaestroBpmnEvent[];
+  sequenceFlows?: MaestroBpmnSequenceFlow[];
+  crossReferences?: Array<{ artifactType: string; artifactName: string; relationship: string }>;
 };
 
 export type { DeploymentResult, DeployReport } from "@shared/models/deployment";
@@ -125,7 +170,7 @@ export function parseArtifactsFromSDD(sddContent: string): OrchestratorArtifacts
       const inner = fence.replace(/```json\s*\n/, "").replace(/\n```$/, "").trim();
       try {
         const parsed = JSON.parse(sanitizeJsonString(inner));
-        if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers || parsed.agents || parsed.communicationsMining || parsed.dataFabricEntities || parsed.apps) {
+        if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers || parsed.agents || parsed.communicationsMining || parsed.dataFabricEntities || parsed.apps || parsed.maestroProcesses) {
           console.log("[parseArtifacts] Found artifacts in json fence block");
           return parsed;
         }
@@ -146,7 +191,7 @@ export function parseArtifactsFromSDD(sddContent: string): OrchestratorArtifacts
       }
       const jsonStr = sddContent.slice(braceStart, end);
       const parsed = JSON.parse(sanitizeJsonString(jsonStr));
-      if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers || parsed.agents || parsed.communicationsMining || parsed.documentUnderstanding || parsed.dataFabricEntities || parsed.apps) {
+      if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers || parsed.agents || parsed.communicationsMining || parsed.documentUnderstanding || parsed.dataFabricEntities || parsed.apps || parsed.maestroProcesses) {
         console.log("[parseArtifacts] Found artifacts in raw JSON");
         return parsed;
       }
@@ -207,6 +252,13 @@ ARTIFACT RULES:
 - promptTemplates: Include template text with {{variable}} placeholders and variables array.
 - dataFabricEntities: Define structured data entities for process data persistence. Each entity needs a name, description, and fields array with field name, type (String|Int32|Int64|Boolean|DateTime|Decimal|Guid), required flag, isKey flag, and description. Include referencedBy array listing which artifacts reference this entity (e.g. ["InvoiceApproval_TaskCatalog", "Main.xaml"]). Use Data Fabric entities for any process data that needs to persist across workflow runs or be shared between processes.
 - apps: Reference existing UiPath Apps that serve as user-facing interfaces for this automation. Include name, description, and linkedProcesses array (process names), linkedEntities array (Data Fabric entity names). Only include apps that are relevant to this specific automation.
+- maestroProcesses: BPMN-compatible Maestro process definitions. Include when the SDD describes multi-step orchestrated processes combining automated and human tasks. Each process has:
+  - tasks: Array of BPMN tasks [{id,name,type:"serviceTask"|"userTask"|"scriptTask"|"sendTask"|"receiveTask",processReference:"<Orchestrator process name>",actionCenterCatalog:"<task catalog name>",formFields:[{name,type,required}],description}]
+  - gateways: Array of BPMN gateways [{id,name,type:"exclusive"|"parallel"|"inclusive"|"eventBased",conditions:[{targetRef,expression,label}]}]
+  - events: Array of BPMN events [{id,name,type:"startEvent"|"endEvent"|"intermediateThrowEvent"|"intermediateCatchEvent"|"boundaryEvent",trigger:"timer"|"message"|"signal"|"error"|"none",timerDefinition,description}]
+  - sequenceFlows: Array of BPMN sequence flows [{id,sourceRef,targetRef,conditionExpression,label}]
+  - crossReferences: Array of references to other artifacts [{artifactType:"queue"|"asset"|"process"|"actionCenter",artifactName,relationship}]
+  - Service tasks MUST reference Orchestrator process names. User tasks MUST reference Action Center catalogs. Gateway conditions MUST have real expressions.
 
 Expected JSON shape:
 {"queues":[{"name":"...","description":"...","maxRetries":3,"uniqueReference":true,"jsonSchema":"{\\"type\\":\\"object\\",\\"properties\\":{...}}","outputSchema":"..."}],"assets":[{"name":"...","type":"Text|Integer|Bool|Credential","value":"...","description":"Usage context"}],"machines":[{"name":"...","type":"Unattended|Attended|Development","slots":1,"runtimeType":"Unattended","description":"Purpose"}],"triggers":[{"name":"...","type":"Queue|Time","queueName":"...","cron":"0 0 8 ? * MON-FRI","timezone":"America/New_York","startStrategy":"Specific","maxJobsCount":1,"description":"..."}],"storageBuckets":[{"name":"...","storageProvider":"Orchestrator","description":"..."}],"environments":[{"name":"...","type":"Production|Development|Testing","description":"..."}],"robotAccounts":[{"name":"...","type":"Unattended","role":"SpecificRole","description":"..."}],"actionCenter":[{"taskCatalog":"...","assignedRole":"...","sla":"4h","escalation":"Manager","priority":"High","actions":["Approve","Reject"],"formFields":[{"name":"...","type":"String|Number|Boolean","required":true,"defaultValue":"...","validationRule":"..."}],"slaConfig":{"dueInHours":4,"warningThresholdHours":3,"escalationPolicy":"Manager","autoEscalate":true},"dataFabricEntity":"EntityName","description":"..."}],"dataFabricEntities":[{"name":"...","description":"...","fields":[{"name":"Id","type":"Guid","required":true,"isKey":true,"description":"Primary key"},{"name":"FieldName","type":"String","required":true,"description":"..."}],"referencedBy":["TaskCatalog_Name","Main.xaml"]}],"apps":[{"name":"...","description":"...","linkedProcesses":["ProcessName"],"linkedEntities":["EntityName"]}],"documentUnderstanding":[{"name":"...","documentTypes":["Invoice"],"extractionApproach":"classic_du","taxonomyFields":[{"documentType":"Invoice","fields":[{"name":"InvoiceNumber","type":"String"}]}],"classifierType":"ML","validationRules":[{"field":"TotalAmount","rule":"confidence >= 0.85","action":"flag_for_review"}],"description":"..."}],"communicationsMining":[{"name":"...","sourceType":"email","intents":["Request","Complaint"],"entities":["CustomerName","OrderNumber"],"routingRules":[{"intent":"Complaint","action":"escalate","target":"SeniorAgent"}],"description":"..."}],"testCases":[{"name":"TC_001_TestName","testType":"Functional","priority":"Critical","description":"...","preconditions":["Precondition 1"],"postconditions":["Postcondition 1"],"testData":[{"field":"FieldName","value":"TestValue","dataType":"String"}],"automationWorkflow":"Main.xaml","expectedDuration":60,"labels":["Critical","Smoke"],"steps":[{"action":"Specific action with field names and values","expected":"Specific expected result with values"}]}],"testDataQueues":[{"name":"...","description":"...","jsonSchema":"...","items":[{"name":"Record_1","content":"..."}]}],"requirements":[{"name":"REQ-001: Name","type":"Functional","priority":"Critical","description":"...","source":"SDD Section X","acceptanceCriteria":["Criteria 1"]}],"testSets":[{"name":"Happy Path Tests","description":"...","executionMode":"Sequential","environment":"Production","triggerType":"Manual","testCaseNames":["TC_001_TestName"]}]}
@@ -340,6 +392,16 @@ ${sddContent.slice(0, 12000)}`
     if (Array.isArray(raw.apps)) {
       validated.apps = raw.apps.filter((a: any) => typeof a?.name === "string" && a.name.length > 0);
     }
+    if (Array.isArray(raw.maestroProcesses)) {
+      validated.maestroProcesses = raw.maestroProcesses.filter((mp: any) => typeof mp?.name === "string" && mp.name.length > 0).map((mp: any) => ({
+        ...mp,
+        tasks: Array.isArray(mp.tasks) ? mp.tasks.filter((t: any) => typeof t?.id === "string" && typeof t?.name === "string") : undefined,
+        gateways: Array.isArray(mp.gateways) ? mp.gateways.filter((g: any) => typeof g?.id === "string" && typeof g?.name === "string") : undefined,
+        events: Array.isArray(mp.events) ? mp.events.filter((e: any) => typeof e?.id === "string" && typeof e?.name === "string") : undefined,
+        sequenceFlows: Array.isArray(mp.sequenceFlows) ? mp.sequenceFlows.filter((sf: any) => typeof sf?.id === "string" && typeof sf?.sourceRef === "string" && typeof sf?.targetRef === "string") : undefined,
+        crossReferences: Array.isArray(mp.crossReferences) ? mp.crossReferences.filter((cr: any) => typeof cr?.artifactType === "string" && typeof cr?.artifactName === "string") : undefined,
+      }));
+    }
 
     const hasContent = (validated.queues?.length || 0) + (validated.assets?.length || 0) +
       (validated.triggers?.length || 0) + (validated.machines?.length || 0) +
@@ -350,11 +412,11 @@ ${sddContent.slice(0, 12000)}`
       (validated.requirements?.length || 0) + (validated.testSets?.length || 0) +
       (validated.agents?.length || 0) + (validated.knowledgeBases?.length || 0) +
       (validated.promptTemplates?.length || 0) +
-      (validated.dataFabricEntities?.length || 0) + (validated.apps?.length || 0);
+      (validated.dataFabricEntities?.length || 0) + (validated.apps?.length || 0) +
+      (validated.maestroProcesses?.length || 0);
 
     if (hasContent > 0) {
-      console.log(`[UiPath Deploy] LLM extracted ${hasContent} validated artifacts (queues:${validated.queues?.length||0}, assets:${validated.assets?.length||0}, machines:${validated.machines?.length||0}, triggers:${validated.triggers?.length||0}, buckets:${validated.storageBuckets?.length||0}, robots:${validated.robotAccounts?.length||0}, actionCenter:${validated.actionCenter?.length||0}, DU:${validated.documentUnderstanding?.length||0}, commsMining:${validated.communicationsMining?.length||0}, testCases:${validated.testCases?.length||0}, testDataQueues:${validated.testDataQueues?.length||0}, requirements:${validated.requirements?.length||0}, testSets:${validated.testSets?.length||0}, agents:${validated.agents?.length||0}, knowledgeBases:${validated.knowledgeBases?.length||0}, promptTemplates:${validated.promptTemplates?.length||0}, dataFabric:${validated.dataFabricEntities?.length||0}, apps:${validated.apps?.length||0})`);
-
+      console.log(`[UiPath Deploy] LLM extracted ${hasContent} validated artifacts (queues:${validated.queues?.length||0}, assets:${validated.assets?.length||0}, machines:${validated.machines?.length||0}, triggers:${validated.triggers?.length||0}, buckets:${validated.storageBuckets?.length||0}, robots:${validated.robotAccounts?.length||0}, actionCenter:${validated.actionCenter?.length||0}, DU:${validated.documentUnderstanding?.length||0}, commsMining:${validated.communicationsMining?.length||0}, testCases:${validated.testCases?.length||0}, testDataQueues:${validated.testDataQueues?.length||0}, requirements:${validated.requirements?.length||0}, testSets:${validated.testSets?.length||0}, agents:${validated.agents?.length||0}, knowledgeBases:${validated.knowledgeBases?.length||0}, promptTemplates:${validated.promptTemplates?.length||0}, dataFabric:${validated.dataFabricEntities?.length||0}, apps:${validated.apps?.length||0}, maestroProcesses:${validated.maestroProcesses?.length||0})`);
       return validated;
     }
     console.warn("[UiPath Deploy] LLM returned JSON but no valid artifacts after validation. Raw keys:", Object.keys(raw));
@@ -4034,6 +4096,199 @@ function extractReferencedMLSkillNames(artifacts: OrchestratorArtifacts): string
   return names;
 }
 
+async function provisionMaestroProcesses(
+  config: UiPathConfig,
+  maestroProcesses: OrchestratorArtifacts["maestroProcesses"],
+  maestroAvailable: boolean,
+  deployedArtifacts: DeploymentResult[],
+): Promise<DeploymentResult[]> {
+  if (!maestroProcesses?.length) return [];
+  const results: DeploymentResult[] = [];
+
+  if (!maestroAvailable) {
+    for (const mp of maestroProcesses) {
+      const crossRefSummary = (mp.crossReferences || []).map(cr => `${cr.artifactType}:${cr.artifactName}`).join(", ");
+      const taskSummary = (mp.tasks || []).map(t => `${t.type}:${t.name}`).join(", ");
+      const manualSteps = [
+        `Import this Maestro process definition in UiPath Maestro: "${mp.name}"`,
+        ...(mp.tasks || []).filter(t => t.type === "serviceTask" && t.processReference).map(t => `Wire service task "${t.name}" to Orchestrator process "${t.processReference}"`),
+        ...(mp.tasks || []).filter(t => t.type === "userTask" && t.actionCenterCatalog).map(t => `Connect user task "${t.name}" to Action Center catalog "${t.actionCenterCatalog}"`),
+        ...(mp.gateways || []).filter(g => g.conditions?.length).map(g => `Configure gateway "${g.name}" conditions: ${g.conditions!.map(c => c.expression).join(", ")}`),
+        `Review and validate BPMN flow sequence and condition expressions before publishing`,
+      ];
+      results.push({
+        artifact: "Maestro Process",
+        name: mp.name,
+        status: "in_package",
+        message: `Maestro service not available on this tenant. Process definition generated with ${(mp.tasks || []).length} tasks, ${(mp.gateways || []).length} gateways, ${(mp.events || []).length} events.${crossRefSummary ? ` Cross-references: ${crossRefSummary}.` : ""} ${taskSummary ? `Tasks: ${taskSummary}.` : ""} See Developer Handoff Guide for manual import steps.`,
+        manualSteps,
+      });
+    }
+    return results;
+  }
+
+  let maestroToken: string;
+  try {
+    const { getMaestroToken } = await import("./uipath-auth");
+    maestroToken = await getMaestroToken();
+  } catch (err: any) {
+    for (const mp of maestroProcesses) {
+      results.push({ artifact: "Maestro Process", name: mp.name, status: "failed", message: `PIMS token acquisition failed: ${err.message}` });
+    }
+    return results;
+  }
+
+  const maestroBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/maestro_`;
+  const maestroHdrs: Record<string, string> = {
+    Authorization: `Bearer ${maestroToken}`,
+    "Content-Type": "application/json",
+  };
+
+  const wiredArtifactTypes = new Set(["Trigger", "Queue", "Asset", "Process", "Release", "Action Center Catalog", "Action Center Task Catalog"]);
+  const processIdMap = new Map<string, number | string>();
+  const actionCenterCatalogIdMap = new Map<string, number | string>();
+  const queueIdMap = new Map<string, number | string>();
+  for (const dr of deployedArtifacts) {
+    if (dr.id && (dr.status === "created" || dr.status === "exists" || dr.status === "updated") && wiredArtifactTypes.has(dr.artifact)) {
+      processIdMap.set(dr.name, dr.id);
+      if (dr.artifact === "Action Center Catalog" || dr.artifact === "Action Center Task Catalog") {
+        actionCenterCatalogIdMap.set(dr.name, dr.id);
+      }
+      if (dr.artifact === "Queue") {
+        queueIdMap.set(dr.name, dr.id);
+      }
+    }
+  }
+
+  for (const mp of maestroProcesses) {
+    try {
+      const resolvedTasks = (mp.tasks || []).map(t => {
+        const resolved: Record<string, any> = {
+          id: t.id,
+          name: t.name,
+          type: t.type,
+          description: t.description || "",
+        };
+        if (t.type === "serviceTask" && t.processReference) {
+          resolved.processReference = t.processReference;
+          const refId = processIdMap.get(t.processReference);
+          if (refId) resolved.processReferenceId = refId;
+        }
+        if (t.type === "userTask") {
+          if (t.actionCenterCatalog) {
+            resolved.actionCenterCatalog = t.actionCenterCatalog;
+            const catalogId = actionCenterCatalogIdMap.get(t.actionCenterCatalog);
+            if (catalogId) resolved.actionCenterCatalogId = catalogId;
+          }
+          if (t.formFields) resolved.formFields = t.formFields;
+        }
+        return resolved;
+      });
+
+      const processDefBody = {
+        name: mp.name,
+        description: truncDesc(mp.description),
+        definition: {
+          tasks: resolvedTasks,
+          gateways: (mp.gateways || []).map(g => ({
+            id: g.id,
+            name: g.name,
+            type: g.type,
+            conditions: g.conditions || [],
+          })),
+          events: (mp.events || []).map(e => ({
+            id: e.id,
+            name: e.name,
+            type: e.type,
+            trigger: e.trigger || "none",
+            timerDefinition: e.timerDefinition,
+            description: e.description || "",
+          })),
+          sequenceFlows: (mp.sequenceFlows || []).map(sf => ({
+            id: sf.id,
+            sourceRef: sf.sourceRef,
+            targetRef: sf.targetRef,
+            conditionExpression: sf.conditionExpression,
+            label: sf.label,
+          })),
+        },
+        crossReferences: (mp.crossReferences || []).map(cr => {
+          const resolved: Record<string, any> = { ...cr };
+          if (cr.artifactName) {
+            const resolvedId = processIdMap.get(cr.artifactName) || actionCenterCatalogIdMap.get(cr.artifactName) || queueIdMap.get(cr.artifactName);
+            if (resolvedId) resolved.resolvedId = resolvedId;
+          }
+          return resolved;
+        }),
+        provisionedBy: "CannonBall",
+        provisionedAt: new Date().toISOString(),
+      };
+
+      const checkRes = await fetch(`${maestroBase}/api/v1/process-definitions?$filter=name eq '${odataEscape(mp.name)}'&$top=1`, {
+        headers: maestroHdrs,
+      }).catch(() => null);
+
+      let existingId: string | number | null = null;
+      if (checkRes && checkRes.ok) {
+        try {
+          const checkData = await checkRes.json();
+          if (checkData.value?.length > 0 || (Array.isArray(checkData) && checkData.length > 0)) {
+            const existing = checkData.value?.[0] || checkData[0];
+            existingId = existing.id || existing.Id;
+          }
+        } catch {}
+      }
+
+      if (existingId) {
+        const putRes = await fetch(`${maestroBase}/api/v1/process-definitions/${existingId}`, {
+          method: "PUT",
+          headers: maestroHdrs,
+          body: JSON.stringify(processDefBody),
+        });
+        const putText = await putRes.text();
+        console.log(`[UiPath Deploy] Maestro process "${mp.name}" UPDATE -> ${putRes.status}: ${putText.slice(0, 500)}`);
+
+        if (putRes.ok) {
+          results.push({ artifact: "Maestro Process", name: mp.name, status: "updated", message: `Updated existing Maestro process definition (ID: ${existingId})`, id: existingId });
+        } else {
+          results.push({ artifact: "Maestro Process", name: mp.name, status: "failed", message: `Update failed: ${sanitizeErrorMessage(putRes.status, putText)}`, id: existingId });
+        }
+      } else {
+        const createRes = await fetch(`${maestroBase}/api/v1/process-definitions`, {
+          method: "POST",
+          headers: maestroHdrs,
+          body: JSON.stringify(processDefBody),
+        });
+        const createText = await createRes.text();
+        console.log(`[UiPath Deploy] Maestro process "${mp.name}" CREATE -> ${createRes.status}: ${createText.slice(0, 500)}`);
+
+        if (createRes.ok || createRes.status === 201) {
+          let createdId: string | number | undefined;
+          try {
+            const created = JSON.parse(createText);
+            createdId = created.id || created.Id;
+          } catch {}
+          results.push({
+            artifact: "Maestro Process",
+            name: mp.name,
+            status: "created",
+            message: `Created Maestro process definition${createdId ? ` (ID: ${createdId})` : ""} with ${resolvedTasks.length} tasks, ${(mp.gateways || []).length} gateways, ${(mp.events || []).length} events`,
+            id: createdId,
+          });
+        } else if (createRes.status === 409 || createText.includes("already exists")) {
+          results.push({ artifact: "Maestro Process", name: mp.name, status: "exists", message: "Process definition already exists in Maestro" });
+        } else {
+          results.push({ artifact: "Maestro Process", name: mp.name, status: "failed", message: sanitizeErrorMessage(createRes.status, createText) });
+        }
+      }
+    } catch (err: any) {
+      results.push({ artifact: "Maestro Process", name: mp.name, status: "failed", message: `Error: ${err.message}` });
+    }
+  }
+
+  return results;
+}
+
 export async function deployAllArtifacts(
   artifacts: OrchestratorArtifacts,
   releaseId: number | null,
@@ -4068,7 +4323,7 @@ export async function deployAllArtifacts(
     let svcAvail: ServiceAvailabilityMap | null = null;
     try {
       svcAvail = await probeServiceAvailability();
-      console.log(`[UiPath Deploy] Service availability: AC=${svcAvail.actionCenter}, TM=${svcAvail.testManager}, DU=${svcAvail.documentUnderstanding}, GenExtract=${svcAvail.generativeExtraction}, CommsMining=${svcAvail.communicationsMining}, DS=${svcAvail.dataService}, PM=${svcAvail.platformManagement}, Env=${svcAvail.environments}, Trig=${svcAvail.triggers}, Agents=${svcAvail.agents}, AI=${svcAvail.aiCenter}`);
+      console.log(`[UiPath Deploy] Service availability: AC=${svcAvail.actionCenter}, TM=${svcAvail.testManager}, DU=${svcAvail.documentUnderstanding}, GenExtract=${svcAvail.generativeExtraction}, CommsMining=${svcAvail.communicationsMining}, DS=${svcAvail.dataService}, PM=${svcAvail.platformManagement}, Env=${svcAvail.environments}, Trig=${svcAvail.triggers}, Agents=${svcAvail.agents}, AI=${svcAvail.aiCenter}, Maestro=${svcAvail.maestro}`);
     } catch { /* non-critical — proceed without filtering */ }
 
     const referencedSkillNames = extractReferencedMLSkillNames(artifacts);
@@ -4237,6 +4492,17 @@ export async function deployAllArtifacts(
       }
       if (artifacts.testSets?.length) {
         allResults.push({ artifact: "Test Set", name: `${artifacts.testSets.length} test set(s)`, status: "skipped", message: "Test Manager project not available — test sets require an active TM project" });
+      }
+    }
+
+    if ((artifacts.maestroProcesses?.length || 0) > 0) {
+      onProgress?.("Provisioning Maestro process definitions...");
+      const maestroAvailable = svcAvail?.maestro ?? false;
+      console.log(`[UiPath Deploy] Provisioning ${artifacts.maestroProcesses!.length} Maestro process definition(s), service available: ${maestroAvailable}`);
+      const maestroResults = await provisionMaestroProcesses(config, artifacts.maestroProcesses, maestroAvailable, allResults);
+      allResults.push(...maestroResults);
+      for (const r of maestroResults) {
+        onProgress?.(`${r.artifact} "${r.name}" — ${r.status}`);
       }
     }
 

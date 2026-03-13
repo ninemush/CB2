@@ -250,7 +250,7 @@ function trimChatForDocGen(messages: { role: string; content: string }[]): { rol
 
 function buildSddProsePrompt(platformCapabilities?: string): string {
   const platformContext = platformCapabilities
-    ? `\n\nIMPORTANT — PLATFORM-AWARE DESIGN:\n${platformCapabilities}\n\nYou MUST design the solution to leverage the available services optimally. Consider the full breadth of the UiPath platform:\n- **Unattended vs Attended automation**: Use unattended bots for back-office tasks, attended for human-assisted work\n- **Agentic automation / AI Agents**: For processes needing intelligent decision-making, context understanding, or natural language processing\n- **Action Center**: For human-in-the-loop steps — approvals, validations, exception review, escalations. Define complete form schemas with field definitions, data types, and validation rules. Configure SLA with due time, warning threshold, and escalation policy. Link task results to Data Fabric entities for persistence.\n- **Data Fabric / Data Service**: For structured data persistence — define entities with typed fields to store process data across workflow runs. Use entities as the data backbone connecting Action Center tasks, Apps, and XAML workflows. Read/write via the Entity Service API.\n- **Apps**: For citizen-developer web interfaces — form-based UIs for manual input, oversight dashboards, and human interaction points. Apps connect directly to Data Fabric entities and can trigger or receive data from automation workflows.\n- **IXP (Intelligent Xtraction & Processing)**: The unified multi-modal data extraction platform. AUTO-SELECT the right extraction approach:\n  - **Classic Document Understanding (DU)**: For structured/semi-structured forms with known layouts — invoices, receipts, purchase orders, tax forms. Uses OCR + ML classification + template-based extraction with pre-trained models. Best when document types are well-defined and high-volume.\n  - **Generative Extraction**: For unstructured documents — contracts, legal agreements, reports, correspondence, medical records. Uses LLM-powered extraction without requiring pre-trained models or taxonomy definitions. Best when document formats vary widely or when rapid deployment is needed without model training.\n  - **Communications Mining**: For email/message streams — customer support emails, internal communications, chat transcripts. Analyzes intent, sentiment, entities, and routes communications intelligently. Best for triage, categorization, and extracting actionable data from conversation flows.\n- **Integration Service**: For pre-built API connectors to enterprise systems (SAP, Salesforce, ServiceNow, etc.) instead of custom HTTP calls\n- **Storage Buckets**: For centralized file storage — input documents, output reports, templates, audit logs\n- **AI Center**: For custom ML models — classification, prediction, NLP, anomaly detection\n- **Test Manager**: For automated test suites to validate the automation\n- **Apps**: For citizen developer interfaces where manual input or oversight is needed\n\nIXP EXTRACTION APPROACH SELECTION (when the process involves documents or communications):\nYou MUST explicitly select and justify the extraction approach in the Architecture section:\n1. Analyze document types mentioned in the process — are they structured forms, unstructured documents, or communications?\n2. Select: Classic DU for structured forms, Generative Extraction for unstructured docs, Communications Mining for email/message streams, or a combination.\n3. Specify extraction field mappings — what fields need to be extracted from each document type.\n4. Define validation rules — confidence thresholds, human review triggers, business rule validations.\n\nFor each available service, explain HOW it will be used in the solution. For unavailable services, include a "## 8. Platform Recommendations" section explaining what each missing service would unlock and the concrete benefits it would provide for this specific automation.`
+    ? `\n\nIMPORTANT — PLATFORM-AWARE DESIGN:\n${platformCapabilities}\n\nYou MUST design the solution to leverage the available services optimally. Consider the full breadth of the UiPath platform:\n- **Unattended vs Attended automation**: Use unattended bots for back-office tasks, attended for human-assisted work\n- **Agentic automation / AI Agents**: For processes needing intelligent decision-making, context understanding, or natural language processing\n- **Action Center**: For human-in-the-loop steps — approvals, validations, exception review, escalations. Define complete form schemas with field definitions, data types, and validation rules. Configure SLA with due time, warning threshold, and escalation policy. Link task results to Data Fabric entities for persistence.\n- **Data Fabric / Data Service**: For structured data persistence — define entities with typed fields to store process data across workflow runs. Use entities as the data backbone connecting Action Center tasks, Apps, and XAML workflows. Read/write via the Entity Service API.\n- **Apps**: For citizen-developer web interfaces — form-based UIs for manual input, oversight dashboards, and human interaction points. Apps connect directly to Data Fabric entities and can trigger or receive data from automation workflows.\n- **IXP (Intelligent Xtraction & Processing)**: The unified multi-modal data extraction platform. AUTO-SELECT the right extraction approach:\n  - **Classic Document Understanding (DU)**: For structured/semi-structured forms with known layouts — invoices, receipts, purchase orders, tax forms. Uses OCR + ML classification + template-based extraction with pre-trained models. Best when document types are well-defined and high-volume.\n  - **Generative Extraction**: For unstructured documents — contracts, legal agreements, reports, correspondence, medical records. Uses LLM-powered extraction without requiring pre-trained models or taxonomy definitions. Best when document formats vary widely or when rapid deployment is needed without model training.\n  - **Communications Mining**: For email/message streams — customer support emails, internal communications, chat transcripts. Analyzes intent, sentiment, entities, and routes communications intelligently. Best for triage, categorization, and extracting actionable data from conversation flows.\n- **Integration Service**: For pre-built API connectors to enterprise systems (SAP, Salesforce, ServiceNow, etc.) instead of custom HTTP calls\n- **Storage Buckets**: For centralized file storage — input documents, output reports, templates, audit logs\n- **AI Center**: For custom ML models — classification, prediction, NLP, anomaly detection\n- **Test Manager**: For automated test suites to validate the automation\n- **Apps**: For citizen developer interfaces where manual input or oversight is needed\n\n- **Maestro**: For BPMN-based process orchestration — when the solution needs coordinated process models with service tasks (linked to Orchestrator processes), user tasks (via Action Center), gateways with conditional routing, event triggers, process apps, and case management. Prefer Maestro over traditional Orchestrator triggers when orchestrating multi-step processes that combine automated and human tasks in a structured BPMN flow\nIXP EXTRACTION APPROACH SELECTION (when the process involves documents or communications):\nYou MUST explicitly select and justify the extraction approach in the Architecture section:\n1. Analyze document types mentioned in the process — are they structured forms, unstructured documents, or communications?\n2. Select: Classic DU for structured forms, Generative Extraction for unstructured docs, Communications Mining for email/message streams, or a combination.\n3. Specify extraction field mappings — what fields need to be extracted from each document type.\n4. Define validation rules — confidence thresholds, human review triggers, business rule validations.\n\nFor each available service, explain HOW it will be used in the solution. For unavailable services, include a "## 8. Platform Recommendations" section explaining what each missing service would unlock and the concrete benefits it would provide for this specific automation.`
     : "";
 
   return `The SME has approved the PDD. Generate the Solution Design Document for this UiPath automation. You are designing a solution that will be FULLY DEPLOYED — every artifact you specify will be automatically provisioned on the connected UiPath platform.
@@ -365,6 +365,29 @@ Here is the EXACT format:
   ],
   "promptTemplates": [
     { "name": "TemplateName", "description": "Purpose", "template": "Prompt with {{variable}}", "variables": ["variable"] }
+  ],
+  "maestroProcesses": [
+    {
+      "name": "ProcessName",
+      "description": "End-to-end orchestrated process combining automated and human tasks",
+      "serviceTasks": [
+        { "name": "ServiceTaskName", "processRef": "ExactProcessNameFromOrchestrator", "description": "Automated step linked to an Orchestrator process" }
+      ],
+      "userTasks": [
+        { "name": "UserTaskName", "actionCenterCatalog": "CatalogNameFromActionCenterAbove", "assignee": "Role or group", "description": "Human review/approval step via Action Center" }
+      ],
+      "gateways": [
+        { "name": "GatewayName", "type": "exclusive|parallel|inclusive", "conditions": ["condition expression"], "description": "Decision or fork/join point" }
+      ],
+      "sequenceFlows": [
+        { "from": "SourceElementName", "to": "TargetElementName", "condition": "optional condition expression" }
+      ],
+      "crossReferences": {
+        "orchestratorProcesses": ["ExactProcessNameFromOrchestrator"],
+        "actionCenterCatalogs": ["CatalogNameFromActionCenterAbove"],
+        "queues": ["QueueNameFromQueuesAbove"]
+      }
+    }
   ]
 }
 \`\`\`
@@ -389,6 +412,12 @@ Rules:
   - Agent contextGrounding.storageBucket MUST reference a storage bucket defined in the storageBuckets array above by exact name.
   - Agent escalationRules.actionCenterCatalog MUST reference an Action Center catalog defined in the actionCenter array above by exact taskCatalog name.
   - These cross-references are validated and wired during deployment — the agent config will contain resolved IDs for all referenced artifacts.
+- Include maestroProcesses when the solution involves multi-step orchestrated workflows combining automated service tasks and human user tasks. Each maestroProcess MUST:
+  - Reference exact Orchestrator process names in serviceTasks.processRef (matching processes defined in the SDD).
+  - Reference exact Action Center catalog names in userTasks.actionCenterCatalog (matching catalogs defined in the actionCenter array above).
+  - Define gateways for conditional routing (exclusive), parallel execution (parallel), or multi-path (inclusive).
+  - Define sequenceFlows connecting all elements (serviceTasks, userTasks, gateways) in execution order.
+  - Include crossReferences listing all referenced orchestratorProcesses, actionCenterCatalogs, and queues by exact name for deployment wiring.
 - Be comprehensive — this specification drives full automated deployment.
 
 Output ONLY "## 9. Orchestrator & Platform Deployment Specification" followed by the fenced artifacts block and any brief supporting prose. Nothing else.`;
@@ -401,7 +430,7 @@ function parseArtifactBlock(text: string): string | null {
   const jsonFenceMatch = text.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
   if (jsonFenceMatch) {
     const parsed = trySanitizeAndParseJson(jsonFenceMatch[1].trim());
-    if (parsed && (parsed.queues || parsed.assets || parsed.machines || parsed.triggers)) {
+    if (parsed && (parsed.queues || parsed.assets || parsed.machines || parsed.triggers || parsed.maestroProcesses)) {
       return "```orchestrator_artifacts\n" + JSON.stringify(parsed, null, 2) + "\n```";
     }
   }
@@ -409,7 +438,7 @@ function parseArtifactBlock(text: string): string | null {
   const rawJsonMatch = text.match(/\{[\s\S]*"queues"[\s\S]*\}/);
   if (rawJsonMatch) {
     const parsed = trySanitizeAndParseJson(rawJsonMatch[0]);
-    if (parsed && (parsed.queues || parsed.assets || parsed.machines || parsed.triggers)) {
+    if (parsed && (parsed.queues || parsed.assets || parsed.machines || parsed.triggers || parsed.maestroProcesses)) {
       return "```orchestrator_artifacts\n" + JSON.stringify(parsed, null, 2) + "\n```";
     }
   }

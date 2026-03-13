@@ -106,8 +106,8 @@ function buildSystemPrompt(ideaTitle: string, currentStage: string, docContext?:
     } else {
       unavailable.push("UiPath Agents (AI agent definitions, tool bindings, context grounding)");
     }
-    if (serviceAvailability.maestro) available.push("Maestro (process orchestration, PIMS)");
-    else unavailable.push("Maestro");
+    if (serviceAvailability.maestro) available.push("Maestro (BPMN process orchestration, process apps, case management)");
+    else unavailable.push("Maestro (BPMN orchestration)");
     if (serviceAvailability.integrationService) available.push("Integration Service (connectors, API integrations)");
     else unavailable.push("Integration Service");
     if (serviceAvailability.ixp) available.push("IXP / Communications Mining");
@@ -261,6 +261,33 @@ Examples:
 [AUTOMATION_TYPE: rpa | This process follows strict rules with structured data from SAP — every step is deterministic with known UI selectors and no judgment calls.]
 [AUTOMATION_TYPE: agent | This process involves triaging unstructured customer emails, interpreting intent, and making context-dependent routing decisions — ideal for an AI agent.]
 [AUTOMATION_TYPE: hybrid | The core invoice processing is structured RPA, but exception handling and vendor communication require judgment — a hybrid with agent nodes for exceptions is optimal.]
+
+MAESTRO ORCHESTRATION KNOWLEDGE:
+UiPath Maestro is the next-generation orchestration layer for agentic automation, process apps, and case management using BPMN process modeling. When evaluating a solution, consider whether Maestro orchestration is appropriate:
+
+WHEN TO RECOMMEND MAESTRO (vs traditional Orchestrator):
+- The process has multiple steps combining automated tasks AND human tasks that need coordination in a single flow
+- The process benefits from visual BPMN modeling with explicit gateways, conditions, and event handling
+- Case management patterns — where a "case" (e.g., loan application, incident ticket) moves through stages with both automated and human decision points
+- Process apps — where business users need a visual interface to monitor and interact with running process instances
+- Complex orchestration — multiple Orchestrator processes need to run in sequence or parallel, with conditional branching between them
+- Human-in-the-loop at scale — multiple approval/review steps with SLAs, escalations, and routing rules
+
+WHEN TRADITIONAL ORCHESTRATOR IS SUFFICIENT:
+- Simple linear automation with one process and a time/queue trigger
+- Pure unattended automation with no human interaction
+- Single bot task with retry logic — no orchestration needed
+- Processes that only need basic queue-driven or scheduled execution
+
+BPMN TASK TYPES in Maestro:
+- Service Task: Linked to an Orchestrator process by name — executes the RPA workflow
+- User Task: Connected to Action Center — creates a human task with forms/actions
+- Script Task: Inline logic or simple transformations
+- Send/Receive Task: For inter-process messaging and signal handling
+- Gateways: Exclusive (XOR), Parallel (AND), Inclusive (OR), Event-Based — route flow based on conditions
+- Events: Start (timer, message, signal), End, Intermediate (catch/throw), Boundary (error, timer)
+
+When Maestro is available and appropriate, recommend it. When it's not available, mention it as a platform recommendation for enhanced orchestration.
 
 ${automationType && automationType !== "rpa" ? `CURRENT AUTOMATION TYPE: ${automationType.toUpperCase()}
 This idea has been assessed as "${automationType}" automation. All subsequent design, documentation, and deployment must reflect this.

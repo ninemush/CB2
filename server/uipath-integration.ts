@@ -2355,8 +2355,8 @@ export async function getPlatformCapabilities(): Promise<PlatformCapabilityProfi
     unavailRecs.push("- **UiPath Agents**: Not available. If enabled, it would allow deploying autonomous, conversational, and coded AI agents that can invoke Orchestrator processes as tools, use storage buckets for context grounding, and escalate to Action Center for human oversight.");
   }
 
-  if (avail.maestro) availNames.push("Maestro (process orchestration, long-running workflows, human-in-the-loop coordination via PIMS)");
-  else unavailRecs.push("- **Maestro**: Not available. If enabled, it would provide advanced process orchestration with human-in-the-loop coordination for complex, long-running workflows.");
+  if (probe.flags.maestro) availNames.push("Maestro (BPMN process orchestration, process apps, case management, service tasks linked to Orchestrator processes, user tasks via Action Center)");
+  else unavailRecs.push("- **Maestro**: Not available. If enabled, it would provide next-generation BPMN-based process orchestration — coordinating service tasks (linked to Orchestrator processes), user tasks (Action Center), gateways with conditional routing, event triggers, process apps, and case management in a single visual process model.");
 
   if (avail.ixp) availNames.push("IXP / Communications Mining (email and message analysis, intent detection, sentiment analysis)");
   else unavailRecs.push("- **IXP / Communications Mining**: Not available. If enabled, it could analyze emails, tickets, and messages for intent detection, sentiment analysis, and automated triage.");

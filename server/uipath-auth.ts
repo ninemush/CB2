@@ -63,6 +63,8 @@ const RESOURCE_SCOPES: Record<ResourceType, string> = {
   ].join(" "),
   PIMS: [
     "PIMS.Default", "PIMS.Read", "PIMS.Write",
+    "PIMS.Process", "PIMS.Process.Read", "PIMS.Process.Write",
+    "PIMS.Execution", "PIMS.Execution.Read",
   ].join(" "),
 };
 
@@ -340,6 +342,18 @@ export async function getPmHeaders(extraHeaders?: Record<string, string>): Promi
 
 export async function getDfHeaders(extraHeaders?: Record<string, string>): Promise<Record<string, string>> {
   return getResourceHeaders("DF", extraHeaders);
+}
+
+export async function getMaestroToken(): Promise<string> {
+  return getResourceToken("PIMS");
+}
+
+export async function getMaestroHeaders(extraHeaders?: Record<string, string>): Promise<Record<string, string>> {
+  return getResourceHeaders("PIMS", extraHeaders);
+}
+
+export function getMaestroBaseUrl(config: UiPathAuthConfig): string {
+  return `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/maestro_`;
 }
 
 export function getResourceScopes(): Record<ResourceType, string> {
