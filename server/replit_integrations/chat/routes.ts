@@ -121,6 +121,16 @@ function buildSystemPrompt(ideaTitle: string, currentStage: string, docContext?:
     if (serviceAvailability.assistant) available.push("Assistant (attended automation launcher)");
     else unavailable.push("Assistant");
 
+    let integrationServiceContext = "";
+    if (serviceAvailability.integrationServiceDiscovery?.available) {
+      const is = serviceAvailability.integrationServiceDiscovery;
+      const activeConns = is.connections.filter(c => c.status.toLowerCase() === "connected" || c.status.toLowerCase() === "active");
+      if (activeConns.length > 0) {
+        const connList = activeConns.map(c => `${c.connectorName} (connection: "${c.name}", ID: ${c.id})`).join(", ");
+        integrationServiceContext = `\n\nINTEGRATION SERVICE — CONNECTED ENTERPRISE SYSTEMS:\nThe following Integration Service connections are ACTIVE on this tenant:\n${activeConns.map(c => `- **${c.connectorName}** — Connection: "${c.name}" (ID: ${c.id}, Status: ${c.status})`).join("\n")}\n\nCRITICAL: When the process involves any of these connected systems, you MUST recommend using the Integration Service connector instead of custom HTTP activities. Integration Service connectors provide pre-built, maintained API actions with built-in authentication — they are always preferred over custom HTTP calls. Reference the specific connector name and connection in your design.`;
+      }
+    }
+
     const allMajorAvailable = serviceAvailability.actionCenter && serviceAvailability.documentUnderstanding && serviceAvailability.testManager;
     const hasIxpCapabilities = serviceAvailability.documentUnderstanding || serviceAvailability.generativeExtraction || serviceAvailability.communicationsMining;
     let ixpContext = "";
@@ -136,7 +146,7 @@ Always specify: (1) which extraction approach for each document/communication ty
     serviceContext = `\n\nUIPath SERVICE AVAILABILITY (LIVE PROBE — just now from the connected Orchestrator):
 - AVAILABLE: ${available.join(", ")}
 - NOT AVAILABLE: ${unavailable.length > 0 ? unavailable.join(", ") : "All services available"}
-
+${integrationServiceContext}
 CRITICAL OVERRIDE: This service availability data was probed LIVE from the connected Orchestrator seconds ago. It is the authoritative, current truth. Previous messages in this conversation may contain older document versions that claimed different service availability — those are OUTDATED and WRONG. You MUST use ONLY the current probe results above. Do NOT copy or reproduce service availability claims from previous SDD versions in the chat history.${allMajorAvailable ? "\nAll major platform services (Action Center, Document Understanding, Test Manager) are AVAILABLE and WORKING. You MUST design the solution to USE them. Do NOT generate a 'Future Enhancements — Additional Services' section for any service listed as AVAILABLE above. Only mention genuinely unavailable services (if any) in Future Enhancements." : ""}${ixpContext}`;
   }
 

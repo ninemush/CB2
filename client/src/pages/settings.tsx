@@ -1133,6 +1133,186 @@ function ConnectionManagerPanel({ onEditConnection }: { onEditConnection: (conn:
   );
 }
 
+function IntegrationServicePanel() {
+  const { data: discovery, isLoading, refetch } = useQuery<{
+    available: boolean;
+    connectors: Array<{ id: string; name: string; description?: string; provider?: string; connectionCount: number }>;
+    connections: Array<{ id: string; connectorId: string; connectorName: string; name: string; status: string; createdAt?: string; provider?: string }>;
+    summary: string;
+  }>({
+    queryKey: ["/api/uipath/integration-service"],
+    staleTime: 60000,
+  });
+
+  const refreshMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/uipath/integration-service/refresh");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/uipath/integration-service"] });
+    },
+  });
+
+  const [expanded, setExpanded] = useState(false);
+
+  if (isLoading) {
+    return (
+      <Card className="p-4 mt-4 space-y-3" data-testid="card-integration-service-loading">
+        <Skeleton className="h-5 w-48" />
+        <Skeleton className="h-4 w-64" />
+      </Card>
+    );
+  }
+
+  if (!discovery) return null;
+
+  const activeConnections = discovery.connections.filter(
+    c => c.status.toLowerCase() === "connected" || c.status.toLowerCase() === "active"
+  );
+
+  return (
+    <Card className="p-4 mt-4 space-y-3" data-testid="card-integration-service">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold text-foreground">Integration Service</h3>
+          {discovery.available ? (
+            <Badge variant="outline" className="text-[10px] border-green-600/30 bg-green-500/10 text-green-400" data-testid="badge-is-status">
+              Available
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-[10px] border-amber-500/30 bg-amber-500/10 text-amber-400" data-testid="badge-is-status">
+              Unavailable
+            </Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => {
+              refreshMutation.mutate();
+            }}
+            disabled={refreshMutation.isPending}
+            data-testid="button-refresh-is"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 mr-1 ${refreshMutation.isPending ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-1"
+            onClick={() => setExpanded(!expanded)}
+            data-testid="button-expand-is"
+          >
+            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </Button>
+        </div>
+      </div>
+
+      <p className="text-xs text-muted-foreground" data-testid="text-is-summary">
+        {discovery.summary}
+      </p>
+
+      {activeConnections.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {activeConnections.map(conn => (
+            <Badge
+              key={conn.id}
+              variant="outline"
+              className="text-[10px] border-green-600/30 bg-green-500/10 text-green-400"
+              data-testid={`badge-is-connection-${conn.id}`}
+            >
+              <CheckCircle2 className="h-3 w-3 mr-1" />
+              {conn.connectorName}: {conn.name}
+            </Badge>
+          ))}
+        </div>
+      )}
+
+      {expanded && (
+        <div className="space-y-3 pt-2 border-t border-border">
+          {discovery.connections.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-foreground mb-2">Connections ({discovery.connections.length})</h4>
+              <div className="space-y-1.5">
+                {discovery.connections.map(conn => (
+                  <div
+                    key={conn.id}
+                    className={`flex items-center justify-between px-3 py-2 rounded-md border text-xs ${
+                      conn.status.toLowerCase() === "connected" || conn.status.toLowerCase() === "active"
+                        ? "border-green-600/30 bg-green-500/5"
+                        : "border-border bg-muted/30"
+                    }`}
+                    data-testid={`row-is-connection-${conn.id}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {conn.status.toLowerCase() === "connected" || conn.status.toLowerCase() === "active" ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                      ) : (
+                        <XCircle className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      )}
+                      <div>
+                        <span className="font-medium text-foreground">{conn.connectorName}</span>
+                        <span className="text-muted-foreground ml-1.5">{conn.name}</span>
+                      </div>
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] ${
+                        conn.status.toLowerCase() === "connected" || conn.status.toLowerCase() === "active"
+                          ? "border-green-600/30 text-green-400"
+                          : "border-muted text-muted-foreground"
+                      }`}
+                    >
+                      {conn.status}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {discovery.connectors.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-foreground mb-2">Available Connectors ({discovery.connectors.length})</h4>
+              <div className="flex flex-wrap gap-1.5">
+                {discovery.connectors.slice(0, 30).map(conn => (
+                  <Badge
+                    key={conn.id}
+                    variant="outline"
+                    className="text-[10px]"
+                    data-testid={`badge-is-connector-${conn.id}`}
+                  >
+                    {conn.name}
+                    {conn.connectionCount > 0 && (
+                      <span className="ml-1 text-green-400">({conn.connectionCount})</span>
+                    )}
+                  </Badge>
+                ))}
+                {discovery.connectors.length > 30 && (
+                  <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                    +{discovery.connectors.length - 30} more
+                  </Badge>
+                )}
+              </div>
+            </div>
+          )}
+
+          {discovery.connections.length === 0 && discovery.connectors.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              No connectors or connections discovered. Configure Integration Service in UiPath to enable pre-built enterprise system integrations.
+            </p>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function IntegrationsTab() {
   const { toast } = useToast();
   const [step, setStep] = useState(0);
@@ -2158,6 +2338,7 @@ function IntegrationsTab() {
         )}
 
         {config?.configured && <OrchestratorHealthPanel />}
+        {config?.configured && <IntegrationServicePanel />}
 
         {step < 3 && (
           <div className="flex items-center gap-3 pt-2">

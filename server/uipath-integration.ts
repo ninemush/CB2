@@ -1553,6 +1553,7 @@ export type PlatformCapabilityProfile = {
   availableDescription: string;
   unavailableRecommendations: string;
   licenseInfo?: LicenseInfo | null;
+  integrationService?: IntegrationServiceDiscovery;
 };
 
 type AgentCapabilities = {
@@ -2002,9 +2003,6 @@ export async function getPlatformCapabilities(): Promise<PlatformCapabilityProfi
   if (avail.maestro) availNames.push("Maestro (process orchestration, long-running workflows, human-in-the-loop coordination via PIMS)");
   else unavailRecs.push("- **Maestro**: Not available. If enabled, it would provide advanced process orchestration with human-in-the-loop coordination for complex, long-running workflows.");
 
-  if (avail.integrationService) availNames.push("Integration Service (pre-built connectors, API integrations, third-party system connections)");
-  else unavailRecs.push("- **Integration Service**: Not available. If enabled, it would provide pre-built connectors and API integrations for seamless third-party system connectivity.");
-
   if (avail.ixp) availNames.push("IXP / Communications Mining (email and message analysis, intent detection, sentiment analysis)");
   else unavailRecs.push("- **IXP / Communications Mining**: Not available. If enabled, it could analyze emails, tickets, and messages for intent detection, sentiment analysis, and automated triage.");
 
@@ -2026,6 +2024,24 @@ export async function getPlatformCapabilities(): Promise<PlatformCapabilityProfi
   const config = await getUiPathConfig();
   const orgTenant = config ? `${config.orgName}/${config.tenantName}` : "unknown";
 
+  let isDiscovery: IntegrationServiceDiscovery | undefined;
+  try {
+    isDiscovery = await discoverIntegrationService();
+    if (isDiscovery.available) {
+      const activeConns = isDiscovery.connections.filter(c => c.status.toLowerCase() === "connected" || c.status.toLowerCase() === "active");
+      if (activeConns.length > 0) {
+        const connectorNames = [...new Set(activeConns.map(c => c.connectorName).filter(Boolean))];
+        availNames.push(`Integration Service (${activeConns.length} active connection(s): ${connectorNames.join(", ")})`);
+      } else if (isDiscovery.connectors.length > 0) {
+        availNames.push(`Integration Service (${isDiscovery.connectors.length} connector(s) available, no active connections)`);
+      }
+    } else {
+      unavailRecs.push("- **Integration Service**: Not available. If enabled, it provides 500+ pre-built connectors to enterprise systems (SAP, Salesforce, ServiceNow, Microsoft 365, etc.) — eliminating the need for custom HTTP activities and credential management.");
+    }
+  } catch (err: any) {
+    console.warn(`[Integration Service] Discovery failed during capabilities check: ${err.message}`);
+  }
+
   return {
     configured: true,
     available: avail,
@@ -2038,6 +2054,7 @@ export async function getPlatformCapabilities(): Promise<PlatformCapabilityProfi
       ? `The following services are NOT currently available on this tenant. Include a "Platform Recommendations" section explaining how each would enhance the solution if enabled:\n${unavailRecs.join("\n")}`
       : "All major UiPath platform services are available.",
     licenseInfo: probe.licenseInfo,
+    integrationService: isDiscovery,
   };
 }
 
@@ -2305,9 +2322,17 @@ export async function verifyUiPathScopes(): Promise<{ success: boolean; requeste
       ? { available: true, message: "Accessible" }
       : { available: false, message: "Not accessible — PIMS scope may be needed" };
 
-    serviceChecks["Integration Service"] = probe.flags.integrationService
-      ? { available: true, message: "Accessible" }
-      : { available: false, message: "Not accessible or not provisioned" };
+    try {
+      const isDiscovery = await discoverIntegrationService();
+      const activeConns = isDiscovery.connections.filter(c => c.status.toLowerCase() === "connected" || c.status.toLowerCase() === "active");
+      serviceChecks["Integration Service"] = isDiscovery.available
+        ? { available: true, message: `${isDiscovery.connectors.length} connector(s), ${activeConns.length} active connection(s)` }
+        : { available: false, message: "Integration Service not accessible" };
+    } catch {
+      serviceChecks["Integration Service"] = probe.flags.integrationService
+        ? { available: true, message: "Accessible" }
+        : { available: false, message: "Could not probe Integration Service" };
+    }
 
     serviceChecks["IXP / Communications Mining"] = probe.flags.ixp
       ? { available: true, message: "Accessible" }
@@ -2365,6 +2390,7 @@ export type ServiceAvailabilityMap = {
   agentCapabilities?: { autonomous: boolean; conversational: boolean; coded: boolean };
   maestro: boolean;
   integrationService: boolean;
+  integrationServiceDiscovery?: IntegrationServiceDiscovery;
   ixp: boolean;
   automationHub: boolean;
   automationOps: boolean;
@@ -2375,6 +2401,12 @@ export type ServiceAvailabilityMap = {
 
 export async function probeServiceAvailability(): Promise<ServiceAvailabilityMap> {
   const probe = await probeAllServices();
+  let isDiscovery: IntegrationServiceDiscovery | undefined;
+  try {
+    isDiscovery = await discoverIntegrationService();
+  } catch (err: any) {
+    console.warn(`[Integration Service] Discovery failed during service probe: ${err.message}`);
+  }
   return {
     configured: probe.configured,
     orchestrator: probe.flags.orchestrator,
@@ -2391,6 +2423,7 @@ export async function probeServiceAvailability(): Promise<ServiceAvailabilityMap
     agentCapabilities: probe.agentCapabilities,
     maestro: probe.flags.maestro,
     integrationService: probe.flags.integrationService,
+    integrationServiceDiscovery: isDiscovery,
     ixp: probe.flags.ixp,
     automationHub: probe.flags.automationHub,
     automationOps: probe.flags.automationOps,
@@ -2398,6 +2431,162 @@ export async function probeServiceAvailability(): Promise<ServiceAvailabilityMap
     apps: probe.flags.apps,
     assistant: probe.flags.assistant,
   };
+}
+
+export type IntegrationServiceConnector = {
+  id: string;
+  name: string;
+  description?: string;
+  provider?: string;
+  iconUrl?: string;
+  connectionCount: number;
+};
+
+export type IntegrationServiceConnection = {
+  id: string;
+  connectorId: string;
+  connectorName: string;
+  name: string;
+  status: string;
+  createdAt?: string;
+  provider?: string;
+};
+
+export type IntegrationServiceDiscovery = {
+  available: boolean;
+  connectors: IntegrationServiceConnector[];
+  connections: IntegrationServiceConnection[];
+  summary: string;
+};
+
+let _isDiscoveryCache: IntegrationServiceDiscovery | null = null;
+const IS_CACHE_TTL_MS = 120_000;
+let _isCacheAt = 0;
+
+export function clearIntegrationServiceCache(): void {
+  _isDiscoveryCache = null;
+  _isCacheAt = 0;
+}
+
+function sanitizeConnectorString(s: string): string {
+  return s.replace(/[<>\[\]{}|\\`]/g, "").slice(0, 100).trim();
+}
+
+export async function discoverIntegrationService(): Promise<IntegrationServiceDiscovery> {
+  if (_isDiscoveryCache && Date.now() - _isCacheAt < IS_CACHE_TTL_MS) {
+    return _isDiscoveryCache;
+  }
+
+  const empty: IntegrationServiceDiscovery = {
+    available: false,
+    connectors: [],
+    connections: [],
+    summary: "Integration Service is not available.",
+  };
+
+  const config = await getUiPathConfig();
+  if (!config) return empty;
+
+  try {
+    const token = await getAccessToken(config);
+    const base = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
+    const hdrs: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+
+    const connectorsUrl = `${base}/integrationservice_/api/ConnectorDefinitions?$top=100`;
+    const connectionsUrl = `${base}/integrationservice_/api/Connections?$top=100`;
+
+    const [connectorRes, connectionRes] = await Promise.allSettled([
+      fetch(connectorsUrl, { headers: hdrs }),
+      fetch(connectionsUrl, { headers: hdrs }),
+    ]);
+
+    const connectors: IntegrationServiceConnector[] = [];
+    const connections: IntegrationServiceConnection[] = [];
+
+    if (connectorRes.status === "fulfilled" && connectorRes.value.ok) {
+      try {
+        const data = await connectorRes.value.json();
+        const items = data.value || data.items || data || [];
+        if (Array.isArray(items)) {
+          for (const c of items) {
+            connectors.push({
+              id: String(c.id || c.Id || "").slice(0, 100),
+              name: sanitizeConnectorString(c.name || c.Name || c.displayName || c.DisplayName || ""),
+              description: sanitizeConnectorString(c.description || c.Description || "") || undefined,
+              provider: sanitizeConnectorString(c.provider || c.Provider || "") || undefined,
+              iconUrl: c.iconUrl || c.IconUrl || undefined,
+              connectionCount: c.connectionCount || c.ConnectionCount || 0,
+            });
+          }
+        }
+      } catch (e) {
+        console.warn("[Integration Service] Failed to parse connectors response:", e);
+      }
+    } else {
+      const status = connectorRes.status === "fulfilled" ? connectorRes.value.status : "error";
+      console.log(`[Integration Service] Connectors endpoint returned ${status}`);
+    }
+
+    if (connectionRes.status === "fulfilled" && connectionRes.value.ok) {
+      try {
+        const data = await connectionRes.value.json();
+        const items = data.value || data.items || data || [];
+        if (Array.isArray(items)) {
+          for (const c of items) {
+            connections.push({
+              id: String(c.id || c.Id || "").slice(0, 100),
+              connectorId: String(c.connectorId || c.ConnectorId || c.connectorDefinitionId || c.ConnectorDefinitionId || "").slice(0, 100),
+              connectorName: sanitizeConnectorString(c.connectorName || c.ConnectorName || c.connectorDisplayName || c.ConnectorDisplayName || ""),
+              name: sanitizeConnectorString(c.name || c.Name || c.displayName || c.DisplayName || ""),
+              status: sanitizeConnectorString(c.status || c.Status || "unknown"),
+              createdAt: c.createdAt || c.CreatedAt || undefined,
+              provider: sanitizeConnectorString(c.provider || c.Provider || "") || undefined,
+            });
+          }
+        }
+      } catch (e) {
+        console.warn("[Integration Service] Failed to parse connections response:", e);
+      }
+    } else {
+      const status = connectionRes.status === "fulfilled" ? connectionRes.value.status : "error";
+      console.log(`[Integration Service] Connections endpoint returned ${status}`);
+    }
+
+    const isAvailable = connectors.length > 0 || connections.length > 0 ||
+      (connectorRes.status === "fulfilled" && connectorRes.value.ok) ||
+      (connectionRes.status === "fulfilled" && connectionRes.value.ok);
+
+    const activeConnections = connections.filter(c => c.status.toLowerCase() === "connected" || c.status.toLowerCase() === "active");
+    const connectorNames = [...new Set(activeConnections.map(c => c.connectorName).filter(Boolean))];
+
+    let summary = "";
+    if (isAvailable) {
+      summary = `Integration Service: ${connectors.length} connector(s) available, ${activeConnections.length} active connection(s)`;
+      if (connectorNames.length > 0) {
+        summary += ` (${connectorNames.join(", ")})`;
+      }
+    } else {
+      summary = "Integration Service is not available or has no connectors configured.";
+    }
+
+    const result: IntegrationServiceDiscovery = {
+      available: isAvailable,
+      connectors,
+      connections,
+      summary,
+    };
+
+    _isDiscoveryCache = result;
+    _isCacheAt = Date.now();
+    console.log(`[Integration Service] Discovery complete — ${summary}`);
+    return result;
+  } catch (err: any) {
+    console.warn(`[Integration Service] Discovery failed: ${err.message}`);
+    return empty;
+  }
 }
 
 export async function testUiPathConnection(): Promise<{ success: boolean; message: string; errorType?: string }> {

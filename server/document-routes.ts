@@ -463,6 +463,17 @@ async function generateDocument(ideaId: string, docType: string): Promise<string
       }
       platformCapabilitiesText += `\nInclude a "## License Analysis & Optimization" section in the SDD covering:\n1. Current license utilization and whether it supports the proposed solution\n2. Recommendations for optimal license allocation (e.g., which robot types to use, how many slots needed)\n3. Any missing license types that would be needed and the business impact of not having them`;
     }
+    if (platformProfile.integrationService?.available && platformCapabilitiesText) {
+      const is = platformProfile.integrationService;
+      const activeConns = is.connections.filter(c => c.status.toLowerCase() === "connected" || c.status.toLowerCase() === "active");
+      if (activeConns.length > 0) {
+        platformCapabilitiesText += `\n\nINTEGRATION SERVICE — CONNECTED ENTERPRISE SYSTEMS:\nThe following Integration Service connections are ACTIVE and ready to use:\n${activeConns.map(c => `- **${c.connectorName}** — Connection: "${c.name}" (ID: ${c.id})`).join("\n")}\n\nWhen designing integration points, you MUST use these Integration Service connectors instead of custom HTTP activities. Reference the specific connector name in the "UiPath Activities and Packages Required" section and include the UiPath.IntegrationService.Activities package. In the "Integration Points" section, specify the connector name and connection ID for each connected system.`;
+      }
+      if (is.connectors.length > 0 && activeConns.length === 0) {
+        const connectorNames = is.connectors.slice(0, 20).map(c => c.name).filter(Boolean).join(", ");
+        platformCapabilitiesText += `\n\nINTEGRATION SERVICE:\n${is.connectors.length} connector(s) available but no active connections configured yet: ${connectorNames}.\nRecommend setting up Integration Service connections for any enterprise systems involved in this automation.`;
+      }
+    }
     console.log(`[SDD] Platform profile: ${platformProfile.summary}`);
 
     console.log("[SDD] Starting parallel generation (prose + artifacts)...");

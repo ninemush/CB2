@@ -348,12 +348,30 @@ function classifyEmail(ctx: ActivityContext, combined: string): ReturnType<typeo
   };
 }
 
+const INTEGRATION_SERVICE_SYSTEMS = [
+  "sap", "salesforce", "servicenow", "microsoft 365", "office 365",
+  "dynamics", "workday", "oracle", "hubspot", "jira", "slack",
+  "google", "sharepoint", "teams", "zendesk", "snowflake",
+  "aws", "azure", "dropbox", "box", "docusign", "twilio",
+];
+
 function classifyApi(ctx: ActivityContext, combined: string): ReturnType<typeof classifyActivity> {
   const gaps: XamlGap[] = [];
   const variables: VariableDecl[] = [
     { name: "str_ApiResponse", type: "String", defaultValue: '""' },
     { name: "int_StatusCode", type: "Int32", defaultValue: "0" },
   ];
+
+  const matchedSystem = INTEGRATION_SERVICE_SYSTEMS.find(s => combined.includes(s));
+  if (matchedSystem) {
+    gaps.push({
+      category: "config",
+      activity: "HttpClient",
+      description: `Consider using Integration Service connector for ${matchedSystem} instead of custom HTTP — "${ctx.name}". The UiPath.IntegrationService.Activities package provides pre-built connectors with managed authentication.`,
+      placeholder: `Use UiPath Integration Service ${matchedSystem} connector with pre-built authentication`,
+      estimatedMinutes: 5,
+    });
+  }
 
   let method = "GET";
   if (combined.includes("post") || combined.includes("create") || combined.includes("submit") || combined.includes("send")) {

@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { getUiPathConfig, getAccessToken, saveUiPathConfig, testUiPathConnection, pushToUiPath, getLastTestedAt, fetchUiPathFolders, saveUiPathFolder, createProcess, listMachines, listRobots, listProcesses, startJob, getJobStatus, verifyUiPathScopes, probeUiPathScopes, autoDetectUiPathScopes, clearProbeCache } from "./uipath-integration";
+import { getUiPathConfig, getAccessToken, saveUiPathConfig, testUiPathConnection, pushToUiPath, getLastTestedAt, fetchUiPathFolders, saveUiPathFolder, createProcess, listMachines, listRobots, listProcesses, startJob, getJobStatus, verifyUiPathScopes, probeUiPathScopes, autoDetectUiPathScopes, clearProbeCache, discoverIntegrationService, clearIntegrationServiceCache } from "./uipath-integration";
 import { parseArtifactsFromSDD, extractArtifactsWithLLM, deployAllArtifacts, formatDeploymentReport } from "./uipath-deploy";
 import { getPreviousManifest, reconcileArtifacts, saveManifest, formatReconciliationSummary } from "./artifact-reconciliation";
 import { documentStorage } from "./document-storage";
@@ -1527,6 +1527,27 @@ export function registerUiPathRoutes(app: Express): void {
       }
 
       return res.json({ success: true, result });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/uipath/integration-service", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const discovery = await discoverIntegrationService();
+      return res.json(discovery);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/uipath/integration-service/refresh", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      clearIntegrationServiceCache();
+      const discovery = await discoverIntegrationService();
+      return res.json(discovery);
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
