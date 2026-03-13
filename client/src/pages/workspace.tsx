@@ -559,10 +559,10 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
 
   const stopDocStreaming = useCallback((opts?: { force?: boolean }) => {
     if (!opts?.force && !isGeneratingDocRef.current) return;
-    setIsGeneratingDoc(false);
-    setGeneratingDocType("");
     isGeneratingDocRef.current = false;
     generatingDocTypeRef.current = "";
+    setIsGeneratingDoc(false);
+    setGeneratingDocType("");
     setDocProgressSection("");
     setStreamingDocContent("");
     setStreamingDocElapsed(0);
@@ -878,14 +878,34 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       });
     } finally {
       setIsStreaming(false);
-      if (docGenIdRef.current === docGenIdAtStart) {
-        stopDocStreaming();
+      const wasGeneratingDoc = isGeneratingDocRef.current;
+      const isOwnGeneration = docGenIdRef.current === docGenIdAtStart;
+      if (isOwnGeneration && wasGeneratingDoc) {
+        isGeneratingDocRef.current = false;
+        generatingDocTypeRef.current = "";
       }
       setDeployStep("");
       setPendingUserMsg(null);
       const finalContent = streamingMsgRef.current;
       setStreamingMsg(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+
+      try {
+        await queryClient.refetchQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+      } catch {
+        queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+      }
+
+      if (isOwnGeneration && wasGeneratingDoc) {
+        setIsGeneratingDoc(false);
+        setGeneratingDocType("");
+        setStreamingDocContent("");
+        setDocProgressSection("");
+        setStreamingDocElapsed(0);
+        if (streamingDocElapsedRef.current) {
+          clearInterval(streamingDocElapsedRef.current);
+          streamingDocElapsedRef.current = null;
+        }
+      }
 
       if (finalContent) {
         const viewStepSets = parseStepsByView(finalContent);
