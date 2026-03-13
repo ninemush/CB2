@@ -892,19 +892,15 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       try {
         await queryClient.refetchQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
       } catch {
-        queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+        try {
+          await queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+        } catch { /* best-effort */ }
       }
 
       if (isOwnGeneration && wasGeneratingDoc) {
-        setIsGeneratingDoc(false);
-        setGeneratingDocType("");
-        setStreamingDocContent("");
-        setDocProgressSection("");
-        setStreamingDocElapsed(0);
-        if (streamingDocElapsedRef.current) {
-          clearInterval(streamingDocElapsedRef.current);
-          streamingDocElapsedRef.current = null;
-        }
+        stopDocStreaming({ force: true });
+      } else if (wasGeneratingDoc && isGeneratingDocRef.current && docGenIdRef.current === docGenIdAtStart) {
+        stopDocStreaming({ force: true });
       }
 
       if (finalContent) {
