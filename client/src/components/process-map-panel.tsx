@@ -1305,12 +1305,13 @@ function CustomEdge({
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
-  const useBezier = simplified || totalNodes > 25;
+  const isDecisionSource = data?.isDecisionSource || false;
+  const useBezier = !isDecisionSource && (simplified || totalNodes > 25);
 
   const sourceOffset = simplified ? 0 : (sourceSiblings > 1 ? (sourceIndex - (sourceSiblings - 1) / 2) * (useBezier ? 12 : 20) : 0);
   const targetOffset = simplified ? 0 : (targetSiblings > 1 ? (targetIndex - (targetSiblings - 1) / 2) * (useBezier ? 12 : 20) : 0);
 
-  const [edgePath, labelX, labelY] = useBezier
+  const [edgePath, midLabelX, midLabelY] = useBezier
     ? getBezierPath({
         sourceX: sourceX + sourceOffset,
         sourceY,
@@ -1329,6 +1330,9 @@ function CustomEdge({
         borderRadius: 16,
         offset: (Math.abs(sourceOffset) > 0 || Math.abs(targetOffset) > 0) ? 25 + Math.max(Math.abs(sourceOffset), Math.abs(targetOffset)) : 20,
       });
+
+  const labelX = isDecisionSource ? sourceX + sourceOffset + (targetX > sourceX ? 30 : -30) : midLabelX;
+  const labelY = isDecisionSource ? sourceY + 30 : midLabelY;
 
   const label = data?.label || "";
   const isYes = /^(yes|approved|pass|valid|complete|true|within|below|stp|auto)/i.test(label);
@@ -1797,6 +1801,8 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       },
     }));
     const nodeIdSet = new Set(dbNodes.map(n => n.id));
+    const nodeTypeMap: Record<string, string> = {};
+    dbNodes.forEach(n => { nodeTypeMap[String(n.id)] = n.nodeType || "task"; });
     const validEdges = dbEdges.filter(e => nodeIdSet.has(e.sourceNodeId) && nodeIdSet.has(e.targetNodeId));
     const relSrcGrp: Record<string, typeof validEdges> = {};
     const relTgtGrp: Record<string, typeof validEdges> = {};
@@ -1813,6 +1819,8 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
     const rawEdges: Edge[] = validEdges.map((e) => {
       const srcS = relSrcGrp[String(e.sourceNodeId)] || [e];
       const tgtS = relTgtGrp[String(e.targetNodeId)] || [e];
+      const srcNodeType = nodeTypeMap[String(e.sourceNodeId)] || "task";
+      const isDecision = srcNodeType === "decision" || srcNodeType === "agent-decision";
       return {
         id: String(e.id), source: String(e.sourceNodeId), target: String(e.targetNodeId),
         type: "custom",
@@ -1822,6 +1830,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
           targetIndex: tgtS.indexOf(e), targetSiblings: tgtS.length,
           totalNodes: relNodeCount,
           simplified: relSimplified,
+          isDecisionSource: isDecision,
         },
       };
     });
@@ -1867,6 +1876,8 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
     }));
 
     const nodeIdSet2 = new Set(dbNodes.map(n => n.id));
+    const nodeTypeMap2: Record<string, string> = {};
+    dbNodes.forEach(n => { nodeTypeMap2[String(n.id)] = n.nodeType || "task"; });
     const safeEdges = dbEdges.filter(e => nodeIdSet2.has(e.sourceNodeId) && nodeIdSet2.has(e.targetNodeId));
     const sourceGroups: Record<string, typeof safeEdges> = {};
     const targetGroups: Record<string, typeof safeEdges> = {};
@@ -1886,6 +1897,8 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       const tgtSiblings = targetGroups[String(e.targetNodeId)] || [e];
       const markerColor = activeView === "sdd" ? "rgba(249,115,22,0.5)" : activeView === "to-be" ? "rgba(34,197,94,0.5)" : "rgba(120,120,145,0.4)";
       const markerSize = isSimplified ? 16 : nodeCount > 25 ? 10 : 14;
+      const srcType = nodeTypeMap2[String(e.sourceNodeId)] || "task";
+      const isDecision = srcType === "decision" || srcType === "agent-decision";
       return {
         id: String(e.id),
         source: String(e.sourceNodeId),
@@ -1897,6 +1910,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
           targetIndex: tgtSiblings.indexOf(e), targetSiblings: tgtSiblings.length,
           totalNodes: nodeCount,
           simplified: isSimplified,
+          isDecisionSource: isDecision,
         },
         animated: activeView === "to-be" || activeView === "sdd",
         markerEnd: {
