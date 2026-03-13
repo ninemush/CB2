@@ -607,7 +607,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   });
 
   const isSystemTriggerMsg = (content: string) =>
-    /^Generate the (Process Design Document|Solution Design Document).*\[DOC:(PDD|SDD):/.test(content);
+    /^Generate the (Process Design Document|Solution Design Document).*\[DOC:(PDD|SDD):/.test(content) ||
+    /^Generate the To-Be process map based on the approved As-Is map/.test(content);
 
   const displayMessages: ChatMsg[] = (() => {
     if (savedMessages && savedMessages.length > 0) {
