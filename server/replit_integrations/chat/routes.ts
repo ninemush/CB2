@@ -8,6 +8,8 @@ import { evaluateTransition } from "../../stage-transition";
 import { approveDocument } from "../../document-service";
 import { PIPELINE_STAGES, type PipelineStage, type AutomationType } from "@shared/schema";
 import { probeServiceAvailability, type ServiceAvailabilityMap } from "../../uipath-integration";
+import { generateRichXamlFromSpec, generateDeveloperHandoffGuide, aggregateGaps } from "../../xaml-generator";
+import { analyzeAndFix } from "../../workflow-analyzer";
 
 const anthropic = new Anthropic({
   apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
@@ -46,16 +48,19 @@ function hasApprovalIntent(userMessage: string): boolean {
   return approvePatterns.some(p => p.test(msg));
 }
 
-function getExplicitDocType(userMessage: string): "PDD" | "SDD" | null {
+function getExplicitDocType(userMessage: string): "PDD" | "SDD" | "DHG" | null {
   const msg = userMessage.toLowerCase().trim();
   if (/\bsdd\b/.test(msg) || /\bsolution\s+design\b/.test(msg)) return "SDD";
   if (/\bpdd\b/.test(msg) || /\bprocess\s+design\b/.test(msg)) return "PDD";
+  if (/\bdhg\b/.test(msg) || /\b(developer\s+)?handoff\s+guide\b/.test(msg) || /\bdeployment\s+handoff\b/.test(msg)) return "DHG";
   if (/\bpdd\b/i.test(userMessage)) return "PDD";
   if (/\bsdd\b/i.test(userMessage)) return "SDD";
+  if (/\bdhg\b/i.test(userMessage)) return "DHG";
   return null;
 }
 
-async function resolveApprovalTarget(ideaId: string, explicitIntent: "PDD" | "SDD" | null): Promise<"PDD" | "SDD" | null> {
+async function resolveApprovalTarget(ideaId: string, explicitIntent: "PDD" | "SDD" | "DHG" | null): Promise<"PDD" | "SDD" | null> {
+  if (explicitIntent === "DHG") return null;
   if (explicitIntent) return explicitIntent;
   const sdd = await documentStorage.getLatestDocument(ideaId, "SDD");
   if (sdd && sdd.status === "draft") return "SDD";
@@ -374,6 +379,14 @@ If ALL services are available, omit this section entirely.
 
 - CONVERSATIONAL DEPLOYMENT: When the SDD is approved and the user wants to deploy, respond with exactly: [DEPLOY_UIPATH] — the system intercepts this tag and executes deployment with live status. Do NOT tell the user to click a button — deployment happens in the conversation.
 - If the SDD is already approved (see document context above), you can deploy immediately when the user asks. Do not re-ask for approval.
+
+DEVELOPER HANDOFF GUIDE (DHG):
+- The DHG is a comprehensive developer handoff document generated after the UiPath automation package has been built.
+- It includes project setup instructions, workflow descriptions, dependency information, gap analysis, deployment details, and developer notes.
+- Users can request the DHG by saying "show me the DHG", "generate the handoff guide", "developer handoff guide", or similar phrases.
+- The DHG is generated programmatically from the automation package data — you do NOT need to write it yourself. When users ask for the DHG, the system handles generation automatically.
+- After deployment, proactively mention that the DHG is available: "The Developer Handoff Guide (DHG) is now available — you can ask me to show it, or view it from the document panel in the workspace."
+- The DHG is NOT an approvable document like the PDD or SDD. It is a generated output for developer reference.
 
 DOCUMENT ITERATION AND STAGE AWARENESS:
 - If the user requests changes to an already-approved document (PDD or SDD), acknowledge that requirements have changed and that you will revise the document. The system supports version control — old versions are preserved and the new version replaces the current one.
@@ -757,16 +770,21 @@ export function registerChatRoutes(app: Express): void {
         }
       }, 5000);
 
-      let classifiedIntent: "PDD" | "SDD" | "PDD_SDD" | "DEPLOY" | "CHAT" = "CHAT";
+      let classifiedIntent: "PDD" | "SDD" | "PDD_SDD" | "DEPLOY" | "DHG" | "CHAT" = "CHAT";
       const lowerContent = content.toLowerCase();
       const hasPddKeyword = /\b(pdd|process\s+design\s+document)\b/.test(lowerContent);
       const hasSddKeyword = /\b(sdd|solution\s+design\s+document)\b/.test(lowerContent);
+      const hasDhgKeyword = /\b(dhg|developer\s+handoff(\s+guide)?|handoff\s+guide|deployment\s+handoff)\b/.test(lowerContent);
       const hasGenVerb = /\b(generate|write|create|regenerate|redo|produce|build|draft)\b/.test(lowerContent);
+      const hasShowVerb = /\b(show|view|open|display|get|see|give)\b/.test(lowerContent);
       const hasDeployVerb = /\b(deploy|push)\b/.test(lowerContent) && /\b(uipath|orchestrator)\b/.test(lowerContent);
 
       if (hasDeployVerb) {
         classifiedIntent = "DEPLOY";
         console.log(`[Chat] Keyword intent classification: DEPLOY`);
+      } else if (hasDhgKeyword) {
+        classifiedIntent = "DHG";
+        console.log(`[Chat] Keyword intent classification: DHG`);
       } else if (hasGenVerb && hasPddKeyword && hasSddKeyword) {
         classifiedIntent = "PDD_SDD";
         console.log(`[Chat] Keyword intent classification: PDD_SDD`);
@@ -788,10 +806,11 @@ export function registerChatRoutes(app: Express): void {
           const classifyRes = await anthropic.messages.create({
             model: "claude-sonnet-4-6",
             max_tokens: 20,
-            system: `You classify user intent in a UiPath automation pipeline chat. The pipeline sequence is: as-is process map → to-be process map → PDD (Process Design Document) → SDD (Solution Design Document) → UiPath package generation → deployment to Orchestrator. Given the recent conversation, determine what the user is requesting. Reply with EXACTLY one of: PDD, SDD, PDD_SDD, DEPLOY, or CHAT.
+            system: `You classify user intent in a UiPath automation pipeline chat. The pipeline sequence is: as-is process map → to-be process map → PDD (Process Design Document) → SDD (Solution Design Document) → UiPath package generation → deployment to Orchestrator → DHG (Developer Handoff Guide). Given the recent conversation, determine what the user is requesting. Reply with EXACTLY one of: PDD, SDD, PDD_SDD, DEPLOY, DHG, or CHAT.
 
 CRITICAL RULES:
 - Classify as PDD, SDD, or PDD_SDD ONLY when the user's LATEST message contains an EXPLICIT request to generate, write, create, produce, or regenerate a document. Look for action verbs like "generate", "write", "create", "produce", "draft", "regenerate", "build", "make" paired with "PDD", "SDD", "document", "design document".
+- Classify as DHG when the user asks to see, generate, show, or view the Developer Handoff Guide, DHG, or handoff guide. This includes phrases like "show me the DHG", "generate the handoff guide", "developer handoff guide", "the DHG", etc.
 - Short responses, feedback, confirmations, opinions, or general discussion about the process should ALWAYS be classified as CHAT. Examples of CHAT: "no i think they make sense in this scenario", "yes that looks right", "I agree", "sounds good", "let's go with that", "what about edge cases?", "can you explain more?", "that's correct".
 - If the user is APPROVING a document (e.g. "I approve", "looks good, approved"), classify as CHAT — approvals are not generation requests.
 - DEPLOY should only be used when the user explicitly requests deployment (e.g. "deploy", "push to orchestrator").
@@ -801,7 +820,7 @@ CRITICAL RULES:
           });
           const rawClassify = (classifyRes.content[0]?.type === "text" ? classifyRes.content[0].text : "").trim();
           const classifyText = rawClassify.toUpperCase().replace(/[^A-Z_]/g, "");
-          if (["PDD", "SDD", "PDD_SDD", "PDDSDD", "DEPLOY"].includes(classifyText)) {
+          if (["PDD", "SDD", "PDD_SDD", "PDDSDD", "DEPLOY", "DHG"].includes(classifyText)) {
             const normalized = classifyText === "PDDSDD" ? "PDD_SDD" : classifyText;
             classifiedIntent = normalized as typeof classifiedIntent;
           }
@@ -911,6 +930,108 @@ CRITICAL RULES:
         intentOverride = "\n\nDOCUMENT GENERATION DIRECTIVE: The user is requesting both PDD and SDD. Per the pipeline sequence, the PDD must be generated and approved first. Generate the PDD NOW using [DOC:PDD:0]. The SDD will be generated separately after PDD approval. Start your response with [DOC:PDD:0] followed by the full PDD content. Do NOT generate an SDD in this response.";
       } else if (classifiedIntent === "DEPLOY") {
         intentOverride = "\n\nDEPLOYMENT DIRECTIVE: The user is requesting deployment to UiPath Orchestrator. Proceed with the deployment flow.";
+      } else if (classifiedIntent === "DHG") {
+        try {
+          const messages = await chatStorage.getMessagesByIdeaId(ideaId);
+          const uipathMsg = [...messages].reverse().find((m) => (m.role === "assistant" || m.role === "system") && m.content.startsWith("[UIPATH:"));
+          if (!uipathMsg) {
+            const noPackageMsg = "The Developer Handoff Guide (DHG) can only be generated after the UiPath automation package has been built. Please complete the automation pipeline first — design the process, approve the PDD and SDD, and generate the automation package. Once the package is ready, you can request the DHG.";
+            await chatStorage.createMessage(ideaId, "assistant", noPackageMsg);
+            try {
+              res.write(`data: ${JSON.stringify({ token: noPackageMsg })}\n\n`);
+              res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+            } catch {}
+            if (heartbeat) clearInterval(heartbeat);
+            res.end();
+            return;
+          }
+
+          const jsonStr = uipathMsg.content.slice(8, -1);
+          let pkg: any;
+          try { pkg = JSON.parse(jsonStr); } catch {
+            const errMsg = "Unable to read the automation package data. Please try regenerating the package first.";
+            await chatStorage.createMessage(ideaId, "assistant", errMsg);
+            try {
+              res.write(`data: ${JSON.stringify({ token: errMsg })}\n\n`);
+              res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+            } catch {}
+            if (heartbeat) clearInterval(heartbeat);
+            res.end();
+            return;
+          }
+
+          try { res.write(`data: ${JSON.stringify({ dhgProgress: { started: true } })}\n\n`); } catch {}
+
+          const sdd = await documentStorage.getLatestDocument(ideaId, "SDD");
+          const sddContent = sdd?.content || "";
+          const workflows = pkg.workflows || [];
+          const allXamlResults: any[] = [];
+          for (const wf of workflows) {
+            allXamlResults.push(generateRichXamlFromSpec(wf, sddContent || undefined));
+          }
+
+          const analysisReports: Array<{ fileName: string; report: any }> = [];
+          for (let i = 0; i < allXamlResults.length; i++) {
+            const wfName = (workflows[i]?.name || "Workflow").replace(/\s+/g, "_");
+            const { report } = analyzeAndFix(allXamlResults[i].xaml);
+            analysisReports.push({ fileName: `${wfName}.xaml`, report });
+          }
+
+          const allGapsForDhg = aggregateGaps(allXamlResults);
+          const depMap: Record<string, string> = {};
+          for (const d of (pkg.dependencies || [])) depMap[d] = "*";
+          const wfNamesForDhg = workflows.map((wf: any) => (wf.name || "Workflow").replace(/\s+/g, "_"));
+
+          const enrichment = pkg._enrichment || pkg.enrichment || null;
+          const useReFramework = enrichment?.useReFramework ?? pkg._useReFramework ?? pkg.useReFramework ?? false;
+          const painPoints = (pkg._painPoints || pkg.painPoints || []).map((p: any) => ({
+            name: p.name || "",
+            description: p.description || "",
+          }));
+
+          const deployReportMsg = [...messages].reverse().find((m) => (m.role === "assistant" || m.role === "system") && m.content.includes("[DEPLOY_REPORT:"));
+          let deploymentResults: any[] | undefined;
+          if (deployReportMsg) {
+            const drMatch = deployReportMsg.content.match(/\[DEPLOY_REPORT:([\s\S]*?)\]$/);
+            if (drMatch) {
+              try { deploymentResults = JSON.parse(drMatch[1]).results || []; } catch {}
+            }
+          }
+
+          const extractedArtifacts = pkg._extractedArtifacts || pkg.extractedArtifacts || undefined;
+
+          const dhgContent = generateDeveloperHandoffGuide({
+            projectName: pkg.projectName || idea.title.replace(/\s+/g, "_"),
+            description: pkg.description || idea.description,
+            gaps: allGapsForDhg,
+            usedPackages: Object.keys(depMap),
+            workflowNames: wfNamesForDhg,
+            sddContent: sddContent || undefined,
+            enrichment,
+            useReFramework,
+            painPoints,
+            deploymentResults,
+            extractedArtifacts,
+            automationType: idea.automationType as "rpa" | "agent" | "hybrid" || undefined,
+            analysisReports,
+          });
+
+          const dhgResponse = `Here is the **Developer Handoff Guide (DHG)** for this automation:\n\n${dhgContent}`;
+          await chatStorage.createMessage(ideaId, "assistant", dhgResponse);
+
+          const chunkSize = 100;
+          for (let i = 0; i < dhgResponse.length; i += chunkSize) {
+            const chunk = dhgResponse.slice(i, i + chunkSize);
+            try { res.write(`data: ${JSON.stringify({ token: chunk })}\n\n`); } catch {}
+          }
+          try { res.write(`data: ${JSON.stringify({ done: true })}\n\n`); } catch {}
+          if (heartbeat) clearInterval(heartbeat);
+          res.end();
+          return;
+        } catch (dhgErr: any) {
+          console.error("[Chat] DHG generation failed:", dhgErr?.message);
+          intentOverride = "\n\nDHG GENERATION DIRECTIVE: The user requested the Developer Handoff Guide but generation encountered an error. Inform the user that the DHG could not be generated and suggest they try again or ensure the automation package has been built first.";
+        }
       }
 
       const systemPrompt = buildSystemPrompt(idea.title, idea.stage, docContext, serviceAvailability, (idea.automationType as AutomationType) || null, toBeMapMode, asIsContextForToBe || undefined) + intentOverride;
