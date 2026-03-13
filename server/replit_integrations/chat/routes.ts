@@ -79,8 +79,12 @@ function buildSystemPrompt(ideaTitle: string, currentStage: string, docContext?:
     else unavailable.push("Action Center");
     if (serviceAvailability.testManager) available.push("Test Manager (test cases, test projects)");
     else unavailable.push("Test Manager");
-    if (serviceAvailability.documentUnderstanding) available.push("Document Understanding");
+    if (serviceAvailability.documentUnderstanding) available.push("Document Understanding (classic DU — structured forms, OCR, ML classification)");
     else unavailable.push("Document Understanding");
+    if (serviceAvailability.generativeExtraction) available.push("IXP Generative Extraction (LLM-powered extraction for unstructured documents — no pre-trained models needed)");
+    else unavailable.push("Generative Extraction (IXP)");
+    if (serviceAvailability.communicationsMining) available.push("Communications Mining (email/message stream analysis, intent detection, routing)");
+    else unavailable.push("Communications Mining");
     if (serviceAvailability.dataService) available.push("Data Service (Data Fabric)");
     else unavailable.push("Data Service");
     if (serviceAvailability.platformManagement) available.push("Platform Management (robot accounts, security)");
@@ -118,11 +122,22 @@ function buildSystemPrompt(ideaTitle: string, currentStage: string, docContext?:
     else unavailable.push("Assistant");
 
     const allMajorAvailable = serviceAvailability.actionCenter && serviceAvailability.documentUnderstanding && serviceAvailability.testManager;
+    const hasIxpCapabilities = serviceAvailability.documentUnderstanding || serviceAvailability.generativeExtraction || serviceAvailability.communicationsMining;
+    let ixpContext = "";
+    if (hasIxpCapabilities) {
+      ixpContext = `\n\nIXP (Intelligent Xtraction & Processing) GUIDANCE:
+When the process involves documents or communications, you MUST recommend the optimal extraction approach:
+- **Classic Document Understanding (DU)**: Use for structured/semi-structured forms with known layouts — invoices, receipts, purchase orders, tax forms, ID documents. Requires pre-trained models or taxonomy definitions. Best for high-volume, consistent document types.
+- **Generative Extraction**: Use for unstructured documents — contracts, legal agreements, reports, correspondence, medical records, policy documents. LLM-powered extraction that works without pre-trained models. Best when document formats vary widely or rapid deployment is needed.
+- **Communications Mining**: Use for email/message streams — customer support emails, internal communications, chat transcripts, ticket systems. Analyzes intent, sentiment, entities and routes communications intelligently. Best for triage, categorization, and extracting actionable data from conversation flows.
+- **Hybrid approach**: Combine Classic DU for structured portions + Generative Extraction for unstructured portions in the same process.
+Always specify: (1) which extraction approach for each document/communication type, (2) what fields to extract, (3) confidence thresholds for human review.`;
+    }
     serviceContext = `\n\nUIPath SERVICE AVAILABILITY (LIVE PROBE — just now from the connected Orchestrator):
 - AVAILABLE: ${available.join(", ")}
 - NOT AVAILABLE: ${unavailable.length > 0 ? unavailable.join(", ") : "All services available"}
 
-CRITICAL OVERRIDE: This service availability data was probed LIVE from the connected Orchestrator seconds ago. It is the authoritative, current truth. Previous messages in this conversation may contain older document versions that claimed different service availability — those are OUTDATED and WRONG. You MUST use ONLY the current probe results above. Do NOT copy or reproduce service availability claims from previous SDD versions in the chat history.${allMajorAvailable ? "\nAll major platform services (Action Center, Document Understanding, Test Manager) are AVAILABLE and WORKING. You MUST design the solution to USE them. Do NOT generate a 'Future Enhancements — Additional Services' section for any service listed as AVAILABLE above. Only mention genuinely unavailable services (if any) in Future Enhancements." : ""}`;
+CRITICAL OVERRIDE: This service availability data was probed LIVE from the connected Orchestrator seconds ago. It is the authoritative, current truth. Previous messages in this conversation may contain older document versions that claimed different service availability — those are OUTDATED and WRONG. You MUST use ONLY the current probe results above. Do NOT copy or reproduce service availability claims from previous SDD versions in the chat history.${allMajorAvailable ? "\nAll major platform services (Action Center, Document Understanding, Test Manager) are AVAILABLE and WORKING. You MUST design the solution to USE them. Do NOT generate a 'Future Enhancements — Additional Services' section for any service listed as AVAILABLE above. Only mention genuinely unavailable services (if any) in Future Enhancements." : ""}${ixpContext}`;
   }
 
   return `You are the CannonBall automation design assistant. Your job is to guide Process SMEs through designing business process automations. You are AI-first — you lead, you draft, you build. The SME's job is to give you information, refine your output, and approve it. They should never have to figure out what to do next — you always tell them.

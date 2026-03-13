@@ -92,7 +92,8 @@ export type OrchestratorArtifacts = {
   environments?: Array<{ name: string; type?: string; description?: string }>;
   robotAccounts?: Array<{ name: string; type?: string; description?: string; role?: string }>;
   actionCenter?: Array<{ taskCatalog: string; assignedRole?: string; sla?: string; escalation?: string; description?: string; priority?: string; actions?: string[]; formFields?: Array<{ name: string; type: string; required?: boolean }> }>;
-  documentUnderstanding?: Array<{ name: string; documentTypes: string[]; description?: string; taxonomyFields?: Array<{ documentType: string; fields: Array<{ name: string; type: string }> }>; classifierType?: string }>;
+  documentUnderstanding?: Array<{ name: string; documentTypes: string[]; description?: string; extractionApproach?: string; taxonomyFields?: Array<{ documentType: string; fields: Array<{ name: string; type: string }> }>; classifierType?: string; validationRules?: Array<{ field: string; rule: string; action: string }> }>;
+  communicationsMining?: Array<{ name: string; sourceType?: string; description?: string; intents?: string[]; entities?: string[]; routingRules?: Array<{ intent: string; action: string; target: string }> }>;
   testCases?: Array<{ name: string; description?: string; labels?: string[]; testType?: string; priority?: string; preconditions?: string[]; postconditions?: string[]; testData?: Array<{ field: string; value: string; dataType: string }>; automationWorkflow?: string; expectedDuration?: number; steps?: Array<{ action: string; expected: string }> }>;
   testDataQueues?: Array<{ name: string; description?: string; jsonSchema?: string; items?: Array<{ name: string; content: string }> }>;
   requirements?: Array<{ name: string; description?: string; source?: string; type?: string; priority?: string; acceptanceCriteria?: string[] }>;
@@ -122,7 +123,7 @@ export function parseArtifactsFromSDD(sddContent: string): OrchestratorArtifacts
       const inner = fence.replace(/```json\s*\n/, "").replace(/\n```$/, "").trim();
       try {
         const parsed = JSON.parse(sanitizeJsonString(inner));
-        if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers || parsed.agents) {
+        if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers || parsed.agents || parsed.communicationsMining) {
           console.log("[parseArtifacts] Found artifacts in json fence block");
           return parsed;
         }
@@ -130,7 +131,7 @@ export function parseArtifactsFromSDD(sddContent: string): OrchestratorArtifacts
     }
   }
 
-  const rawMatch = sddContent.match(/\{\s*"queues"\s*:\s*\[[\s\S]*?\}\s*\]\s*\}/);
+  const rawMatch = sddContent.match(/\{\s*"(?:queues|assets|documentUnderstanding|communicationsMining)"\s*:\s*\[[\s\S]*?\}\s*\]\s*\}/);
   if (rawMatch) {
     try {
       const braceStart = rawMatch.index!;
@@ -143,7 +144,7 @@ export function parseArtifactsFromSDD(sddContent: string): OrchestratorArtifacts
       }
       const jsonStr = sddContent.slice(braceStart, end);
       const parsed = JSON.parse(sanitizeJsonString(jsonStr));
-      if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers || parsed.agents) {
+      if (parsed.queues || parsed.assets || parsed.machines || parsed.triggers || parsed.agents || parsed.communicationsMining || parsed.documentUnderstanding) {
         console.log("[parseArtifacts] Found artifacts in raw JSON");
         return parsed;
       }
@@ -185,7 +186,8 @@ ARTIFACT RULES:
 - storageBuckets: Include storageProvider ("Orchestrator"|"Azure"|"AWS"|"GCP") derived from the SDD tech stack.
 - robotAccounts: Include role (specific role name like "InvoiceProcessor" not generic "Executor"). At least one robot per machine.
 - actionCenter: Include priority ("Critical"|"High"|"Normal"|"Low"), actions array (e.g. ["Approve","Reject","Escalate"]), formFields array with field definitions. CRITICAL: Any human approval/review/escalation step MUST generate an entry.
-- documentUnderstanding: Include taxonomyFields (extraction fields per document type with name+type), classifierType ("Keyword"|"ML"|"Regex").
+- documentUnderstanding: Include extractionApproach ("classic_du" for structured forms, "generative" for unstructured documents, "hybrid" for mixed). Include taxonomyFields (extraction fields per document type with name+type), classifierType ("Keyword"|"ML"|"Regex"), validationRules [{field, rule (e.g. "confidence >= 0.85"), action ("flag_for_review"|"reject"|"auto_accept")}].
+- communicationsMining: Include sourceType ("email"|"chat"|"ticket"), intents (array of intent labels the model should detect), entities (array of entity names to extract), routingRules [{intent, action ("escalate"|"auto_reply"|"route"|"archive"), target (team/person/queue)}].
 - testCases: AUTOMATION-GRADE quality required:
   - testType: "Functional"|"Regression"|"Smoke"|"Integration"|"E2E"
   - priority: "Critical"|"High"|"Medium"|"Low"
@@ -203,7 +205,7 @@ ARTIFACT RULES:
 - promptTemplates: Include template text with {{variable}} placeholders and variables array.
 
 Expected JSON shape:
-{"queues":[{"name":"...","description":"...","maxRetries":3,"uniqueReference":true,"jsonSchema":"{\\"type\\":\\"object\\",\\"properties\\":{...}}","outputSchema":"..."}],"assets":[{"name":"...","type":"Text|Integer|Bool|Credential","value":"...","description":"Usage context"}],"machines":[{"name":"...","type":"Unattended|Attended|Development","slots":1,"runtimeType":"Unattended","description":"Purpose"}],"triggers":[{"name":"...","type":"Queue|Time","queueName":"...","cron":"0 0 8 ? * MON-FRI","timezone":"America/New_York","startStrategy":"Specific","maxJobsCount":1,"description":"..."}],"storageBuckets":[{"name":"...","storageProvider":"Orchestrator","description":"..."}],"environments":[{"name":"...","type":"Production|Development|Testing","description":"..."}],"robotAccounts":[{"name":"...","type":"Unattended","role":"SpecificRole","description":"..."}],"actionCenter":[{"taskCatalog":"...","assignedRole":"...","sla":"4h","escalation":"Manager","priority":"High","actions":["Approve","Reject"],"formFields":[{"name":"...","type":"String|Number|Boolean","required":true}],"description":"..."}],"documentUnderstanding":[{"name":"...","documentTypes":["Invoice"],"taxonomyFields":[{"documentType":"Invoice","fields":[{"name":"InvoiceNumber","type":"String"}]}],"classifierType":"ML","description":"..."}],"testCases":[{"name":"TC_001_TestName","testType":"Functional","priority":"Critical","description":"...","preconditions":["Precondition 1"],"postconditions":["Postcondition 1"],"testData":[{"field":"FieldName","value":"TestValue","dataType":"String"}],"automationWorkflow":"Main.xaml","expectedDuration":60,"labels":["Critical","Smoke"],"steps":[{"action":"Specific action with field names and values","expected":"Specific expected result with values"}]}],"testDataQueues":[{"name":"...","description":"...","jsonSchema":"...","items":[{"name":"Record_1","content":"..."}]}],"requirements":[{"name":"REQ-001: Name","type":"Functional","priority":"Critical","description":"...","source":"SDD Section X","acceptanceCriteria":["Criteria 1"]}],"testSets":[{"name":"Happy Path Tests","description":"...","executionMode":"Sequential","environment":"Production","triggerType":"Manual","testCaseNames":["TC_001_TestName"]}]}
+{"queues":[{"name":"...","description":"...","maxRetries":3,"uniqueReference":true,"jsonSchema":"{\\"type\\":\\"object\\",\\"properties\\":{...}}","outputSchema":"..."}],"assets":[{"name":"...","type":"Text|Integer|Bool|Credential","value":"...","description":"Usage context"}],"machines":[{"name":"...","type":"Unattended|Attended|Development","slots":1,"runtimeType":"Unattended","description":"Purpose"}],"triggers":[{"name":"...","type":"Queue|Time","queueName":"...","cron":"0 0 8 ? * MON-FRI","timezone":"America/New_York","startStrategy":"Specific","maxJobsCount":1,"description":"..."}],"storageBuckets":[{"name":"...","storageProvider":"Orchestrator","description":"..."}],"environments":[{"name":"...","type":"Production|Development|Testing","description":"..."}],"robotAccounts":[{"name":"...","type":"Unattended","role":"SpecificRole","description":"..."}],"actionCenter":[{"taskCatalog":"...","assignedRole":"...","sla":"4h","escalation":"Manager","priority":"High","actions":["Approve","Reject"],"formFields":[{"name":"...","type":"String|Number|Boolean","required":true}],"description":"..."}],"documentUnderstanding":[{"name":"...","documentTypes":["Invoice"],"extractionApproach":"classic_du","taxonomyFields":[{"documentType":"Invoice","fields":[{"name":"InvoiceNumber","type":"String"}]}],"classifierType":"ML","validationRules":[{"field":"TotalAmount","rule":"confidence >= 0.85","action":"flag_for_review"}],"description":"..."}],"communicationsMining":[{"name":"...","sourceType":"email","intents":["Request","Complaint"],"entities":["CustomerName","OrderNumber"],"routingRules":[{"intent":"Complaint","action":"escalate","target":"SeniorAgent"}],"description":"..."}],"testCases":[{"name":"TC_001_TestName","testType":"Functional","priority":"Critical","description":"...","preconditions":["Precondition 1"],"postconditions":["Postcondition 1"],"testData":[{"field":"FieldName","value":"TestValue","dataType":"String"}],"automationWorkflow":"Main.xaml","expectedDuration":60,"labels":["Critical","Smoke"],"steps":[{"action":"Specific action with field names and values","expected":"Specific expected result with values"}]}],"testDataQueues":[{"name":"...","description":"...","jsonSchema":"...","items":[{"name":"Record_1","content":"..."}]}],"requirements":[{"name":"REQ-001: Name","type":"Functional","priority":"Critical","description":"...","source":"SDD Section X","acceptanceCriteria":["Criteria 1"]}],"testSets":[{"name":"Happy Path Tests","description":"...","executionMode":"Sequential","environment":"Production","triggerType":"Manual","testCaseNames":["TC_001_TestName"]}]}
 
 SDD content:
 ${sddContent.slice(0, 12000)}`
@@ -279,7 +281,23 @@ ${sddContent.slice(0, 12000)}`
       validated.actionCenter = raw.actionCenter.filter((a: any) => typeof a?.taskCatalog === "string" && a.taskCatalog.length > 0);
     }
     if (Array.isArray(raw.documentUnderstanding)) {
-      validated.documentUnderstanding = raw.documentUnderstanding.filter((d: any) => typeof d?.name === "string" && d.name.length > 0);
+      const validApproaches = new Set(["classic_du", "generative", "hybrid"]);
+      validated.documentUnderstanding = raw.documentUnderstanding
+        .filter((d: any) => typeof d?.name === "string" && d.name.length > 0)
+        .map((d: any) => ({
+          ...d,
+          extractionApproach: validApproaches.has(d.extractionApproach) ? d.extractionApproach : "classic_du",
+        }));
+    }
+    if (Array.isArray(raw.communicationsMining)) {
+      validated.communicationsMining = raw.communicationsMining
+        .filter((d: any) => typeof d?.name === "string" && d.name.length > 0)
+        .map((d: any) => ({
+          ...d,
+          intents: Array.isArray(d.intents) ? d.intents.filter((i: any) => typeof i === "string") : undefined,
+          entities: Array.isArray(d.entities) ? d.entities.filter((e: any) => typeof e === "string") : undefined,
+          routingRules: Array.isArray(d.routingRules) ? d.routingRules.filter((r: any) => typeof r?.intent === "string" && typeof r?.action === "string") : undefined,
+        }));
     }
     if (Array.isArray(raw.testCases)) {
       validated.testCases = raw.testCases.filter((t: any) => typeof t?.name === "string" && t.name.length > 0).map((t: any) => ({
@@ -317,13 +335,14 @@ ${sddContent.slice(0, 12000)}`
       (validated.triggers?.length || 0) + (validated.machines?.length || 0) +
       (validated.storageBuckets?.length || 0) + (validated.environments?.length || 0) +
       (validated.robotAccounts?.length || 0) + (validated.actionCenter?.length || 0) +
-      (validated.documentUnderstanding?.length || 0) + (validated.testCases?.length || 0) +
-      (validated.testDataQueues?.length || 0) + (validated.requirements?.length || 0) +
-      (validated.testSets?.length || 0) + (validated.agents?.length || 0) +
-      (validated.knowledgeBases?.length || 0) + (validated.promptTemplates?.length || 0);
+      (validated.documentUnderstanding?.length || 0) + (validated.communicationsMining?.length || 0) +
+      (validated.testCases?.length || 0) + (validated.testDataQueues?.length || 0) +
+      (validated.requirements?.length || 0) + (validated.testSets?.length || 0) +
+      (validated.agents?.length || 0) + (validated.knowledgeBases?.length || 0) +
+      (validated.promptTemplates?.length || 0);
 
     if (hasContent > 0) {
-      console.log(`[UiPath Deploy] LLM extracted ${hasContent} validated artifacts (queues:${validated.queues?.length||0}, assets:${validated.assets?.length||0}, machines:${validated.machines?.length||0}, triggers:${validated.triggers?.length||0}, buckets:${validated.storageBuckets?.length||0}, robots:${validated.robotAccounts?.length||0}, actionCenter:${validated.actionCenter?.length||0}, DU:${validated.documentUnderstanding?.length||0}, testCases:${validated.testCases?.length||0}, testDataQueues:${validated.testDataQueues?.length||0}, requirements:${validated.requirements?.length||0}, testSets:${validated.testSets?.length||0}, agents:${validated.agents?.length||0}, knowledgeBases:${validated.knowledgeBases?.length||0}, promptTemplates:${validated.promptTemplates?.length||0})`);
+      console.log(`[UiPath Deploy] LLM extracted ${hasContent} validated artifacts (queues:${validated.queues?.length||0}, assets:${validated.assets?.length||0}, machines:${validated.machines?.length||0}, triggers:${validated.triggers?.length||0}, buckets:${validated.storageBuckets?.length||0}, robots:${validated.robotAccounts?.length||0}, actionCenter:${validated.actionCenter?.length||0}, DU:${validated.documentUnderstanding?.length||0}, commsMining:${validated.communicationsMining?.length||0}, testCases:${validated.testCases?.length||0}, testDataQueues:${validated.testDataQueues?.length||0}, requirements:${validated.requirements?.length||0}, testSets:${validated.testSets?.length||0}, agents:${validated.agents?.length||0}, knowledgeBases:${validated.knowledgeBases?.length||0}, promptTemplates:${validated.promptTemplates?.length||0})`);
       return validated;
     }
     console.warn("[UiPath Deploy] LLM returned JSON but no valid artifacts after validation. Raw keys:", Object.keys(raw));
@@ -2096,6 +2115,13 @@ async function provisionDocUnderstanding(
         }
       } catch {}
 
+      const approach = artifact.extractionApproach || "classic_du";
+      const approachLabel = approach === "generative" ? "Generative Extraction" : approach === "hybrid" ? "Hybrid (Classic DU + Generative)" : "Classic DU";
+      const fieldSummary = artifact.taxonomyFields?.map(tf => `${tf.documentType}: ${tf.fields.map(f => f.name).join(", ")}`).join("; ") || "";
+      const validationSummary = artifact.validationRules?.map(vr => `${vr.field}: ${vr.rule} → ${vr.action}`).join("; ") || "";
+      details += `. Extraction approach: ${approachLabel}`;
+      if (fieldSummary) details += `. Fields: ${fieldSummary}`;
+      if (validationSummary) details += `. Validation: ${validationSummary}`;
       results.push({ artifact: "Document Understanding", name: artifact.name, status: "exists", message: details, id: exactMatch.id || exactMatch.Id });
       continue;
     }
@@ -2120,16 +2146,100 @@ async function provisionDocUnderstanding(
         }
       } catch {}
 
+      const approach = artifact.extractionApproach || "classic_du";
+      const approachLabel = approach === "generative" ? "Generative Extraction" : approach === "hybrid" ? "Hybrid (Classic DU + Generative)" : "Classic DU";
+      details += `. Extraction approach: ${approachLabel}`;
       details += `. Artifact doc types needed: ${artifact.documentTypes?.join(", ") || "N/A"}`;
       results.push({ artifact: "Document Understanding", name: artifact.name, status: "exists", message: details, id: projId });
       continue;
     }
 
+    const approach = artifact.extractionApproach || "classic_du";
+    const approachLabel = approach === "generative" ? "Generative Extraction" : approach === "hybrid" ? "Hybrid (Classic DU + Generative)" : "Classic DU";
+    const fieldSummary = artifact.taxonomyFields?.map(tf => `${tf.documentType}: ${tf.fields.map(f => f.name).join(", ")}`).join("; ") || "";
     results.push({
       artifact: "Document Understanding",
       name: artifact.name,
       status: "manual" as const,
-      message: `No matching DU project found. Create a project in the Document Understanding UI at ${duConsoleUrl}. Document types needed: ${artifact.documentTypes?.join(", ") || "N/A"}. Tip: the predefined project (ID: 00000000-0000-0000-0000-000000000000) provides access to public pre-trained models.`,
+      message: `No matching DU project found. Extraction approach: ${approachLabel}. Create a project in the Document Understanding UI at ${duConsoleUrl}. Document types needed: ${artifact.documentTypes?.join(", ") || "N/A"}.${fieldSummary ? ` Fields to configure: ${fieldSummary}.` : ""} Tip: the predefined project (ID: 00000000-0000-0000-0000-000000000000) provides access to public pre-trained models.${approach === "generative" ? " For Generative Extraction, use the IXP console to configure LLM-powered extraction without pre-trained models." : ""}`,
+    });
+  }
+  return results;
+}
+
+async function provisionCommunicationsMining(
+  config: UiPathConfig,
+  token: string,
+  streams: OrchestratorArtifacts["communicationsMining"]
+): Promise<DeploymentResult[]> {
+  if (!streams?.length) return [];
+  const results: DeploymentResult[] = [];
+
+  const cloudBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
+  const cmConsoleUrl = `${cloudBase}/communicationsmining_`;
+
+  const hdrs: Record<string, string> = {
+    "Authorization": `Bearer ${token}`,
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+  };
+
+  let discoveredDatasets: any[] = [];
+  let discoverySuccess = false;
+
+  try {
+    const listRes = await fetch(`${cloudBase}/communicationsmining_/api/v1/datasets`, { headers: hdrs });
+    const listText = await listRes.text();
+    console.log(`[UiPath Deploy] Communications Mining Discovery GET /datasets -> ${listRes.status}: ${listText.slice(0, 300)}`);
+
+    if (listRes.ok) {
+      const genuineCheck = isGenuineServiceResponse(listText);
+      if (genuineCheck.genuine) {
+        const listData = JSON.parse(listText);
+        discoveredDatasets = listData.datasets || listData.value || listData.items || (Array.isArray(listData) ? listData : []);
+        discoverySuccess = true;
+        console.log(`[UiPath Deploy] Communications Mining Discovery found ${discoveredDatasets.length} dataset(s)`);
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[UiPath Deploy] Communications Mining Discovery error: ${err.message}`);
+  }
+
+  for (const stream of streams) {
+    const intentsSummary = stream.intents?.join(", ") || "N/A";
+    const entitiesSummary = stream.entities?.join(", ") || "N/A";
+    const routingSummary = stream.routingRules?.map(r => `${r.intent} → ${r.action}: ${r.target}`).join("; ") || "N/A";
+
+    if (discoverySuccess) {
+      const exactMatch = discoveredDatasets.find((d: any) => (d.name || d.Name) === stream.name);
+      if (exactMatch) {
+        const dsId = exactMatch.id || exactMatch.Id;
+        results.push({
+          artifact: "Communications Mining",
+          name: stream.name,
+          status: "exists",
+          message: `Discovered Communications Mining dataset (ID: ${dsId}). Source: ${stream.sourceType || "N/A"}. Intents: ${intentsSummary}. Entities: ${entitiesSummary}. Routing: ${routingSummary}.`,
+          id: dsId,
+        });
+        continue;
+      }
+    }
+
+    const manualSteps = [
+      `Open Communications Mining console at ${cmConsoleUrl}`,
+      `Create a new dataset named "${stream.name}" with source type: ${stream.sourceType || "email"}`,
+      `Configure intent labels: ${intentsSummary}`,
+      `Configure entity extraction for: ${entitiesSummary}`,
+      `Set up routing rules: ${routingSummary}`,
+      `Connect the data source and start ingesting ${stream.sourceType || "email"} streams`,
+    ];
+
+    results.push({
+      artifact: "Communications Mining",
+      name: stream.name,
+      status: "manual" as const,
+      message: `Communications Mining dataset "${stream.name}" needs manual setup. Source: ${stream.sourceType || "N/A"}. Intents: ${intentsSummary}. Entities: ${entitiesSummary}.`,
+      manualSteps,
     });
   }
   return results;
@@ -3678,7 +3788,7 @@ export async function deployAllArtifacts(
     let svcAvail: ServiceAvailabilityMap | null = null;
     try {
       svcAvail = await probeServiceAvailability();
-      console.log(`[UiPath Deploy] Service availability: AC=${svcAvail.actionCenter}, TM=${svcAvail.testManager}, DU=${svcAvail.documentUnderstanding}, DS=${svcAvail.dataService}, PM=${svcAvail.platformManagement}, Env=${svcAvail.environments}, Trig=${svcAvail.triggers}, Agents=${svcAvail.agents}`);
+      console.log(`[UiPath Deploy] Service availability: AC=${svcAvail.actionCenter}, TM=${svcAvail.testManager}, DU=${svcAvail.documentUnderstanding}, GenExtract=${svcAvail.generativeExtraction}, CommsMining=${svcAvail.communicationsMining}, DS=${svcAvail.dataService}, PM=${svcAvail.platformManagement}, Env=${svcAvail.environments}, Trig=${svcAvail.triggers}, Agents=${svcAvail.agents}`);
     } catch { /* non-critical — proceed without filtering */ }
 
     onProgress?.("Running infrastructure probe...");
@@ -3731,18 +3841,25 @@ export async function deployAllArtifacts(
     if (svcAvail && !svcAvail.documentUnderstanding && (artifacts.documentUnderstanding?.length || 0) > 0) {
       console.log("[UiPath Deploy] Probe says DU unavailable, but attempting provisioning anyway...");
     }
+    if ((artifacts.communicationsMining?.length || 0) > 0) {
+      if (svcAvail && !svcAvail.communicationsMining) {
+        console.log("[UiPath Deploy] Probe says Communications Mining unavailable, but attempting provisioning anyway...");
+      }
+      console.log(`[UiPath Deploy] Provisioning ${artifacts.communicationsMining!.length} Communications Mining stream(s): ${artifacts.communicationsMining!.map(s => s.name).join(", ")}`);
+    }
     if (svcAvail && !svcAvail.testManager && ((artifacts.testCases?.length || 0) > 0 || (artifacts.testDataQueues?.length || 0) > 0)) {
       console.log("[UiPath Deploy] Probe says Test Manager unavailable, but attempting provisioning anyway...");
     }
 
-    const [triggerResults, actionCenterResults, duResults, testProvision] = await Promise.all([
+    const [triggerResults, actionCenterResults, duResults, cmResults, testProvision] = await Promise.all([
       triggerPromise,
       provisionActionCenter(base, hdrs, artifacts.actionCenter, config, svcAvail?.actionCenter),
       provisionDocUnderstanding(config, token, artifacts.documentUnderstanding),
+      provisionCommunicationsMining(config, token, artifacts.communicationsMining),
       provisionTestCases(config, token, artifacts.testCases, releaseName || "Automation", artifacts.testDataQueues, config.folderId),
     ]);
-    allResults.push(...triggerResults, ...actionCenterResults, ...duResults, ...testProvision.results);
-    for (const r of [...triggerResults, ...actionCenterResults, ...duResults, ...testProvision.results]) {
+    allResults.push(...triggerResults, ...actionCenterResults, ...duResults, ...cmResults, ...testProvision.results);
+    for (const r of [...triggerResults, ...actionCenterResults, ...duResults, ...cmResults, ...testProvision.results]) {
       onProgress?.(`${r.artifact} "${r.name}" — ${r.status}`);
     }
 

@@ -1534,6 +1534,8 @@ export type PlatformCapabilityProfile = {
     orchestrator: boolean;
     actionCenter: boolean;
     documentUnderstanding: boolean;
+    generativeExtraction: boolean;
+    communicationsMining: boolean;
     testManager: boolean;
     storageBuckets: boolean;
     aiCenter: boolean;
@@ -1566,6 +1568,8 @@ type UnifiedProbeResult = {
     actionCenter: boolean;
     testManager: boolean;
     documentUnderstanding: boolean;
+    generativeExtraction: boolean;
+    communicationsMining: boolean;
     dataService: boolean;
     platformManagement: boolean;
     environments: boolean;
@@ -1606,7 +1610,8 @@ async function probeAllServices(): Promise<UnifiedProbeResult> {
     configured: false,
     flags: {
       orchestrator: false, actionCenter: false, testManager: false,
-      documentUnderstanding: false, dataService: false, platformManagement: false,
+      documentUnderstanding: false, generativeExtraction: false, communicationsMining: false,
+      dataService: false, platformManagement: false,
       environments: true, triggers: true, storageBuckets: false, aiCenter: false, agents: false,
       maestro: false, integrationService: false, ixp: false,
       automationHub: false, automationOps: false, automationStore: false,
@@ -1710,6 +1715,8 @@ async function probeAllServices(): Promise<UnifiedProbeResult> {
     }
 
     let duAvailable = false;
+    let genExtractionAvailable = false;
+    let commsMiningAvailable = false;
     if (duResult.status === "fulfilled" && duResult.value.ok) {
       const duTok = await getDuToken();
       const duHdrs: Record<string, string> = { Authorization: `Bearer ${duTok}`, "Content-Type": "application/json" };
@@ -1724,7 +1731,45 @@ async function probeAllServices(): Promise<UnifiedProbeResult> {
           console.warn(`[UiPath Probe] DU token got 403 — scopes may be insufficient for Discovery API`);
         }
       } catch {}
+
+      const ixpProbeUrl = `${base}/ixp_/api/v1/projects`;
+      try {
+        const ixpRes = await fetch(ixpProbeUrl, { headers: duHdrs });
+        console.log(`[UiPath Probe] IXP Generative Extraction: ${ixpProbeUrl} -> ${ixpRes.status}`);
+        if (ixpRes.ok) {
+          const ixpText = await ixpRes.text();
+          const trimmedIxp = ixpText.trim();
+          if (trimmedIxp.length > 0 && !trimmedIxp.startsWith("<") && !trimmedIxp.startsWith("<!")) {
+            try {
+              const ixpData = JSON.parse(trimmedIxp);
+              if (!ixpData.errorCode && !ixpData.ErrorCode && !ixpData["odata.error"]) {
+                genExtractionAvailable = true;
+                console.log("[UiPath Probe] IXP Generative Extraction available");
+              }
+            } catch { /* not valid JSON — not a genuine service */ }
+          }
+        }
+      } catch {}
     }
+
+    const cmProbeUrl = `${base}/communicationsmining_/api/v1/datasets`;
+    try {
+      const cmRes = await fetch(cmProbeUrl, { headers: hdrs });
+      console.log(`[UiPath Probe] Communications Mining: ${cmProbeUrl} -> ${cmRes.status}`);
+      if (cmRes.ok) {
+        const cmText = await cmRes.text();
+        const trimmedCm = cmText.trim();
+        if (trimmedCm.length > 0 && !trimmedCm.startsWith("<") && !trimmedCm.startsWith("<!")) {
+          try {
+            const cmData = JSON.parse(trimmedCm);
+            if (!cmData.errorCode && !cmData.ErrorCode && !cmData["odata.error"]) {
+              commsMiningAvailable = true;
+              console.log("[UiPath Probe] Communications Mining available");
+            }
+          } catch { /* not valid JSON — not a genuine service */ }
+        }
+      }
+    } catch {}
 
     let aiAvailable = false;
     const aiProbe = await fetch(`${base}/aifabric_/ai-deployer/v1/projects?$top=1`, { headers: hdrs }).catch(() => null);
@@ -1824,6 +1869,8 @@ async function probeAllServices(): Promise<UnifiedProbeResult> {
         actionCenter: acAvailable,
         testManager: tmAvailable,
         documentUnderstanding: duAvailable,
+        generativeExtraction: genExtractionAvailable,
+        communicationsMining: commsMiningAvailable,
         dataService: dsAvailable,
         platformManagement: pmAvailable,
         environments: envAvailable,
@@ -1869,6 +1916,7 @@ export async function getPlatformCapabilities(): Promise<PlatformCapabilityProfi
     configured: false,
     available: {
       orchestrator: false, actionCenter: false, documentUnderstanding: false,
+      generativeExtraction: false, communicationsMining: false,
       testManager: false, storageBuckets: false, aiCenter: false,
       maestro: false, integrationService: false, ixp: false,
       automationHub: false, automationOps: false, automationStore: false,
@@ -1890,6 +1938,8 @@ export async function getPlatformCapabilities(): Promise<PlatformCapabilityProfi
     orchestrator: probe.flags.orchestrator,
     actionCenter: probe.flags.actionCenter,
     documentUnderstanding: probe.flags.documentUnderstanding,
+    generativeExtraction: probe.flags.generativeExtraction,
+    communicationsMining: probe.flags.communicationsMining,
     testManager: probe.flags.testManager,
     storageBuckets: probe.flags.storageBuckets,
     aiCenter: probe.flags.aiCenter,
@@ -1912,8 +1962,21 @@ export async function getPlatformCapabilities(): Promise<PlatformCapabilityProfi
   if (avail.actionCenter) availNames.push("Action Center (human-in-the-loop tasks, approvals, escalations, SLA management)");
   else unavailRecs.push("- **Action Center**: Not available. If enabled, it would allow human-in-the-loop steps — approvals, validations, exception handling escalations — directly within the automation workflow instead of external email/chat processes.");
 
-  if (avail.documentUnderstanding) availNames.push("Document Understanding (intelligent document processing, OCR, ML classification, data extraction)");
-  else unavailRecs.push("- **Document Understanding**: Not available. If enabled, it could automate document classification, data extraction from invoices/forms/contracts using ML models instead of manual data entry or rigid template-based parsing.");
+  if (avail.documentUnderstanding) {
+    const duDesc = avail.generativeExtraction
+      ? "IXP Document Understanding (classic DU for structured forms — OCR, ML classification, template-based extraction) + Generative Extraction (LLM-powered extraction for unstructured documents — contracts, reports, correspondence without pre-trained models)"
+      : "Document Understanding (intelligent document processing, OCR, ML classification, data extraction for structured/semi-structured forms)";
+    availNames.push(duDesc);
+  } else {
+    unavailRecs.push("- **Document Understanding / IXP**: Not available. If enabled, it could automate document classification and data extraction from invoices/forms/contracts using ML models (classic DU) or LLM-powered generative extraction for unstructured documents (contracts, reports) without pre-trained models.");
+  }
+
+  if (avail.generativeExtraction && !avail.documentUnderstanding) {
+    availNames.push("IXP Generative Extraction (LLM-powered extraction for unstructured documents — contracts, reports, correspondence — without requiring pre-trained models or taxonomies)");
+  }
+
+  if (avail.communicationsMining) availNames.push("Communications Mining (email/message stream analysis, intent detection, sentiment analysis, intelligent routing, conversation intelligence for customer communications)");
+  else unavailRecs.push("- **Communications Mining**: Not available. If enabled, it could analyze email and message streams to detect intent, extract data, route communications intelligently, and identify automation opportunities from customer/employee conversations.");
 
   if (avail.testManager) availNames.push("Test Manager (automated test projects, test cases, test execution, regression suites)");
   else unavailRecs.push("- **Test Manager**: Not available. If enabled, it would allow automated test case management and regression testing for the automation, ensuring quality across updates.");
@@ -2292,6 +2355,8 @@ export type ServiceAvailabilityMap = {
   actionCenter: boolean;
   testManager: boolean;
   documentUnderstanding: boolean;
+  generativeExtraction: boolean;
+  communicationsMining: boolean;
   dataService: boolean;
   platformManagement: boolean;
   environments: boolean;
@@ -2316,6 +2381,8 @@ export async function probeServiceAvailability(): Promise<ServiceAvailabilityMap
     actionCenter: probe.flags.actionCenter,
     testManager: probe.flags.testManager,
     documentUnderstanding: probe.flags.documentUnderstanding,
+    generativeExtraction: probe.flags.generativeExtraction,
+    communicationsMining: probe.flags.communicationsMining,
     dataService: probe.flags.dataService,
     platformManagement: probe.flags.platformManagement,
     environments: probe.flags.environments,
