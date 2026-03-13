@@ -44,7 +44,7 @@ const MAX_SVG_DIMENSION = 4000;
 function getNodeDimensions(nodeType: string): { width: number; height: number } {
   const t = (nodeType || "task").toLowerCase();
   if (t === "start" || t === "end") return { width: 44, height: 44 };
-  if (t === "decision") return { width: 52, height: 52 };
+  if (t === "decision" || t === "agent-decision") return { width: 52, height: 52 };
   return { width: 240, height: 70 };
 }
 
@@ -56,9 +56,14 @@ function truncate(str: string, maxLen: number): string {
 function computeLayout(nodes: MapNode[], edges: MapEdge[]): { layoutNodes: LayoutNode[]; layoutEdges: LayoutEdge[] } {
   const g = new dagre.graphlib.Graph({ multigraph: true });
   g.setDefaultEdgeLabel(() => ({}));
+  const hasDecisions = nodes.some(n => {
+    const t = (n.nodeType || "task").toLowerCase();
+    return t === "decision" || t === "agent-decision";
+  });
+
   g.setGraph({
     rankdir: "TB",
-    nodesep: 60,
+    nodesep: hasDecisions ? 100 : 60,
     ranksep: 80,
     edgesep: 40,
     marginx: 40,
@@ -67,7 +72,10 @@ function computeLayout(nodes: MapNode[], edges: MapEdge[]): { layoutNodes: Layou
 
   for (const node of nodes) {
     const dims = getNodeDimensions(node.nodeType);
-    g.setNode(String(node.id), { width: dims.width, height: dims.height });
+    const nType = (node.nodeType || "task").toLowerCase();
+    const isDecision = nType === "decision" || nType === "agent-decision";
+    const layoutWidth = isDecision ? Math.max(dims.width, 140) : dims.width;
+    g.setNode(String(node.id), { width: layoutWidth, height: dims.height });
   }
 
   for (const edge of edges) {
@@ -89,13 +97,64 @@ function computeLayout(nodes: MapNode[], edges: MapEdge[]): { layoutNodes: Layou
     };
   });
 
+  const nodeMap: Record<string, MapNode> = {};
+  for (const node of nodes) { nodeMap[String(node.id)] = node; }
+
+  const sourceEdgeGroups: Record<string, MapEdge[]> = {};
+  for (const edge of edges) {
+    const sk = String(edge.sourceNodeId);
+    if (!sourceEdgeGroups[sk]) sourceEdgeGroups[sk] = [];
+    sourceEdgeGroups[sk].push(edge);
+  }
+
   const layoutEdges: LayoutEdge[] = edges.map((edge) => {
     const edgeData = g.edge(String(edge.sourceNodeId), String(edge.targetNodeId), String(edge.id));
+    let points = edgeData?.points || [];
+
+    const srcNode = nodeMap[String(edge.sourceNodeId)];
+    const srcNodeType = (srcNode?.nodeType || "task").toLowerCase();
+    if ((srcNodeType === "decision" || srcNodeType === "agent-decision") && points.length >= 2) {
+      const srcPos = g.node(String(edge.sourceNodeId));
+      if (srcPos) {
+        const srcDims = getNodeDimensions(srcNodeType);
+        const cx = srcPos.x;
+        const cy = srcPos.y;
+        const siblings = sourceEdgeGroups[String(edge.sourceNodeId)] || [edge];
+        const edgeIdx = siblings.indexOf(edge);
+        const label = edge.label || "";
+        const isYes = /^(yes|approved|pass|valid|complete|true|within|below|stp|auto)/i.test(label);
+        const isNo = /^(no|rejected|fail|invalid|incomplete|false|exceed|above|poor|flag)/i.test(label);
+
+        let exitRight = true;
+        if (isNo) exitRight = false;
+        else if (isYes) exitRight = true;
+        else if (siblings.length <= 1) exitRight = true;
+        else exitRight = edgeIdx % 2 === 0;
+
+        const exitX = exitRight ? cx + srcDims.width / 2 : cx - srcDims.width / 2;
+        const exitY = cy;
+
+        const tgtPos = g.node(String(edge.targetNodeId));
+        if (tgtPos) {
+          const tgtDims = getNodeDimensions((nodeMap[String(edge.targetNodeId)]?.nodeType || "task").toLowerCase());
+          const entryX = exitRight ? tgtPos.x - tgtDims.width / 2 : tgtPos.x + tgtDims.width / 2;
+          const entryY = tgtPos.y;
+          const midX = exitX + (exitRight ? 40 : -40);
+          points = [
+            { x: exitX, y: exitY },
+            { x: midX, y: exitY },
+            { x: midX, y: entryY },
+            { x: entryX, y: entryY },
+          ];
+        }
+      }
+    }
+
     return {
       source: String(edge.sourceNodeId),
       target: String(edge.targetNodeId),
       label: edge.label || "",
-      points: edgeData?.points || [],
+      points,
     };
   });
 
@@ -142,7 +201,7 @@ function renderNodeSvg(node: LayoutNode, viewType: string): string {
     `;
   }
 
-  if (nType === "decision") {
+  if (nType === "decision" || nType === "agent-decision") {
     const cx = x + width / 2;
     const cy = y + height / 2;
     const s = 24;
@@ -204,7 +263,7 @@ export async function renderProcessMapImage(
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const n of layoutNodes) {
     const nType = (n.data.nodeType || "task").toLowerCase();
-    const extra = nType === "decision" ? 34 : 0;
+    const extra = (nType === "decision" || nType === "agent-decision") ? 34 : 0;
     minX = Math.min(minX, n.x - extra);
     minY = Math.min(minY, n.y - extra);
     maxX = Math.max(maxX, n.x + n.width + extra);

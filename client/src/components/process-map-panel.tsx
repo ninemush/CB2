@@ -568,6 +568,30 @@ function getNodeDimensions(nodeType: string): { width: number; height: number } 
   return { width: 280, height: 100 };
 }
 
+function isDecisionNodeType(nodeType: string): boolean {
+  return nodeType === "decision" || nodeType === "agent-decision";
+}
+
+function getDecisionEdgeHandles(
+  label: string,
+  edgeIndex: number,
+  siblingCount: number
+): { sourceHandle: string; targetHandle: string } {
+  const isYes = /^(yes|approved|pass|valid|complete|true|within|below|stp|auto)/i.test(label);
+  const isNo = /^(no|rejected|fail|invalid|incomplete|false|exceed|above|poor|flag)/i.test(label);
+
+  if (isYes) return { sourceHandle: "right", targetHandle: "left-target" };
+  if (isNo) return { sourceHandle: "left", targetHandle: "right-target" };
+
+  if (siblingCount <= 1) return { sourceHandle: "right", targetHandle: "left-target" };
+
+  const exitRight = edgeIndex % 2 === 0;
+  return {
+    sourceHandle: exitRight ? "right" : "left",
+    targetHandle: exitRight ? "left-target" : "right-target",
+  };
+}
+
 function applyDagreLayout(
   nodes: Node[],
   edges: Edge[],
@@ -603,6 +627,11 @@ function applyDagreLayout(
     edgesep = 60;
   }
 
+  const hasDecisions = nodes.some((node) => isDecisionNodeType((node.data as any)?.nodeType || "task"));
+  if (hasDecisions && !simplified) {
+    nodesep = Math.max(nodesep, 200);
+  }
+
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({
@@ -619,7 +648,8 @@ function applyDagreLayout(
   nodes.forEach((node) => {
     const nodeType = (node.data as any)?.nodeType || "task";
     const dims = getNodeDimensions(nodeType);
-    g.setNode(node.id, { width: dims.width, height: dims.height });
+    const layoutWidth = isDecisionNodeType(nodeType) ? Math.max(dims.width, 280) : dims.width;
+    g.setNode(node.id, { width: layoutWidth, height: dims.height });
   });
 
   const outDeg: Record<string, number> = {};
@@ -933,6 +963,7 @@ function DecisionNode({ data, id }: { data: any; id: string }) {
         targetHandles={[
           { position: Position.Top },
           { position: Position.Left, id: "left-target" },
+          { position: Position.Right, id: "right-target" },
         ]}
         sourceHandles={[
           { position: Position.Bottom, id: "bottom" },
@@ -1006,6 +1037,7 @@ function TaskNode({ data, id }: { data: any; id: string }) {
         targetHandles={[
           { position: Position.Top },
           { position: Position.Left, id: "left-target" },
+          { position: Position.Right, id: "right-target" },
         ]}
         sourceHandles={[
           { position: Position.Bottom },
@@ -1099,6 +1131,7 @@ function AgentTaskNode({ data, id }: { data: any; id: string }) {
         targetHandles={[
           { position: Position.Top },
           { position: Position.Left, id: "left-target" },
+          { position: Position.Right, id: "right-target" },
         ]}
         sourceHandles={[
           { position: Position.Bottom },
@@ -1170,6 +1203,7 @@ function AgentDecisionNode({ data, id }: { data: any; id: string }) {
         targetHandles={[
           { position: Position.Top },
           { position: Position.Left, id: "left-target" },
+          { position: Position.Right, id: "right-target" },
         ]}
         sourceHandles={[
           { position: Position.Bottom, id: "bottom" },
@@ -1234,6 +1268,7 @@ function AgentLoopNode({ data, id }: { data: any; id: string }) {
         targetHandles={[
           { position: Position.Top },
           { position: Position.Left, id: "left-target" },
+          { position: Position.Right, id: "right-target" },
         ]}
         sourceHandles={[
           { position: Position.Bottom },
@@ -1803,6 +1838,8 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       },
     }));
     const nodeIdSet = new Set(dbNodes.map(n => n.id));
+    const nodeTypeMap: Record<string, string> = {};
+    dbNodes.forEach(n => { nodeTypeMap[String(n.id)] = n.nodeType || "task"; });
     const validEdges = dbEdges.filter(e => nodeIdSet.has(e.sourceNodeId) && nodeIdSet.has(e.targetNodeId));
     const relSrcGrp: Record<string, typeof validEdges> = {};
     const relTgtGrp: Record<string, typeof validEdges> = {};
@@ -1819,9 +1856,16 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
     const rawEdges: Edge[] = validEdges.map((e) => {
       const srcS = relSrcGrp[String(e.sourceNodeId)] || [e];
       const tgtS = relTgtGrp[String(e.targetNodeId)] || [e];
+      const srcNodeType = nodeTypeMap[String(e.sourceNodeId)] || "task";
+      const isDecisionSource = isDecisionNodeType(srcNodeType);
+      const handles = isDecisionSource
+        ? getDecisionEdgeHandles(e.label || "", srcS.indexOf(e), srcS.length)
+        : { sourceHandle: undefined, targetHandle: undefined };
       return {
         id: String(e.id), source: String(e.sourceNodeId), target: String(e.targetNodeId),
         type: "custom",
+        ...(handles.sourceHandle ? { sourceHandle: handles.sourceHandle } : {}),
+        ...(handles.targetHandle ? { targetHandle: handles.targetHandle } : {}),
         data: {
           label: e.label, dbId: e.id, viewType: activeView,
           sourceIndex: srcS.indexOf(e), sourceSiblings: srcS.length,
@@ -1873,6 +1917,8 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
     }));
 
     const nodeIdSet2 = new Set(dbNodes.map(n => n.id));
+    const nodeTypeMap2: Record<string, string> = {};
+    dbNodes.forEach(n => { nodeTypeMap2[String(n.id)] = n.nodeType || "task"; });
     const safeEdges = dbEdges.filter(e => nodeIdSet2.has(e.sourceNodeId) && nodeIdSet2.has(e.targetNodeId));
     const sourceGroups: Record<string, typeof safeEdges> = {};
     const targetGroups: Record<string, typeof safeEdges> = {};
@@ -1892,12 +1938,19 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       const tgtSiblings = targetGroups[String(e.targetNodeId)] || [e];
       const markerColor = activeView === "sdd" ? "rgba(249,115,22,0.5)" : activeView === "to-be" ? "rgba(34,197,94,0.5)" : "rgba(120,120,145,0.4)";
       const markerSize = isSimplified ? 16 : nodeCount > 25 ? 10 : 14;
+      const srcNodeType = nodeTypeMap2[String(e.sourceNodeId)] || "task";
+      const isDecisionSource = isDecisionNodeType(srcNodeType);
+      const handles = isDecisionSource
+        ? getDecisionEdgeHandles(e.label || "", srcSiblings.indexOf(e), srcSiblings.length)
+        : { sourceHandle: undefined, targetHandle: undefined };
 
       return {
         id: String(e.id),
         source: String(e.sourceNodeId),
         target: String(e.targetNodeId),
         type: "custom",
+        ...(handles.sourceHandle ? { sourceHandle: handles.sourceHandle } : {}),
+        ...(handles.targetHandle ? { targetHandle: handles.targetHandle } : {}),
         data: {
           label: e.label, dbId: e.id, viewType: activeView,
           sourceIndex: srcSiblings.indexOf(e), sourceSiblings: srcSiblings.length,
