@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { getUiPathConfig, getAccessToken, saveUiPathConfig, testUiPathConnection, pushToUiPath, getLastTestedAt, fetchUiPathFolders, saveUiPathFolder, createProcess, listMachines, listRobots, listProcesses, startJob, getJobStatus, verifyUiPathScopes, probeUiPathScopes, autoDetectUiPathScopes, clearProbeCache } from "./uipath-integration";
 import { parseArtifactsFromSDD, extractArtifactsWithLLM, deployAllArtifacts, formatDeploymentReport } from "./uipath-deploy";
+import { getPreviousManifest, reconcileArtifacts, saveManifest, formatReconciliationSummary } from "./artifact-reconciliation";
 import { documentStorage } from "./document-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
@@ -582,20 +583,55 @@ export function registerUiPathRoutes(app: Express): void {
             (artifacts.requirements?.length || 0) > 0 ||
             (artifacts.testSets?.length || 0) > 0
           )) {
+            sendEvent({ deployStatus: "Reconciling artifacts with previous deployment..." });
+            const previousManifest = await getPreviousManifest(ideaId);
+            const reconciliation = reconcileArtifacts(artifacts, previousManifest);
+            const reconciledArtifacts = reconciliation.reconciledArtifacts;
+
+            if (previousManifest.length > 0) {
+              const reconciliationSummary = formatReconciliationSummary(reconciliation.actions);
+              if (reconciliationSummary) {
+                console.log(`[UiPath Deploy] ${reconciliationSummary}`);
+                sendEvent({ deployStatus: reconciliationSummary.split("\n")[0] });
+              }
+            }
+
             const releaseId = result.details?.processId || null;
             const releaseKey = result.details?.releaseKey || null;
             const releaseName = result.details?.processName || null;
 
             sendEvent({ deployStatus: "Provisioning Orchestrator artifacts..." });
 
-            const deployResult = await deployAllArtifacts(artifacts, releaseId, releaseKey, releaseName, (step) => {
+            const deployResult = await deployAllArtifacts(reconciledArtifacts, releaseId, releaseKey, releaseName, (step) => {
               sendEvent({ deployStatus: step });
             });
+
+            const reconciliationActions = reconciliation.actions;
+            const removedArtifacts = reconciliationActions
+              .filter((a) => a.action === "removed" && a.previousName)
+              .map((a) => ({ artifactType: a.artifactType, artifactName: a.previousName! }));
+
+            try {
+              await saveManifest(ideaId, deployResult.results, removedArtifacts);
+              console.log(`[UiPath Deploy] Saved deployment manifest for idea ${ideaId}`);
+            } catch (manifestErr: any) {
+              console.warn(`[UiPath Deploy] Failed to save deployment manifest: ${manifestErr.message}`);
+              deployResult.results.push({
+                artifact: "Deployment Manifest",
+                name: "Artifact Manifest",
+                status: "failed",
+                message: `Failed to save deployment manifest for future reconciliation: ${manifestErr.message}. Subsequent redeployments may not detect name drift correctly.`,
+              });
+            }
+            const reconSummaryText = previousManifest.length > 0
+              ? formatReconciliationSummary(reconciliationActions)
+              : "";
 
             result.details = {
               ...result.details,
               deploymentResults: deployResult.results,
-              deploymentSummary: deployResult.summary,
+              deploymentSummary: deployResult.summary + (reconSummaryText ? "\n\n" + reconSummaryText : ""),
+              reconciliationActions: reconciliationActions.length > 0 ? reconciliationActions : undefined,
             };
           }
         }

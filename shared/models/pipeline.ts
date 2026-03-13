@@ -82,3 +82,19 @@ export const insertTestResultSchema = createInsertSchema(testResults).omit({
 });
 export type TestResult = typeof testResults.$inferSelect;
 export type InsertTestResult = z.infer<typeof insertTestResultSchema>;
+
+export const deploymentManifests = pgTable("deployment_manifests", {
+  id: serial("id").primaryKey(),
+  ideaId: text("idea_id").notNull(),
+  artifactType: text("artifact_type").notNull(),
+  artifactName: text("artifact_name").notNull(),
+  orchestratorId: text("orchestrator_id"),
+  deployedAt: timestamp("deployed_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertDeploymentManifestSchema = createInsertSchema(deploymentManifests).omit({
+  id: true,
+  deployedAt: true,
+});
+export type DeploymentManifest = typeof deploymentManifests.$inferSelect;
+export type InsertDeploymentManifest = z.infer<typeof insertDeploymentManifestSchema>;

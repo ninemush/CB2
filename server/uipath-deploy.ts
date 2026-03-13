@@ -3664,12 +3664,13 @@ export async function deployAllArtifacts(
     }
 
     const created = allResults.filter(r => r.status === "created").length;
+    const updated = allResults.filter(r => r.status === "updated").length;
     const existed = allResults.filter(r => r.status === "exists").length;
     const failed = allResults.filter(r => r.status === "failed").length;
     const skipped = allResults.filter(r => r.status === "skipped").length;
     const inPackage = allResults.filter(r => r.status === "in_package").length;
 
-    let summary = `Deployment complete: ${created} created, ${existed} already existed`;
+    let summary = `Deployment complete: ${created} created, ${updated} updated, ${existed} already existed`;
     if (inPackage > 0) summary += `, ${inPackage} in downloadable package`;
     if (skipped > 0) summary += `, ${skipped} skipped (service unavailable)`;
     if (failed > 0) summary += `, ${failed} failed`;
