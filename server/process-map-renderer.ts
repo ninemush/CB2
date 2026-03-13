@@ -37,6 +37,7 @@ interface LayoutEdge {
   target: string;
   label: string;
   points: { x: number; y: number }[];
+  isDecisionSource?: boolean;
 }
 
 const MAX_SVG_DIMENSION = 4000;
@@ -89,15 +90,20 @@ function computeLayout(nodes: MapNode[], edges: MapEdge[]): { layoutNodes: Layou
     };
   });
 
+  const nodeTypeMap: Record<string, string> = {};
+  nodes.forEach(n => { nodeTypeMap[String(n.id)] = n.nodeType || "task"; });
+
   const layoutEdges: LayoutEdge[] = edges.map((edge) => {
     const edgeData = g.edge(String(edge.sourceNodeId), String(edge.targetNodeId), String(edge.id));
     const points = edgeData?.points || [];
+    const srcType = nodeTypeMap[String(edge.sourceNodeId)] || "task";
 
     return {
       source: String(edge.sourceNodeId),
       target: String(edge.targetNodeId),
       label: edge.label || "",
       points,
+      isDecisionSource: srcType === "decision" || srcType === "agent-decision",
     };
   });
 
@@ -247,9 +253,17 @@ export async function renderProcessMapImage(
     edgesSvg += `<path d="${pathD}" fill="none" stroke="${color}" stroke-width="1.5" marker-end="url(#arrow-${color.replace("#", "")})" stroke-linejoin="round"/>`;
 
     if (edge.label) {
-      const midIdx = Math.floor(edge.points.length / 2);
-      const lx = edge.points[midIdx]?.x || 0;
-      const ly = edge.points[midIdx]?.y || 0;
+      let lx: number, ly: number;
+      if (edge.isDecisionSource && edge.points.length >= 2) {
+        const srcPt = edge.points[0];
+        const nextPt = edge.points[1];
+        lx = srcPt.x + (nextPt.x > srcPt.x ? 30 : -30);
+        ly = srcPt.y + 20;
+      } else {
+        const midIdx = Math.floor(edge.points.length / 2);
+        lx = edge.points[midIdx]?.x || 0;
+        ly = edge.points[midIdx]?.y || 0;
+      }
       const labelBgW = edge.label.length * 6 + 10;
       edgesSvg += `
         <rect x="${lx - labelBgW / 2}" y="${ly - 8}" width="${labelBgW}" height="16" rx="4" fill="#18181b" stroke="${color}" stroke-width="0.5"/>

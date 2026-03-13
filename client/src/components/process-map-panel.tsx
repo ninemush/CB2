@@ -1305,13 +1305,12 @@ function CustomEdge({
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
-  const isDecisionSource = data?.isDecisionSource || false;
-  const useBezier = !isDecisionSource && (simplified || totalNodes > 25);
+  const useBezier = simplified || totalNodes > 25;
 
   const sourceOffset = simplified ? 0 : (sourceSiblings > 1 ? (sourceIndex - (sourceSiblings - 1) / 2) * (useBezier ? 12 : 20) : 0);
   const targetOffset = simplified ? 0 : (targetSiblings > 1 ? (targetIndex - (targetSiblings - 1) / 2) * (useBezier ? 12 : 20) : 0);
 
-  const [edgePath, midLabelX, midLabelY] = useBezier
+  const [edgePath, labelX, labelY] = useBezier
     ? getBezierPath({
         sourceX: sourceX + sourceOffset,
         sourceY,
@@ -1330,9 +1329,6 @@ function CustomEdge({
         borderRadius: 16,
         offset: (Math.abs(sourceOffset) > 0 || Math.abs(targetOffset) > 0) ? 25 + Math.max(Math.abs(sourceOffset), Math.abs(targetOffset)) : 20,
       });
-
-  const labelX = isDecisionSource ? sourceX + sourceOffset + (targetX > sourceX ? 30 : -30) : midLabelX;
-  const labelY = isDecisionSource ? sourceY + 30 : midLabelY;
 
   const label = data?.label || "";
   const isYes = /^(yes|approved|pass|valid|complete|true|within|below|stp|auto)/i.test(label);
@@ -1823,7 +1819,8 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       const isDecision = srcNodeType === "decision" || srcNodeType === "agent-decision";
       return {
         id: String(e.id), source: String(e.sourceNodeId), target: String(e.targetNodeId),
-        type: "custom",
+        type: isDecision ? "smoothstep" : "custom",
+        ...(isDecision && e.label ? { label: e.label } : {}),
         data: {
           label: e.label, dbId: e.id, viewType: activeView,
           sourceIndex: srcS.indexOf(e), sourceSiblings: srcS.length,
@@ -1903,7 +1900,8 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
         id: String(e.id),
         source: String(e.sourceNodeId),
         target: String(e.targetNodeId),
-        type: "custom",
+        type: isDecision ? "smoothstep" : "custom",
+        ...(isDecision && e.label ? { label: e.label } : {}),
         data: {
           label: e.label, dbId: e.id, viewType: activeView,
           sourceIndex: srcSiblings.indexOf(e), sourceSiblings: srcSiblings.length,
