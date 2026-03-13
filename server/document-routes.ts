@@ -958,30 +958,73 @@ ${content}`
       archive.append(initXaml, { name: "InitAllSettings.xaml" });
 
       const richPkgs = aggPkgs(allXamlResults);
+      const packageVersionMap: Record<string, string> = {
+        "UiPath.System.Activities": "[23.10.0]",
+        "UiPath.UIAutomation.Activities": "[23.10.0]",
+        "UiPath.Web.Activities": "[1.18.0]",
+        "UiPath.Excel.Activities": "[2.22.0]",
+        "UiPath.Mail.Activities": "[1.20.0]",
+        "UiPath.Database.Activities": "[1.8.0]",
+      };
       const depMap: Record<string, string> = {};
       for (const d of (pkg.dependencies || [])) {
-        depMap[d] = "*";
+        depMap[d] = packageVersionMap[d] || "*";
       }
       for (const rp of richPkgs) {
-        if (!depMap[rp]) depMap[rp] = "*";
+        if (!depMap[rp]) depMap[rp] = packageVersionMap[rp] || "*";
       }
       if (!depMap["UiPath.Excel.Activities"]) {
-        depMap["UiPath.Excel.Activities"] = "*";
+        depMap["UiPath.Excel.Activities"] = "[2.22.0]";
       }
 
+      const crypto = require("crypto");
+      const entryPointId = crypto.randomUUID();
       const projectJson = {
         name: pkg.projectName || idea.title.replace(/\s+/g, "_"),
         description: pkg.description || idea.description,
         main: "Main.xaml",
         dependencies: depMap,
+        webServices: [],
+        entitiesStores: [],
         schemaVersion: "4.0",
-        studioVersion: "23.10.0",
+        studioVersion: "25.10.0",
         projectVersion: "1.0.0",
-        runtimeOptions: { autoDispose: false, netFrameworkLazyLoading: false },
+        runtimeOptions: {
+          autoDispose: false,
+          netFrameworkLazyLoading: false,
+          isPausable: true,
+          isAttended: false,
+          requiresUserInteraction: false,
+          supportsPersistence: false,
+          executionType: "Workflow",
+          readyForPiP: false,
+          startsInPiP: false,
+          mustRestoreAllDependencies: true,
+        },
+        designOptions: {
+          projectProfile: "Developement",
+          outputType: "Process",
+          libraryOptions: { includeOriginalXaml: false, privateWorkflows: [] },
+          processOptions: { ignoredFiles: [] },
+          fileInfoCollection: [],
+          modernBehavior: false,
+        },
+        expressionLanguage: "VisualBasic",
+        entryPoints: [
+          {
+            filePath: "Main.xaml",
+            uniqueId: entryPointId,
+            input: [],
+            output: [],
+          },
+        ],
+        isTemplate: false,
+        templateProjectData: {},
+        publishData: {},
       };
       archive.append(JSON.stringify(projectJson, null, 2), { name: "project.json" });
 
-      archive.append("Settings\nName,Value,Description\nOrchestratorURL,,Orchestrator base URL\nProcessTimeout,30,Max process timeout in minutes\nMaxRetries,3,Maximum retry attempts\n\nConstants\nName,Value,Description\nApplicationName," + (pkg.projectName || "Automation") + ",Process name\nVersion,1.0.0,Package version", { name: "Data/Config.xlsx" });
+      archive.append("Name,Value,Description\nOrchestratorURL,,Orchestrator base URL\nProcessTimeout,30,Max process timeout in minutes\nMaxRetries,3,Maximum retry attempts\nApplicationName," + (pkg.projectName || "Automation") + ",Process name\nVersion,1.0.0,Package version", { name: "Data/Config.csv" });
 
       let readme = `# ${pkg.projectName || idea.title}\n\n`;
       readme += `${pkg.description || idea.description}\n\n`;
