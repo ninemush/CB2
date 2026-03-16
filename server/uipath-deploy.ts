@@ -1278,6 +1278,8 @@ export async function detectAvailableRuntimeType(base: string, hdrs: Record<stri
     availableTypes: [],
   };
 
+  let hasNonProd = false;
+
   try {
     let machines: any[];
     if (prefetched) {
@@ -1291,7 +1293,7 @@ export async function detectAvailableRuntimeType(base: string, hdrs: Record<stri
     }
     if (machines.length > 0) {
       const hasUnattended = machines.some((m: any) => (m.UnattendedSlots || m.unattendedSlots || 0) > 0);
-      const hasNonProd = machines.some((m: any) => (m.NonProductionSlots || m.nonProdSlots || 0) > 0);
+      hasNonProd = machines.some((m: any) => (m.NonProductionSlots || m.nonProdSlots || 0) > 0);
       const hasTestAuto = machines.some((m: any) => (m.TestAutomationSlots || m.testAutomationSlots || 0) > 0);
       const hasHeadless = machines.some((m: any) => (m.HeadlessSlots || m.headlessSlots || 0) > 0);
 
@@ -1305,17 +1307,14 @@ export async function detectAvailableRuntimeType(base: string, hdrs: Record<stri
         result.runtimeType = "Unattended";
         result.verified = true;
         console.log(`[UiPath Deploy] Runtime detection: Found ${machines.length} machine template(s) with Unattended slots`);
-        return result;
-      }
-      if (hasNonProd) {
+      } else if (hasNonProd) {
         result.runtimeType = "NonProduction";
         result.verified = true;
-        console.log(`[UiPath Deploy] Runtime detection: No Unattended slots, using NonProduction`);
-        return result;
+        console.log(`[UiPath Deploy] Runtime detection: No Unattended slots, found NonProduction`);
+      } else {
+        console.warn(`[UiPath Deploy] Runtime detection: ${machines.length} machine template(s) found but NONE have Unattended or NonProduction slots`);
+        result.warning = `${machines.length} machine template(s) found in folder but none have Unattended runtime slots configured. Triggers will fail until an Unattended runtime is assigned to a machine template in this folder.`;
       }
-
-      console.warn(`[UiPath Deploy] Runtime detection: ${machines.length} machine template(s) found but NONE have Unattended or NonProduction slots`);
-      result.warning = `${machines.length} machine template(s) found in folder but none have Unattended runtime slots configured. Triggers will fail until an Unattended runtime is assigned to a machine template in this folder.`;
     } else {
       console.warn(`[UiPath Deploy] Runtime detection: No machine templates found in folder`);
       result.warning = "No machine templates found in this folder. Triggers require at least one machine template with Unattended runtime slots.";
@@ -1346,33 +1345,18 @@ export async function detectAvailableRuntimeType(base: string, hdrs: Record<stri
       }
 
       if (types.includes("Unattended")) {
-        result.runtimeType = "Unattended";
-        result.verified = true;
         result.hasUnattendedSlots = true;
-        result.warning = undefined;
+        if (!result.verified || result.runtimeType !== "Unattended") {
+          result.runtimeType = "Unattended";
+          result.verified = true;
+          result.warning = undefined;
+        }
         console.log(`[UiPath Deploy] Runtime detection: Found active Unattended session(s)`);
-        return result;
       }
-      if (types.includes("Production")) {
+      if (types.includes("Production") && !result.verified) {
         result.runtimeType = "Production";
         result.verified = true;
         result.warning = undefined;
-        return result;
-      }
-      if (result.hasServerless && !result.hasUnattendedSlots) {
-        result.runtimeType = "Serverless";
-        result.verified = true;
-        result.warning = undefined;
-        console.log(`[UiPath Deploy] Runtime detection: No Unattended slots, using Serverless runtime`);
-        return result;
-      }
-      if (uniqueTypes.length > 0) {
-        result.runtimeType = uniqueTypes[0];
-        result.verified = true;
-        if (!result.warning) {
-          result.warning = `No Unattended sessions found. Using "${uniqueTypes[0]}" runtime. Triggers may fail if this runtime type cannot execute scheduled jobs.`;
-        }
-        return result;
       }
     }
   } catch { /* ignore */ }
@@ -1399,29 +1383,38 @@ export async function detectAvailableRuntimeType(base: string, hdrs: Record<stri
       }
 
       if (types.includes("Unattended")) {
-        result.runtimeType = "Unattended";
-        result.verified = true;
         result.hasUnattendedSlots = true;
-        result.warning = undefined;
-        return result;
-      }
-      if (result.hasServerless && !result.hasUnattendedSlots) {
-        result.runtimeType = "Serverless";
-        result.verified = true;
-        result.warning = undefined;
-        console.log(`[UiPath Deploy] Runtime detection: No Unattended robots, using Serverless runtime from robot types`);
-        return result;
-      }
-      if (uniqueTypes.length > 0) {
-        result.runtimeType = uniqueTypes[0];
-        result.verified = true;
-        if (!result.warning) {
-          result.warning = `No Unattended robots found. Using "${uniqueTypes[0]}" runtime.`;
+        if (!result.verified || result.runtimeType !== "Unattended") {
+          result.runtimeType = "Unattended";
+          result.verified = true;
+          result.warning = undefined;
         }
-        return result;
       }
     }
   } catch { /* ignore */ }
+
+  if (result.hasServerless && result.hasUnattendedSlots) {
+    result.runtimeType = "Unattended";
+    result.verified = true;
+    result.warning = undefined;
+    console.log(`[UiPath Deploy] Runtime detection: Both Serverless and Unattended available — defaulting to Unattended (caller may override)`);
+  } else if (result.hasServerless && !result.hasUnattendedSlots) {
+    result.runtimeType = "Serverless";
+    result.verified = true;
+    result.warning = undefined;
+    console.log(`[UiPath Deploy] Runtime detection: Serverless available, no Unattended slots — using Serverless`);
+  } else if (!result.verified && !result.hasUnattendedSlots && !result.hasServerless) {
+    if (hasNonProd) {
+      result.runtimeType = "NonProduction";
+      result.verified = true;
+    } else if (result.availableTypes.length > 0) {
+      result.runtimeType = result.availableTypes[0];
+      result.verified = true;
+      if (!result.warning) {
+        result.warning = `No Unattended or Serverless runtime found. Using "${result.availableTypes[0]}" runtime. Triggers may fail if this runtime type cannot execute scheduled jobs.`;
+      }
+    }
+  }
 
   if (!result.verified) {
     result.warning = result.warning || "Could not detect any runtime types in this folder. No machine templates, active sessions, or robots were found. Triggers will be created DISABLED — enable them after configuring an Unattended runtime in Orchestrator > Folder > Machine Templates.";
@@ -1481,6 +1474,8 @@ async function provisionTriggers(
             if (existing.MinNumberOfItems !== undefined && existing.MinNumberOfItems !== 1) { updateBody.MinNumberOfItems = 1; changed = true; }
             if (existing.MaxNumberOfItems !== undefined && existing.MaxNumberOfItems !== 100) { updateBody.MaxNumberOfItems = 100; changed = true; }
             if (existing.RuntimeType !== runtimeType) { updateBody.RuntimeType = runtimeType; changed = true; }
+            const desiredEnabled = !createDisabled;
+            if (existing.Enabled !== desiredEnabled) { updateBody.Enabled = desiredEnabled; changed = true; }
             let triggerShouldCreate = false;
             if (changed) {
               try {
@@ -1524,6 +1519,8 @@ async function provisionTriggers(
               const desiredSchedJobsCount = (t.maxJobsCount && t.maxJobsCount > 0) ? t.maxJobsCount : 1;
               if (existingSched.JobsCount !== undefined && existingSched.JobsCount !== desiredSchedJobsCount) { schedUpdateBody.JobsCount = desiredSchedJobsCount; schedChanged = true; }
               if (existingSched.RuntimeType !== runtimeType) { schedUpdateBody.RuntimeType = runtimeType; schedChanged = true; }
+              const desiredSchedEnabled = !createDisabled;
+              if (existingSched.Enabled !== desiredSchedEnabled) { schedUpdateBody.Enabled = desiredSchedEnabled; schedChanged = true; }
               let schedShouldCreate = false;
               if (schedChanged) {
                 try {
@@ -1682,6 +1679,8 @@ async function provisionTriggers(
             if (existingTime.TimeZoneId !== timeTz) { timeUpdateBody.TimeZoneId = timeTz; timeUpdateBody.TimeZoneIana = timeTzIana; timeChanged = true; }
             const desiredTimeJobsCount = (t.maxJobsCount && t.maxJobsCount > 0) ? t.maxJobsCount : undefined;
             if (desiredTimeJobsCount !== undefined && existingTime.JobsCount !== desiredTimeJobsCount) { timeUpdateBody.JobsCount = desiredTimeJobsCount; timeChanged = true; }
+            const desiredTimeEnabled = !createDisabled;
+            if (existingTime.Enabled !== desiredTimeEnabled) { timeUpdateBody.Enabled = desiredTimeEnabled; timeChanged = true; }
             let timeShouldCreate = false;
             if (timeChanged) {
               if (timeUpdateBody.StartProcessCron) {
@@ -3769,12 +3768,87 @@ async function provisionRobotAccounts(
     }
 
     if (!created) {
-      results.push({
-        artifact: "Robot Account",
-        name: ra.name,
-        status: "failed" as const,
-        message: `Robot account requires manual setup. Create in Admin Portal: Tenant > Manage Access > Robot Accounts, then assign to the target folder with Executor role. Required API scopes (PM.RobotAccount, PM.RobotAccount.Write, OR.Users.Write) are not accessible on this tenant. Machine templates have been provisioned and will be used once a robot account is assigned.`,
-      });
+      console.log(`[UiPath Deploy] Robot account "${ra.name}" creation failed via Identity API and OData — searching for any existing robot account in folder to reuse`);
+      let fallbackFound = false;
+
+      if (probe.robots.length > 0) {
+        const anyUnattendedRobot = probe.robots.find(r => r.type === "Unattended" || r.type === "NonProduction");
+        const anyRobot = anyUnattendedRobot || probe.robots[0];
+        if (anyRobot) {
+          results.push({
+            artifact: "Robot Account",
+            name: ra.name,
+            status: "exists",
+            message: `Creation failed (insufficient API scopes) — reusing existing robot "${anyRobot.name}" (ID: ${anyRobot.id}, Type: ${anyRobot.type}) found in folder. This robot will be used for trigger execution.`,
+            id: anyRobot.id,
+          });
+          fallbackFound = true;
+        }
+      }
+
+      if (!fallbackFound) {
+        try {
+          const tenantHdrs = { ...hdrs };
+          delete tenantHdrs["X-UIPATH-OrganizationUnitId"];
+          const tenantRobotsRes = await fetch(`${base}/odata/Users?$filter=Type eq 'Robot'&$top=10&$select=Id,UserName,Type,RolesList`, { headers: tenantHdrs });
+          if (tenantRobotsRes.ok) {
+            const tenantRobotsData = await tenantRobotsRes.json();
+            const tenantRobots = tenantRobotsData.value || [];
+            if (tenantRobots.length > 0) {
+              const tenantRobot = tenantRobots[0];
+              console.log(`[UiPath Deploy] Found tenant-level robot "${tenantRobot.UserName}" (ID: ${tenantRobot.Id}) — attempting to assign to folder`);
+              if (config.folderId) {
+                try {
+                  const assignUrl = `${base}/odata/Folders/UiPath.Server.Configuration.OData.AssignUsers`;
+                  const assignBody = { assignments: { UserIds: [tenantRobot.Id], RolesPerFolder: [{ FolderId: parseInt(config.folderId, 10), Roles: [{ Name: "Executor" }] }] } };
+                  const assignRes = await fetch(assignUrl, { method: "POST", headers: hdrs, body: JSON.stringify(assignBody) });
+                  if (assignRes.ok || assignRes.status === 200 || assignRes.status === 204) {
+                    results.push({
+                      artifact: "Robot Account",
+                      name: ra.name,
+                      status: "exists",
+                      message: `Creation failed (insufficient API scopes) — assigned existing tenant-level robot "${tenantRobot.UserName}" (ID: ${tenantRobot.Id}) to folder with Executor role.`,
+                      id: tenantRobot.Id,
+                    });
+                    fallbackFound = true;
+                  } else {
+                    console.log(`[UiPath Deploy] Folder assignment for tenant robot failed: ${assignRes.status}`);
+                  }
+                } catch (assignErr: any) {
+                  console.warn(`[UiPath Deploy] Folder assignment for tenant robot error: ${assignErr.message}`);
+                }
+              }
+              if (!fallbackFound) {
+                results.push({
+                  artifact: "Robot Account",
+                  name: ra.name,
+                  status: "manual" as const,
+                  message: `Creation failed (insufficient API scopes) — found tenant-level robot "${tenantRobot.UserName}" (ID: ${tenantRobot.Id}) but could not assign to folder automatically. Assign it manually: Orchestrator > Folder Settings > Assign Users > select "${tenantRobot.UserName}" with Executor role.`,
+                  id: tenantRobot.Id,
+                  manualSteps: [
+                    `Go to Orchestrator > Folder Settings > Users`,
+                    `Click "Assign Users" and search for "${tenantRobot.UserName}"`,
+                    `Assign with "Executor" role`,
+                    `Enable triggers in Orchestrator > Automations > Triggers`,
+                  ],
+                });
+                fallbackFound = true;
+              }
+            }
+          }
+        } catch (tenantErr: any) {
+          console.warn(`[UiPath Deploy] Tenant-level robot search failed: ${tenantErr.message}`);
+        }
+      }
+
+      if (!fallbackFound) {
+        results.push({
+          artifact: "Robot Account",
+          name: ra.name,
+          status: "failed" as const,
+          message: `Robot account creation failed and no existing robot accounts found to reuse. Tried: (1) Identity API robot creation, (2) OData Users API creation, (3) reuse existing folder robot, (4) assign tenant-level robot to folder. To fix: Create a robot account in Admin Portal > Tenant > Manage Access > Robot Accounts, then assign to the target folder with Executor role.`,
+        });
+      }
     }
   }
 
@@ -4407,47 +4481,96 @@ export async function deployAllArtifacts(
     const infraResults = formatInfraProbeResults(infraProbe);
     allResults.push(...infraResults);
 
+    onProgress?.("Detecting runtime strategy...");
+    const earlyInfraData: PreFetchedInfraData = { machines: infraProbe.machines, sessions: infraProbe.sessions, robots: infraProbe.robots };
+    const earlyRuntimeCheck = await detectAvailableRuntimeType(base, hdrs, earlyInfraData);
+
+    const useServerless = earlyRuntimeCheck.hasServerless;
+
+    if (useServerless) {
+      console.log(`[UiPath Deploy] Runtime strategy: Serverless detected — auto-selecting Serverless (zero config), skipping machine template and robot account provisioning`);
+    } else if (earlyRuntimeCheck.verified && earlyRuntimeCheck.hasUnattendedSlots) {
+      console.log(`[UiPath Deploy] Runtime strategy: Unattended runtime already verified in folder`);
+    } else {
+      console.log(`[UiPath Deploy] Runtime strategy: Unattended — will provision machine templates and robot accounts`);
+    }
+
     onProgress?.("Provisioning infrastructure artifacts...");
-    const isServerlessDeploy = artifacts.machines?.every(m => {
-      const rt = (m.runtimeType || m.type || "").toLowerCase();
-      return rt.includes("serverless");
-    }) && (artifacts.machines?.length || 0) > 0;
+    const skipMachines = useServerless;
+    const skipRobots = useServerless;
     const [queueResults, bucketResults, assetResults, machineResults, envResults, robotResults] = await Promise.all([
       provisionQueues(base, hdrs, artifacts.queues),
       provisionStorageBuckets(base, hdrs, artifacts.storageBuckets),
       provisionAssets(base, hdrs, artifacts.assets),
-      isServerlessDeploy
-        ? Promise.resolve([{ artifact: "Machine Template", name: `${artifacts.machines!.length} machine(s)`, status: "skipped" as const, message: "Serverless runtime does not require machine template provisioning. Machines are auto-managed by the cloud infrastructure." }])
+      skipMachines
+        ? Promise.resolve([{ artifact: "Machine Template", name: `${(artifacts.machines || []).length || 0} machine(s)`, status: "skipped" as const, message: "Serverless runtime detected — machine template provisioning not required. Machines are auto-managed by the cloud infrastructure." }])
         : provisionMachines(base, hdrs, artifacts.machines),
       (svcAvail && !svcAvail.environments && (artifacts.environments?.length || 0) > 0)
         ? Promise.resolve([{ artifact: "Environment", name: `${artifacts.environments!.length} environment(s)`, status: "skipped" as const, message: "Environments API not available on modern folder tenants (deprecated Oct 2023). Modern folders use machine templates and runtime slots instead. No action needed." }])
         : provisionEnvironments(base, hdrs, artifacts.environments),
-      provisionRobotAccounts(base, hdrs, config, artifacts.robotAccounts, infraProbe),
+      skipRobots
+        ? Promise.resolve((artifacts.robotAccounts || []).length > 0 ? [{ artifact: "Robot Account", name: `${artifacts.robotAccounts!.length} robot account(s)`, status: "skipped" as const, message: "Serverless runtime detected — robot account provisioning not required. Jobs execute in cloud-managed Serverless containers." }] : [])
+        : provisionRobotAccounts(base, hdrs, config, artifacts.robotAccounts, infraProbe),
     ]);
     allResults.push(...queueResults, ...bucketResults, ...assetResults, ...machineResults, ...envResults, ...robotResults);
     for (const r of [...queueResults, ...bucketResults, ...assetResults, ...machineResults, ...envResults, ...robotResults]) {
       onProgress?.(`${r.artifact} "${r.name}" — ${r.status}`);
     }
 
-    onProgress?.("Checking runtime availability...");
-    const infraData: PreFetchedInfraData = { machines: infraProbe.machines, sessions: infraProbe.sessions, robots: infraProbe.robots };
-    const runtimeCheck = await detectAvailableRuntimeType(base, hdrs, infraData);
-    if (runtimeCheck.warning && (artifacts.triggers?.length || 0) > 0) {
-      allResults.push({
-        artifact: "Runtime Check",
-        name: runtimeCheck.hasServerless ? "Serverless Runtime" : "Unattended Runtime",
-        status: runtimeCheck.verified && (runtimeCheck.hasUnattendedSlots || runtimeCheck.hasServerless) ? "exists" : "failed",
-        message: runtimeCheck.warning || (runtimeCheck.verified ? `Runtime type "${runtimeCheck.runtimeType}" verified` : "No runtimes detected"),
-      });
+    onProgress?.("Verifying execution readiness...");
+    let runtimeCheck: RuntimeDetectionResult;
+    if (useServerless) {
+      runtimeCheck = { ...earlyRuntimeCheck, runtimeType: "Serverless", verified: true, hasServerless: true };
+    } else {
+      const postProvisionProbe = await preflightInfraProbe(base, hdrs, config.folderId, config, svcAvail);
+      const freshInfraData: PreFetchedInfraData = { machines: postProvisionProbe.machines, sessions: postProvisionProbe.sessions, robots: postProvisionProbe.robots };
+      runtimeCheck = await detectAvailableRuntimeType(base, hdrs, freshInfraData);
+
+      if (!runtimeCheck.verified || (!runtimeCheck.hasUnattendedSlots && !runtimeCheck.hasServerless)) {
+        console.log(`[UiPath Deploy] Post-provisioning runtime check failed — attempting remediation re-check`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const remediationCheck = await detectAvailableRuntimeType(base, hdrs);
+        if (remediationCheck.verified && (remediationCheck.hasUnattendedSlots || remediationCheck.hasServerless)) {
+          console.log(`[UiPath Deploy] Remediation re-check succeeded: runtime type "${remediationCheck.runtimeType}" now verified`);
+          runtimeCheck = remediationCheck;
+        } else {
+          console.log(`[UiPath Deploy] Remediation re-check also failed — triggers will be created DISABLED`);
+        }
+      }
     }
-    if (runtimeCheck.hasServerless && !runtimeCheck.warning) {
-      allResults.push({
-        artifact: "Runtime Check",
-        name: "Serverless Runtime",
-        status: "exists",
-        message: `Serverless runtime detected. Triggers will be created ENABLED with RuntimeType "Serverless". Cross-Platform packages required.`,
-      });
+
+    const executionReady = runtimeCheck.verified && (runtimeCheck.hasUnattendedSlots || runtimeCheck.hasServerless);
+    const runtimeDiagnostics: string[] = [];
+
+    if (executionReady) {
+      if (runtimeCheck.runtimeType === "Serverless") {
+        runtimeDiagnostics.push("Serverless runtime verified");
+        runtimeDiagnostics.push("Triggers will be created ENABLED with RuntimeType \"Serverless\"");
+        runtimeDiagnostics.push("Jobs will execute in cloud-managed containers — no machine or robot configuration needed");
+      } else {
+        runtimeDiagnostics.push(`${runtimeCheck.runtimeType} runtime verified`);
+        runtimeDiagnostics.push(`Triggers will be created ENABLED with RuntimeType "${runtimeCheck.runtimeType}"`);
+        runtimeDiagnostics.push("Jobs will execute on machine templates with Unattended slots in this folder");
+      }
+    } else {
+      runtimeDiagnostics.push("No verified runtime detected after provisioning");
+      const machineCreated = machineResults.some(r => r.status === "created" || r.status === "exists");
+      const robotCreated = robotResults.some(r => r.status === "created" || r.status === "exists");
+      const robotFailed = robotResults.some(r => r.status === "failed");
+      const robotManual = robotResults.some(r => r.status === "manual");
+      if (!machineCreated) runtimeDiagnostics.push("Issue: No machine template with Unattended slots found in folder");
+      if (machineCreated && !robotCreated) runtimeDiagnostics.push("Issue: Machine template exists but no robot account is assigned to the folder");
+      if (robotFailed) runtimeDiagnostics.push("Issue: Robot account creation failed — assign a robot account manually in Admin Portal > Tenant > Manage Access > Robot Accounts");
+      if (robotManual) runtimeDiagnostics.push("Issue: A tenant-level robot account was found but needs manual assignment to this folder — see Robot Account manual steps above");
+      runtimeDiagnostics.push("Triggers will be created DISABLED until a working Unattended runtime is configured");
     }
+
+    allResults.push({
+      artifact: "Runtime Check",
+      name: `${runtimeCheck.runtimeType} Runtime`,
+      status: executionReady ? "exists" : "failed",
+      message: runtimeDiagnostics.join(". ") + ".",
+    });
 
     onProgress?.("Provisioning services and test infrastructure...");
 
@@ -4598,12 +4721,16 @@ export function formatDeploymentReport(results: DeploymentResult[]): string {
 
   if (runtimeChecks.length > 0) {
     for (const rc of runtimeChecks) {
-      if (rc.status === "failed") {
+      if (rc.status === "exists") {
+        lines.push(`✅ **Runtime Strategy: ${rc.name}** — ${rc.message}`);
+        lines.push("");
+      } else if (rc.status === "failed") {
         lines.push(`⚠️ **Runtime Configuration Issue:** ${rc.message}`);
-        lines.push(`> Triggers have been created in a DISABLED state to prevent Orchestrator errors. To fix:`);
-        lines.push(`> 1. Go to Orchestrator > your folder > Machine Templates`);
-        lines.push(`> 2. Assign an Unattended runtime to a machine template`);
-        lines.push(`> 3. Enable the triggers in Orchestrator > Triggers`);
+        lines.push(`> Triggers have been created DISABLED. To enable unattended execution:`);
+        lines.push(`> 1. Go to Orchestrator > your folder > Machine Templates — ensure at least one template has Unattended slots`);
+        lines.push(`> 2. Go to Admin Portal > Tenant > Manage Access > Robot Accounts — ensure a robot account exists and is assigned to this folder`);
+        lines.push(`> 3. Verify the robot account appears in Orchestrator > Folder Settings > Users with Executor role`);
+        lines.push(`> 4. Enable the triggers in Orchestrator > Automations > Triggers`);
         lines.push("");
       }
     }
@@ -4644,13 +4771,21 @@ export function formatDeploymentReport(results: DeploymentResult[]): string {
   if (skipped > 0) {
     lines.push(`**${skipped} item(s) skipped** — these services are not available on your tenant.`);
   }
+  const hasServerlessRuntime = runtimeChecks.some(r => r.status === "exists" && r.name.includes("Serverless"));
+  const hasVerifiedRuntime = runtimeChecks.some(r => r.status === "exists");
+
   if (hasRuntimeIssue) {
-    lines.push("**Action Required:** Configure an Unattended runtime in your Orchestrator folder before enabling triggers.");
+    lines.push("**Action Required:** No verified runtime detected. See the Runtime Configuration Issue above for step-by-step remediation.");
   }
-  if (created > 0 && failed === 0 && skipped === 0 && manual === 0 && !hasRuntimeIssue) {
-    lines.push("All artifacts provisioned successfully. The automation is fully deployed.");
+  if (created > 0 && failed === 0 && skipped === 0 && manual === 0 && !hasRuntimeIssue && hasVerifiedRuntime) {
+    if (hasServerlessRuntime) {
+      lines.push("**Automation is execution-ready** — all artifacts provisioned, triggers are ENABLED with Serverless runtime, and jobs will fire on schedule.");
+    } else {
+      lines.push("**Automation is execution-ready** — all artifacts provisioned, triggers are ENABLED, and jobs will fire on schedule.");
+    }
   } else if (created > 0 && failed === 0 && !hasRuntimeIssue) {
-    lines.push("Core artifacts provisioned successfully." + (manual > 0 ? " Manual items have step-by-step instructions above." : "") + (skipped > 0 ? " Skipped items are not available on your tenant." : ""));
+    const readyNote = hasVerifiedRuntime ? " Automation is execution-ready — triggers are ENABLED and will fire on schedule." : "";
+    lines.push("Core artifacts provisioned successfully." + (manual > 0 ? " Manual items have step-by-step instructions above." : "") + (skipped > 0 ? " Skipped items are not available on your tenant." : "") + readyNote);
   }
 
   return lines.join("\n");
