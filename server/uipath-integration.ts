@@ -2,6 +2,8 @@ import { db } from "./db";
 import { appSettings } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import archiver from "archiver";
+import AdmZip from "adm-zip";
+import { createHash } from "crypto";
 import { PassThrough } from "stream";
 import {
   generateRichXamlFromSpec,
@@ -483,8 +485,25 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
     passthrough.on("error", reject);
   });
 
-  const archive = archiver("zip", { zlib: { level: 9 } });
-  archive.pipe(passthrough);
+  const _archive = archiver("zip", { zlib: { level: 9 } });
+  _archive.pipe(passthrough);
+
+  const _archiveManifestTracker: string[] = [];
+  const _appendedContentHashes = new Map<string, string>();
+  const archive = {
+    append(data: any, opts: { name: string }) {
+      _archiveManifestTracker.push(opts.name);
+      if (typeof data === "string") {
+        _appendedContentHashes.set(opts.name, createHash("sha256").update(data).digest("hex"));
+      } else if (Buffer.isBuffer(data)) {
+        _appendedContentHashes.set(opts.name, createHash("sha256").update(data).digest("hex"));
+      }
+      return _archive.append(data, opts);
+    },
+    finalize() {
+      return _archive.finalize();
+    },
+  };
 
   const explicitFramework = (pkg as any).targetFramework;
   const isServerless = explicitFramework === "Portable"
@@ -905,6 +924,7 @@ ${depEntries}
       configData: configCsv,
       orchestratorArtifacts,
       targetFramework: tf,
+      archiveManifest: _archiveManifestTracker,
     });
 
     if (!qualityGateResult.passed) {
@@ -916,7 +936,8 @@ ${depEntries}
       );
     } else {
       const warnCount = qualityGateResult.summary.totalWarnings;
-      console.log(`[UiPath Quality Gate] PASSED${warnCount > 0 ? ` with ${warnCount} warning(s)` : ""}${stubsGenerated.length > 0 ? `, ${stubsGenerated.length} stub(s) generated` : ""}`);
+      const evidenceCount = qualityGateResult.positiveEvidence?.length || 0;
+      console.log(`[UiPath Quality Gate] PASSED${warnCount > 0 ? ` with ${warnCount} warning(s)` : ""}${stubsGenerated.length > 0 ? `, ${stubsGenerated.length} stub(s) generated` : ""}, ${evidenceCount} positive evidence item(s)`);
     }
 
     const finalValidation = validateXamlContent(xamlEntries);
@@ -951,6 +972,68 @@ ${depEntries}
     archive.finalize();
 
   const buffer = await streamDone;
+
+  const parityErrors: string[] = [];
+  const appendedPathSet = new Set(_archiveManifestTracker);
+
+  const zip = new AdmZip(buffer);
+  const zipEntries = zip.getEntries();
+  const zipPathSet = new Set<string>();
+
+  for (const entry of zipEntries) {
+    if (entry.isDirectory) continue;
+    const entryName = entry.entryName;
+    zipPathSet.add(entryName);
+
+    const expectedHash = _appendedContentHashes.get(entryName);
+    if (expectedHash) {
+      const actualHash = createHash("sha256").update(entry.getData()).digest("hex");
+      if (actualHash !== expectedHash) {
+        parityErrors.push(`Content mismatch for "${entryName}": expected hash ${expectedHash.substring(0, 12)}..., got ${actualHash.substring(0, 12)}...`);
+      }
+    }
+
+    if (!appendedPathSet.has(entryName)) {
+      parityErrors.push(`Unexpected file "${entryName}" found in final ZIP archive but was not in the appended manifest`);
+    }
+  }
+
+  for (const appendedPath of _archiveManifestTracker) {
+    if (!zipPathSet.has(appendedPath)) {
+      parityErrors.push(`Appended file "${appendedPath}" is missing from the final ZIP archive`);
+    }
+  }
+
+  for (const entry of xamlEntries) {
+    const basename = entry.name.split("/").pop() || entry.name;
+    const archivePath = `${libPath}/${basename}`;
+    if (!zipPathSet.has(archivePath)) {
+      const altMatch = Array.from(zipPathSet).find(p => p.endsWith("/" + basename) || p === basename);
+      if (!altMatch) {
+        parityErrors.push(`Validated XAML "${basename}" not found in final archive at expected path "${archivePath}"`);
+      }
+    } else {
+      const entryData = zip.getEntry(archivePath)?.getData();
+      if (entryData) {
+        const actualContent = entryData.toString("utf-8");
+        const expectedContent = entry.content;
+        if (actualContent !== expectedContent) {
+          const actualHash = createHash("sha256").update(actualContent).digest("hex").substring(0, 12);
+          const expectedHash = createHash("sha256").update(expectedContent).digest("hex").substring(0, 12);
+          parityErrors.push(`Content mismatch for validated XAML "${basename}": validated hash ${expectedHash}..., archive hash ${actualHash}...`);
+        }
+      }
+    }
+  }
+
+  if (parityErrors.length > 0) {
+    const details = parityErrors.map(e => `  - ${e}`).join("\n");
+    console.error(`[UiPath Post-Archive Parity] FAILED with ${parityErrors.length} mismatch(es):\n${details}`);
+    throw new Error(`UiPath post-archive parity check failed with ${parityErrors.length} mismatch(es):\n${details}`);
+  } else {
+    console.log(`[UiPath Post-Archive Parity] PASSED — all ${_archiveManifestTracker.length} appended files verified, ${zipPathSet.size} ZIP entries checked bidirectionally`);
+  }
+
   if (ideaId && fingerprint) {
     evictOldestCacheEntry();
     packageBuildCache.set(ideaId, { fingerprint, version, buffer, gaps: allGaps, usedPackages: allUsedPkgs, enrichment, qualityGatePassed: qualityGateResult.passed, qualityGateResult });

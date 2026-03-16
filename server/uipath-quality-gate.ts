@@ -1,6 +1,12 @@
 export type QualityGateViolation = {
-  category: "blocked-pattern" | "completeness" | "accuracy";
+  category: "blocked-pattern" | "completeness" | "accuracy" | "runtime-safety" | "logic-location";
   severity: "error" | "warning";
+  check: string;
+  file: string;
+  detail: string;
+};
+
+export type PositiveEvidence = {
   check: string;
   file: string;
   detail: string;
@@ -9,12 +15,16 @@ export type QualityGateViolation = {
 export type QualityGateResult = {
   passed: boolean;
   violations: QualityGateViolation[];
+  positiveEvidence: PositiveEvidence[];
   summary: {
     blockedPatterns: number;
     completenessErrors: number;
     completenessWarnings: number;
     accuracyErrors: number;
     accuracyWarnings: number;
+    runtimeSafetyErrors: number;
+    runtimeSafetyWarnings: number;
+    logicLocationWarnings: number;
     totalErrors: number;
     totalWarnings: number;
   };
@@ -26,6 +36,7 @@ export type QualityGateInput = {
   configData?: string;
   orchestratorArtifacts?: any;
   targetFramework: "Windows" | "Portable";
+  archiveManifest?: string[];
 };
 
 type ActivityPropertyInfo = {
@@ -33,24 +44,39 @@ type ActivityPropertyInfo = {
   optional?: string[];
 };
 
-const KNOWN_ACTIVITIES: Record<string, { package: string; properties: ActivityPropertyInfo }> = {
+type VersionedProperty = {
+  name: string;
+  addedInMajor?: number;
+  removedInMajor?: number;
+};
+
+const KNOWN_ACTIVITIES: Record<string, { package: string; properties: ActivityPropertyInfo; versionedProperties?: VersionedProperty[] }> = {
   "ui:Click": {
     package: "UiPath.UIAutomation.Activities",
     properties: {
       optional: ["ClickType", "MouseButton", "KeyModifiers", "CursorPosition", "DelayAfter", "DelayBefore", "TimeoutMS", "ContinueOnError", "InformativeScreenshot"],
     },
+    versionedProperties: [
+      { name: "InformativeScreenshot", addedInMajor: 23 },
+    ],
   },
   "ui:TypeInto": {
     package: "UiPath.UIAutomation.Activities",
     properties: {
       optional: ["Text", "ClickBeforeTyping", "EmptyField", "DelayBetweenKeys", "DelayAfter", "DelayBefore", "TimeoutMS", "ContinueOnError", "InformativeScreenshot"],
     },
+    versionedProperties: [
+      { name: "InformativeScreenshot", addedInMajor: 23 },
+    ],
   },
   "ui:GetText": {
     package: "UiPath.UIAutomation.Activities",
     properties: {
       optional: ["Value", "DelayAfter", "DelayBefore", "TimeoutMS", "ContinueOnError", "InformativeScreenshot"],
     },
+    versionedProperties: [
+      { name: "InformativeScreenshot", addedInMajor: 23 },
+    ],
   },
   "ui:OpenBrowser": {
     package: "UiPath.UIAutomation.Activities",
@@ -63,6 +89,9 @@ const KNOWN_ACTIVITIES: Record<string, { package: string; properties: ActivityPr
     properties: {
       optional: ["Url", "BrowserType", "InformativeScreenshot"],
     },
+    versionedProperties: [
+      { name: "InformativeScreenshot", addedInMajor: 23 },
+    ],
   },
   "ui:NavigateTo": {
     package: "UiPath.UIAutomation.Activities",
@@ -87,6 +116,9 @@ const KNOWN_ACTIVITIES: Record<string, { package: string; properties: ActivityPr
     properties: {
       optional: ["Url", "BrowserType", "InformativeScreenshot"],
     },
+    versionedProperties: [
+      { name: "InformativeScreenshot", addedInMajor: 23 },
+    ],
   },
   "ui:ElementExists": {
     package: "UiPath.UIAutomation.Activities",
@@ -99,6 +131,9 @@ const KNOWN_ACTIVITIES: Record<string, { package: string; properties: ActivityPr
     properties: {
       optional: ["WorkbookPath", "AutoSave", "Visible", "CreateNewFile", "ReadOnly", "Password", "EditPassword"],
     },
+    versionedProperties: [
+      { name: "EditPassword", addedInMajor: 2 },
+    ],
   },
   "ui:UseExcel": {
     package: "UiPath.Excel.Activities",
@@ -1001,7 +1036,7 @@ function checkAccuracy(input: QualityGateInput): QualityGateViolation[] {
         const lineNum = content.substring(0, match.index).split("\n").length;
         violations.push({
           category: "accuracy",
-          severity: "warning",
+          severity: "error",
           check: "unknown-activity",
           file: shortName,
           detail: `Line ${lineNum}: unknown activity "${activityName}" — not in known activity registry (may be hallucinated)`,
@@ -1152,15 +1187,633 @@ function checkAccuracy(input: QualityGateInput): QualityGateViolation[] {
 
   checkVariableArgumentDeclarations(input, violations);
   checkInvokeArgumentTypes(input, violations);
+  checkVersionCompatibility(input, violations);
 
   return violations;
+}
+
+function checkArchiveParity(input: QualityGateInput): QualityGateViolation[] {
+  const violations: QualityGateViolation[] = [];
+  if (!input.archiveManifest || input.archiveManifest.length === 0) return violations;
+
+  const validatedBasenames = new Set<string>();
+  for (const entry of input.xamlEntries) {
+    const basename = entry.name.split("/").pop() || entry.name;
+    validatedBasenames.add(basename);
+  }
+  validatedBasenames.add("project.json");
+
+  const archiveBasenames = new Set<string>();
+  for (const archivePath of input.archiveManifest) {
+    const basename = archivePath.split("/").pop() || archivePath;
+    archiveBasenames.add(basename);
+  }
+
+  for (const entry of input.xamlEntries) {
+    const basename = entry.name.split("/").pop() || entry.name;
+    if (!archiveBasenames.has(basename)) {
+      violations.push({
+        category: "completeness",
+        severity: "error",
+        check: "archive-parity-missing-from-archive",
+        file: basename,
+        detail: `Validated file "${basename}" is not present in the final archive`,
+      });
+    }
+  }
+
+  const requiredNonXamlFiles = ["project.json", "Config.xlsx", "DeveloperHandoffGuide.md"];
+  for (const required of requiredNonXamlFiles) {
+    if (!archiveBasenames.has(required)) {
+      violations.push({
+        category: "completeness",
+        severity: "warning",
+        check: "archive-parity-missing-artifact",
+        file: required,
+        detail: `Expected artifact "${required}" is not present in the archive manifest`,
+      });
+    }
+  }
+
+  const hasNuspec = input.archiveManifest.some(p => p.endsWith(".nuspec"));
+  if (!hasNuspec) {
+    violations.push({
+      category: "completeness",
+      severity: "error",
+      check: "archive-parity-missing-artifact",
+      file: "*.nuspec",
+      detail: `No .nuspec file found in the archive — package metadata is missing`,
+    });
+  }
+
+  for (const archivePath of input.archiveManifest) {
+    const basename = archivePath.split("/").pop() || archivePath;
+    const isNugetMeta = archivePath.startsWith("_rels/") ||
+      archivePath.startsWith("package/") ||
+      archivePath === "[Content_Types].xml" ||
+      archivePath.endsWith(".nuspec") ||
+      archivePath.endsWith(".psmdcp");
+    if (isNugetMeta) continue;
+
+    if (!basename.endsWith(".xaml")) continue;
+    if (!validatedBasenames.has(basename)) {
+      violations.push({
+        category: "completeness",
+        severity: "error",
+        check: "archive-parity-not-validated",
+        file: basename,
+        detail: `Archive contains XAML file "${archivePath}" that was not validated through the quality gate`,
+      });
+    }
+  }
+
+  return violations;
+}
+
+const PACKAGE_MAJOR_VERSION_RANGES: Record<string, { windowsMajors: number[]; portableMajors: number[] }> = {
+  "UiPath.UIAutomation.Activities": { windowsMajors: [23], portableMajors: [25] },
+  "UiPath.System.Activities": { windowsMajors: [23], portableMajors: [25] },
+  "UiPath.Web.Activities": { windowsMajors: [1], portableMajors: [2] },
+  "UiPath.Excel.Activities": { windowsMajors: [2], portableMajors: [3] },
+  "UiPath.Mail.Activities": { windowsMajors: [1], portableMajors: [2] },
+  "UiPath.Database.Activities": { windowsMajors: [1], portableMajors: [2] },
+  "UiPath.Persistence.Activities": { windowsMajors: [23], portableMajors: [25] },
+  "UiPath.MLActivities": { windowsMajors: [23], portableMajors: [25] },
+};
+
+function checkVersionCompatibility(input: QualityGateInput, violations: QualityGateViolation[]): void {
+  let projectJson: any;
+  try {
+    projectJson = JSON.parse(input.projectJsonContent);
+  } catch {
+    return;
+  }
+
+  const deps = projectJson.dependencies || {};
+  const isPortable = input.targetFramework === "Portable";
+
+  for (const [pkgName, versionStr] of Object.entries(deps)) {
+    if (typeof versionStr !== "string") continue;
+    const versionNum = (versionStr as string).replace(/[\[\]]/g, "");
+    const majorVersion = parseInt(versionNum.split(".")[0], 10);
+    if (isNaN(majorVersion)) continue;
+
+    const versionRange = PACKAGE_MAJOR_VERSION_RANGES[pkgName];
+    if (!versionRange) continue;
+
+    const expectedMajors = isPortable ? versionRange.portableMajors : versionRange.windowsMajors;
+    if (!expectedMajors.includes(majorVersion)) {
+      violations.push({
+        category: "accuracy",
+        severity: "error",
+        check: "version-framework-mismatch",
+        file: "project.json",
+        detail: `Package "${pkgName}" version ${versionStr} (major ${majorVersion}) is not compatible with ${input.targetFramework} target — expected major version(s): ${expectedMajors.join(", ")}`,
+      });
+    }
+  }
+
+  for (const entry of input.xamlEntries) {
+    const shortName = entry.name.split("/").pop() || entry.name;
+    const content = entry.content;
+    const activityPattern = /<(ui:[A-Za-z]+)\s/g;
+    let match;
+    while ((match = activityPattern.exec(content)) !== null) {
+      const activityName = match[1];
+      const knownActivity = KNOWN_ACTIVITIES[activityName];
+      if (!knownActivity) continue;
+
+      const declaredVersion = deps[knownActivity.package];
+      if (!declaredVersion || typeof declaredVersion !== "string") continue;
+
+      const versionNum = (declaredVersion as string).replace(/[\[\]]/g, "");
+      const majorVersion = parseInt(versionNum.split(".")[0], 10);
+      if (isNaN(majorVersion)) continue;
+
+      if (!knownActivity.versionedProperties || knownActivity.versionedProperties.length === 0) continue;
+
+      const attrStr = content.substring(match.index, Math.min(content.length, match.index + 2000));
+      const closingIdx = attrStr.indexOf(">");
+      if (closingIdx === -1) continue;
+      const tagStr = attrStr.substring(0, closingIdx + 1);
+
+      const attrPattern = /\b([A-Za-z][A-Za-z0-9_]*)\s*=/g;
+      let attrMatch;
+      while ((attrMatch = attrPattern.exec(tagStr)) !== null) {
+        const propName = attrMatch[1];
+        if (propName === "DisplayName" || propName.startsWith("xmlns") ||
+            propName.startsWith("sap") || propName === "x:Class" ||
+            propName === "mc:Ignorable" || propName === "Selector" ||
+            propName === "Target") continue;
+
+        const versionedProp = knownActivity.versionedProperties.find(vp => vp.name === propName);
+        if (!versionedProp) continue;
+
+        if (versionedProp.addedInMajor !== undefined && majorVersion < versionedProp.addedInMajor) {
+          const lineNum = content.substring(0, match.index).split("\n").length;
+          violations.push({
+            category: "accuracy",
+            severity: "error",
+            check: "version-property-unavailable",
+            file: shortName,
+            detail: `Line ${lineNum}: property "${propName}" on ${activityName} requires ${knownActivity.package} major version ${versionedProp.addedInMajor}+, but declared version is ${declaredVersion} (major ${majorVersion})`,
+          });
+        }
+
+        if (versionedProp.removedInMajor !== undefined && majorVersion >= versionedProp.removedInMajor) {
+          const lineNum = content.substring(0, match.index).split("\n").length;
+          violations.push({
+            category: "accuracy",
+            severity: "error",
+            check: "version-property-removed",
+            file: shortName,
+            detail: `Line ${lineNum}: property "${propName}" on ${activityName} was removed in ${knownActivity.package} major version ${versionedProp.removedInMajor}, but declared version is ${declaredVersion} (major ${majorVersion})`,
+          });
+        }
+      }
+    }
+  }
+}
+
+function checkRuntimeSafety(input: QualityGateInput): QualityGateViolation[] {
+  const violations: QualityGateViolation[] = [];
+
+  const unguardedArrayPattern = /\.Rows\(\s*\d+\s*\)/;
+  const unguardedJsonParseAccess = /JObject\.Parse\s*\([^)]*\)\s*\(\s*"[^"]*"\s*\)/;
+  const selectTokenPattern = /\.SelectToken\s*\(/;
+  const jTokenAccessPattern = /\.\s*\(\s*"[^"]*"\s*\)/;
+  const itemAccessPattern = /\.Item\(\s*\d+\s*\)/;
+
+  for (const entry of input.xamlEntries) {
+    const shortName = entry.name.split("/").pop() || entry.name;
+    const content = entry.content;
+
+    const exprPattern = /\[([^\[\]]{3,})\]/g;
+    let match;
+    while ((match = exprPattern.exec(content)) !== null) {
+      const expr = match[1];
+      if (expr.startsWith("&quot;") || expr.startsWith("\"") || expr.startsWith("'")) continue;
+      if (/^\d+$/.test(expr)) continue;
+
+      const lineNum = content.substring(0, match.index).split("\n").length;
+
+      if (unguardedArrayPattern.test(expr)) {
+        const surroundingContext = content.substring(
+          Math.max(0, match.index - 500), match.index
+        );
+        const hasRowCountCheck = /\.Rows\.Count\s*>\s*0/.test(surroundingContext) ||
+          /If.*\.Rows\.Count/.test(surroundingContext) ||
+          /\.Rows\.Count\s*>\s*0/.test(expr);
+        if (!hasRowCountCheck) {
+          violations.push({
+            category: "runtime-safety",
+            severity: "warning",
+            check: "unguarded-array-index",
+            file: shortName,
+            detail: `Line ${lineNum}: array indexing ".Rows(N)" without a preceding row count check — may throw IndexOutOfRangeException at runtime`,
+          });
+        }
+      }
+
+      if (unguardedJsonParseAccess.test(expr)) {
+        violations.push({
+          category: "runtime-safety",
+          severity: "warning",
+          check: "unguarded-json-access",
+          file: shortName,
+          detail: `Line ${lineNum}: JObject.Parse(...)("key") without null/existence check — may throw NullReferenceException if key missing`,
+        });
+      }
+
+      if (selectTokenPattern.test(expr)) {
+        const hasNullCheck = /If\s*\(.*SelectToken/.test(expr) ||
+          /IsNot Nothing/.test(expr) ||
+          /!= null/.test(expr) ||
+          /\?\s*\./.test(expr);
+        if (!hasNullCheck) {
+          const surroundingContext = content.substring(
+            Math.max(0, match.index - 500), match.index
+          );
+          const hasExternalGuard = /If.*SelectToken/.test(surroundingContext) ||
+            /IsNot Nothing/.test(surroundingContext);
+          if (!hasExternalGuard) {
+            violations.push({
+              category: "runtime-safety",
+              severity: "warning",
+              check: "unguarded-selecttoken",
+              file: shortName,
+              detail: `Line ${lineNum}: .SelectToken() without null check — use If(token IsNot Nothing, ...) or ?.`,
+            });
+          }
+        }
+      }
+
+      if (jTokenAccessPattern.test(expr)) {
+        const hasGuard = /If\s*\(/.test(expr) ||
+          /IsNot Nothing/.test(expr) ||
+          /!= null/.test(expr);
+        if (!hasGuard) {
+          violations.push({
+            category: "runtime-safety",
+            severity: "warning",
+            check: "unguarded-jtoken-access",
+            file: shortName,
+            detail: `Line ${lineNum}: JToken("key") access without null guard — may throw KeyNotFoundException`,
+          });
+        }
+      }
+
+      if (itemAccessPattern.test(expr)) {
+        const surroundingContext = content.substring(
+          Math.max(0, match.index - 500), match.index
+        );
+        const hasCountCheck = /\.Count\s*>/.test(surroundingContext) || /\.Count\s*>/.test(expr);
+        if (!hasCountCheck) {
+          violations.push({
+            category: "runtime-safety",
+            severity: "warning",
+            check: "unguarded-item-access",
+            file: shortName,
+            detail: `Line ${lineNum}: .Item(N) access without count/bounds check — may throw IndexOutOfRangeException`,
+          });
+        }
+      }
+
+      const memberAccessPattern = /(\w+)\.(\w+)/g;
+      let memberMatch;
+      while ((memberMatch = memberAccessPattern.exec(expr)) !== null) {
+        const varName = memberMatch[1];
+        if (["String", "Integer", "Math", "Convert", "DateTime", "TimeSpan",
+             "Environment", "System", "Console", "Array", "Type", "Int32",
+             "Boolean", "Double", "Decimal", "CType", "CStr", "CInt", "CDbl",
+             "JObject", "JToken", "JArray", "Newtonsoft"].includes(varName)) continue;
+
+        const propName = memberMatch[2];
+        if (["ToString", "GetType", "Equals", "GetHashCode", "Length", "Count",
+             "Message", "StackTrace", "InnerException"].includes(propName)) continue;
+
+        const surroundingContext = content.substring(
+          Math.max(0, match.index - 800), match.index + match[0].length
+        );
+        const nullCheckPatterns = [
+          new RegExp(`${varName}\\s+IsNot\\s+Nothing`),
+          new RegExp(`${varName}\\s*!=\\s*null`),
+          new RegExp(`If.*${varName}\\s+IsNot\\s+Nothing`),
+          new RegExp(`Condition="\\[${varName}\\s+IsNot\\s+Nothing`),
+          new RegExp(`Condition="\\[${varName}\\s*!=\\s*null`),
+        ];
+        const hasNullGuard = nullCheckPatterns.some(p => p.test(surroundingContext));
+        if (!hasNullGuard) {
+          const prefixes = ["out_", "qi_", "obj_", "jobj_"];
+          if (prefixes.some(p => varName.startsWith(p))) {
+            violations.push({
+              category: "runtime-safety",
+              severity: "warning",
+              check: "potentially-null-dereference",
+              file: shortName,
+              detail: `Line ${lineNum}: "${varName}.${propName}" accessed without visible null guard in scope — verify null check exists in enclosing If/TryCatch`,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return violations;
+}
+
+function checkLogicLocation(input: QualityGateInput): QualityGateViolation[] {
+  const violations: QualityGateViolation[] = [];
+
+  const retryCountPattern = /NumberOfRetries="(\d+)"/g;
+  const retryIntervalPattern = /RetryInterval="([^"]+)"/g;
+  const hardcodedQueuePattern = /QueueName="\[?&quot;([^&"]+)&quot;\]?"/g;
+  const hardcodedQueuePattern2 = /QueueName="([^"[\]]+)"/g;
+  const hardcodedAssetPattern = /AssetName="([^"[\]]+)"/g;
+
+  const configRefPattern = /in_Config\s*\(\s*"[^"]+"\s*\)/;
+
+  for (const entry of input.xamlEntries) {
+    const shortName = entry.name.split("/").pop() || entry.name;
+    const content = entry.content;
+
+    let match;
+    while ((match = retryCountPattern.exec(content)) !== null) {
+      const lineNum = content.substring(0, match.index).split("\n").length;
+      const val = match[1];
+      violations.push({
+        category: "logic-location",
+        severity: "warning",
+        check: "hardcoded-retry-count",
+        file: shortName,
+        detail: `Line ${lineNum}: retry count hardcoded as ${val} — consider externalizing to Config.xlsx (e.g., in_Config("MaxRetryNumber"))`,
+      });
+    }
+
+    while ((match = retryIntervalPattern.exec(content)) !== null) {
+      const lineNum = content.substring(0, match.index).split("\n").length;
+      const val = match[1];
+      if (val !== "00:00:00") {
+        violations.push({
+          category: "logic-location",
+          severity: "warning",
+          check: "hardcoded-retry-interval",
+          file: shortName,
+          detail: `Line ${lineNum}: retry interval hardcoded as "${val}" — consider externalizing to Config.xlsx`,
+        });
+      }
+    }
+
+    while ((match = hardcodedQueuePattern.exec(content)) !== null) {
+      const lineNum = content.substring(0, match.index).split("\n").length;
+      const val = match[1];
+      const surroundingContext = content.substring(
+        Math.max(0, match.index - 200), Math.min(content.length, match.index + 200)
+      );
+      if (configRefPattern.test(surroundingContext)) continue;
+      if (val === "in_QueueName" || val.startsWith("[")) continue;
+      violations.push({
+        category: "logic-location",
+        severity: "warning",
+        check: "hardcoded-queue-name",
+        file: shortName,
+        detail: `Line ${lineNum}: queue name "${val}" is hardcoded — consider using a Config.xlsx entry or workflow argument`,
+      });
+    }
+
+    while ((match = hardcodedQueuePattern2.exec(content)) !== null) {
+      const val = match[1];
+      if (val.startsWith("[") || val === "in_QueueName" || val.includes("in_Config")) continue;
+      if (val === "TransactionQueue") {
+        const lineNum = content.substring(0, match.index).split("\n").length;
+        violations.push({
+          category: "logic-location",
+          severity: "warning",
+          check: "hardcoded-queue-name",
+          file: shortName,
+          detail: `Line ${lineNum}: queue name "${val}" is hardcoded — consider using a Config.xlsx entry or workflow argument`,
+        });
+      }
+    }
+
+    while ((match = hardcodedAssetPattern.exec(content)) !== null) {
+      const val = match[1];
+      if (val.startsWith("[") || val.startsWith("TODO") || val.startsWith("PLACEHOLDER")) continue;
+      if (val.includes("in_Config") || val.includes("in_")) continue;
+      const lineNum = content.substring(0, match.index).split("\n").length;
+      violations.push({
+        category: "logic-location",
+        severity: "warning",
+        check: "hardcoded-asset-name",
+        file: shortName,
+        detail: `Line ${lineNum}: asset name "${val}" is hardcoded — consider using a Config.xlsx entry or workflow argument`,
+      });
+    }
+
+    const timeIntervalPattern = /(?:Delay|Timeout|Duration)="(?:00:)?(\d{2}:\d{2}(?::\d{2})?)"/g;
+    while ((match = timeIntervalPattern.exec(content)) !== null) {
+      const contextBefore = content.substring(Math.max(0, match.index - 60), match.index);
+      if (contextBefore.includes("RetryInterval")) continue;
+      const lineNum = content.substring(0, match.index).split("\n").length;
+      const val = match[1];
+      if (val !== "00:00" && val !== "00:00:00") {
+        violations.push({
+          category: "logic-location",
+          severity: "warning",
+          check: "hardcoded-time-interval",
+          file: shortName,
+          detail: `Line ${lineNum}: time interval "${match[0].split("=")[0]}=${val}" is hardcoded — consider externalizing to Config.xlsx`,
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
+function collectPositiveEvidence(input: QualityGateInput): PositiveEvidence[] {
+  const evidence: PositiveEvidence[] = [];
+
+  for (const entry of input.xamlEntries) {
+    const shortName = entry.name.split("/").pop() || entry.name;
+    const lineCount = entry.content.split("\n").length;
+    const hasActivityRoot = entry.content.includes("<Activity");
+    evidence.push({
+      check: "xaml-valid",
+      file: shortName,
+      detail: `${shortName} found with ${lineCount} lines${hasActivityRoot ? ", valid <Activity> root element present" : ""}`,
+    });
+  }
+
+  const fileBasenames = new Set(input.xamlEntries.map(e => {
+    const parts = e.name.split("/");
+    return parts[parts.length - 1];
+  }));
+
+  if (fileBasenames.has("Main.xaml")) {
+    evidence.push({
+      check: "main-xaml-present",
+      file: "Main.xaml",
+      detail: "Main.xaml entry point found in package",
+    });
+  }
+
+  let projectJson: any = null;
+  try {
+    projectJson = JSON.parse(input.projectJsonContent);
+    evidence.push({
+      check: "project-json-valid",
+      file: "project.json",
+      detail: `project.json parsed successfully with ${Object.keys(projectJson.dependencies || {}).length} dependencies declared`,
+    });
+
+    if (projectJson.targetFramework) {
+      evidence.push({
+        check: "target-framework-set",
+        file: "project.json",
+        detail: `targetFramework is "${projectJson.targetFramework}"`,
+      });
+    }
+
+    if (projectJson.expressionLanguage) {
+      evidence.push({
+        check: "expression-language-set",
+        file: "project.json",
+        detail: `expressionLanguage is "${projectJson.expressionLanguage}"`,
+      });
+    }
+
+    if (projectJson.entryPoints?.length > 0) {
+      evidence.push({
+        check: "entry-point-defined",
+        file: "project.json",
+        detail: `${projectJson.entryPoints.length} entry point(s) defined: ${projectJson.entryPoints.map((ep: any) => ep.filePath).join(", ")}`,
+      });
+    }
+  } catch {}
+
+  let invokeCount = 0;
+  let resolvedCount = 0;
+  for (const entry of input.xamlEntries) {
+    const invokePattern = /WorkflowFileName="([^"]+)"/g;
+    let match;
+    while ((match = invokePattern.exec(entry.content)) !== null) {
+      invokeCount++;
+      const invokedFile = match[1];
+      const basename = invokedFile.split("/").pop() || invokedFile;
+      if (fileBasenames.has(basename)) {
+        resolvedCount++;
+      }
+    }
+  }
+  if (invokeCount > 0) {
+    evidence.push({
+      check: "invoke-targets-resolved",
+      file: "package",
+      detail: `${resolvedCount}/${invokeCount} InvokeWorkflowFile targets resolve to existing files in the package`,
+    });
+  }
+
+  const declaredDeps = projectJson?.dependencies ? Object.keys(projectJson.dependencies) : [];
+  const usedPackages = new Set<string>();
+  for (const entry of input.xamlEntries) {
+    const activityPattern = /<(ui:[A-Za-z]+)\s/g;
+    let match;
+    while ((match = activityPattern.exec(entry.content)) !== null) {
+      const knownActivity = KNOWN_ACTIVITIES[match[1]];
+      if (knownActivity) {
+        usedPackages.add(knownActivity.package);
+      }
+    }
+  }
+  const allUsedDeclared = [...usedPackages].every(p => declaredDeps.includes(p));
+  if (usedPackages.size > 0) {
+    evidence.push({
+      check: "activity-packages-declared",
+      file: "project.json",
+      detail: `${usedPackages.size} activity packages used, ${allUsedDeclared ? "all" : "not all"} declared in project.json dependencies`,
+    });
+  }
+
+  for (const entry of input.xamlEntries) {
+    const shortName = entry.name.split("/").pop() || entry.name;
+    const content = entry.content;
+    const xmlnsPattern = /xmlns:([a-zA-Z0-9]+)="([^"]+)"/g;
+    const declaredNs = new Set<string>();
+    let match;
+    while ((match = xmlnsPattern.exec(content)) !== null) {
+      declaredNs.add(match[1]);
+    }
+    if (declaredNs.size > 0) {
+      evidence.push({
+        check: "namespaces-declared",
+        file: shortName,
+        detail: `${declaredNs.size} XML namespace(s) declared: ${[...declaredNs].join(", ")}`,
+      });
+    }
+  }
+
+  if (input.archiveManifest && input.archiveManifest.length > 0) {
+    const xamlInArchive = input.archiveManifest.filter(p => p.endsWith(".xaml")).length;
+    const validatedBasenames = new Set(input.xamlEntries.map(e => (e.name.split("/").pop() || e.name)));
+    const archiveXamlBasenames = input.archiveManifest
+      .filter(p => p.endsWith(".xaml"))
+      .map(p => p.split("/").pop() || p);
+    const allValidated = archiveXamlBasenames.every(b => validatedBasenames.has(b));
+    const allInArchive = Array.from(validatedBasenames).every(b => 
+      input.archiveManifest!.some(p => (p.split("/").pop() || p) === b)
+    );
+    const parityStatus = allValidated && allInArchive ? "parity confirmed" : "parity check performed (see violations)";
+    evidence.push({
+      check: "archive-parity-checked",
+      file: "package",
+      detail: `Archive manifest checked: ${input.archiveManifest.length} total files, ${xamlInArchive} XAML files, ${input.xamlEntries.length} validated entries — ${parityStatus}`,
+    });
+
+    const archiveBasenameLookup = new Set(input.archiveManifest.map(p => p.split("/").pop() || p));
+    const requiredArtifacts = ["project.json", "Config.xlsx", "DeveloperHandoffGuide.md"];
+    for (const artifact of requiredArtifacts) {
+      if (archiveBasenameLookup.has(artifact)) {
+        const archivePath = input.archiveManifest.find(p => (p.split("/").pop() || p) === artifact);
+        evidence.push({
+          check: "artifact-present",
+          file: artifact,
+          detail: `${artifact} found in archive at "${archivePath}"`,
+        });
+      }
+    }
+
+    const nuspecPath = input.archiveManifest.find(p => p.endsWith(".nuspec"));
+    if (nuspecPath) {
+      evidence.push({
+        check: "nuspec-present",
+        file: nuspecPath,
+        detail: `NuSpec package metadata found at "${nuspecPath}"`,
+      });
+    }
+
+  }
+
+  return evidence;
 }
 
 export function runQualityGate(input: QualityGateInput): QualityGateResult {
   const blockedViolations = scanBlockedPatterns(input);
   const completenessViolations = checkCompleteness(input);
   const accuracyViolations = checkAccuracy(input);
-  const allViolations = [...blockedViolations, ...completenessViolations, ...accuracyViolations];
+  const runtimeSafetyViolations = checkRuntimeSafety(input);
+  const logicLocationViolations = checkLogicLocation(input);
+  const archiveParityViolations = checkArchiveParity(input);
+  const positiveEvidence = collectPositiveEvidence(input);
+
+  const allViolations = [
+    ...blockedViolations,
+    ...completenessViolations,
+    ...accuracyViolations,
+    ...runtimeSafetyViolations,
+    ...logicLocationViolations,
+    ...archiveParityViolations,
+  ];
 
   const hasErrors = allViolations.some(v => v.severity === "error");
   const summary = buildSummary(allViolations);
@@ -1168,6 +1821,7 @@ export function runQualityGate(input: QualityGateInput): QualityGateResult {
   return {
     passed: !hasErrors,
     violations: allViolations,
+    positiveEvidence,
     summary,
   };
 }
@@ -1178,47 +1832,63 @@ function buildSummary(violations: QualityGateViolation[]): QualityGateResult["su
   const completenessWarnings = violations.filter(v => v.category === "completeness" && v.severity === "warning").length;
   const accuracyErrors = violations.filter(v => v.category === "accuracy" && v.severity === "error").length;
   const accuracyWarnings = violations.filter(v => v.category === "accuracy" && v.severity === "warning").length;
+  const runtimeSafetyErrors = violations.filter(v => v.category === "runtime-safety" && v.severity === "error").length;
+  const runtimeSafetyWarnings = violations.filter(v => v.category === "runtime-safety" && v.severity === "warning").length;
+  const logicLocationWarnings = violations.filter(v => v.category === "logic-location" && v.severity === "warning").length;
   return {
     blockedPatterns,
     completenessErrors,
     completenessWarnings,
     accuracyErrors,
     accuracyWarnings,
-    totalErrors: blockedPatterns + completenessErrors + accuracyErrors,
-    totalWarnings: completenessWarnings + accuracyWarnings,
+    runtimeSafetyErrors,
+    runtimeSafetyWarnings,
+    logicLocationWarnings,
+    totalErrors: blockedPatterns + completenessErrors + accuracyErrors + runtimeSafetyErrors,
+    totalWarnings: completenessWarnings + accuracyWarnings + runtimeSafetyWarnings + logicLocationWarnings,
   };
 }
 
 export function formatQualityGateViolations(result: QualityGateResult): string {
-  if (result.passed && result.violations.length === 0) {
-    return "Quality gate passed — no violations found.";
-  }
-
   const lines: string[] = [];
-  if (!result.passed) {
+
+  if (result.passed && result.violations.length === 0) {
+    lines.push("Quality gate passed — no violations found.");
+  } else if (!result.passed) {
     lines.push(`Quality gate FAILED — ${result.summary.totalErrors} error(s), ${result.summary.totalWarnings} warning(s)`);
   } else {
     lines.push(`Quality gate passed with ${result.summary.totalWarnings} warning(s)`);
   }
 
-  const grouped: Record<string, QualityGateViolation[]> = {};
-  for (const v of result.violations) {
-    const key = `${v.category}`;
-    if (!grouped[key]) grouped[key] = [];
-    grouped[key].push(v);
+  if (result.violations.length > 0) {
+    const grouped: Record<string, QualityGateViolation[]> = {};
+    for (const v of result.violations) {
+      const key = `${v.category}`;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(v);
+    }
+
+    const categoryLabels: Record<string, string> = {
+      "blocked-pattern": "Blocked Patterns",
+      "completeness": "Completeness",
+      "accuracy": "Technical Accuracy",
+      "runtime-safety": "Runtime Safety",
+      "logic-location": "Logic Location",
+    };
+
+    for (const [cat, items] of Object.entries(grouped)) {
+      lines.push(`\n[${categoryLabels[cat] || cat}]`);
+      for (const v of items) {
+        const severity = v.severity === "error" ? "ERROR" : "WARN";
+        lines.push(`  ${severity} [${v.check}] ${v.file}: ${v.detail}`);
+      }
+    }
   }
 
-  const categoryLabels: Record<string, string> = {
-    "blocked-pattern": "Blocked Patterns",
-    "completeness": "Completeness",
-    "accuracy": "Technical Accuracy",
-  };
-
-  for (const [cat, items] of Object.entries(grouped)) {
-    lines.push(`\n[${categoryLabels[cat] || cat}]`);
-    for (const v of items) {
-      const severity = v.severity === "error" ? "ERROR" : "WARN";
-      lines.push(`  ${severity} [${v.check}] ${v.file}: ${v.detail}`);
+  if (result.positiveEvidence && result.positiveEvidence.length > 0) {
+    lines.push(`\n[Positive Evidence (${result.positiveEvidence.length} items)]`);
+    for (const e of result.positiveEvidence) {
+      lines.push(`  PASS [${e.check}] ${e.file}: ${e.detail}`);
     }
   }
 
