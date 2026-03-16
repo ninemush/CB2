@@ -17,9 +17,12 @@ import {
   generateDeveloperHandoffGuide,
   generateDhgSummary,
   makeUiPathCompliant,
+  validateXamlContent,
+  generateStubWorkflow,
   type XamlGeneratorResult,
   type XamlGap,
   type TargetFramework,
+  type XamlValidationViolation,
 } from "./xaml-generator";
 import { enrichWithAI, type EnrichmentResult } from "./ai-xaml-enricher";
 import { analyzeAndFix, setGovernancePolicies, type AnalysisReport } from "./workflow-analyzer";
@@ -536,12 +539,14 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
     }
 
     const analysisReports: { fileName: string; report: AnalysisReport }[] = [];
+    const xamlEntries: { name: string; content: string }[] = [];
     const tf: TargetFramework = isServerless ? "Portable" : "Windows";
     const apEnabled = !!(pkg as any).autopilotEnabled || !!(_probeCache?.flags?.autopilot);
     function compliancePass(rawXaml: string, fileName: string): string {
       const compliant = makeUiPathCompliant(rawXaml, tf);
       const { fixed, report } = analyzeAndFix(compliant);
       analysisReports.push({ fileName, report });
+      xamlEntries.push({ name: fileName, content: fixed });
       if (report.totalAutoFixed > 0) {
         console.log(`[UiPath Analyzer] ${fileName}: ${report.totalAutoFixed} auto-fixed, ${report.totalRemaining} remaining`);
       }
@@ -854,6 +859,44 @@ ${depEntries}
     });
     archive.append(dhg, { name: `${libPath}/DeveloperHandoffGuide.md` });
     console.log(`[UiPath] Generated Developer Handoff Guide: ${allGaps.length} gaps, ~${(allGaps.reduce((s: number, g: XamlGap) => s + g.estimatedMinutes, 0) / 60).toFixed(1)}h effort, REFramework=${useReFramework}`);
+
+    const preArchiveViolations = validateXamlContent(xamlEntries);
+
+    const missingFileViolations = preArchiveViolations.filter(v => v.check === "invoked-file");
+    const stubsGenerated: string[] = [];
+    if (missingFileViolations.length > 0) {
+      const missingFiles = new Set<string>();
+      for (const v of missingFileViolations) {
+        const m = v.detail.match(/references "([^"]+)"/);
+        if (m) missingFiles.add(m[1]);
+      }
+      for (const missingFile of Array.from(missingFiles)) {
+        const stubXaml = generateStubWorkflow(missingFile);
+        const stubCompliant = compliancePass(stubXaml, missingFile);
+        archive.append(stubCompliant, { name: `${libPath}/${missingFile}` });
+        stubsGenerated.push(missingFile);
+        console.log(`[UiPath Validation] Generated stub workflow for missing file: ${missingFile}`);
+      }
+    }
+
+    const postStubViolations = validateXamlContent(xamlEntries);
+    const criticalViolations = postStubViolations.filter(v => v.check === "placeholder" || v.check === "pseudo-xaml");
+    const remainingMissingFiles = postStubViolations.filter(v => v.check === "invoked-file");
+
+    if (criticalViolations.length > 0 || remainingMissingFiles.length > 0) {
+      const allIssues = [...criticalViolations, ...remainingMissingFiles];
+      const violationSummary: string[] = [];
+      for (const v of allIssues) {
+        const msg = `[${v.check}] ${v.file}: ${v.detail}`;
+        console.error(`[UiPath Validation FAIL] ${msg}`);
+        violationSummary.push(msg);
+      }
+      throw new Error(
+        `UiPath XAML pre-archive validation failed with ${allIssues.length} violation(s):\n${violationSummary.join("\n")}`
+      );
+    } else {
+      console.log(`[UiPath Validation] All pre-archive checks passed${stubsGenerated.length > 0 ? ` (${stubsGenerated.length} stub(s) generated)` : ""}`);
+    }
 
     archive.finalize();
 

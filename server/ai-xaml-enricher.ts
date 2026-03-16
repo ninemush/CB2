@@ -85,6 +85,16 @@ RULES:
     - Timeout: default 30000ms for UI activities, higher for long-running operations
     - ContinueOnError: "True" for non-critical activities (logging, notifications), "False" for critical activities (data processing, login, validation)
     - DelayBefore/DelayAfter: specify when system-specific timing needs exist (e.g. SAP page loads need 1000-2000ms delay, web transitions need 500ms)
+12. DOMAIN-SPECIFIC BUSINESS LOGIC FIDELITY:
+    - Carefully read the SDD for any priority ordering, fallback sequences, or routing rules (e.g., "try System A first, then fall back to System B", "route high-priority items via Channel X before Channel Y")
+    - Reflect that exact ordering in the generated activity sequence and decision conditions — do NOT reorder steps arbitrarily
+    - When the SDD specifies a priority or fallback chain, implement it as nested If/Switch conditions preserving the documented order
+    - Add a dhgNotes entry when domain-specific ordering is applied, e.g. "Applied SDD priority ordering: System A → System B → Manual fallback"
+13. STRUCTURAL RULES FOR CONTROL FLOW:
+    - NEVER return Then, Else, Cases, Body, or Finally as string property values — these are always nested child elements in UiPath XAML
+    - If/Switch activities must use structured decomposition: If.Then with Sequence child, If.Else with Sequence child, Switch.Cases with Case children
+    - Properties must ONLY contain simple string/number/boolean values or VB.NET/C# expressions — never nested activity XML as a string value
+    - For Headers properties, return a proper Dictionary initializer string, not a JSON object
 
 OUTPUT FORMAT — respond with ONLY valid JSON matching this schema:
 {
@@ -228,6 +238,43 @@ Generate the enriched workflow specification. For each node, provide the specifi
           if (typeof act.continueOnError !== "boolean") act.continueOnError = undefined;
           if (typeof act.delayBefore !== "number") act.delayBefore = undefined;
           if (typeof act.delayAfter !== "number") act.delayAfter = undefined;
+          const pseudoKeys = ["Then", "Else", "Cases", "Body", "Finally", "Try"];
+          const isControlFlow = ["If", "Switch", "ForEach", "TryCatch"].some(
+            cf => act.activityType === cf || act.activityType === `System.Activities.${cf}`
+          );
+          if (!isControlFlow) {
+            for (const pk of pseudoKeys) {
+              if (pk in act.properties) {
+                delete act.properties[pk];
+              }
+            }
+          }
+          for (const [propKey, propVal] of Object.entries(act.properties)) {
+            if (isControlFlow && pseudoKeys.includes(propKey)) continue;
+            if (typeof propVal !== "string") {
+              if (propVal === null || propVal === undefined) {
+                delete act.properties[propKey];
+              } else if (typeof propVal === "object") {
+                if (propKey.toLowerCase().includes("header")) {
+                  const entries = Object.entries(propVal as Record<string, any>);
+                  if (entries.length === 0) {
+                    act.properties[propKey] = "New Dictionary(Of String, String)()";
+                  } else {
+                    const kvPairs = entries.map(([k, v]) => `{"${k}", "${String(v)}"}`).join(", ");
+                    act.properties[propKey] = `New Dictionary(Of String, String) From {${kvPairs}}`;
+                  }
+                } else {
+                  act.properties[propKey] = JSON.stringify(propVal);
+                }
+              } else {
+                act.properties[propKey] = String(propVal);
+              }
+            } else if (propVal === "[object Object]") {
+              act.properties[propKey] = `PLACEHOLDER_${propKey}_object_value`;
+            } else if (propVal === "...") {
+              act.properties[propKey] = `PLACEHOLDER_${propKey}`;
+            }
+          }
         }
       }
       if (!parsed.decomposition) parsed.decomposition = [];

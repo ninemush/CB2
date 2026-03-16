@@ -1103,6 +1103,265 @@ function isNonCriticalActivity(activityType: string): boolean {
   return nonCritical.some(t => activityType === t);
 }
 
+function sanitizePropertyValue(key: string, value: any): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    if (value === "[object Object]") {
+      return `PLACEHOLDER_${key}_object_value`;
+    }
+    if (value === "...") {
+      return `PLACEHOLDER_${key}`;
+    }
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    const items = value.map((item: any) => {
+      if (typeof item === "string") return item;
+      if (typeof item === "object" && item !== null) return JSON.stringify(item);
+      return String(item);
+    });
+    return `New String() {${items.map(i => `"${i.replace(/"/g, '""')}"`).join(", ")}}`;
+  }
+  if (typeof value === "object") {
+    if (key.toLowerCase().includes("header")) {
+      const entries = Object.entries(value as Record<string, any>);
+      if (entries.length === 0) return `New Dictionary(Of String, String)()`;
+      const kvPairs = entries.map(([k, v]) => `{"${k}", "${String(v)}"}`).join(", ");
+      return `New Dictionary(Of String, String) From {${kvPairs}}`;
+    }
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+const PSEUDO_XAML_ATTR_KEYS = new Set(["Then", "Else", "Cases", "Body", "Finally", "Try"]);
+
+const CONTROL_FLOW_ACTIVITY_TYPES = new Set(["If", "Switch", "ForEach", "TryCatch"]);
+
+interface NestedActivityObject {
+  activityType: string;
+  displayName?: string;
+  properties?: Record<string, string>;
+  selectorHint?: string;
+  [key: string]: unknown;
+}
+
+function isNestedActivityObject(val: unknown): val is NestedActivityObject {
+  return typeof val === "object" && val !== null && typeof (val as Record<string, unknown>).activityType === "string";
+}
+
+function isControlFlowActivity(activityType: string): boolean {
+  return CONTROL_FLOW_ACTIVITY_TYPES.has(activityType) ||
+    CONTROL_FLOW_ACTIVITY_TYPES.has(activityType.replace("System.Activities.", ""));
+}
+
+function sanitizePropsForRendering(props: Record<string, string>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(props)) {
+    if (PSEUDO_XAML_ATTR_KEYS.has(key)) continue;
+    const sanitized = sanitizePropertyValue(key, value);
+    if (sanitized === "") continue;
+    result[key] = sanitized;
+  }
+  return result;
+}
+
+function buildRawPropertiesForControlFlow(obj: NestedActivityObject): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const props = obj.properties || {};
+  for (const [k, v] of Object.entries(props)) {
+    result[k] = v;
+  }
+  const pseudoKeysList = ["Then", "Else", "Cases", "Body", "Finally", "Try"];
+  for (const pseudoKey of pseudoKeysList) {
+    if (pseudoKey in obj && !(pseudoKey in result)) {
+      result[pseudoKey] = obj[pseudoKey];
+    }
+  }
+  return result;
+}
+
+function renderActivityOrControlFlow(
+  activityType: string,
+  displayName: string,
+  sanitizedProps: Record<string, string>,
+  rawObj: NestedActivityObject,
+  targetFramework?: TargetFramework
+): string {
+  if (isControlFlowActivity(activityType)) {
+    const rawProperties = buildRawPropertiesForControlFlow(rawObj);
+    return renderControlFlowActivity(activityType, displayName, sanitizedProps, rawProperties, targetFramework);
+  }
+  const selectorHint = typeof rawObj.selectorHint === "string" ? rawObj.selectorHint : undefined;
+  return renderActivity(activityType, displayName, sanitizedProps, selectorHint, undefined, undefined, targetFramework);
+}
+
+function renderControlFlowActivity(
+  activityType: string,
+  displayName: string,
+  properties: Record<string, string>,
+  rawProperties: Record<string, unknown>,
+  targetFramework?: TargetFramework
+): string {
+  const enforced = enforceDisplayName(activityType, displayName);
+  const baseType = activityType.replace("System.Activities.", "");
+
+  if (baseType === "If") {
+    const condition = properties["Condition"] || rawProperties["Condition"] || "TODO_Condition";
+
+    let thenContent = "";
+    const thenProp = rawProperties["Then"];
+    if (isNestedActivityObject(thenProp)) {
+      const nestedProps = sanitizePropsForRendering(thenProp.properties || {});
+      thenContent = renderActivityOrControlFlow(thenProp.activityType, thenProp.displayName || "Then Activity", nestedProps, thenProp , targetFramework);
+    } else if (typeof thenProp === "string" && thenProp.length > 0 && thenProp !== "..." && thenProp !== "[object Object]") {
+      thenContent = `\n                <ui:LogMessage Level="Info" Message="'Then: ${escapeXml(String(thenProp))}'" DisplayName="Then: ${escapeXml(enforced)}" />`;
+    } else {
+      thenContent = `\n                <ui:LogMessage Level="Info" Message="'Then path: ${escapeXml(enforced)}'" DisplayName="Then Path" />`;
+    }
+
+    let elseContent = "";
+    const elseProp = rawProperties["Else"];
+    if (isNestedActivityObject(elseProp)) {
+      const nestedProps = sanitizePropsForRendering(elseProp.properties || {});
+      elseContent = renderActivityOrControlFlow(elseProp.activityType, elseProp.displayName || "Else Activity", nestedProps, elseProp , targetFramework);
+    } else if (typeof elseProp === "string" && elseProp.length > 0 && elseProp !== "..." && elseProp !== "[object Object]") {
+      elseContent = `\n                <ui:LogMessage Level="Info" Message="'Else: ${escapeXml(String(elseProp))}'" DisplayName="Else: ${escapeXml(enforced)}" />`;
+    } else {
+      elseContent = `\n                <ui:LogMessage Level="Info" Message="'Else path: ${escapeXml(enforced)}'" DisplayName="Else Path" />`;
+    }
+
+    return `
+          <If DisplayName="${escapeXml(enforced)}" Condition="[${escapeXml(String(condition))}]">
+            <If.Then>
+              <Sequence DisplayName="Then: ${escapeXml(enforced)}">${thenContent}
+              </Sequence>
+            </If.Then>
+            <If.Else>
+              <Sequence DisplayName="Else: ${escapeXml(enforced)}">${elseContent}
+              </Sequence>
+            </If.Else>
+          </If>`;
+  }
+
+  if (baseType === "Switch") {
+    const expression = properties["Expression"] || rawProperties["Expression"] || "TODO_Expression";
+    const casesProp = rawProperties["Cases"];
+    let caseElements = "";
+
+    if (casesProp && typeof casesProp === "object" && !Array.isArray(casesProp)) {
+      for (const [caseKey, caseVal] of Object.entries(casesProp)) {
+        let caseBody = "";
+        if (isNestedActivityObject(caseVal)) {
+          caseBody = renderActivityOrControlFlow(caseVal.activityType, caseVal.displayName || caseKey, caseVal.properties || {}, caseVal, targetFramework);
+        } else {
+          caseBody = `\n                  <ui:LogMessage Level="Info" Message="'Case: ${escapeXml(caseKey)}'" DisplayName="Case: ${escapeXml(caseKey)}" />`;
+        }
+        caseElements += `
+              <Case x:TypeArguments="x:String" Value="${escapeXml(caseKey)}">
+                <Sequence DisplayName="Case: ${escapeXml(caseKey)}">${caseBody}
+                </Sequence>
+              </Case>`;
+      }
+    }
+    if (!caseElements) {
+      caseElements = `
+              <Case x:TypeArguments="x:String" Value="TODO">
+                <Sequence DisplayName="Default Case">
+                  <ui:LogMessage Level="Info" Message="'Default case: ${escapeXml(enforced)}'" DisplayName="Default Case" />
+                </Sequence>
+              </Case>`;
+    }
+
+    return `
+          <Switch x:TypeArguments="x:String" DisplayName="${escapeXml(enforced)}" Expression="[${escapeXml(String(expression))}]">
+            <Switch.Cases>${caseElements}
+            </Switch.Cases>
+            <Switch.Default>
+              <Sequence DisplayName="Default: ${escapeXml(enforced)}">
+                <ui:LogMessage Level="Info" Message="'Switch default: ${escapeXml(enforced)}'" DisplayName="Default Path" />
+              </Sequence>
+            </Switch.Default>
+          </Switch>`;
+  }
+
+  if (baseType === "ForEach") {
+    const itemType = properties["TypeArgument"] || rawProperties["TypeArgument"] || "x:Object";
+    const values = properties["Values"] || rawProperties["Values"] || "TODO_Collection";
+
+    let bodyContent = "";
+    const bodyProp = rawProperties["Body"];
+    if (isNestedActivityObject(bodyProp)) {
+      const nestedProps = sanitizePropsForRendering(bodyProp.properties || {});
+      bodyContent = renderActivityOrControlFlow(bodyProp.activityType, bodyProp.displayName || "Loop Body", nestedProps, bodyProp , targetFramework);
+    } else {
+      bodyContent = `\n                <ui:LogMessage Level="Info" Message="'Processing item in: ${escapeXml(enforced)}'" DisplayName="Loop Body" />`;
+    }
+
+    return `
+          <ForEach x:TypeArguments="${escapeXml(String(itemType))}" DisplayName="${escapeXml(enforced)}" Values="[${escapeXml(String(values))}]">
+            <ForEach.Body>
+              <ActivityAction x:TypeArguments="${escapeXml(String(itemType))}">
+                <ActivityAction.Argument>
+                  <DelegateInArgument x:TypeArguments="${escapeXml(String(itemType))}" Name="item" />
+                </ActivityAction.Argument>
+                <Sequence DisplayName="Body: ${escapeXml(enforced)}">${bodyContent}
+                </Sequence>
+              </ActivityAction>
+            </ForEach.Body>
+          </ForEach>`;
+  }
+
+  if (baseType === "TryCatch") {
+    let tryContent = "";
+    const tryProp = rawProperties["Try"];
+    if (isNestedActivityObject(tryProp)) {
+      const nestedProps = sanitizePropsForRendering(tryProp.properties || {});
+      tryContent = renderActivityOrControlFlow(tryProp.activityType, tryProp.displayName || "Try Body", nestedProps, tryProp , targetFramework);
+    } else {
+      tryContent = `\n                <ui:LogMessage Level="Info" Message="'Try block: ${escapeXml(enforced)}'" DisplayName="Try Body" />`;
+    }
+
+    let finallyContent = "";
+    const finallyProp = rawProperties["Finally"];
+    if (isNestedActivityObject(finallyProp)) {
+      const nestedProps = sanitizePropsForRendering(finallyProp.properties || {});
+      finallyContent = renderActivityOrControlFlow(finallyProp.activityType, finallyProp.displayName || "Finally", nestedProps, finallyProp , targetFramework);
+    }
+
+    return `
+          <TryCatch DisplayName="${escapeXml(enforced)}">
+            <TryCatch.Try>
+              <Sequence DisplayName="Try: ${escapeXml(enforced)}">${tryContent}
+              </Sequence>
+            </TryCatch.Try>
+            <TryCatch.Catches>
+              <Catch x:TypeArguments="s:Exception">
+                <ActivityAction x:TypeArguments="s:Exception">
+                  <ActivityAction.Argument>
+                    <DelegateInArgument x:TypeArguments="s:Exception" Name="exception" />
+                  </ActivityAction.Argument>
+                  <Sequence DisplayName="Catch: ${escapeXml(enforced)}">
+                    <ui:LogMessage Level="Error" Message="['Error in ${escapeXml(enforced)}: ' + exception.Message]" DisplayName="Log Exception" />
+                  </Sequence>
+                </ActivityAction>
+              </Catch>
+            </TryCatch.Catches>${finallyContent ? `
+            <TryCatch.Finally>
+              <Sequence DisplayName="Finally: ${escapeXml(enforced)}">${finallyContent}
+              </Sequence>
+            </TryCatch.Finally>` : ""}
+          </TryCatch>`;
+  }
+
+  return renderActivity(activityType, displayName, properties as Record<string, string>, undefined, undefined, undefined, targetFramework);
+}
+
 function renderActivity(
   activityType: string,
   displayName: string,
@@ -1116,7 +1375,10 @@ function renderActivity(
   const isCrossPlatform = targetFramework === "Portable";
   let propAttrs = "";
   for (const [key, value] of Object.entries(properties)) {
-    propAttrs += ` ${key}="${escapeXml(value)}"`;
+    if (PSEUDO_XAML_ATTR_KEYS.has(key)) continue;
+    const sanitized = sanitizePropertyValue(key, value);
+    if (sanitized === "") continue;
+    propAttrs += ` ${key}="${escapeXml(sanitized)}"`;
   }
 
   if (selectorHint && !isCrossPlatform) {
@@ -1413,10 +1675,26 @@ function renderEnrichedActivities(enrichedNode: EnrichedNodeSpec, targetFramewor
       }
     }
 
+    const rawProperties = act.properties || {};
+
+    if (isControlFlowActivity(act.activityType)) {
+      const sanitizedProps: Record<string, string> = {};
+      for (const [key, value] of Object.entries(rawProperties)) {
+        if (PSEUDO_XAML_ATTR_KEYS.has(key)) continue;
+        const strVal = sanitizePropertyValue(key, value);
+        if (strVal === "") continue;
+        sanitizedProps[key] = strVal;
+      }
+      innerXml += renderControlFlowActivity(act.activityType, act.displayName, sanitizedProps, rawProperties, targetFramework).replace(/\n          /, "\n            ");
+      continue;
+    }
+
     const props: Record<string, string> = {};
     const placeholders: string[] = [];
-    for (const [key, value] of Object.entries(act.properties || {})) {
-      const strVal = String(value);
+    for (const [key, value] of Object.entries(rawProperties)) {
+      if (PSEUDO_XAML_ATTR_KEYS.has(key)) continue;
+      const strVal = sanitizePropertyValue(key, value);
+      if (strVal === "") continue;
       props[key] = strVal;
       if (strVal.startsWith("PLACEHOLDER_") || strVal.startsWith("TODO")) {
         placeholders.push(key);
@@ -1883,22 +2161,35 @@ export function generateRichXamlFromSpec(
         allVariables.push(...step.variables);
       }
 
+      const rawStepProps = step.properties || {};
       const props: Record<string, string> = {};
-      if (step.properties) {
-        for (const [k, v] of Object.entries(step.properties)) {
-          props[k] = String(v);
-        }
+      for (const [k, v] of Object.entries(rawStepProps)) {
+        if (PSEUDO_XAML_ATTR_KEYS.has(k)) continue;
+        const sanitized = sanitizePropertyValue(k, v);
+        if (sanitized === "") continue;
+        props[k] = sanitized;
       }
 
-      const activityXml = renderActivity(
-        step.activityType,
-        stepName,
-        props,
-        step.selectorHint,
-        undefined,
-        undefined,
-        targetFramework
-      );
+      let activityXml: string;
+      if (isControlFlowActivity(step.activityType)) {
+        activityXml = renderControlFlowActivity(
+          step.activityType,
+          stepName,
+          props,
+          rawStepProps,
+          targetFramework
+        );
+      } else {
+        activityXml = renderActivity(
+          step.activityType,
+          stepName,
+          props,
+          step.selectorHint,
+          undefined,
+          undefined,
+          targetFramework
+        );
+      }
 
       if (step.selectorHint) {
         allGaps.push({
@@ -3537,6 +3828,108 @@ function extractSystemFromGap(gap: XamlGap): string {
   if (desc.includes("oracle")) return "Oracle";
   if (desc.includes("browser") || desc.includes("web") || desc.includes("chrome")) return "Web Browser";
   return "General";
+}
+
+export interface XamlValidationViolation {
+  check: "placeholder" | "pseudo-xaml" | "invoked-file";
+  file: string;
+  detail: string;
+}
+
+export function validateXamlContent(xamlEntries: { name: string; content: string }[]): XamlValidationViolation[] {
+  const violations: XamlValidationViolation[] = [];
+  const fileNames = new Set(xamlEntries.map(e => {
+    const parts = e.name.split("/");
+    return parts[parts.length - 1];
+  }));
+
+  for (const entry of xamlEntries) {
+    const shortName = entry.name.split("/").pop() || entry.name;
+    const content = entry.content;
+
+    if (content.includes("[object Object]")) {
+      const lines = content.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes("[object Object]")) {
+          violations.push({
+            check: "placeholder",
+            file: shortName,
+            detail: `Line ${i + 1}: contains "[object Object]"`,
+          });
+        }
+      }
+    }
+
+    const ellipsisAttrPattern = /(\w+)="\.\.\."/g;
+    let match;
+    while ((match = ellipsisAttrPattern.exec(content)) !== null) {
+      const lineNum = content.substring(0, match.index).split("\n").length;
+      violations.push({
+        check: "placeholder",
+        file: shortName,
+        detail: `Line ${lineNum}: attribute ${match[1]}="..." contains placeholder ellipsis`,
+      });
+    }
+
+    const pseudoXamlPattern = /\b(Then|Else|Cases|Body|Finally|Try)="([^"]*)"/g;
+    while ((match = pseudoXamlPattern.exec(content)) !== null) {
+      const attrName = match[1];
+      const attrValue = match[2];
+      const contextBefore = content.substring(Math.max(0, match.index - 80), match.index);
+      const isInChildElement = /\.\s*$/.test(contextBefore.trimEnd()) ||
+        contextBefore.includes(`<If.${attrName}`) ||
+        contextBefore.includes(`<Switch.${attrName}`) ||
+        contextBefore.includes(`<TryCatch.${attrName}`) ||
+        contextBefore.includes(`<ForEach.${attrName}`) ||
+        contextBefore.includes(`<Sequence.${attrName}`);
+      if (isInChildElement) continue;
+      const isPartOfDisplayName = new RegExp(`DisplayName="[^"]*$`).test(contextBefore);
+      if (isPartOfDisplayName) continue;
+      if (attrValue.length > 0 && attrValue !== "True" && attrValue !== "False") {
+        const lineNum = content.substring(0, match.index).split("\n").length;
+        const parentTag = attrName === "Cases" ? "Switch" : attrName === "Finally" ? "TryCatch" : attrName === "Body" ? "Activity" : "If";
+        violations.push({
+          check: "pseudo-xaml",
+          file: shortName,
+          detail: `Line ${lineNum}: pseudo-XAML attribute ${attrName}="${attrValue.substring(0, 80)}${attrValue.length > 80 ? "..." : ""}" — should use nested <${parentTag}.${attrName}> child element`,
+        });
+      }
+    }
+
+    const invokePattern = /WorkflowFileName="([^"]+)"/g;
+    while ((match = invokePattern.exec(content)) !== null) {
+      const invokedFile = match[1];
+      if (!fileNames.has(invokedFile)) {
+        const lineNum = content.substring(0, match.index).split("\n").length;
+        violations.push({
+          check: "invoked-file",
+          file: shortName,
+          detail: `Line ${lineNum}: InvokeWorkflowFile references "${invokedFile}" which does not exist in the package`,
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
+export function generateStubWorkflow(fileName: string): string {
+  const className = fileName.replace(/\.xaml$/i, "").replace(/[^A-Za-z0-9_]/g, "_");
+  return `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="${className}"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="${escapeXml(className)}">
+    <Sequence.Variables />
+    <ui:LogMessage Level="Warn" Message="'STUB: ${escapeXml(className)} — this workflow was auto-generated as a placeholder because it is referenced by InvokeWorkflowFile but was not part of the original process map. Implement the actual logic here.'" DisplayName="Stub Warning: ${escapeXml(className)}" />
+  </Sequence>
+</Activity>`;
 }
 
 export function generateDhgSummary(gaps: XamlGap[], deploymentResults?: DhgDeploymentResult[]): string {
