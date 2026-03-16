@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import Anthropic from "@anthropic-ai/sdk";
+import { getLLM } from "./lib/llm";
 import { documentStorage } from "./document-storage";
 import { processMapStorage } from "./process-map-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
@@ -21,10 +21,6 @@ import { renderProcessMapImage } from "./process-map-renderer";
 import AdmZip from "adm-zip";
 import archiver from "archiver";
 
-const anthropic = new Anthropic({
-  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-});
 
 const PDD_PROMPT = `The SME has approved the As-Is process map. Now generate a Process Design Document. The PDD must include: 1) Executive Summary, 2) Process Scope, 3) As-Is Process Description (narrative form, referencing the steps in the map), 4) To-Be Process Description (describe the optimised automated process — how the workflow will operate once automation is applied, referencing the To-Be map steps), 5) Pain Points and Inefficiencies, 6) Automation Opportunity Assessment, 7) Assumptions and Exceptions, 8) Data and System Requirements. Write this as a professional document, not a bullet list. Be specific and use the details from our conversation.
 
@@ -523,15 +519,13 @@ async function generateDocument(ideaId: string, docType: string): Promise<string
     const sddArtifactsPrompt = buildSddArtifactsPrompt(platformCapabilitiesText);
 
     const [proseResponse, artifactsResponse] = await Promise.all([
-      anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 6144,
+      getLLM().create({
+        maxTokens: 6144,
         system: systemPrompt,
         messages: [...chatMessages, { role: "user", content: sddProsePrompt }],
       }),
-      anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 3072,
+      getLLM().create({
+        maxTokens: 3072,
         system: systemPrompt,
         messages: [...chatMessages, { role: "user", content: sddArtifactsPrompt }],
       }),
@@ -540,8 +534,8 @@ async function generateDocument(ideaId: string, docType: string): Promise<string
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`[SDD] Parallel generation completed in ${elapsed}s`);
 
-    const proseText = proseResponse.content.find((b) => b.type === "text")?.text || "";
-    const artifactsText = artifactsResponse.content.find((b) => b.type === "text")?.text || "";
+    const proseText = proseResponse.text;
+    const artifactsText = artifactsResponse.text;
 
     let artifactBlock = parseArtifactBlock(artifactsText);
 
@@ -554,16 +548,15 @@ async function generateDocument(ideaId: string, docType: string): Promise<string
       console.warn("[SDD] Both parallel calls failed to produce artifacts block, running recovery extraction...");
       try {
         const combinedText = proseText + "\n\n" + artifactsText;
-        const recoveryResponse = await anthropic.messages.create({
-          model: "claude-sonnet-4-6",
-          max_tokens: 2048,
+        const recoveryResponse = await getLLM().create({
+          maxTokens: 2048,
           system: "You are a UiPath automation consultant. Extract the Orchestrator artifact definitions and output ONLY a fenced JSON block. Output nothing else.",
           messages: [{
             role: "user",
             content: `From this document, extract ALL Orchestrator and platform artifacts and output them as a single fenced block:\n\n\`\`\`orchestrator_artifacts\n{ "queues": [...], "assets": [...], "machines": [...], "triggers": [...], "storageBuckets": [...], "environments": [...], "actionCenter": [...], "documentUnderstanding": [...], "communicationsMining": [...], "testCases": [...], "requirements": [...], "testSets": [...] }\n\`\`\`\n\nDocument:\n${combinedText.slice(0, 8000)}`
           }],
         });
-        const recoveryText = recoveryResponse.content.find((b) => b.type === "text")?.text || "";
+        const recoveryText = recoveryResponse.text;
         artifactBlock = parseArtifactBlock(recoveryText);
         if (artifactBlock) {
           console.log("[SDD] Recovery extraction succeeded");
@@ -599,15 +592,13 @@ async function generateDocument(ideaId: string, docType: string): Promise<string
 
   const prompt = docType === "PDD" ? PDD_PROMPT : UIPATH_PROMPT;
   const maxTokens = 4096;
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: maxTokens,
+  const response = await getLLM().create({
+    maxTokens: maxTokens,
     system: `You are a professional automation consultant generating formal documents for the "${idea.title}" project. Be specific and use details from the conversation.${contextPrompt}`,
     messages: [...chatMessages, { role: "user", content: prompt }],
   });
 
-  const textBlock = response.content.find((b) => b.type === "text");
-  return textBlock?.text || "";
+  return response.text;
 }
 
 export function registerDocumentRoutes(app: Express): void {
@@ -857,24 +848,21 @@ export function registerDocumentRoutes(app: Express): void {
 
       const revisionPrompt = `The user has requested a revision to the ${type}. Here is the current document:\n\n${currentDoc.content}\n\nRevision request: ${revision}\n\nPlease regenerate the complete ${type} with this revision applied. Keep the same section structure (## headings). Output only the revised document.`;
 
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 8192,
+      const response = await getLLM().create({
+        maxTokens: 8192,
         system: `You are a professional automation consultant revising a ${type} for the "${idea.title}" project.`,
         messages: [...chatMessages, { role: "user", content: revisionPrompt }],
       });
 
-      const textBlock = response.content.find((b) => b.type === "text");
-      let content = textBlock?.text || "";
+      let content = response.text;
 
       if (type === "SDD" && content.length > 0) {
         const hasArtifactsBlock = /```orchestrator_artifacts\s*\n[\s\S]*?\n```/.test(content);
         if (!hasArtifactsBlock) {
           console.log("[SDD Revision] orchestrator_artifacts block missing, extracting...");
           try {
-            const extractionResponse = await anthropic.messages.create({
-              model: "claude-sonnet-4-6",
-              max_tokens: 2048,
+            const extractionResponse = await getLLM().create({
+              maxTokens: 2048,
               system: "You are a UiPath automation consultant. Extract the Orchestrator artifact definitions from the SDD document and output ONLY a fenced JSON block. Output nothing else.",
               messages: [{
                 role: "user",
@@ -895,8 +883,7 @@ Here is the SDD:
 ${content}`
               }],
             });
-            const extractBlock = extractionResponse.content.find((b) => b.type === "text");
-            const extractedText = extractBlock?.text || "";
+            const extractedText = extractionResponse.text;
             let artifactBlock: string | null = null;
             const exactMatch = extractedText.match(/```orchestrator_artifacts\s*\n([\s\S]*?)\n```/);
             if (exactMatch) {
@@ -1027,9 +1014,8 @@ ${content}`
 
       let response;
       try {
-        response = await anthropic.messages.create({
-          model: "claude-sonnet-4-6",
-          max_tokens: 16384,
+        response = await getLLM().create({
+          maxTokens: 16384,
           system: systemCtx,
           messages: [{ role: "user", content: UIPATH_PROMPT }],
         });
@@ -1039,10 +1025,9 @@ ${content}`
 
       sendProgress("LLM response received, parsing JSON...");
 
-      const textBlock = response.content.find((b) => b.type === "text");
-      const rawText = textBlock?.text || "{}";
+      const rawText = response.text || "{}";
 
-      if (response.stop_reason === "max_tokens") {
+      if (response.stopReason === "max_tokens") {
         console.warn(`[UiPath] LLM response truncated at max_tokens for ${ideaId} — attempting repair`);
         sendProgress("Response truncated, attempting JSON repair...");
       }

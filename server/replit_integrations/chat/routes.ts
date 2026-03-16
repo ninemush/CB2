@@ -1,5 +1,4 @@
 import type { Express, Request, Response } from "express";
-import Anthropic from "@anthropic-ai/sdk";
 import { chatStorage } from "./storage";
 import { storage } from "../../storage";
 import { documentStorage } from "../../document-storage";
@@ -10,11 +9,7 @@ import { PIPELINE_STAGES, type PipelineStage, type AutomationType } from "@share
 import { probeServiceAvailability, type ServiceAvailabilityMap } from "../../uipath-integration";
 import { generateRichXamlFromSpec, generateDeveloperHandoffGuide, aggregateGaps } from "../../xaml-generator";
 import { analyzeAndFix } from "../../workflow-analyzer";
-
-const anthropic = new Anthropic({
-  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-});
+import { getLLM, type LLMMessage, type LLMContentBlock } from "../../lib/llm";
 
 function hasMapApprovalIntent(userMessage: string): boolean {
   const msg = userMessage.toLowerCase().trim();
@@ -967,9 +962,8 @@ export function registerChatRoutes(app: Express): void {
           if (recentMessages.length === 0) {
             recentMessages = chatMessages.slice(-1);
           }
-          const classifyRes = await anthropic.messages.create({
-            model: "claude-sonnet-4-6",
-            max_tokens: 20,
+          const classifyRes = await getLLM().create({
+            maxTokens: 20,
             system: `You classify user intent in a UiPath automation pipeline chat. The pipeline sequence is: as-is process map → to-be process map → PDD (Process Design Document) → SDD (Solution Design Document) → UiPath package generation → deployment to Orchestrator → DHG (Developer Handoff Guide). Given the recent conversation, determine what the user is requesting. Reply with EXACTLY one of: PDD, SDD, PDD_SDD, DEPLOY, DHG, or CHAT.
 
 CRITICAL RULES:
@@ -982,7 +976,7 @@ CRITICAL RULES:
 - If both documents are being requested for generation, reply PDD_SDD.`,
             messages: recentMessages,
           });
-          const rawClassify = (classifyRes.content[0]?.type === "text" ? classifyRes.content[0].text : "").trim();
+          const rawClassify = classifyRes.text.trim();
           const classifyText = rawClassify.toUpperCase().replace(/[^A-Z_]/g, "");
           if (["PDD", "SDD", "PDD_SDD", "PDDSDD", "DEPLOY", "DHG"].includes(classifyText)) {
             const normalized = classifyText === "PDDSDD" ? "PDD_SDD" : classifyText;
@@ -1260,27 +1254,24 @@ CRITICAL RULES:
 
       const systemPrompt = buildSystemPrompt(idea.title, idea.stage, docContext, serviceAvailability, (idea.automationType as AutomationType) || null, toBeMapMode, asIsContextForToBe || undefined) + intentOverride;
 
-      let finalMessages: Array<{ role: "user" | "assistant"; content: string | Array<{ type: string; [key: string]: any }> }> = chatMessages;
+      let finalMessages: LLMMessage[] = chatMessages;
       if (imageData?.base64 && imageData?.mediaType) {
-        finalMessages = chatMessages.map((m, i) => {
+        finalMessages = chatMessages.map((m, i): LLMMessage => {
           if (i === chatMessages.length - 1 && m.role === "user") {
-            return {
-              ...m,
-              content: [
-                { type: "image", source: { type: "base64", media_type: imageData.mediaType, data: imageData.base64 } },
-                { type: "text", text: m.content },
-              ],
-            };
+            const content: LLMContentBlock[] = [
+              { type: "image", source: { type: "base64", media_type: imageData.mediaType, data: imageData.base64 } },
+              { type: "text", text: m.content as string },
+            ];
+            return { ...m, content };
           }
           return m;
         });
       }
 
-      const stream = anthropic.messages.stream({
-        model: "claude-sonnet-4-6",
-        max_tokens: (mapApprovalDone || asIsApprovalDone) ? 300 : 8192,
+      const stream = getLLM().stream({
+        maxTokens: (mapApprovalDone || asIsApprovalDone) ? 300 : 8192,
         system: systemPrompt,
-        messages: finalMessages as any,
+        messages: finalMessages,
       });
 
       let fullResponse = "";
@@ -1296,59 +1287,57 @@ CRITICAL RULES:
           stream.abort();
           break;
         }
-        if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-          const text = event.delta.text;
-          if (text) {
-            fullResponse += text;
-            try { res.write(`data: ${JSON.stringify({ token: text })}\n\n`); } catch { break; }
+        if (event.type === "text_delta" && event.text) {
+          const text = event.text;
+          fullResponse += text;
+          try { res.write(`data: ${JSON.stringify({ token: text })}\n\n`); } catch { break; }
 
-            if (!docProgressStarted && !mapApprovalDone && !chatApprovalDone) {
-              const docTagMatch = fullResponse.match(/\[DOC:(PDD|SDD):/);
-              if (docTagMatch) {
-                docProgressDocType = docTagMatch[1] as "PDD" | "SDD";
+          if (!docProgressStarted && !mapApprovalDone && !chatApprovalDone) {
+            const docTagMatch = fullResponse.match(/\[DOC:(PDD|SDD):/);
+            if (docTagMatch) {
+              docProgressDocType = docTagMatch[1] as "PDD" | "SDD";
+              docProgressStarted = true;
+              try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: docProgressDocType } })}\n\n`); } catch { /* ignore */ }
+            } else if (fullResponse.length > 800 && /## \d+[\.\)]\s/.test(fullResponse)) {
+              const looksLikeSdd = /orchestrator_artifacts|Automation Architecture|Solution Design/i.test(fullResponse);
+              const looksLikePdd = /Executive Summary|Process Scope|Automation Opportunity/i.test(fullResponse);
+              if (looksLikeSdd) {
+                docProgressDocType = "SDD";
                 docProgressStarted = true;
-                try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: docProgressDocType } })}\n\n`); } catch { /* ignore */ }
-              } else if (fullResponse.length > 800 && /## \d+[\.\)]\s/.test(fullResponse)) {
-                const looksLikeSdd = /orchestrator_artifacts|Automation Architecture|Solution Design/i.test(fullResponse);
-                const looksLikePdd = /Executive Summary|Process Scope|Automation Opportunity/i.test(fullResponse);
-                if (looksLikeSdd) {
-                  docProgressDocType = "SDD";
-                  docProgressStarted = true;
-                  try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "SDD" } })}\n\n`); } catch { /* ignore */ }
-                  console.log(`[Chat] Detected inline SDD generation (no [DOC:] tag) — enabling doc progress`);
-                } else if (looksLikePdd) {
-                  docProgressDocType = "PDD";
-                  docProgressStarted = true;
-                  try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "PDD" } })}\n\n`); } catch { /* ignore */ }
-                  console.log(`[Chat] Detected inline PDD generation (no [DOC:] tag) — enabling doc progress`);
-                }
+                try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "SDD" } })}\n\n`); } catch { /* ignore */ }
+                console.log(`[Chat] Detected inline SDD generation (no [DOC:] tag) — enabling doc progress`);
+              } else if (looksLikePdd) {
+                docProgressDocType = "PDD";
+                docProgressStarted = true;
+                try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "PDD" } })}\n\n`); } catch { /* ignore */ }
+                console.log(`[Chat] Detected inline PDD generation (no [DOC:] tag) — enabling doc progress`);
               }
-            } else if (expectSddAfterPdd && docProgressDocType === "PDD" && /\[DOC:SDD:/.test(fullResponse)) {
-              docProgressDocType = "SDD";
-              lastEmittedSectionNumber = -1;
-              expectSddAfterPdd = false;
-              try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "SDD" } })}\n\n`); } catch { /* ignore */ }
-              console.log(`[Chat] Switched doc progress indicator from PDD to SDD (PDD_SDD flow)`);
             }
+          } else if (expectSddAfterPdd && docProgressDocType === "PDD" && /\[DOC:SDD:/.test(fullResponse)) {
+            docProgressDocType = "SDD";
+            lastEmittedSectionNumber = -1;
+            expectSddAfterPdd = false;
+            try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "SDD" } })}\n\n`); } catch { /* ignore */ }
+            console.log(`[Chat] Switched doc progress indicator from PDD to SDD (PDD_SDD flow)`);
+          }
 
-            if (docProgressStarted && docProgressDocType) {
-              const sectionRe = /## (?:(\d+)[\.\)]\s+)?([^\n]+)/g;
-              let sMatch: RegExpExecArray | null;
-              let highestFound = lastEmittedSectionNumber;
-              while ((sMatch = sectionRe.exec(fullResponse)) !== null) {
-                const sectionNumber = sMatch[1] ? parseInt(sMatch[1], 10) : (highestFound + 1);
-                highestFound = Math.max(highestFound, sectionNumber);
-                if (sectionNumber > lastEmittedSectionNumber) {
-                  lastEmittedSectionNumber = sectionNumber;
-                  const sectionName = sMatch[2].trim();
-                  try { res.write(`data: ${JSON.stringify({ docProgress: { section: sectionName, sectionNumber, docType: docProgressDocType } })}\n\n`); } catch { /* ignore */ }
-                }
+          if (docProgressStarted && docProgressDocType) {
+            const sectionRe = /## (?:(\d+)[\.\)]\s+)?([^\n]+)/g;
+            let sMatch: RegExpExecArray | null;
+            let highestFound = lastEmittedSectionNumber;
+            while ((sMatch = sectionRe.exec(fullResponse)) !== null) {
+              const sectionNumber = sMatch[1] ? parseInt(sMatch[1], 10) : (highestFound + 1);
+              highestFound = Math.max(highestFound, sectionNumber);
+              if (sectionNumber > lastEmittedSectionNumber) {
+                lastEmittedSectionNumber = sectionNumber;
+                const sectionName = sMatch[2].trim();
+                try { res.write(`data: ${JSON.stringify({ docProgress: { section: sectionName, sectionNumber, docType: docProgressDocType } })}\n\n`); } catch { /* ignore */ }
               }
             }
           }
         }
-        if (event.type === "message_delta" && (event as any).delta?.stop_reason) {
-          stopReason = (event as any).delta.stop_reason;
+        if (event.type === "stop") {
+          stopReason = event.stopReason || "";
         }
       }
 
@@ -1384,9 +1373,8 @@ CRITICAL RULES:
           ];
 
           try {
-            const contStream = anthropic.messages.stream({
-              model: "claude-sonnet-4-6",
-              max_tokens: 8192,
+            const contStream = getLLM().stream({
+              maxTokens: 8192,
               system: systemPrompt,
               messages: continueMessages,
             });
@@ -1397,25 +1385,23 @@ CRITICAL RULES:
                 contStream.abort();
                 break;
               }
-              if (evt.type === "content_block_delta" && evt.delta.type === "text_delta") {
-                const text = evt.delta.text;
-                if (text) {
-                  continuation += text;
-                  try { res.write(`data: ${JSON.stringify({ token: text })}\n\n`); } catch { break; }
+              if (evt.type === "text_delta" && evt.text) {
+                const text = evt.text;
+                continuation += text;
+                try { res.write(`data: ${JSON.stringify({ token: text })}\n\n`); } catch { break; }
 
-                  if (docProgressStarted && docProgressDocType) {
-                    const combinedText = fullResponse + "\n" + continuation;
-                    const contSectionRe = /## (?:(\d+)[\.\)]\s+)?([^\n]+)/g;
-                    let csMatch: RegExpExecArray | null;
-                    let contHighest = lastEmittedSectionNumber;
-                    while ((csMatch = contSectionRe.exec(combinedText)) !== null) {
-                      const sectionNumber = csMatch[1] ? parseInt(csMatch[1], 10) : (contHighest + 1);
-                      contHighest = Math.max(contHighest, sectionNumber);
-                      if (sectionNumber > lastEmittedSectionNumber) {
-                        lastEmittedSectionNumber = sectionNumber;
-                        const sectionName = csMatch[2].trim();
-                        try { res.write(`data: ${JSON.stringify({ docProgress: { section: sectionName, sectionNumber, docType: docProgressDocType } })}\n\n`); } catch { /* ignore */ }
-                      }
+                if (docProgressStarted && docProgressDocType) {
+                  const combinedText = fullResponse + "\n" + continuation;
+                  const contSectionRe = /## (?:(\d+)[\.\)]\s+)?([^\n]+)/g;
+                  let csMatch: RegExpExecArray | null;
+                  let contHighest = lastEmittedSectionNumber;
+                  while ((csMatch = contSectionRe.exec(combinedText)) !== null) {
+                    const sectionNumber = csMatch[1] ? parseInt(csMatch[1], 10) : (contHighest + 1);
+                    contHighest = Math.max(contHighest, sectionNumber);
+                    if (sectionNumber > lastEmittedSectionNumber) {
+                      lastEmittedSectionNumber = sectionNumber;
+                      const sectionName = csMatch[2].trim();
+                      try { res.write(`data: ${JSON.stringify({ docProgress: { section: sectionName, sectionNumber, docType: docProgressDocType } })}\n\n`); } catch { /* ignore */ }
                     }
                   }
                 }
@@ -1447,9 +1433,8 @@ CRITICAL RULES:
           ];
 
           try {
-            const mapContStream = anthropic.messages.stream({
-              model: "claude-sonnet-4-6",
-              max_tokens: 8192,
+            const mapContStream = getLLM().stream({
+              maxTokens: 8192,
               system: systemPrompt,
               messages: continueMapMessages,
             });
@@ -1461,15 +1446,12 @@ CRITICAL RULES:
                 mapContStream.abort();
                 break;
               }
-              if (evt.type === "content_block_delta" && evt.delta.type === "text_delta") {
-                const text = evt.delta.text;
-                if (text) {
-                  mapContinuation += text;
-                  try { res.write(`data: ${JSON.stringify({ token: text })}\n\n`); } catch { break; }
-                }
+              if (evt.type === "text_delta" && evt.text) {
+                mapContinuation += evt.text;
+                try { res.write(`data: ${JSON.stringify({ token: evt.text })}\n\n`); } catch { break; }
               }
-              if (evt.type === "message_delta" && (evt as any).delta?.stop_reason) {
-                contStopReason = (evt as any).delta.stop_reason;
+              if (evt.type === "stop") {
+                contStopReason = evt.stopReason || "end_turn";
               }
             }
             fullResponse += "\n" + mapContinuation;

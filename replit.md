@@ -21,7 +21,7 @@ The application employs a modern web stack for scalability and an intuitive user
 -   PostgreSQL integrated with Drizzle ORM.
 
 **AI Integration**:
--   Anthropic Claude via Replit AI Integrations for streaming SSE chat responses.
+-   LLM provider abstraction layer (`server/lib/llm.ts`) supporting provider-agnostic AI calls. Currently configured for Anthropic Claude via Replit AI Integrations. Provider and model are configurable via `LLM_PROVIDER` and `LLM_MODEL` environment variables (defaults: `anthropic` / `claude-sonnet-4-6`). New providers can be added by implementing the `LLMProvider` interface and registering in the provider registry.
 
 **Authentication**:
 -   Session-based authentication supports demo users and role-switching.

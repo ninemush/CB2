@@ -1,7 +1,7 @@
 import { getUiPathConfig, probeServiceAvailability, type UiPathConfig, type ServiceAvailabilityMap, type AICenterSkill } from "./uipath-integration";
 import { uipathFetch, isGenuineApiResponse, isValidCreation } from "./uipath-fetch";
 import { getToken as getSharedToken, getTmToken, getTestManagerBaseUrl, type UiPathAuthConfig } from "./uipath-auth";
-import Anthropic from "@anthropic-ai/sdk";
+import { getLLM } from "./lib/llm";
 import { sanitizeJsonString, stripCodeFences } from "./lib/json-utils";
 
 function odataEscape(value: string): string {
@@ -203,15 +203,9 @@ export function parseArtifactsFromSDD(sddContent: string): OrchestratorArtifacts
 
 export async function extractArtifactsWithLLM(sddContent: string): Promise<OrchestratorArtifacts | null> {
   try {
-    const anthropic = new Anthropic({
-      apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-    });
-
     console.log("[UiPath Deploy] Extracting artifacts from SDD using LLM...");
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 8192,
+    const response = await getLLM().create({
+      maxTokens: 8192,
       system: `You are a senior UiPath RPA architect generating PRODUCTION-READY artifacts. Output ONLY valid JSON — no text, no markdown, no code fences.
 
 CRITICAL RULES:
@@ -268,8 +262,7 @@ ${sddContent.slice(0, 12000)}`
       }],
     });
 
-    const textBlock = response.content.find((b) => b.type === "text");
-    const text = textBlock?.text?.trim() || "";
+    const text = response.text.trim();
 
     let jsonStr = stripCodeFences(text);
     if (jsonStr !== text) {

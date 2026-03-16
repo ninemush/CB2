@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { getLLM } from "./lib/llm";
 import type { ProcessNode, ProcessEdge } from "@shared/schema";
 import { sanitizeJsonString, stripCodeFences } from "./lib/json-utils";
 
@@ -148,11 +148,6 @@ export async function enrichWithAI(
   timeoutMs: number = 45000
 ): Promise<EnrichmentResult | null> {
   try {
-    const anthropic = new Anthropic({
-      apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-    });
-
     const nodeDescriptions = nodes
       .filter(n => n.nodeType !== "start" && n.nodeType !== "end")
       .map(n => ({
@@ -198,22 +193,20 @@ Generate the enriched workflow specification. For each node, provide the specifi
 
     try {
       console.log(`[AI XAML Enricher] Requesting enrichment for ${nodeDescriptions.length} nodes...`);
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 8192,
+      const response = await getLLM().create({
+        maxTokens: 8192,
         system: ENRICHMENT_PROMPT,
         messages: [{ role: "user", content: userMessage }],
       });
 
       clearTimeout(timeout);
 
-      const content = response.content[0];
-      if (content.type !== "text") {
-        console.log("[AI XAML Enricher] Non-text response received");
+      if (!response.text) {
+        console.log("[AI XAML Enricher] Empty response received");
         return null;
       }
 
-      const jsonText = stripCodeFences(content.text.trim());
+      const jsonText = stripCodeFences(response.text.trim());
       const sanitized = sanitizeJsonString(jsonText);
 
       const parsed = JSON.parse(sanitized) as EnrichmentResult;
