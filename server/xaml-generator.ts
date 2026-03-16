@@ -1114,7 +1114,11 @@ function sanitizePropertyValue(key: string, value: any): string {
     if (value === "...") {
       return `PLACEHOLDER_${key}`;
     }
-    return value;
+    const isVbExpression = /^\[.*\]$/.test(value.trim());
+    if (isVbExpression) {
+      return value.replace(/'/g, "");
+    }
+    return value.replace(/["']/g, "");
   }
   if (typeof value === "number" || typeof value === "boolean") {
     return String(value);
@@ -3831,7 +3835,7 @@ function extractSystemFromGap(gap: XamlGap): string {
 }
 
 export interface XamlValidationViolation {
-  check: "placeholder" | "pseudo-xaml" | "invoked-file";
+  check: "placeholder" | "pseudo-xaml" | "invoked-file" | "malformed-quote" | "duplicate-file" | "xml-wellformedness";
   file: string;
   detail: string;
 }
@@ -3908,7 +3912,86 @@ export function validateXamlContent(xamlEntries: { name: string; content: string
         });
       }
     }
+
+    const contentLines = content.split("\n");
+    for (let lineIdx = 0; lineIdx < contentLines.length; lineIdx++) {
+      const line = contentLines[lineIdx];
+      const attrPattern = /(\w[\w:.]*)\s*=\s*"/g;
+      let attrMatch;
+      while ((attrMatch = attrPattern.exec(line)) !== null) {
+        const attrName = attrMatch[1];
+        const valueStart = attrMatch.index + attrMatch[0].length;
+        const closingQuote = line.indexOf('"', valueStart);
+        if (closingQuote < 0) continue;
+        const attrValue = line.substring(valueStart, closingQuote);
+        if (attrName === "Selector") continue;
+        const withoutEntities = attrValue
+          .replace(/&quot;/g, "")
+          .replace(/&apos;/g, "")
+          .replace(/&amp;/g, "")
+          .replace(/&lt;/g, "")
+          .replace(/&gt;/g, "");
+        const isVbStringLiteral = /^'.*'$/.test(withoutEntities.trim());
+        if (isVbStringLiteral) continue;
+        const isVbExprWithStrings = /^\[.*\]$/.test(withoutEntities.trim());
+        if (isVbExprWithStrings) continue;
+        const startsWithQuote = /^['"]/.test(withoutEntities.trim());
+        if (startsWithQuote) continue;
+        if (withoutEntities.includes("'") || withoutEntities.includes('"')) {
+          violations.push({
+            check: "malformed-quote",
+            file: shortName,
+            detail: `Line ${lineIdx + 1}: attribute ${attrName} contains raw quote character mid-value`,
+          });
+        }
+      }
+    }
+
+    try {
+      const xmlHeader = '<?xml version="1.0" encoding="utf-8"?>';
+      const xmlContent = content.startsWith("<?xml") ? content : xmlHeader + "\n" + content;
+      const { DOMParser } = require("@xmldom/xmldom");
+      const xmlErrors: string[] = [];
+      const parser = new DOMParser({
+        errorHandler: {
+          error: (msg: string) => xmlErrors.push(msg),
+          fatalError: (msg: string) => xmlErrors.push(msg),
+        },
+      });
+      parser.parseFromString(xmlContent, "text/xml");
+      for (const xmlErr of xmlErrors) {
+        violations.push({
+          check: "xml-wellformedness",
+          file: shortName,
+          detail: `XML parse error: ${xmlErr.substring(0, 200)}`,
+        });
+      }
+    } catch (xmlParseErr: any) {
+      violations.push({
+        check: "xml-wellformedness",
+        file: shortName,
+        detail: `XML parse exception: ${xmlParseErr.message?.substring(0, 200) || String(xmlParseErr)}`,
+      });
+    }
   }
+
+  const fileNameCounts = new Map<string, string[]>();
+  for (const entry of xamlEntries) {
+    const basename = entry.name.split("/").pop() || entry.name;
+    if (!fileNameCounts.has(basename)) {
+      fileNameCounts.set(basename, []);
+    }
+    fileNameCounts.get(basename)!.push(entry.name);
+  }
+  fileNameCounts.forEach((paths, basename) => {
+    if (paths.length > 1) {
+      violations.push({
+        check: "duplicate-file",
+        file: basename,
+        detail: `Duplicate XAML file "${basename}" found in multiple locations: ${paths.join(", ")}`,
+      });
+    }
+  });
 
   return violations;
 }

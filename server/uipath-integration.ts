@@ -559,11 +559,13 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
     const xamlEntries: { name: string; content: string }[] = [];
     const tf: TargetFramework = isServerless ? "Portable" : "Windows";
     const apEnabled = !!(pkg as any).autopilotEnabled || !!(_probeCache?.flags?.autopilot);
-    function compliancePass(rawXaml: string, fileName: string): string {
+    function compliancePass(rawXaml: string, fileName: string, skipTracking?: boolean): string {
       const compliant = makeUiPathCompliant(rawXaml, tf);
       const { fixed, report } = analyzeAndFix(compliant);
       analysisReports.push({ fileName, report });
-      xamlEntries.push({ name: fileName, content: fixed });
+      if (!skipTracking) {
+        xamlEntries.push({ name: fileName, content: fixed });
+      }
       if (report.totalAutoFixed > 0) {
         console.log(`[UiPath Analyzer] ${fileName}: ${report.totalAutoFixed} auto-fixed, ${report.totalRemaining} remaining`);
       }
@@ -889,10 +891,11 @@ ${depEntries}
       }
       for (const missingFile of Array.from(missingFiles)) {
         const stubXaml = generateStubWorkflow(missingFile);
-        const stubCompliant = compliancePass(stubXaml, missingFile);
+        const stubCompliant = compliancePass(stubXaml, missingFile, true);
         archive.append(stubCompliant, { name: `${libPath}/${missingFile}` });
+        xamlEntries.push({ name: missingFile, content: stubCompliant });
         stubsGenerated.push(missingFile);
-        console.log(`[UiPath Validation] Generated stub workflow for missing file: ${missingFile}`);
+        console.log(`[UiPath Validation] Generated stub workflow for missing file: ${missingFile} (tracked in xamlEntries)`);
       }
     }
 
@@ -914,6 +917,35 @@ ${depEntries}
     } else {
       const warnCount = qualityGateResult.summary.totalWarnings;
       console.log(`[UiPath Quality Gate] PASSED${warnCount > 0 ? ` with ${warnCount} warning(s)` : ""}${stubsGenerated.length > 0 ? `, ${stubsGenerated.length} stub(s) generated` : ""}`);
+    }
+
+    const finalValidation = validateXamlContent(xamlEntries);
+    const malformedQuotes = finalValidation.filter(v => v.check === "malformed-quote");
+    const pseudoXaml = finalValidation.filter(v => v.check === "pseudo-xaml");
+    const placeholders = finalValidation.filter(v => v.check === "placeholder");
+    const invokedFiles = finalValidation.filter(v => v.check === "invoked-file");
+    const duplicateFiles = finalValidation.filter(v => v.check === "duplicate-file");
+    const xmlWellformedness = finalValidation.filter(v => v.check === "xml-wellformedness");
+    console.log(`[UiPath Pre-Package Validation Report]`);
+    console.log(`  No malformed quotes:       ${malformedQuotes.length === 0 ? "PASS" : `FAIL (${malformedQuotes.length} violation(s))`}`);
+    console.log(`  No pseudo-XAML:             ${pseudoXaml.length === 0 ? "PASS" : `FAIL (${pseudoXaml.length} violation(s))`}`);
+    console.log(`  No placeholder values:      ${placeholders.length === 0 ? "PASS" : `FAIL (${placeholders.length} violation(s))`}`);
+    console.log(`  Every invoked file exists:  ${invokedFiles.length === 0 ? "PASS" : `FAIL (${invokedFiles.length} violation(s))`}`);
+    console.log(`  No duplicate files:         ${duplicateFiles.length === 0 ? "PASS" : `FAIL (${duplicateFiles.length} violation(s))`}`);
+    console.log(`  All XAML well-formed:       ${xmlWellformedness.length === 0 ? "PASS" : `FAIL (${xmlWellformedness.length} violation(s))`}`);
+    for (const v of finalValidation) {
+      if (v.check === "malformed-quote" || v.check === "xml-wellformedness" || v.check === "duplicate-file") {
+        console.warn(`  [${v.check}] ${v.file}: ${v.detail}`);
+      }
+    }
+
+    const severeValidationErrors = [...xmlWellformedness, ...duplicateFiles, ...malformedQuotes];
+    if (severeValidationErrors.length > 0) {
+      const details = severeValidationErrors.map(v => `  [${v.check}] ${v.file}: ${v.detail}`).join("\n");
+      console.error(`[UiPath Pre-Package Validation] Blocking package due to ${severeValidationErrors.length} severe violation(s):\n${details}`);
+      throw new Error(
+        `UiPath pre-package validation failed with ${severeValidationErrors.length} severe violation(s):\n${details}`
+      );
     }
 
     archive.finalize();

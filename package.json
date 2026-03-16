@@ -46,6 +46,7 @@
     "@types/adm-zip": "^0.5.7",
     "@types/archiver": "^7.0.0",
     "@types/multer": "^2.0.0",
+    "@xmldom/xmldom": "^0.8.11",
     "@xyflow/react": "^12.10.1",
     "adm-zip": "^0.5.16",
     "archiver": "^7.0.1",

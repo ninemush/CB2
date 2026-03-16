@@ -273,6 +273,13 @@ Generate the enriched workflow specification. For each node, provide the specifi
               act.properties[propKey] = `PLACEHOLDER_${propKey}_object_value`;
             } else if (propVal === "...") {
               act.properties[propKey] = `PLACEHOLDER_${propKey}`;
+            } else if (typeof propVal === "string") {
+              const isVbExpr = /^\[.*\]$/.test(propVal.trim());
+              if (isVbExpr) {
+                act.properties[propKey] = propVal.replace(/'/g, "");
+              } else {
+                act.properties[propKey] = propVal.replace(/["']/g, "");
+              }
             }
           }
         }
