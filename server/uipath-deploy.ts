@@ -2643,7 +2643,7 @@ async function provisionTestCases(
 
   for (const tmBase of tmBases) {
     try {
-      const projRes = await uipathFetch(`${tmBase}/api/v2/Projects?$top=10`, {
+      const projRes = await uipathFetch(`${tmBase}/api/v2/Projects?$top=200`, {
         headers: tmHdrs, label: "TM Probe Projects", maxRetries: 1,
         redirect: "manual" as any,
       });
@@ -2665,17 +2665,29 @@ async function provisionTestCases(
         try {
           const projects = projRes.data?.data || projRes.data?.value || [];
           const normalizedProcessName = processName.replace(/_/g, " ").toLowerCase().trim();
+          const strippedProcessName = processName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
           if (projects.length > 0) {
-            const match = projects.find((p: any) =>
+            let match = projects.find((p: any) =>
               (p.Name || p.name)?.toLowerCase().trim() === normalizedProcessName
             );
+            if (!match) {
+              match = projects.find((p: any) => {
+                const pName = (p.Name || p.name) || "";
+                const stripped = pName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+                return stripped === strippedProcessName;
+              });
+              if (match) {
+                console.log(`[UiPath Deploy] Normalized match found (probe): project "${match.Name || match.name}" matched via stripped comparison`);
+              }
+            }
             if (match) {
               projectId = match.Id || match.id;
               projectPrefix = match.Prefix || match.prefix || match.ProjectPrefix || match.projectPrefix || null;
-              console.log(`[UiPath Deploy] Exact match found: project "${match.Name || match.name}" (ID: ${projectId}) — reusing existing project`);
+              console.log(`[UiPath Deploy] Match found: project "${match.Name || match.name}" (ID: ${projectId}) — reusing existing project`);
               results.push({ artifact: "Test Project", name: match.Name || match.name, status: "exists", message: `Using existing project "${match.Name || match.name}" (ID: ${projectId}, Prefix: ${projectPrefix})`, id: projectId! });
             } else {
-              console.log(`[UiPath Deploy] No exact project match for "${normalizedProcessName}" among ${projects.length} project(s) — will create new project`);
+              const projectNames = projects.map((p: any) => p.Name || p.name).join(", ");
+              console.log(`[UiPath Deploy] No project match for "${normalizedProcessName}" (stripped: "${strippedProcessName}") among ${projects.length} project(s): [${projectNames}] — will create new project`);
             }
           }
         } catch {}
@@ -2765,24 +2777,84 @@ async function provisionTestCases(
           results.push({ artifact: "Test Project", name: projName, status: "failed", message: `API returned ${createProjResult.status} but response validation failed: ${errorDetail}` });
         }
       } else if (createProjResult.status === 409 || createProjResult.text.includes("already exists")) {
-        console.log(`[UiPath Deploy] Test project already exists, re-fetching...`);
-        try {
-          const reListResult = await uipathFetch(`${activeTmBase}/api/v2/Projects?$top=50`, { headers: tmHdrs, label: "TM Re-list Projects", maxRetries: 1, redirect: "manual" as any });
-          if (reListResult.ok) {
-            const projects = reListResult.data?.data || reListResult.data?.value || [];
-            const match = projects.find((p: any) =>
-              (p.Name || p.name)?.toLowerCase() === processName.replace(/_/g, " ").toLowerCase()
-            );
-            if (match) {
-              projectId = match.Id || match.id;
-              projectPrefix = match.Prefix || match.prefix || match.ProjectPrefix || match.projectPrefix || null;
-              results.push({ artifact: "Test Project", name: projName, status: "exists", message: `Project exists (ID: ${projectId}, Prefix: ${projectPrefix})`, id: projectId! });
-            } else {
-              console.log(`[UiPath Deploy] 409 re-list: no exact match for "${projName}" among ${projects.length} project(s) — project creation conflict but name mismatch`);
-              results.push({ artifact: "Test Project", name: projName, status: "failed", message: `Project creation returned 409 but no exact name match found among ${projects.length} existing project(s)` });
+        const isPrefixConflict = createProjResult.text.toLowerCase().includes("prefix") && !createProjResult.text.toLowerCase().includes("name");
+        console.log(`[UiPath Deploy] Test project 409 conflict (prefixConflict=${isPrefixConflict}), re-fetching...`);
+
+        if (isPrefixConflict) {
+          const randomSuffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+          const retryPrefix = (prefix.slice(0, 6) + randomSuffix).slice(0, 10);
+          console.log(`[UiPath Deploy] Prefix collision detected — retrying with modified prefix "${retryPrefix}"`);
+          try {
+            const retryBody = { name: projName, projectPrefix: retryPrefix, description: truncDesc(`Test project for ${processName}`) };
+            let retryResult = await uipathFetch(`${activeTmBase}/api/v2/Projects`, {
+              method: "POST", headers: tmHdrs, body: JSON.stringify(retryBody),
+              label: "TM Create Project (prefix retry)", redirect: "manual" as any,
+            });
+            if (retryResult.status === 400 && retryResult.text.includes("ProjectPrefix")) {
+              const retryBodyPascal = { Name: projName, ProjectPrefix: retryPrefix, Description: truncDesc(`Test project for ${processName}`) };
+              retryResult = await uipathFetch(`${activeTmBase}/api/v2/Projects`, {
+                method: "POST", headers: tmHdrs, body: JSON.stringify(retryBodyPascal),
+                label: "TM Create Project (prefix retry PascalCase)", redirect: "manual" as any,
+              });
             }
+            console.log(`[UiPath Deploy] Prefix retry create -> ${retryResult.status}: ${retryResult.text.slice(0, 300)}`);
+            if (retryResult.status === 200 || retryResult.status === 201) {
+              const retryCreation = isValidCreation(retryResult.text);
+              if (retryCreation.valid && (retryCreation.data?.Id || retryCreation.data?.id)) {
+                projectId = retryCreation.data.Id || retryCreation.data.id;
+                projectPrefix = retryCreation.data.Prefix || retryCreation.data.prefix || retryCreation.data.ProjectPrefix || retryCreation.data.projectPrefix || retryPrefix;
+                results.push({ artifact: "Test Project", name: projName, status: "created", message: `Created test project "${projName}" (ID: ${projectId}, Prefix: ${projectPrefix}) after prefix retry`, id: projectId! });
+              }
+            }
+          } catch (retryErr: any) {
+            console.warn(`[UiPath Deploy] Prefix retry failed: ${retryErr.message}`);
           }
-        } catch {}
+        }
+
+        if (!projectId) {
+          try {
+            const reListResult = await uipathFetch(`${activeTmBase}/api/v2/Projects?$top=200`, { headers: tmHdrs, label: "TM Re-list Projects", maxRetries: 1, redirect: "manual" as any });
+            if (reListResult.ok) {
+              const projects = reListResult.data?.data || reListResult.data?.value || [];
+              const searchName = processName.replace(/_/g, " ").toLowerCase().trim();
+              const strippedSearchName = processName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+              const pascalExpanded = processName.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ").toLowerCase().trim();
+
+              const projectNames = projects.map((p: any) => p.Name || p.name || "(unnamed)");
+              console.log(`[UiPath Deploy] 409 re-list: searching for "${searchName}" (stripped: "${strippedSearchName}", pascal-expanded: "${pascalExpanded}") among ${projects.length} project(s): [${projectNames.join(", ")}]`);
+
+              let match = projects.find((p: any) =>
+                (p.Name || p.name)?.toLowerCase().trim() === searchName
+              );
+
+              if (!match) {
+                match = projects.find((p: any) => {
+                  const pName = (p.Name || p.name) || "";
+                  return pName.toLowerCase().trim() === pascalExpanded;
+                });
+                if (match) console.log(`[UiPath Deploy] 409 recovery: PascalCase-expanded match found: "${match.Name || match.name}"`);
+              }
+
+              if (!match) {
+                match = projects.find((p: any) => {
+                  const pName = (p.Name || p.name) || "";
+                  const stripped = pName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+                  return stripped === strippedSearchName;
+                });
+                if (match) console.log(`[UiPath Deploy] 409 recovery: normalized match found: "${match.Name || match.name}"`);
+              }
+
+              if (match) {
+                projectId = match.Id || match.id;
+                projectPrefix = match.Prefix || match.prefix || match.ProjectPrefix || match.projectPrefix || null;
+                results.push({ artifact: "Test Project", name: match.Name || match.name, status: "exists", message: `Project exists (ID: ${projectId}, Prefix: ${projectPrefix})`, id: projectId! });
+              } else {
+                console.log(`[UiPath Deploy] 409 re-list: no match for "${projName}" among ${projects.length} project(s) after exact, PascalCase, and normalized comparisons`);
+                results.push({ artifact: "Test Project", name: projName, status: "failed", message: `Project creation returned 409 but no name match found among ${projects.length} existing project(s) (tried exact, PascalCase-expanded, and normalized matching)` });
+              }
+            }
+          } catch {}
+        }
       } else if (createProjResult.status === 403 || createProjResult.status === 401) {
         console.log(`[UiPath Deploy] Test project creation failed with ${createProjResult.status} — insufficient permissions`);
       }
