@@ -329,7 +329,23 @@ export function DocumentCard({ docType, docId, content, ideaId, isApproved, vers
             {expandedSections.has(idx) && (
               <div className="px-4 pb-3 pl-9">
                 <div className="text-[11px] text-muted-foreground/90 leading-relaxed prose-doc">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      img: ({ node, ...props }) => (
+                        <img
+                          {...props}
+                          data-testid={`img-process-map-${idx}`}
+                          style={{
+                            maxWidth: "100%",
+                            borderRadius: "8px",
+                            margin: "8px 0",
+                            border: "1px solid hsl(var(--border))",
+                          }}
+                        />
+                      ),
+                    }}
+                  >
                     {section.content}
                   </ReactMarkdown>
                   {streaming && idx === sections.length - 1 && (

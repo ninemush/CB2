@@ -1514,6 +1514,54 @@ CRITICAL RULES:
             console.warn(`[Chat] Could not inject process map into ${detectedDocType}:`, mapErr?.message);
           }
 
+          if (detectedDocType === "PDD") {
+            try {
+              const asIsNodes = await processMapStorage.getNodesByIdeaId(ideaId, "as-is");
+              const toBeNodes = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
+              const ts = Date.now();
+              const alreadyHasAsIs = docContent.includes(`/process-map/image?viewType=as-is`);
+              const alreadyHasToBe = docContent.includes(`/process-map/image?viewType=to-be`);
+
+              if (asIsNodes.length > 0 && !alreadyHasAsIs) {
+                const asIsImg = `\n\n![As-Is Process Map](/api/ideas/${ideaId}/process-map/image?viewType=as-is&v=${ts})`;
+                const asIsHeadingMatch = docContent.match(/#{1,3}\s.*As[- ]Is\s+Process\s+(Description|Map)/i);
+                if (asIsHeadingMatch) {
+                  const insertIdx = (asIsHeadingMatch.index || 0) + asIsHeadingMatch[0].length;
+                  docContent = docContent.slice(0, insertIdx) + asIsImg + docContent.slice(insertIdx);
+                } else {
+                  const tableMatch = docContent.match(/\n### Process Map \(/);
+                  if (tableMatch && tableMatch.index !== undefined) {
+                    docContent = docContent.slice(0, tableMatch.index) + asIsImg + docContent.slice(tableMatch.index);
+                  } else {
+                    docContent += `\n\n### As-Is Process Map${asIsImg}\n`;
+                  }
+                }
+              }
+
+              if (toBeNodes.length > 0 && !alreadyHasToBe) {
+                const toBeImg = `\n\n![To-Be Process Map](/api/ideas/${ideaId}/process-map/image?viewType=to-be&v=${ts})`;
+                const toBeHeadingMatch = docContent.match(/#{1,3}\s.*To[- ]Be\s+Process\s+(Description|Map)/i);
+                if (toBeHeadingMatch) {
+                  const insertIdx = (toBeHeadingMatch.index || 0) + toBeHeadingMatch[0].length;
+                  docContent = docContent.slice(0, insertIdx) + toBeImg + docContent.slice(insertIdx);
+                } else {
+                  const tableMatch = docContent.match(/\n### Process Map \(/);
+                  if (tableMatch && tableMatch.index !== undefined) {
+                    docContent = docContent.slice(0, tableMatch.index) + toBeImg + docContent.slice(tableMatch.index);
+                  } else {
+                    docContent += `\n\n### To-Be Process Map${toBeImg}\n`;
+                  }
+                }
+              }
+
+              if ((asIsNodes.length > 0 && !alreadyHasAsIs) || (toBeNodes.length > 0 && !alreadyHasToBe)) {
+                console.log(`[Chat] Injected process map images into PDD for idea ${ideaId}`);
+              }
+            } catch (imgErr: any) {
+              console.warn(`[Chat] Could not inject process map images into PDD:`, imgErr?.message);
+            }
+          }
+
           const existing = await documentStorage.getLatestDocument(ideaId, detectedDocType);
           const version = existing ? existing.version + 1 : 1;
           if (existing && existing.status !== "approved") {

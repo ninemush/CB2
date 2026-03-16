@@ -737,12 +737,44 @@ export function registerDocumentRoutes(app: Express): void {
         await documentStorage.updateDocument(existing.id, { status: "superseded" });
       }
 
-      const content = await generateDocument(ideaId, type);
+      let content = await generateDocument(ideaId, type);
 
       const nodes = type === "PDD"
         ? await processMapStorage.getNodesByIdeaId(ideaId, "as-is")
         : [];
       const snapshot = JSON.stringify({ generatedFrom: type === "PDD" ? "as-is-map" : "pdd", nodes });
+
+      if (type === "PDD") {
+        try {
+          const asIsNodes = await processMapStorage.getNodesByIdeaId(ideaId, "as-is");
+          const toBeNodes = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
+          const ts = Date.now();
+
+          if (asIsNodes.length > 0 && !content.includes(`/process-map/image?viewType=as-is`)) {
+            const asIsImg = `\n\n![As-Is Process Map](/api/ideas/${ideaId}/process-map/image?viewType=as-is&v=${ts})`;
+            const asIsHeadingMatch = content.match(/#{1,3}\s.*As[- ]Is\s+Process\s+(Description|Map)/i);
+            if (asIsHeadingMatch) {
+              const insertIdx = (asIsHeadingMatch.index || 0) + asIsHeadingMatch[0].length;
+              content = content.slice(0, insertIdx) + asIsImg + content.slice(insertIdx);
+            } else {
+              content += `\n\n### As-Is Process Map${asIsImg}\n`;
+            }
+          }
+
+          if (toBeNodes.length > 0 && !content.includes(`/process-map/image?viewType=to-be`)) {
+            const toBeImg = `\n\n![To-Be Process Map](/api/ideas/${ideaId}/process-map/image?viewType=to-be&v=${ts})`;
+            const toBeHeadingMatch = content.match(/#{1,3}\s.*To[- ]Be\s+Process\s+(Description|Map)/i);
+            if (toBeHeadingMatch) {
+              const insertIdx = (toBeHeadingMatch.index || 0) + toBeHeadingMatch[0].length;
+              content = content.slice(0, insertIdx) + toBeImg + content.slice(insertIdx);
+            } else {
+              content += `\n\n### To-Be Process Map${toBeImg}\n`;
+            }
+          }
+        } catch (imgErr: any) {
+          console.warn(`[Document Generate] Could not inject process map images into PDD:`, imgErr?.message);
+        }
+      }
 
       const doc = await documentStorage.createDocument({
         ideaId,

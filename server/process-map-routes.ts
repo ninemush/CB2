@@ -4,6 +4,7 @@ import { documentStorage } from "./document-storage";
 import { storage } from "./storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { evaluateTransition } from "./stage-transition";
+import { renderProcessMapImage } from "./process-map-renderer";
 import { z } from "zod";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
@@ -498,6 +499,43 @@ async function verifyIdeaAccess(req: Request, res: Response): Promise<string | n
   }
 
 export function registerProcessMapRoutes(app: Express): void {
+  app.get("/api/ideas/:ideaId/process-map/image", async (req: Request, res: Response) => {
+    const ideaId = await verifyIdeaAccess(req, res);
+    if (!ideaId) return;
+
+    const viewType = (req.query.viewType as string) || "as-is";
+    if (viewType !== "as-is" && viewType !== "to-be") {
+      return res.status(400).json({ message: "viewType must be 'as-is' or 'to-be'" });
+    }
+
+    try {
+      const nodes = await processMapStorage.getNodesByIdeaId(ideaId, viewType);
+      if (!nodes.length) {
+        const transparentPng = Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+          "base64"
+        );
+        res.set("Content-Type", "image/png");
+        res.set("Cache-Control", "no-cache");
+        return res.status(404).send(transparentPng);
+      }
+
+      const edges = await processMapStorage.getEdgesByIdeaId(ideaId, viewType);
+      const result = await renderProcessMapImage(nodes, edges, viewType);
+
+      if (!result) {
+        return res.status(500).json({ message: "Failed to render process map image" });
+      }
+
+      res.set("Content-Type", "image/png");
+      res.set("Cache-Control", "public, max-age=60");
+      return res.send(result.buffer);
+    } catch (err: any) {
+      console.error("[Process Map Image] Failed to render:", err.message);
+      return res.status(500).json({ message: "Failed to render process map image" });
+    }
+  });
+
   app.get("/api/ideas/:ideaId/process-map", async (req: Request, res: Response) => {
     const ideaId = await verifyIdeaAccess(req, res);
     if (!ideaId) return;
