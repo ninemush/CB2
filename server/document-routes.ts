@@ -4,7 +4,7 @@ import { documentStorage } from "./document-storage";
 import { processMapStorage } from "./process-map-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
-import { getPlatformCapabilities, buildNuGetPackage, getAICenterSkills, resolvePackageVersionFromFeed } from "./uipath-integration";
+import { getPlatformCapabilities, buildNuGetPackage, getAICenterSkills } from "./uipath-integration";
 import { generateRichXamlFromSpec, generateDeveloperHandoffGuide, aggregateGaps as aggGapsImport, setAICenterSkillsContext, getReferencedMLSkillNames, TargetFramework } from "./xaml-generator";
 import { analyzeAndFix } from "./workflow-analyzer";
 import { evaluateTransition } from "./stage-transition";
@@ -1152,208 +1152,34 @@ ${content}`
       const sdd = await documentStorage.getLatestDocument(ideaId, "SDD");
       const sddContent = sdd?.content || "";
 
-      let aiSkills: any[] = [];
-      try {
-        const aiResult = await getAICenterSkills();
-        if (aiResult.available) aiSkills = aiResult.skills;
-      } catch { }
-      setAICenterSkillsContext(aiSkills);
+      pkg._sddContent = sddContent;
+      pkg._automationType = idea.automationType || undefined;
+
+      const buildResult = await buildNuGetPackage(pkg, "1.0.0", `download-${ideaId}`);
+
+      const isServerless = (pkg as any).targetFramework === "Portable" || (pkg as any).isServerless;
+      const libPrefix = isServerless ? "lib/net6.0/" : "lib/net45/";
+
+      const AdmZip = require("adm-zip");
+      const nupkgZip = new AdmZip(buildResult.buffer);
+      const nupkgEntries = nupkgZip.getEntries();
 
       const archiverModule = require("archiver") as typeof import("archiver");
       const archive = (archiverModule as any)("zip", { zlib: { level: 9 } });
 
       res.setHeader("Content-Type", "application/zip");
       res.setHeader("Content-Disposition", `attachment; filename="${pkg.projectName || "UiPathPackage"}.zip"`);
-
       archive.pipe(res);
 
-      const { generateInitAllSettingsXaml: genInit, aggregatePackages: aggPkgs, makeUiPathCompliant: makeCompliant } = require("./xaml-generator");
-      const allXamlResults: any[] = [];
-
-      const isServerlessDoc = (pkg as any).targetFramework === "Portable" || (pkg as any).isServerless;
-      const tfDoc = isServerlessDoc ? "Portable" : "Windows";
-      const apDoc = !!(pkg as any).autopilotEnabled;
-
-      const workflows = pkg.workflows || [];
-      for (const wf of workflows) {
-        const result = generateRichXamlFromSpec(wf, sddContent || undefined, aiSkills, tfDoc, apDoc);
-        const compliantXaml = makeCompliant(result.xaml, tfDoc);
-        allXamlResults.push(result);
-        archive.append(compliantXaml, { name: `${wf.name || "Workflow"}.xaml` });
-      }
-
-      const initXaml = genInit(undefined, tfDoc);
-      archive.append(makeCompliant(initXaml, tfDoc), { name: "InitAllSettings.xaml" });
-
-      const richPkgs = aggPkgs(allXamlResults);
-      const isServerless = (pkg as any).targetFramework === "Portable" || (pkg as any).isServerless;
-      const windowsVersionMap: Record<string, string> = {
-        "UiPath.System.Activities": "[23.10.0]",
-        "UiPath.UIAutomation.Activities": "[23.10.0]",
-        "UiPath.Web.Activities": "[1.18.0]",
-        "UiPath.Excel.Activities": "[2.22.0]",
-        "UiPath.Mail.Activities": "[1.20.0]",
-        "UiPath.Database.Activities": "[1.8.0]",
-      };
-      const crossPlatformVersionMap: Record<string, string> = {
-        "UiPath.System.Activities": "[25.10.0]",
-        "UiPath.UIAutomation.Activities": "[25.10.0]",
-        "UiPath.Web.Activities": "[2.5.0]",
-        "UiPath.Excel.Activities": "[3.18.0]",
-        "UiPath.Mail.Activities": "[2.5.0]",
-        "UiPath.Database.Activities": "[2.2.0]",
-      };
-      const packageVersionMap = isServerless ? crossPlatformVersionMap : windowsVersionMap;
-      const depMap: Record<string, string> = {};
-      for (const d of (pkg.dependencies || [])) {
-        depMap[d] = packageVersionMap[d] || "*";
-      }
-      for (const rp of richPkgs) {
-        if (!depMap[rp]) depMap[rp] = packageVersionMap[rp] || "*";
-      }
-      if (!depMap["UiPath.Excel.Activities"]) {
-        depMap["UiPath.Excel.Activities"] = isServerless ? "[3.18.0]" : "[2.22.0]";
-      }
-
-      const allDepEntries = Object.entries(depMap);
-      if (allDepEntries.length > 0) {
-        const feedResolutions = await Promise.allSettled(
-          allDepEntries.map(([pkgId, ver]) => resolvePackageVersionFromFeed(pkgId, ver))
-        );
-        for (let i = 0; i < allDepEntries.length; i++) {
-          const [pkgId, currentVer] = allDepEntries[i];
-          const result = feedResolutions[i];
-          if (result.status === "fulfilled" && result.value !== "*") {
-            if (currentVer === "*" || result.value !== currentVer) {
-              depMap[pkgId] = result.value;
-            }
-          }
+      for (const entry of nupkgEntries) {
+        if (entry.isDirectory) continue;
+        const entryName: string = entry.entryName;
+        if (entryName.startsWith("_rels/") || entryName.startsWith("package/") || entryName === "[Content_Types].xml" || entryName.endsWith(".nuspec")) {
+          continue;
         }
+        const flatName = entryName.startsWith(libPrefix) ? entryName.slice(libPrefix.length) : entryName;
+        archive.append(entry.getData(), { name: flatName });
       }
-
-      const crypto = require("crypto");
-      const entryPointId = crypto.randomUUID();
-      const projectJson: Record<string, any> = {
-        name: pkg.projectName || idea.title.replace(/\s+/g, "_"),
-        description: pkg.description || idea.description,
-        main: "Main.xaml",
-        dependencies: depMap,
-        webServices: [],
-        entitiesStores: [],
-        schemaVersion: "4.0",
-        studioVersion: "25.10.0",
-        projectVersion: "1.0.0",
-        runtimeOptions: {
-          autoDispose: false,
-          netFrameworkLazyLoading: false,
-          isPausable: true,
-          isAttended: false,
-          requiresUserInteraction: false,
-          supportsPersistence: false,
-          executionType: "Workflow",
-          readyForPiP: false,
-          startsInPiP: false,
-          mustRestoreAllDependencies: true,
-        },
-        designOptions: {
-          projectProfile: "Developement",
-          outputType: "Process",
-          libraryOptions: { includeOriginalXaml: false, privateWorkflows: [] },
-          processOptions: { ignoredFiles: [] },
-          fileInfoCollection: [],
-          modernBehavior: isServerless,
-        },
-        expressionLanguage: isServerless ? "CSharp" : "VisualBasic",
-        entryPoints: [
-          {
-            filePath: "Main.xaml",
-            uniqueId: entryPointId,
-            input: [],
-            output: [],
-          },
-        ],
-        isTemplate: false,
-        templateProjectData: {},
-        publishData: {},
-      };
-      if (isServerless) {
-        projectJson.targetFramework = "Portable";
-      }
-      if ((pkg as any).autopilotEnabled) {
-        projectJson.designOptions.autopilotEnabled = true;
-        projectJson.designOptions.selfHealingSelectors = true;
-      }
-      archive.append(JSON.stringify(projectJson, null, 2), { name: "project.json" });
-
-      archive.append("Name,Value,Description\nOrchestratorURL,,Orchestrator base URL\nProcessTimeout,30,Max process timeout in minutes\nMaxRetries,3,Maximum retry attempts\nApplicationName," + (pkg.projectName || "Automation") + ",Process name\nVersion,1.0.0,Package version", { name: "Data/Config.csv" });
-
-      let readme = `# ${pkg.projectName || idea.title}\n\n`;
-      readme += `${pkg.description || idea.description}\n\n`;
-      readme += `## Import Instructions\n\n`;
-      readme += `1. Open UiPath Studio\n`;
-      readme += `2. Click "Open Project" and navigate to this folder\n`;
-      readme += `3. Select project.json\n`;
-      readme += `4. Install any missing dependencies from the Package Manager\n`;
-      readme += `5. Review each XAML workflow file\n\n`;
-      readme += `## Workflows\n\n`;
-      for (const wf of workflows) {
-        readme += `### ${wf.name}\n${wf.description || ""}\n\n`;
-        if (wf.steps) {
-          for (const step of wf.steps) {
-            readme += `- **${step.activity}**: ${step.notes || ""}\n`;
-          }
-          readme += "\n";
-        }
-      }
-      archive.append(readme, { name: "README.md" });
-
-      const analysisReports: Array<{ fileName: string; report: any }> = [];
-      for (let i = 0; i < allXamlResults.length; i++) {
-        const wfName = (workflows[i]?.name || "Workflow").replace(/\s+/g, "_");
-        const { report } = analyzeAndFix(allXamlResults[i].xaml);
-        analysisReports.push({ fileName: `${wfName}.xaml`, report });
-      }
-
-      const allGapsForDhg = aggGapsImport(allXamlResults);
-      const allUsedPkgsForDhg = Object.keys(depMap);
-      const wfNamesForDhg = workflows.map((wf: any) => (wf.name || "Workflow").replace(/\s+/g, "_"));
-
-      const zipEnrichment = pkg._enrichment || pkg.enrichment || null;
-      const zipUseReFramework = zipEnrichment?.useReFramework ?? pkg._useReFramework ?? pkg.useReFramework ?? false;
-      const zipPainPoints = (pkg._painPoints || pkg.painPoints || []).map((p: any) => ({
-        name: p.name || "",
-        description: p.description || "",
-      }));
-      const zipExtractedArtifacts = pkg._extractedArtifacts || pkg.extractedArtifacts || undefined;
-
-      const zipDeployReportMsg = [...messages].reverse().find((m) => m.content.includes("[DEPLOY_REPORT:"));
-      let zipDeploymentResults: any[] | undefined;
-      if (zipDeployReportMsg) {
-        const drMatch = zipDeployReportMsg.content.match(/\[DEPLOY_REPORT:([\s\S]*?)\]$/);
-        if (drMatch) {
-          try {
-            const drData = JSON.parse(drMatch[1]);
-            zipDeploymentResults = drData.results || [];
-          } catch {}
-        }
-      }
-
-      const dhgContent = generateDeveloperHandoffGuide({
-        projectName: pkg.projectName || idea.title.replace(/\s+/g, "_"),
-        description: pkg.description || idea.description,
-        gaps: allGapsForDhg,
-        usedPackages: allUsedPkgsForDhg,
-        workflowNames: wfNamesForDhg,
-        sddContent: sddContent || undefined,
-        enrichment: zipEnrichment,
-        useReFramework: zipUseReFramework,
-        painPoints: zipPainPoints,
-        deploymentResults: zipDeploymentResults,
-        extractedArtifacts: zipExtractedArtifacts,
-        automationType: idea.automationType as "rpa" | "agent" | "hybrid" || undefined,
-        analysisReports,
-      });
-      archive.append(dhgContent, { name: "DeveloperHandoffGuide.md" });
 
       const autoType = idea.automationType as string || "";
       if (autoType === "agent" || autoType === "hybrid") {

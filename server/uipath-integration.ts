@@ -649,7 +649,7 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
     const allUsedPkgs = Object.keys(deps);
 
     const entryPointId = generateUuid();
-    const studioVer = isServerless ? "25.10.0" : "23.10.0";
+    const studioVer = isServerless ? "24.10.0" : "23.10.6";
     const projectJson: Record<string, any> = {
       name: projectName,
       description: pkg.description || "",
@@ -673,12 +673,12 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
         mustRestoreAllDependencies: true,
       },
       designOptions: {
-        projectProfile: "Developement",
+        projectProfile: "Development",
         outputType: "Process",
         libraryOptions: { includeOriginalXaml: false, privateWorkflows: [] },
         processOptions: { ignoredFiles: [] },
         fileInfoCollection: [],
-        modernBehavior: isServerless,
+        modernBehavior: true,
       },
       expressionLanguage: isServerless ? "CSharp" : "VisualBasic",
       entryPoints: [
@@ -695,6 +695,10 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
     };
     if (isServerless) {
       projectJson.targetFramework = "Portable";
+      projectJson.sourceLanguage = "CSharp";
+    } else {
+      projectJson.targetFramework = "Windows";
+      projectJson.sourceLanguage = "VisualBasic";
     }
     if (apEnabled) {
       projectJson.designOptions.autopilotEnabled = true;

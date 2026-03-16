@@ -517,6 +517,137 @@ function autoFixMissingLogs(xaml: string): { fixed: string; fixes: AnalysisViola
   return { fixed, fixes };
 }
 
+function checkArgumentCompleteness(xaml: string): AnalysisViolation[] {
+  const violations: AnalysisViolation[] = [];
+
+  const bareArgPatterns2 = [
+    /<Argument\s+x:TypeArguments="([^"]+)"\s+x:Name="([^"]+)"\s*\/>/g,
+    /<Argument\s+x:Name="([^"]+)"\s+x:TypeArguments="([^"]+)"\s*\/>/g,
+  ];
+  let match;
+  for (const bareArgPattern of bareArgPatterns2) {
+    while ((match = bareArgPattern.exec(xaml)) !== null) {
+      const argName = bareArgPattern === bareArgPatterns2[1] ? match[1] : match[2];
+      const lineNum = xaml.substring(0, match.index).split("\n").length;
+      violations.push({
+        ruleId: "ST-ARG-001",
+        ruleName: "Invalid bare Argument tag in Catch",
+        category: "usage",
+        severity: "error",
+        message: `Bare <Argument> tag "${argName}" should be <ActivityAction.Argument><DelegateInArgument /></ActivityAction.Argument>`,
+        location: `line ${lineNum}`,
+        autoFixed: false,
+      });
+    }
+  }
+
+  const invokeBlockPattern = /<ui:InvokeWorkflowFile[^>]*WorkflowFileName="([^"]+)"[^>]*>[\s\S]*?<ui:InvokeWorkflowFile\.Arguments>([\s\S]*?)<\/ui:InvokeWorkflowFile\.Arguments>/g;
+  let invokeMatch;
+  while ((invokeMatch = invokeBlockPattern.exec(xaml)) !== null) {
+    const fileName = invokeMatch[1];
+    const argsContent = invokeMatch[2];
+    const argKeyPattern = /x:Key="([^"]+)"/g;
+    let keyMatch;
+    const invokedArgs: string[] = [];
+    while ((keyMatch = argKeyPattern.exec(argsContent)) !== null) {
+      invokedArgs.push(keyMatch[1]);
+    }
+    for (const argName of invokedArgs) {
+      const varDeclared = new RegExp(`<Variable[^>]*Name="${argName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`, "").test(xaml);
+      const propDeclared = new RegExp(`<x:Property\\s+Name="${argName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`, "").test(xaml);
+      if (!varDeclared && !propDeclared) {
+        const lineNum = xaml.substring(0, invokeMatch.index).split("\n").length;
+        violations.push({
+          ruleId: "ST-ARG-002",
+          ruleName: "Missing declaration for invoked argument",
+          category: "usage",
+          severity: "warning",
+          message: `Argument "${argName}" is passed to "${fileName}" but is not declared as a Variable or x:Property in the calling workflow`,
+          location: `line ${lineNum}`,
+          autoFixed: false,
+        });
+      }
+    }
+  }
+
+  const exprPattern = /\[([^\]]+)\]/g;
+  const declaredVars = new Set<string>();
+  const varPattern = /<Variable[^>]*Name="([^"]+)"/g;
+  while ((match = varPattern.exec(xaml)) !== null) {
+    declaredVars.add(match[1]);
+  }
+  const propPattern = /<x:Property\s+Name="([^"]+)"/g;
+  while ((match = propPattern.exec(xaml)) !== null) {
+    declaredVars.add(match[1]);
+  }
+  const delegatePattern = /<DelegateInArgument[^>]*Name="([^"]+)"/g;
+  while ((match = delegatePattern.exec(xaml)) !== null) {
+    declaredVars.add(match[1]);
+  }
+  const keywords = new Set(["True", "False", "Nothing", "null", "New", "Not", "And", "Or", "If", "String", "Integer", "Boolean", "DateTime", "Math", "Convert", "CType", "CStr", "CInt", "CDbl"]);
+  const identPattern = /\b([a-zA-Z_]\w*)\b/g;
+  while ((match = exprPattern.exec(xaml)) !== null) {
+    const expr = match[1];
+    if (expr.startsWith("&quot;") || expr.startsWith("\"")) continue;
+    let idMatch;
+    while ((idMatch = identPattern.exec(expr)) !== null) {
+      const ident = idMatch[1];
+      if (keywords.has(ident)) continue;
+      if (/^[A-Z][a-z]/.test(ident) && expr.includes(`${ident}.`) && !declaredVars.has(ident)) continue;
+      if (ident.startsWith("str_") || ident.startsWith("int_") || ident.startsWith("bool_") || ident.startsWith("dt_") || ident.startsWith("qi_") || ident.startsWith("obj_") || ident.startsWith("dbl_") || ident.startsWith("sec_") || ident.startsWith("io_") || ident.startsWith("in_") || ident.startsWith("out_")) {
+        if (!declaredVars.has(ident)) {
+          const lineNum = xaml.substring(0, match.index).split("\n").length;
+          violations.push({
+            ruleId: "ST-ARG-003",
+            ruleName: "Undeclared variable in expression",
+            category: "usage",
+            severity: "warning",
+            message: `Variable "${ident}" is used in an expression but not declared as a Variable or x:Property`,
+            location: `line ${lineNum}`,
+            autoFixed: false,
+          });
+        }
+      }
+    }
+  }
+
+  return violations;
+}
+
+function autoFixBareArguments(xaml: string): { fixed: string; fixes: AnalysisViolation[] } {
+  const fixes: AnalysisViolation[] = [];
+  let fixed = xaml;
+
+  const bareArgPatterns = [
+    /<Argument\s+x:TypeArguments="([^"]+)"\s+x:Name="([^"]+)"\s*\/>/g,
+    /<Argument\s+x:Name="([^"]+)"\s+x:TypeArguments="([^"]+)"\s*\/>/g,
+  ];
+
+  for (const pattern of bareArgPatterns) {
+    let match;
+    while ((match = pattern.exec(fixed)) !== null) {
+      const isReversed = pattern === bareArgPatterns[1];
+      const typeArg = isReversed ? match[2] : match[1];
+      const argName = isReversed ? match[1] : match[2];
+      const lineNum = fixed.substring(0, match.index).split("\n").length;
+      const replacement = `<ActivityAction.Argument>\n                  <DelegateInArgument x:TypeArguments="${typeArg}" Name="${argName}" />\n                </ActivityAction.Argument>`;
+      fixed = fixed.replace(match[0], replacement);
+      fixes.push({
+        ruleId: "ST-ARG-001",
+        ruleName: "Invalid bare Argument tag in Catch",
+        category: "usage",
+        severity: "error",
+        message: `Auto-fixed bare <Argument> tag "${argName}" → <DelegateInArgument>`,
+        location: `line ${lineNum}`,
+        autoFixed: true,
+      });
+      pattern.lastIndex = 0;
+    }
+  }
+
+  return { fixed, fixes };
+}
+
 const ALL_RULES: Array<{ ruleId: string; ruleName: string; category: string }> = [
   { ruleId: "ST-NMG-001", ruleName: "Variable naming convention", category: "naming" },
   { ruleId: "ST-NMG-004", ruleName: "Argument naming convention", category: "naming" },
@@ -529,6 +660,9 @@ const ALL_RULES: Array<{ ruleId: string; ruleName: string; category: string }> =
   { ruleId: "ST-USG-017", ruleName: "Deeply nested If activities", category: "usage" },
   { ruleId: "ST-SEC-004", ruleName: "Sensitive data in log message", category: "security" },
   { ruleId: "ST-SEC-005", ruleName: "Plaintext credential in property", category: "security" },
+  { ruleId: "ST-ARG-001", ruleName: "Invalid bare Argument tag in Catch", category: "usage" },
+  { ruleId: "ST-ARG-002", ruleName: "Missing declaration for invoked argument", category: "usage" },
+  { ruleId: "ST-ARG-003", ruleName: "Undeclared variable in expression", category: "usage" },
 ];
 
 let _governancePolicies: GovernancePolicy[] = [];
@@ -691,6 +825,7 @@ export function analyzeXaml(xamlContent: string): AnalysisReport {
     ...checkUsage(xamlContent),
     ...checkSecurity(xamlContent),
     ...checkGovernancePolicies(xamlContent),
+    ...checkArgumentCompleteness(xamlContent),
   ];
 
   const ruleSummaries = buildRuleSummaries(violations);
@@ -708,8 +843,12 @@ export function analyzeXaml(xamlContent: string): AnalysisReport {
 export function analyzeAndFix(xamlContent: string): { fixed: string; report: AnalysisReport } {
   const allViolations: AnalysisViolation[] = [];
 
-  const namingResult = autoFixNaming(xamlContent);
-  let fixed = namingResult.fixed;
+  const bareArgResult = autoFixBareArguments(xamlContent);
+  let fixed = bareArgResult.fixed;
+  allViolations.push(...bareArgResult.fixes);
+
+  const namingResult = autoFixNaming(fixed);
+  fixed = namingResult.fixed;
   allViolations.push(...namingResult.fixes);
 
   const catchResult = autoFixEmptyCatches(fixed);
@@ -726,6 +865,7 @@ export function analyzeAndFix(xamlContent: string): { fixed: string; report: Ana
     ...checkUsage(fixed),
     ...checkSecurity(fixed),
     ...checkGovernancePolicies(fixed),
+    ...checkArgumentCompleteness(fixed),
   ];
   allViolations.push(...postFixViolations);
 

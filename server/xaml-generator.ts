@@ -1054,6 +1054,22 @@ function renderVariablesBlock(variables: VariableDecl[], targetFramework?: Targe
   return xml;
 }
 
+function generateXMembersBlock(
+  args: Array<{ name: string; direction: string; type: string }>,
+  targetFramework?: TargetFramework
+): string {
+  if (!args || args.length === 0) return "";
+  const lines: string[] = [];
+  lines.push("  <x:Members>");
+  for (const arg of args) {
+    const clrType = mapClrType(arg.type);
+    const dir = arg.direction || "InArgument";
+    lines.push(`    <x:Property Name="${escapeXml(arg.name)}" Type="${dir}(${clrType})" />`);
+  }
+  lines.push("  </x:Members>");
+  return lines.join("\n");
+}
+
 function mapClrType(type: string): string {
   const lower = type.toLowerCase();
   if (lower === "string" || lower === "system.string") return "x:String";
@@ -1756,6 +1772,10 @@ export function generateRichXamlFromNodes(
 
   const variablesBlock = renderVariablesBlock(allVariables, targetFramework);
 
+  const isMainWorkflow2 = workflowName.toLowerCase() === "main" || workflowName.toLowerCase() === "main.xaml";
+  const wfArgs = !isMainWorkflow2 && enrichment?.arguments?.length ? enrichment.arguments : [];
+  const xMembersBlock = generateXMembersBlock(wfArgs, targetFramework);
+
   const xaml = `<?xml version="1.0" encoding="utf-8"?>
 <Activity mc:Ignorable="sap sap2010" x:Class="${escapeXml(workflowName.replace(/\s+/g, "_"))}"
   xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
@@ -1767,7 +1787,7 @@ export function generateRichXamlFromNodes(
   xmlns:scg2="clr-namespace:System.Data;assembly=System.Data"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <Sequence DisplayName="${escapeXml(workflowName)}">
+${xMembersBlock}  <Sequence DisplayName="${escapeXml(workflowName)}">
     ${variablesBlock}${activities}
   </Sequence>
 </Activity>`;
@@ -1930,6 +1950,9 @@ export function generateRichXamlFromSpec(
 
   const variablesBlock = renderVariablesBlock(allVariables, targetFramework);
 
+  const specArgs = workflow.arguments || [];
+  const xMembersBlockSpec = generateXMembersBlock(specArgs, targetFramework);
+
   const xaml = `<?xml version="1.0" encoding="utf-8"?>
 <Activity mc:Ignorable="sap sap2010" x:Class="${escapeXml(wfName.replace(/\s+/g, "_"))}"
   xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
@@ -1941,7 +1964,7 @@ export function generateRichXamlFromSpec(
   xmlns:scg2="clr-namespace:System.Data;assembly=System.Data"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <Sequence DisplayName="${escapeXml(wfName)}">
+${xMembersBlockSpec}  <Sequence DisplayName="${escapeXml(wfName)}">
     ${variablesBlock}${activities}
   </Sequence>
 </Activity>`;
@@ -2155,7 +2178,9 @@ export function generateReframeworkMainXaml(projectName: string, queueName: stri
           <TryCatch.Catches>
             <Catch x:TypeArguments="s:Exception">
               <ActivityAction x:TypeArguments="s:Exception">
-                <Argument x:TypeArguments="s:Exception" x:Name="exception" />
+                <ActivityAction.Argument>
+                  <DelegateInArgument x:TypeArguments="s:Exception" Name="exception" />
+                </ActivityAction.Argument>
                 <Sequence DisplayName="Handle Exception">
                   <Sequence.Variables>
                     <Variable x:TypeArguments="x:String" Name="str_ErrorScreenshotPath" Default="[&quot;screenshots/error_tx_&quot;${concat}int_TransactionNumber.ToString${isCSharp ? "()" : ""}${concat}&quot;_&quot;${concat}DateTime.Now.ToString(&quot;yyyyMMdd_HHmmss&quot;)${concat}&quot;.png&quot;]" />
@@ -2167,7 +2192,9 @@ export function generateReframeworkMainXaml(projectName: string, queueName: stri
                     <TryCatch.Catches>
                       <Catch x:TypeArguments="s:Exception">
                         <ActivityAction x:TypeArguments="s:Exception">
-                          <Argument x:TypeArguments="s:Exception" x:Name="ssEx" />
+                          <ActivityAction.Argument>
+                            <DelegateInArgument x:TypeArguments="s:Exception" Name="ssEx" />
+                          </ActivityAction.Argument>
                           <ui:LogMessage Level="Warn" Message="[&quot;Screenshot capture failed: &quot;${concat}ssEx.Message]" DisplayName="Log Screenshot Failure" />
                         </ActivityAction>
                       </Catch>
@@ -2231,12 +2258,12 @@ export function generateGetTransactionDataXaml(queueName: string, targetFramewor
   xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <x:Members>
+    <x:Property Name="in_QueueName" Type="InArgument(x:String)" />
+    <x:Property Name="out_TransactionItem" Type="OutArgument(ui:QueueItem)" />
+    <x:Property Name="io_TransactionNumber" Type="InOutArgument(x:Int32)" />
+  </x:Members>
   <Sequence DisplayName="Get Transaction Data">
-    <Sequence.Variables>
-      <Variable x:TypeArguments="x:String" Name="in_QueueName" Default="'${escapeXml(queueName)}'" />
-      <Variable x:TypeArguments="ui:QueueItem" Name="out_TransactionItem" />
-      <Variable x:TypeArguments="x:Int32" Name="io_TransactionNumber" Default="0" />
-    </Sequence.Variables>
     <ui:GetTransactionItem DisplayName="Get Queue Item" QueueName="[in_QueueName]" TransactionItem="[out_TransactionItem]" />
     <If DisplayName="Check Transaction Item" Condition="[${isCSharp ? "out_TransactionItem != null" : "out_TransactionItem IsNot Nothing"}]">
       <If.Then>
@@ -2277,11 +2304,13 @@ export function generateSetTransactionStatusXaml(targetFramework?: TargetFramewo
   xmlns:scg="clr-namespace:System.Collections.Generic;assembly=${nsScg}"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <x:Members>
+    <x:Property Name="in_TransactionItem" Type="InArgument(ui:QueueItem)" />
+    <x:Property Name="in_Status" Type="InArgument(x:String)" />
+    <x:Property Name="in_ErrorMessage" Type="InArgument(x:String)" />
+  </x:Members>
   <Sequence DisplayName="Set Transaction Status">
     <Sequence.Variables>
-      <Variable x:TypeArguments="ui:QueueItem" Name="in_TransactionItem" />
-      <Variable x:TypeArguments="x:String" Name="in_Status" Default="'Successful'" />
-      <Variable x:TypeArguments="x:String" Name="in_ErrorMessage" />
       <Variable x:TypeArguments="x:String" Name="str_ScreenshotPath" Default="[${screenshotDefault}]" />
     </Sequence.Variables>
     <If DisplayName="Check Status" Condition="[in_Status = &quot;Successful&quot;]">
@@ -2352,7 +2381,9 @@ ${isCrossPlatform ? "<!-- Cross-Platform (Portable) — CloseApplication not ava
       <TryCatch.Catches>
         <Catch x:TypeArguments="s:Exception">
           <ActivityAction x:TypeArguments="s:Exception">
-            <Argument x:TypeArguments="s:Exception" x:Name="closeEx" />
+            <ActivityAction.Argument>
+              <DelegateInArgument x:TypeArguments="s:Exception" Name="closeEx" />
+            </ActivityAction.Argument>
             <ui:LogMessage Level="Warn" Message="[&quot;Error during cleanup: &quot;${isCrossPlatform ? " + " : " &amp; "}closeEx.Message]" DisplayName="Log Cleanup Error" />
           </ActivityAction>
         </Catch>
