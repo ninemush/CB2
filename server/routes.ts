@@ -11,6 +11,7 @@ import { registerDocumentRoutes } from "./document-routes";
 import { registerUiPathRoutes } from "./uipath-routes";
 import { registerFileUploadRoutes } from "./file-upload";
 import { evaluateTransition } from "./stage-transition";
+import { SUPPORTED_MODELS, setDbModel, getActiveModel, getProviderName } from "./lib/llm";
 
 declare module "express-session" {
   interface SessionData {
@@ -60,6 +61,11 @@ export async function registerRoutes(
 
   await seedDemoUsers();
   await seedDemoIdeas();
+
+  const dbModelValue = await storage.getAppSetting("llm_model");
+  if (dbModelValue) {
+    setDbModel(dbModelValue);
+  }
 
   registerChatRoutes(app);
   registerProcessMapRoutes(app);
@@ -355,6 +361,52 @@ export async function registerRoutes(
       details: `Updated user ${safeUser.email}: ${JSON.stringify(updates)}`,
     });
     return res.json(safeUser);
+  });
+
+  app.get("/api/settings/llm-model", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    return res.json({
+      model: getActiveModel(),
+      provider: getProviderName(),
+      supportedModels: SUPPORTED_MODELS,
+    });
+  });
+
+  app.put("/api/settings/llm-model", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const dbUser = await storage.getUser(req.session.userId);
+    const effectiveRole = req.session.activeRole || dbUser?.role;
+    if (!dbUser || effectiveRole !== "Admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const { model } = req.body;
+    if (!model || !SUPPORTED_MODELS.some((m) => m.id === model)) {
+      return res.status(400).json({
+        message: `Invalid model. Supported: ${SUPPORTED_MODELS.map((m) => m.id).join(", ")}`,
+      });
+    }
+    const previousModel = getActiveModel();
+    await storage.setAppSetting("llm_model", model);
+    setDbModel(model);
+    await storage.createAuditLog({
+      ideaId: null,
+      userId: req.session.userId,
+      userName: dbUser.displayName || "Unknown",
+      userRole: effectiveRole,
+      action: "llm_model_changed",
+      fromStage: null,
+      toStage: null,
+      details: `Changed LLM model from "${previousModel}" to "${model}"`,
+    });
+    return res.json({
+      model: getActiveModel(),
+      provider: getProviderName(),
+      supportedModels: SUPPORTED_MODELS,
+    });
   });
 
   return httpServer;

@@ -1,8 +1,11 @@
 import { users, ideas, auditLogs, type User, type InsertUser, type Idea, type InsertIdea, type AuditLog, type InsertAuditLog } from "@shared/schema";
+import { appSettings } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
+  getAppSetting(key: string): Promise<string | undefined>;
+  setAppSetting(key: string, value: string): Promise<void>;
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
@@ -20,6 +23,20 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  async getAppSetting(key: string): Promise<string | undefined> {
+    const [row] = await db.select().from(appSettings).where(eq(appSettings.key, key));
+    return row?.value;
+  }
+
+  async setAppSetting(key: string, value: string): Promise<void> {
+    const [existing] = await db.select().from(appSettings).where(eq(appSettings.key, key));
+    if (existing) {
+      await db.update(appSettings).set({ value, updatedAt: new Date() }).where(eq(appSettings.key, key));
+    } else {
+      await db.insert(appSettings).values({ key, value });
+    }
+  }
+
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;

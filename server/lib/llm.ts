@@ -173,12 +173,30 @@ const PROVIDER_REGISTRY: Record<string, (model: string) => LLMProvider> = {
 const DEFAULT_PROVIDER = "anthropic";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
+export const SUPPORTED_MODELS = [
+  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4 (claude-sonnet-4-6)" },
+  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5 (claude-haiku-4-5)" },
+  { id: "claude-opus-4", label: "Claude Opus 4 (claude-opus-4)" },
+];
+
 let cachedProvider: LLMProvider | null = null;
 let cachedKey: string | null = null;
 
+let dbModel: string | null = null;
+
+export function setDbModel(model: string | null): void {
+  dbModel = model;
+  cachedProvider = null;
+  cachedKey = null;
+}
+
+export function getActiveModel(): string {
+  return dbModel || process.env.LLM_MODEL || DEFAULT_MODEL;
+}
+
 export function getLLM(): LLMProvider {
   const providerName = process.env.LLM_PROVIDER || DEFAULT_PROVIDER;
-  const model = process.env.LLM_MODEL || DEFAULT_MODEL;
+  const model = getActiveModel();
   const key = `${providerName}:${model}`;
 
   if (cachedProvider && cachedKey === key) {
@@ -199,7 +217,7 @@ export function getLLM(): LLMProvider {
 }
 
 export function getModel(): string {
-  return process.env.LLM_MODEL || DEFAULT_MODEL;
+  return getActiveModel();
 }
 
 export function getProviderName(): string {

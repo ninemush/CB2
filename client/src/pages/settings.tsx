@@ -287,12 +287,39 @@ function AuditLogTab() {
   );
 }
 
+interface LlmModelResponse {
+  model: string;
+  provider: string;
+  supportedModels: { id: string; label: string }[];
+}
+
 function SystemTab() {
   const { toast } = useToast();
   const { data: users } = useQuery<User[]>({ queryKey: ["/api/users"] });
   const { data: ideas } = useQuery<Idea[]>({ queryKey: ["/api/ideas"] });
+  const { data: llmData, isLoading: llmLoading } = useQuery<LlmModelResponse>({ queryKey: ["/api/settings/llm-model"] });
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [confirmModelOpen, setConfirmModelOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const updateModelMutation = useMutation({
+    mutationFn: async (model: string) => {
+      const res = await apiRequest("PUT", "/api/settings/llm-model", { model });
+      return res.json();
+    },
+    onSuccess: (data: LlmModelResponse) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/llm-model"] });
+      toast({ title: "Model updated", description: `Active model changed to ${data.model}` });
+      setSelectedModel(null);
+      setConfirmModelOpen(false);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update model", description: err.message, variant: "destructive" });
+      setSelectedModel(null);
+      setConfirmModelOpen(false);
+    },
+  });
 
   const deleteMutation = useMutation({
     mutationFn: async (ideaId: string) => {
@@ -330,7 +357,57 @@ function SystemTab() {
             <Brain className="h-4 w-4" />
             Model
           </div>
-          <p className="text-sm font-semibold">Claude claude-sonnet-4-6</p>
+          {llmLoading ? (
+            <Skeleton className="h-5 w-32" />
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm font-semibold" data-testid="text-current-model">
+                {llmData?.provider === "anthropic" ? "Claude" : llmData?.provider} {llmData?.model}
+              </p>
+              <Select
+                value={selectedModel || llmData?.model || ""}
+                onValueChange={(val) => {
+                  if (val !== llmData?.model) {
+                    setSelectedModel(val);
+                    setConfirmModelOpen(true);
+                  }
+                }}
+              >
+                <SelectTrigger className="h-8 text-xs" data-testid="select-model-trigger">
+                  <SelectValue placeholder="Change model..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {llmData?.supportedModels.map((m) => (
+                    <SelectItem key={m.id} value={m.id} data-testid={`select-model-option-${m.id}`}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <AlertDialog open={confirmModelOpen} onOpenChange={(open) => { setConfirmModelOpen(open); if (!open) setSelectedModel(null); }}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Change LLM Model?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will change the active model from <strong>{llmData?.model}</strong> to <strong>{selectedModel}</strong> for all subsequent AI operations.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel data-testid="button-cancel-model-change">
+                  Cancel
+                </AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => selectedModel && updateModelMutation.mutate(selectedModel)}
+                  disabled={updateModelMutation.isPending}
+                  data-testid="button-confirm-model-change"
+                >
+                  {updateModelMutation.isPending ? "Saving..." : "Confirm"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </Card>
         <Card className="p-4 space-y-2" data-testid="card-api-status">
           <div className="flex items-center gap-2 text-muted-foreground text-sm">
