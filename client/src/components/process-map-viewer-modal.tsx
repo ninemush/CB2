@@ -54,6 +54,9 @@ interface ProcessEdgeData extends Record<string, unknown> {
   label: string;
   viewType: string;
   totalNodes: number;
+  targetIndex?: number;
+  targetSiblings?: number;
+  targetNodeType?: string;
 }
 
 interface DbProcessNode {
@@ -436,6 +439,9 @@ function ROCustomEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, 
   const totalNodes = data?.totalNodes || 0;
   const useBezier = totalNodes > 25;
   const label = data?.label || "";
+  const targetNodeType = data?.targetNodeType || "task";
+  const targetIndex = data?.targetIndex || 0;
+  const targetSiblings = data?.targetSiblings || 1;
   const isYes = /^(yes|approved|pass|valid|complete|true|within|below|stp|auto)/i.test(label);
   const isNo = /^(no|rejected|fail|invalid|incomplete|false|exceed|above|poor|flag)/i.test(label);
   const isToBeView = data?.viewType === "to-be";
@@ -446,9 +452,26 @@ function ROCustomEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, 
   else if (isNo) edgeColor = "rgba(239,68,68,0.7)";
   else if (label) edgeColor = isDark ? "rgba(148,163,184,0.5)" : "rgba(100,116,139,0.6)";
 
-  const [edgePath, labelX, labelY] = useBezier
-    ? getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
-    : getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 16, offset: 20 });
+  const isEndTarget = targetNodeType === "end";
+  let edgePath: string;
+  let labelX: number;
+  let labelY: number;
+
+  if (isEndTarget && targetSiblings > 1) {
+    const dy = targetY - sourceY;
+    const fanSpread = (targetIndex - (targetSiblings - 1) / 2) * Math.min(35, 180 / targetSiblings);
+    const cx1 = sourceX;
+    const cy1 = sourceY + dy * 0.4;
+    const cx2 = targetX + fanSpread;
+    const cy2 = targetY - Math.abs(dy) * 0.3;
+    edgePath = `M ${sourceX},${sourceY} C ${cx1},${cy1} ${cx2},${cy2} ${targetX},${targetY}`;
+    labelX = (sourceX + targetX) / 2 + fanSpread * 0.3;
+    labelY = (sourceY + targetY) / 2;
+  } else {
+    [edgePath, labelX, labelY] = useBezier
+      ? getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
+      : getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 16, offset: 20 });
+  }
 
   return (
     <>
@@ -555,16 +578,31 @@ export function ProcessMapViewerModal({ open, onClose, ideaId, viewType }: Proce
     }));
 
     const nodeIdSet = new Set(mapData.nodes.map((n) => n.id));
+    const nodeTypeMap: Record<string, string> = {};
+    mapData.nodes.forEach(n => { nodeTypeMap[String(n.id)] = n.nodeType || "task"; });
     const validEdges = (mapData.edges || []).filter((e) => nodeIdSet.has(e.sourceNodeId) && nodeIdSet.has(e.targetNodeId));
     const totalNodes = rawNodes.length;
+    const tgtGroups: Record<string, typeof validEdges> = {};
+    validEdges.forEach(e => {
+      const tk = String(e.targetNodeId);
+      if (!tgtGroups[tk]) tgtGroups[tk] = [];
+      tgtGroups[tk].push(e);
+    });
 
-    const rawEdges: Edge<ProcessEdgeData>[] = validEdges.map((e) => ({
-      id: String(e.id),
-      source: String(e.sourceNodeId),
-      target: String(e.targetNodeId),
-      type: "custom" as const,
-      data: { label: e.label, viewType, totalNodes },
-    }));
+    const rawEdges: Edge<ProcessEdgeData>[] = validEdges.map((e) => {
+      const tgtS = tgtGroups[String(e.targetNodeId)] || [e];
+      return {
+        id: String(e.id),
+        source: String(e.sourceNodeId),
+        target: String(e.targetNodeId),
+        type: "custom" as const,
+        data: {
+          label: e.label, viewType, totalNodes,
+          targetIndex: tgtS.indexOf(e), targetSiblings: tgtS.length,
+          targetNodeType: nodeTypeMap[String(e.targetNodeId)] || "task",
+        },
+      };
+    });
 
     const layoutNodes = rawEdges.length > 0
       ? applyDagreLayout(rawNodes, rawEdges)

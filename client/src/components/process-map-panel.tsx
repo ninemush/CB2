@@ -1333,33 +1333,55 @@ function CustomEdge({
   const targetSiblings = data?.targetSiblings || 1;
   const totalNodes = data?.totalNodes || 0;
   const simplified = data?.simplified || false;
+  const targetNodeType = data?.targetNodeType || "task";
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
   const useBezier = simplified || totalNodes > 25;
+  const isEndTarget = targetNodeType === "end";
 
   const sourceOffset = simplified ? 0 : (sourceSiblings > 1 ? (sourceIndex - (sourceSiblings - 1) / 2) * (useBezier ? 12 : 20) : 0);
-  const targetOffset = simplified ? 0 : (targetSiblings > 1 ? (targetIndex - (targetSiblings - 1) / 2) * (useBezier ? 12 : 20) : 0);
+  const targetOffset = (simplified || isEndTarget) ? 0 : (targetSiblings > 1 ? (targetIndex - (targetSiblings - 1) / 2) * (useBezier ? 12 : 20) : 0);
 
-  const [edgePath, labelX, labelY] = useBezier
-    ? getBezierPath({
-        sourceX: sourceX + sourceOffset,
-        sourceY,
-        sourcePosition,
-        targetX: targetX + targetOffset,
-        targetY,
-        targetPosition,
-      })
-    : getSmoothStepPath({
-        sourceX: sourceX + sourceOffset,
-        sourceY,
-        sourcePosition,
-        targetX: targetX + targetOffset,
-        targetY,
-        targetPosition,
-        borderRadius: 16,
-        offset: (Math.abs(sourceOffset) > 0 || Math.abs(targetOffset) > 0) ? 25 + Math.max(Math.abs(sourceOffset), Math.abs(targetOffset)) : 20,
-      });
+  let edgePath: string;
+  let labelX: number;
+  let labelY: number;
+
+  if (isEndTarget && targetSiblings > 1 && !simplified) {
+    const sx = sourceX + sourceOffset;
+    const sy = sourceY;
+    const tx = targetX;
+    const ty = targetY;
+    const dy = ty - sy;
+    const fanSpread = (targetIndex - (targetSiblings - 1) / 2) * Math.min(35, 180 / targetSiblings);
+    const cx1 = sx;
+    const cy1 = sy + dy * 0.4;
+    const cx2 = tx + fanSpread;
+    const cy2 = ty - Math.abs(dy) * 0.3;
+    edgePath = `M ${sx},${sy} C ${cx1},${cy1} ${cx2},${cy2} ${tx},${ty}`;
+    labelX = (sx + tx) / 2 + fanSpread * 0.3;
+    labelY = (sy + ty) / 2;
+  } else {
+    [edgePath, labelX, labelY] = useBezier
+      ? getBezierPath({
+          sourceX: sourceX + sourceOffset,
+          sourceY,
+          sourcePosition,
+          targetX: targetX + targetOffset,
+          targetY,
+          targetPosition,
+        })
+      : getSmoothStepPath({
+          sourceX: sourceX + sourceOffset,
+          sourceY,
+          sourcePosition,
+          targetX: targetX + targetOffset,
+          targetY,
+          targetPosition,
+          borderRadius: 16,
+          offset: (Math.abs(sourceOffset) > 0 || Math.abs(targetOffset) > 0) ? 25 + Math.max(Math.abs(sourceOffset), Math.abs(targetOffset)) : 20,
+        });
+  }
 
   const label = data?.label || "";
   const isYes = /^(yes|approved|pass|valid|complete|true|within|below|stp|auto)/i.test(label);
@@ -1850,6 +1872,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       const isDecision = srcNodeType === "decision" || srcNodeType === "agent-decision";
       const sourceHandle = getEdgeSourceHandle(isDecision, e.label, srcS, e);
 
+      const tgtNodeType = nodeTypeMap[String(e.targetNodeId)] || "task";
       return {
         id: String(e.id), source: String(e.sourceNodeId), target: String(e.targetNodeId),
         type: isDecision ? "smoothstep" : "custom",
@@ -1863,6 +1886,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
           totalNodes: relNodeCount,
           simplified: relSimplified,
           isDecisionSource: isDecision,
+          targetNodeType: tgtNodeType,
         },
       };
     });
@@ -1930,6 +1954,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       const markerColor = activeView === "sdd" ? "rgba(249,115,22,0.5)" : activeView === "to-be" ? "rgba(34,197,94,0.5)" : "rgba(120,120,145,0.4)";
       const markerSize = isSimplified ? 16 : nodeCount > 25 ? 10 : 14;
       const srcType = nodeTypeMap2[String(e.sourceNodeId)] || "task";
+      const tgtType = nodeTypeMap2[String(e.targetNodeId)] || "task";
       const isDecision = srcType === "decision" || srcType === "agent-decision";
       const sourceHandle = getEdgeSourceHandle(isDecision, e.label, srcSiblings, e);
       return {
@@ -1947,6 +1972,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
           totalNodes: nodeCount,
           simplified: isSimplified,
           isDecisionSource: isDecision,
+          targetNodeType: tgtType,
         },
         animated: activeView === "to-be" || activeView === "sdd",
         markerEnd: {
