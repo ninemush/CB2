@@ -257,7 +257,7 @@ class OpenAIProvider implements LLMProvider {
 
       const text = response.choices[0]?.message?.content || "";
       const finishReason = response.choices[0]?.finish_reason || "";
-      return { text, stopReason: finishReason };
+      return { text, stopReason: normalizeStopReason(finishReason) };
     } catch (error: unknown) {
       const paramType = MODELS_REQUIRING_MAX_COMPLETION_TOKENS.has(this.model) ? "max_completion_tokens" : "max_tokens";
       const msg = error instanceof Error ? error.message : String(error);
@@ -311,7 +311,7 @@ class OpenAIProvider implements LLMProvider {
               if (finishReason) {
                 return {
                   done: false,
-                  value: { type: "stop", stopReason: finishReason },
+                  value: { type: "stop", stopReason: normalizeStopReason(finishReason) },
                 };
               }
 
@@ -372,7 +372,7 @@ class GeminiProvider implements LLMProvider {
 
       const text = response.choices[0]?.message?.content || "";
       const finishReason = response.choices[0]?.finish_reason || "";
-      return { text, stopReason: finishReason };
+      return { text, stopReason: normalizeStopReason(finishReason) };
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`Gemini API error for model "${this.model}" (using max_tokens):`, msg);
@@ -419,7 +419,7 @@ class GeminiProvider implements LLMProvider {
               if (finishReason) {
                 return {
                   done: false,
-                  value: { type: "stop", stopReason: finishReason },
+                  value: { type: "stop", stopReason: normalizeStopReason(finishReason) },
                 };
               }
 
@@ -449,6 +449,18 @@ class GeminiProvider implements LLMProvider {
   }
 }
 
+function normalizeStopReason(reason: string | null | undefined): string {
+  if (!reason) return "";
+  switch (reason) {
+    case "length":
+      return "max_tokens";
+    case "stop":
+      return "end_turn";
+    default:
+      return reason;
+  }
+}
+
 const PROVIDER_REGISTRY: Record<string, (model: string) => LLMProvider> = {
   anthropic: (model) => new AnthropicProvider(model),
   openai: (model) => new OpenAIProvider(model),
@@ -458,20 +470,26 @@ const PROVIDER_REGISTRY: Record<string, (model: string) => LLMProvider> = {
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 export const SUPPORTED_MODELS = [
-  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4 (claude-sonnet-4-6)", provider: "anthropic" },
-  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5 (claude-haiku-4-5)", provider: "anthropic" },
-  { id: "claude-opus-4", label: "Claude Opus 4 (claude-opus-4)", provider: "anthropic" },
-  { id: "gpt-4o", label: "GPT-4o (gpt-4o)", provider: "openai" },
-  { id: "gpt-5.3-codex", label: "GPT-5.3 Codex (gpt-5.3-codex) - Code only, no chat", provider: "openai" },
-  { id: "gpt-5.2", label: "GPT-5.2 (gpt-5.2)", provider: "openai" },
-  { id: "gpt-5", label: "GPT-5 (gpt-5)", provider: "openai" },
-  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro (gemini-2.5-pro)", provider: "google" },
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash (gemini-2.5-flash)", provider: "google" },
+  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4 (claude-sonnet-4-6)", provider: "anthropic", chatSupported: true },
+  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5 (claude-haiku-4-5)", provider: "anthropic", chatSupported: true },
+  { id: "claude-opus-4", label: "Claude Opus 4 (claude-opus-4)", provider: "anthropic", chatSupported: true },
+  { id: "gpt-4o", label: "GPT-4o (gpt-4o)", provider: "openai", chatSupported: true },
+  { id: "gpt-5.3-codex", label: "GPT-5.3 Codex (gpt-5.3-codex) - Code only, no chat", provider: "openai", chatSupported: false },
+  { id: "gpt-5.2", label: "GPT-5.2 (gpt-5.2)", provider: "openai", chatSupported: true },
+  { id: "gpt-5", label: "GPT-5 (gpt-5)", provider: "openai", chatSupported: true },
+  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro (gemini-2.5-pro)", provider: "google", chatSupported: true },
+  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash (gemini-2.5-flash)", provider: "google", chatSupported: true },
 ];
+
+export const CHAT_SUPPORTED_MODELS = SUPPORTED_MODELS.filter((m) => m.chatSupported);
 
 function getProviderForModel(modelId: string): string {
   const entry = SUPPORTED_MODELS.find((m) => m.id === modelId);
-  return entry?.provider || "anthropic";
+  if (!entry) {
+    console.warn(`[LLM] Unrecognized model "${modelId}" — defaulting to Anthropic provider. Consider updating SUPPORTED_MODELS.`);
+    return "anthropic";
+  }
+  return entry.provider;
 }
 
 let cachedProvider: LLMProvider | null = null;
@@ -480,7 +498,12 @@ let cachedKey: string | null = null;
 let dbModel: string | null = null;
 
 export function setDbModel(model: string | null): void {
-  dbModel = model;
+  if (model && !CHAT_SUPPORTED_MODELS.some((m) => m.id === model)) {
+    console.warn(`[LLM] Stored model "${model}" is not chat-compatible or recognized. Falling back to default "${DEFAULT_MODEL}".`);
+    dbModel = null;
+  } else {
+    dbModel = model;
+  }
   cachedProvider = null;
   cachedKey = null;
 }

@@ -11,7 +11,7 @@ import { registerDocumentRoutes } from "./document-routes";
 import { registerUiPathRoutes } from "./uipath-routes";
 import { registerFileUploadRoutes } from "./file-upload";
 import { evaluateTransition } from "./stage-transition";
-import { SUPPORTED_MODELS, setDbModel, getActiveModel, getProviderName } from "./lib/llm";
+import { SUPPORTED_MODELS, CHAT_SUPPORTED_MODELS, setDbModel, getActiveModel, getProviderName } from "./lib/llm";
 
 declare module "express-session" {
   interface SessionData {
@@ -370,7 +370,7 @@ export async function registerRoutes(
     return res.json({
       model: getActiveModel(),
       provider: getProviderName(),
-      supportedModels: SUPPORTED_MODELS,
+      supportedModels: CHAT_SUPPORTED_MODELS,
     });
   });
 
@@ -384,9 +384,9 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Admin access required" });
     }
     const { model } = req.body;
-    if (!model || !SUPPORTED_MODELS.some((m) => m.id === model)) {
+    if (!model || !CHAT_SUPPORTED_MODELS.some((m) => m.id === model)) {
       return res.status(400).json({
-        message: `Invalid model. Supported: ${SUPPORTED_MODELS.map((m) => m.id).join(", ")}`,
+        message: `Invalid model. Supported: ${CHAT_SUPPORTED_MODELS.map((m) => m.id).join(", ")}`,
       });
     }
     const previousModel = getActiveModel();
@@ -405,7 +405,7 @@ export async function registerRoutes(
     return res.json({
       model: getActiveModel(),
       provider: getProviderName(),
-      supportedModels: SUPPORTED_MODELS,
+      supportedModels: CHAT_SUPPORTED_MODELS,
     });
   });
 
