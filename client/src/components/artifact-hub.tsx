@@ -418,12 +418,20 @@ export function ArtifactHub({ ideaId, ideaTitle }: ArtifactHubProps) {
   async function downloadArtifact(type: string) {
     try {
       if (type === "uipath") {
+        const res = await fetch(`/api/ideas/${ideaId}/download-uipath`, { credentials: "include" });
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => null);
+          throw new Error(errBody?.message || "Failed to download UiPath package");
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
-        a.href = `/api/ideas/${ideaId}/download-uipath`;
+        a.href = url;
         a.download = "UiPathPackage.zip";
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
+        URL.revokeObjectURL(url);
         return;
       }
 
@@ -479,12 +487,21 @@ export function ArtifactHub({ ideaId, ideaTitle }: ArtifactHubProps) {
 
       if (hasUipath) {
         await new Promise(resolve => setTimeout(resolve, 500));
-        const a = document.createElement("a");
-        a.href = `/api/ideas/${ideaId}/download-uipath`;
-        a.download = "UiPathPackage.zip";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+        try {
+          const res = await fetch(`/api/ideas/${ideaId}/download-uipath`, { credentials: "include" });
+          if (!res.ok) throw new Error("UiPath download failed");
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "UiPathPackage.zip";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } catch {
+          toast({ title: "UiPath download failed", variant: "destructive" });
+        }
       }
 
       if (hasDhg) {

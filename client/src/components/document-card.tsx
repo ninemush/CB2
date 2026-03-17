@@ -671,14 +671,33 @@ export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDep
 
       <div className="px-4 py-3 border-t border-border/30 space-y-2">
         <div className="flex gap-2">
-          <a
-            href={`/api/ideas/${ideaId}/download-uipath`}
+          <button
+            onClick={async () => {
+              try {
+                const res = await fetch(`/api/ideas/${ideaId}/download-uipath`, { credentials: "include" });
+                if (!res.ok) {
+                  const errBody = await res.json().catch(() => null);
+                  throw new Error(errBody?.message || "Failed to download UiPath package");
+                }
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "UiPathPackage.zip";
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              } catch (err: any) {
+                toast({ title: "Download failed", description: err.message, variant: "destructive" });
+              }
+            }}
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-medium transition-colors flex-1 justify-center"
             data-testid="button-download-uipath"
           >
             <Download className="h-3.5 w-3.5" />
             Package
-          </a>
+          </button>
           <button
             onClick={async () => {
               setDhgContent(null);

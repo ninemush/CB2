@@ -12,7 +12,9 @@ import type { DeploymentResult } from "@shared/models/deployment";
 import type { AICenterSkill } from "./uipath-integration";
 import { isActivityAllowed } from "./uipath-activity-policy";
 import type { AutomationPattern } from "./uipath-activity-registry";
-import { DOMParser } from "@xmldom/xmldom";
+import { createRequire } from "node:module";
+const _require = createRequire(import.meta.url);
+const { DOMParser } = _require("@xmldom/xmldom");
 
 let _aiCenterSkillsCtx: AICenterSkill[] = [];
 let _currentAutomationPattern: string = "";
