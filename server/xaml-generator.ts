@@ -113,6 +113,10 @@ export function applyActivityPolicy(
   if (modeConfig.blockReFramework) {
     content = content.replace(/WorkflowFileName="Workflows\\([^"]+)"/g, 'WorkflowFileName="$1"');
     content = content.replace(/WorkflowFileName="Workflows\/([^"]+)"/g, 'WorkflowFileName="$1"');
+    content = content.replace(/WorkflowFileName="([^"]+)"/g, (_match: string, p1: string) => {
+      const cleaned = p1.replace(/\\/g, "/").replace(/^[./]+/, "");
+      return `WorkflowFileName="${cleaned}"`;
+    });
   }
 
   return { content, blocked };
@@ -536,6 +540,10 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
 
   xml = xml.replace(/WorkflowFileName="Workflows\\([^"]+)"/g, 'WorkflowFileName="$1"');
   xml = xml.replace(/WorkflowFileName="Workflows\/([^"]+)"/g, 'WorkflowFileName="$1"');
+  xml = xml.replace(/WorkflowFileName="([^"]+)"/g, (_match: string, p1: string) => {
+    const cleaned = p1.replace(/\\/g, "/").replace(/^[./]+/, "");
+    return `WorkflowFileName="${cleaned}"`;
+  });
 
   return xml;
 }

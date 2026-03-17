@@ -559,6 +559,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
   const _appendedContentHashes = new Map<string, string>();
   const archive = {
     append(data: any, opts: { name: string }) {
+      opts.name = opts.name.replace(/\\/g, "/").replace(/^[./]+/, "");
       _archiveManifestTracker.push(opts.name);
       if (typeof data === "string") {
         _appendedContentHashes.set(opts.name, createHash("sha256").update(data).digest("hex"));
@@ -974,7 +975,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         const m = v.detail.match(/references "([^"]+)"/);
         if (m) missingFiles.add(m[1]);
       }
-      for (const missingFile of Array.from(missingFiles)) {
+      for (const rawMissingFile of Array.from(missingFiles)) {
+        const missingFile = rawMissingFile.replace(/\\/g, "/").replace(/^[./]+/, "");
         const stubXaml = generateStubWorkflow(missingFile);
         const stubCompliant = compliancePass(stubXaml, missingFile, true);
         deferredWrites.set(`${libPath}/${missingFile}`, stubCompliant);
@@ -1090,6 +1092,10 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
         content = content.replace(/WorkflowFileName="Workflows\\([^"]+)"/g, 'WorkflowFileName="$1"');
         content = content.replace(/WorkflowFileName="Workflows\/([^"]+)"/g, 'WorkflowFileName="$1"');
+        content = content.replace(/WorkflowFileName="([^"]+)"/g, (_match, p1) => {
+          const cleaned = p1.replace(/\\/g, "/").replace(/^[./]+/, "");
+          return `WorkflowFileName="${cleaned}"`;
+        });
 
         content = content.replace(/<ui:TakeScreenshot\s+([^>]*?)OutputPath="([^"]*)"([^>]*?)\/>/g, (match, before, outputPathVal, after) => {
           const attrs = (before + after).trim();
@@ -1470,7 +1476,8 @@ ${depEntries}
   }
 
   for (const entry of xamlEntries) {
-    const basename = entry.name.split("/").pop() || entry.name;
+    const normalizedName = entry.name.replace(/\\/g, "/").replace(/^[./]+/, "");
+    const basename = normalizedName.split("/").pop() || normalizedName;
     const archivePath = `${libPath}/${basename}`;
     if (!zipPathSet.has(archivePath)) {
       const altMatch = Array.from(zipPathSet).find(p => p.endsWith("/" + basename) || p === basename);
