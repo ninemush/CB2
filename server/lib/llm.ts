@@ -238,6 +238,50 @@ class OpenAIProvider implements LLMProvider {
     this.model = model;
   }
 
+  private buildNonStreamingParams(options: LLMOptions): OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming {
+    const messages = toOpenAIMessages(options.system, options.messages);
+    const tokenParams = getOpenAITokenParams(this.model, options.maxTokens);
+    if (tokenParams.max_completion_tokens !== undefined) {
+      const p: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+        model: this.model,
+        messages,
+        max_completion_tokens: tokenParams.max_completion_tokens,
+      };
+      console.log(`[OpenAI] Request params: model=${p.model}, max_completion_tokens=${p.max_completion_tokens}, max_tokens=<not set>`);
+      return p;
+    }
+    const p: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+      model: this.model,
+      messages,
+      max_tokens: tokenParams.max_tokens,
+    };
+    console.log(`[OpenAI] Request params: model=${p.model}, max_tokens=${p.max_tokens}, max_completion_tokens=<not set>`);
+    return p;
+  }
+
+  private buildStreamingParams(options: LLMOptions): OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming {
+    const messages = toOpenAIMessages(options.system, options.messages);
+    const tokenParams = getOpenAITokenParams(this.model, options.maxTokens);
+    if (tokenParams.max_completion_tokens !== undefined) {
+      const p: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
+        model: this.model,
+        messages,
+        max_completion_tokens: tokenParams.max_completion_tokens,
+        stream: true,
+      };
+      console.log(`[OpenAI] Stream params: model=${p.model}, max_completion_tokens=${p.max_completion_tokens}, max_tokens=<not set>`);
+      return p;
+    }
+    const p: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
+      model: this.model,
+      messages,
+      max_tokens: tokenParams.max_tokens,
+      stream: true,
+    };
+    console.log(`[OpenAI] Stream params: model=${p.model}, max_tokens=${p.max_tokens}, max_completion_tokens=<not set>`);
+    return p;
+  }
+
   async create(options: LLMOptions): Promise<LLMResponse> {
     if (MODELS_NOT_SUPPORTING_CHAT.has(this.model)) {
       throw new Error(
@@ -246,12 +290,9 @@ class OpenAIProvider implements LLMProvider {
     }
 
     try {
+      const params = this.buildNonStreamingParams(options);
       const response = await this.client.chat.completions.create(
-        {
-          model: this.model,
-          ...getOpenAITokenParams(this.model, options.maxTokens),
-          messages: toOpenAIMessages(options.system, options.messages),
-        },
+        params,
         options.abortSignal ? { signal: options.abortSignal } : undefined,
       );
 
@@ -276,13 +317,9 @@ class OpenAIProvider implements LLMProvider {
     let abortController: AbortController | null = new AbortController();
     const modelName = this.model;
 
+    const params = this.buildStreamingParams(options);
     const streamPromise = this.client.chat.completions.create(
-      {
-        model: this.model,
-        ...getOpenAITokenParams(this.model, options.maxTokens),
-        messages: toOpenAIMessages(options.system, options.messages),
-        stream: true,
-      },
+      params,
       { signal: abortController.signal },
     );
 
@@ -342,8 +379,30 @@ class OpenAIProvider implements LLMProvider {
   }
 }
 
+function toGeminiContents(messages: LLMMessage[]): Array<{ role: string; parts: Array<Record<string, unknown>> }> {
+  return messages.map((m) => {
+    const role = m.role === "assistant" ? "model" : "user";
+    if (typeof m.content === "string") {
+      return { role, parts: [{ text: m.content }] };
+    }
+    const parts: Array<Record<string, unknown>> = m.content.map((block) => {
+      if (block.type === "image") {
+        return {
+          inlineData: {
+            mimeType: block.source.media_type,
+            data: block.source.data,
+          },
+        };
+      }
+      return { text: block.text };
+    });
+    return { role, parts };
+  });
+}
+
 class GeminiProvider implements LLMProvider {
-  private client: OpenAI;
+  private baseURL: string;
+  private apiKey: string;
   private model: string;
 
   constructor(model: string) {
@@ -352,88 +411,191 @@ class GeminiProvider implements LLMProvider {
         "Gemini integration is not configured. Please install the Gemini AI Integration blueprint in your Replit project."
       );
     }
-    this.client = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
-    });
+    this.baseURL = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL.replace(/\/+$/, "");
+    this.apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
     this.model = model;
   }
 
-  async create(options: LLMOptions): Promise<LLMResponse> {
-    try {
-      const response = await this.client.chat.completions.create(
-        {
-          model: this.model,
-          max_tokens: options.maxTokens,
-          messages: toOpenAIMessages(options.system, options.messages),
-        },
-        options.abortSignal ? { signal: options.abortSignal } : undefined,
-      );
+  private buildRequestBody(options: LLMOptions): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      contents: toGeminiContents(options.messages),
+      generationConfig: {
+        maxOutputTokens: options.maxTokens,
+      },
+    };
+    if (options.system) {
+      body.system_instruction = {
+        parts: [{ text: options.system }],
+      };
+    }
+    return body;
+  }
 
-      const text = response.choices[0]?.message?.content || "";
-      const finishReason = response.choices[0]?.finish_reason || "";
-      return { text, stopReason: normalizeStopReason(finishReason) };
+  async create(options: LLMOptions): Promise<LLMResponse> {
+    const url = `${this.baseURL}/models/${this.model}:generateContent`;
+    const body = this.buildRequestBody(options);
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": this.apiKey,
+        },
+        body: JSON.stringify(body),
+        signal: options.abortSignal,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Gemini API error (${response.status}): ${errorText}`);
+      }
+
+      const data = await response.json() as {
+        candidates?: Array<{
+          content?: { parts?: Array<{ text?: string }> };
+          finishReason?: string;
+        }>;
+      };
+
+      const candidate = data.candidates?.[0];
+      const text = candidate?.content?.parts?.map((p) => p.text || "").join("") || "";
+      const finishReason = normalizeStopReason(candidate?.finishReason || "");
+      return { text, stopReason: finishReason };
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      console.error(`Gemini API error for model "${this.model}" (using max_tokens):`, msg);
+      console.error(`Gemini API error for model "${this.model}":`, msg);
       throw error;
     }
   }
 
   stream(options: LLMOptions): LLMStream {
     let abortController: AbortController | null = new AbortController();
+    if (options.abortSignal) {
+      const externalSignal = options.abortSignal;
+      externalSignal.addEventListener("abort", () => abortController?.abort(), { once: true });
+    }
     const modelName = this.model;
+    const url = `${this.baseURL}/models/${this.model}:streamGenerateContent?alt=sse`;
+    const body = this.buildRequestBody(options);
+    const apiKey = this.apiKey;
 
-    const streamPromise = this.client.chat.completions.create(
-      {
-        model: this.model,
-        max_tokens: options.maxTokens,
-        messages: toOpenAIMessages(options.system, options.messages),
-        stream: true,
+    const fetchPromise = fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
       },
-      { signal: abortController.signal },
-    );
+      body: JSON.stringify(body),
+      signal: abortController.signal,
+    });
 
     return {
       [Symbol.asyncIterator]() {
-        let openaiStream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk> | null = null;
-        let iterator: AsyncIterator<OpenAI.Chat.Completions.ChatCompletionChunk> | null = null;
+        let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let dataLines: string[] = [];
+        let streamDone = false;
+
+        async function init(): Promise<void> {
+          const response = await fetchPromise;
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Gemini stream error (${response.status}): ${errorText}`);
+          }
+          if (!response.body) {
+            throw new Error("Gemini stream response has no body");
+          }
+          reader = response.body.getReader();
+        }
+
+        function parseGeminiEvent(jsonStr: string): LLMStreamEvent | null {
+          const chunk = JSON.parse(jsonStr) as {
+            candidates?: Array<{
+              content?: { parts?: Array<{ text?: string }> };
+              finishReason?: string;
+            }>;
+          };
+          const candidate = chunk.candidates?.[0];
+          const rawFinishReason = candidate?.finishReason;
+          const finishReason = rawFinishReason ? normalizeStopReason(rawFinishReason) : undefined;
+
+          if (finishReason && finishReason !== "end_turn") {
+            return { type: "stop", stopReason: finishReason };
+          }
+
+          const text = candidate?.content?.parts?.map((p) => p.text || "").join("") || "";
+          if (text) {
+            return { type: "text_delta", text };
+          }
+
+          if (finishReason === "end_turn") {
+            return { type: "stop", stopReason: "end_turn" };
+          }
+
+          return null;
+        }
 
         return {
           async next(): Promise<IteratorResult<LLMStreamEvent>> {
             try {
-              if (!openaiStream) {
-                openaiStream = await streamPromise;
-                iterator = openaiStream[Symbol.asyncIterator]();
+              if (!reader) {
+                await init();
               }
 
-              const result = await iterator!.next();
-              if (result.done) {
-                return { done: true, value: undefined };
+              while (true) {
+                const lineEnd = buffer.indexOf("\n");
+                if (lineEnd !== -1) {
+                  const line = buffer.slice(0, lineEnd).replace(/\r$/, "");
+                  buffer = buffer.slice(lineEnd + 1);
+
+                  if (line === "") {
+                    if (dataLines.length > 0) {
+                      const payload = dataLines.join("\n");
+                      dataLines = [];
+                      if (payload === "[DONE]") {
+                        streamDone = true;
+                        return { done: true, value: undefined };
+                      }
+                      try {
+                        const event = parseGeminiEvent(payload);
+                        if (event) return { done: false, value: event };
+                      } catch (e) {
+                        console.warn(`[Gemini] Failed to parse SSE payload for model "${modelName}":`, e);
+                      }
+                    }
+                  } else if (line.startsWith("data: ")) {
+                    dataLines.push(line.slice(6));
+                  }
+                  continue;
+                }
+
+                if (streamDone) {
+                  return { done: true, value: undefined };
+                }
+
+                const result = await reader!.read();
+                if (result.done) {
+                  streamDone = true;
+                  if (dataLines.length > 0) {
+                    const payload = dataLines.join("\n");
+                    dataLines = [];
+                    try {
+                      const event = parseGeminiEvent(payload);
+                      if (event) return { done: false, value: event };
+                    } catch (e) {
+                      console.warn(`[Gemini] Failed to parse final SSE payload for model "${modelName}":`, e);
+                    }
+                  }
+                  return { done: true, value: undefined };
+                }
+
+                buffer += decoder.decode(result.value, { stream: true });
               }
-
-              const chunk = result.value;
-              const delta = chunk.choices[0]?.delta;
-              const finishReason = chunk.choices[0]?.finish_reason;
-
-              if (finishReason) {
-                return {
-                  done: false,
-                  value: { type: "stop", stopReason: normalizeStopReason(finishReason) },
-                };
-              }
-
-              if (delta?.content) {
-                return {
-                  done: false,
-                  value: { type: "text_delta", text: delta.content },
-                };
-              }
-
-              return this.next();
             } catch (error: unknown) {
               const msg = error instanceof Error ? error.message : String(error);
-              console.error(`Gemini stream error for model "${modelName}" (using max_tokens):`, msg);
+              console.error(`Gemini stream error for model "${modelName}":`, msg);
               throw error;
             }
           },
@@ -453,9 +615,15 @@ function normalizeStopReason(reason: string | null | undefined): string {
   if (!reason) return "";
   switch (reason) {
     case "length":
+    case "MAX_TOKENS":
       return "max_tokens";
     case "stop":
+    case "STOP":
       return "end_turn";
+    case "SAFETY":
+      return "safety";
+    case "RECITATION":
+      return "recitation";
     default:
       return reason;
   }
