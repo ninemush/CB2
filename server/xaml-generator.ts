@@ -12,13 +12,10 @@ import type { DeploymentResult } from "@shared/models/deployment";
 import type { AICenterSkill } from "./uipath-integration";
 import { isActivityAllowed } from "./uipath-activity-policy";
 import type { AutomationPattern } from "./uipath-activity-registry";
+import type { XamlGenerationContext } from "./types/uipath-package";
 import { createRequire } from "node:module";
 const _require = createRequire(import.meta.url);
 const { DOMParser } = _require("@xmldom/xmldom");
-
-let _aiCenterSkillsCtx: AICenterSkill[] = [];
-let _currentAutomationPattern: string = "";
-let _currentGenerationMode: GenerationMode = "baseline_openable";
 
 export type GenerationMode = "baseline_openable" | "full_implementation";
 
@@ -91,13 +88,6 @@ export function selectGenerationMode(
   };
 }
 
-export function setGenerationMode(mode: GenerationMode): void {
-  _currentGenerationMode = mode;
-}
-
-export function getGenerationMode(): GenerationMode {
-  return _currentGenerationMode;
-}
 
 export function applyActivityPolicy(
   xamlContent: string,
@@ -135,24 +125,12 @@ export function isReFrameworkFile(fileName: string): boolean {
   return REFRAMEWORK_FILES.has(basename);
 }
 
-export function setAICenterSkillsContext(skills: AICenterSkill[]): void {
-  _aiCenterSkillsCtx = skills || [];
+export function isCurrentPatternActivityAllowed(activity: string, genCtx?: XamlGenerationContext): boolean {
+  const pattern = genCtx?.automationPattern || "";
+  if (!pattern) return true;
+  return isActivityAllowed(activity, pattern as AutomationPattern);
 }
 
-export function setAutomationPattern(pattern: string): void {
-  _currentAutomationPattern = pattern;
-}
-
-export function isCurrentPatternActivityAllowed(activity: string): boolean {
-  if (!_currentAutomationPattern) return true;
-  return isActivityAllowed(activity, _currentAutomationPattern as AutomationPattern);
-}
-
-export function getReferencedMLSkillNames(): string[] {
-  return [..._referencedMLSkillNames];
-}
-
-const _referencedMLSkillNames: string[] = [];
 
 export type XamlGap = {
   category: "selector" | "credential" | "endpoint" | "logic" | "config" | "manual" | "agent";
@@ -746,7 +724,7 @@ type WorkflowSpec = {
   arguments?: Array<{ name: string; direction: string; type: string; required?: boolean }>;
 };
 
-function classifyActivity(ctx: ActivityContext): {
+function classifyActivity(ctx: ActivityContext, genCtx?: XamlGenerationContext): {
   activityType: string;
   activityPackage: string;
   properties: Record<string, string>;
@@ -765,7 +743,7 @@ function classifyActivity(ctx: ActivityContext): {
   }
   if (system.includes("email") || system.includes("outlook") || system.includes("smtp") || combined.includes("email") || combined.includes("mail")) {
     const emailResult = classifyEmail(ctx, combined);
-    if (!isCurrentPatternActivityAllowed(emailResult.activityType)) {
+    if (!isCurrentPatternActivityAllowed(emailResult.activityType, genCtx)) {
       return classifyGeneral(ctx, combined);
     }
     return emailResult;
@@ -789,12 +767,12 @@ function classifyActivity(ctx: ActivityContext): {
     return classifyActionCenterTask(ctx, combined);
   }
   if (combined.includes("ml skill") || combined.includes("ml model") || combined.includes("ai center") || combined.includes("ai skill") || combined.includes("predict") || combined.includes("classify") || combined.includes("classification") || combined.includes("anomaly detect") || combined.includes("nlp") || combined.includes("sentiment") || combined.includes("machine learning")) {
-    return classifyMLSkill(ctx, combined);
+    return classifyMLSkill(ctx, combined, genCtx);
   }
 
   if (combined.includes("browser") || combined.includes("web") || combined.includes("click") || combined.includes("type") || combined.includes("navigate") || combined.includes("login") || combined.includes("portal") || combined.includes("screen") || combined.includes("ui ") || combined.includes("application")) {
     const uiResult = classifyUI(ctx, combined);
-    if (!isCurrentPatternActivityAllowed(uiResult.activityType)) {
+    if (!isCurrentPatternActivityAllowed(uiResult.activityType, genCtx)) {
       return classifyGeneral(ctx, combined);
     }
     return uiResult;
@@ -1373,17 +1351,17 @@ function classifyUI(ctx: ActivityContext, combined: string): ReturnType<typeof c
   };
 }
 
-function classifyMLSkill(ctx: ActivityContext, combined: string): ReturnType<typeof classifyActivity> {
+function classifyMLSkill(ctx: ActivityContext, combined: string, genCtx?: XamlGenerationContext): ReturnType<typeof classifyActivity> {
   const gaps: XamlGap[] = [];
 
-  const matchedSkill = findMatchingAICenterSkill(ctx.name, ctx.description || "", combined);
+  const matchedSkill = findMatchingAICenterSkill(ctx.name, ctx.description || "", combined, genCtx);
   const skillName = matchedSkill ? matchedSkill.name : "";
   const inputType = matchedSkill?.inputType || "String";
   const outputType = matchedSkill?.outputType || "String";
 
-  if (matchedSkill) {
-    if (!_referencedMLSkillNames.includes(matchedSkill.name)) {
-      _referencedMLSkillNames.push(matchedSkill.name);
+  if (matchedSkill && genCtx) {
+    if (!genCtx.referencedMLSkillNames.includes(matchedSkill.name)) {
+      genCtx.referencedMLSkillNames.push(matchedSkill.name);
     }
   }
 
@@ -1430,14 +1408,15 @@ function classifyMLSkill(ctx: ActivityContext, combined: string): ReturnType<typ
   };
 }
 
-function findMatchingAICenterSkill(stepName: string, description: string, combined: string): AICenterSkill | null {
-  if (_aiCenterSkillsCtx.length === 0) return null;
+function findMatchingAICenterSkill(stepName: string, description: string, combined: string, genCtx?: XamlGenerationContext): AICenterSkill | null {
+  const skills = genCtx?.aiCenterSkills as AICenterSkill[] || [];
+  if (skills.length === 0) return null;
 
-  const deployed = _aiCenterSkillsCtx.filter(s => {
+  const deployed = skills.filter(s => {
     const st = s.status.toLowerCase();
     return st === "deployed" || st === "available";
   });
-  if (deployed.length === 0) return _aiCenterSkillsCtx[0] || null;
+  if (deployed.length === 0) return skills[0] || null;
 
   const stepLower = stepName.toLowerCase();
   const descLower = description.toLowerCase();
@@ -1969,12 +1948,13 @@ ${argsContent}              </${activityType}.Arguments>
           ${innerActivity}`;
 }
 
-function wrapInTryCatch(innerXml: string, stepName: string, errorHandling: "retry" | "catch" | "escalate" | "none", targetFramework?: TargetFramework): string {
+function wrapInTryCatch(innerXml: string, stepName: string, errorHandling: "retry" | "catch" | "escalate" | "none", targetFramework?: TargetFramework, genCtx?: XamlGenerationContext): string {
   if (errorHandling === "none") return innerXml;
 
   const isCSharp = targetFramework === "Portable";
   const concat = isCSharp ? " + " : " &amp; ";
-  const suppressDiagnostics = _currentAutomationPattern === "simple-linear" || _currentAutomationPattern === "api-data-driven";
+  const automationPattern = genCtx?.automationPattern || "";
+  const suppressDiagnostics = automationPattern === "simple-linear" || automationPattern === "api-data-driven";
 
   const strategyDesc = errorHandling === "retry" ? "Retry up to 3 times with 5s interval"
     : errorHandling === "escalate" ? "Log escalation and rethrow for manual intervention"
@@ -2189,7 +2169,7 @@ function wrapInIf(innerXml: string, condition: string, displayName: string): str
           </If>`;
 }
 
-function renderEnrichedActivities(enrichedNode: EnrichedNodeSpec, targetFramework?: TargetFramework): {
+function renderEnrichedActivities(enrichedNode: EnrichedNodeSpec, targetFramework?: TargetFramework, genCtx?: XamlGenerationContext): {
   xml: string;
   packages: string[];
   variables: VariableDecl[];
@@ -2265,12 +2245,12 @@ function renderEnrichedActivities(enrichedNode: EnrichedNodeSpec, targetFramewor
 
   let xml: string;
   if (enrichedNode.activities.length === 1) {
-    xml = wrapInTryCatch(innerXml, enrichedNode.nodeName, errorHandling, targetFramework);
+    xml = wrapInTryCatch(innerXml, enrichedNode.nodeName, errorHandling, targetFramework, genCtx);
   } else {
     const sequenceXml = `
           <Sequence DisplayName="${escapeXml(enrichedNode.nodeName)}">${innerXml}
           </Sequence>`;
-    xml = wrapInTryCatch(sequenceXml, enrichedNode.nodeName, errorHandling, targetFramework);
+    xml = wrapInTryCatch(sequenceXml, enrichedNode.nodeName, errorHandling, targetFramework, genCtx);
   }
 
   return { xml, packages, variables, gaps };
@@ -2283,7 +2263,8 @@ export function generateRichXamlFromNodes(
   projectDescription: string,
   enrichment?: EnrichmentResult | null,
   targetFramework?: TargetFramework,
-  autopilotEnabled?: boolean
+  autopilotEnabled?: boolean,
+  genCtx?: XamlGenerationContext
 ): XamlGeneratorResult {
   const allGaps: XamlGap[] = [];
   const allVariables: VariableDecl[] = [];
@@ -2355,7 +2336,7 @@ export function generateRichXamlFromNodes(
       activities += `
         <!-- Agent Step: ${nodeTrace} -->`;
       const agentXml = renderAgentTaskSequence(node.name, node.description || "", node.role || "");
-      const wrappedAgent = wrapInTryCatch(agentXml, node.name, "catch", targetFramework);
+      const wrappedAgent = wrapInTryCatch(agentXml, node.name, "catch", targetFramework, genCtx);
       activities += wrappedAgent;
       allVariables.push({ name: "str_AgentInput", type: "String", defaultValue: '""' });
       allVariables.push({ name: "str_AgentOutput", type: "String", defaultValue: '""' });
@@ -2383,13 +2364,13 @@ export function generateRichXamlFromNodes(
         const targetEnriched = enrichedMap.get(outEdge.target);
         let branchXml: string;
         if (targetEnriched && targetEnriched.activities.length > 0) {
-          const rendered = renderEnrichedActivities(targetEnriched, targetFramework);
+          const rendered = renderEnrichedActivities(targetEnriched, targetFramework, genCtx);
           branchXml = rendered.xml;
           rendered.packages.forEach(p => usedPackages.add(p));
           allVariables.push(...rendered.variables);
           allGaps.push(...rendered.gaps);
         } else {
-          const classified = classifyActivity({ system: targetNode.system || "", nodeType: targetNode.nodeType, name: targetNode.name, description: targetNode.description || "", role: targetNode.role || "", isPainPoint: targetNode.isPainPoint || false, targetFramework });
+          const classified = classifyActivity({ system: targetNode.system || "", nodeType: targetNode.nodeType, name: targetNode.name, description: targetNode.description || "", role: targetNode.role || "", isPainPoint: targetNode.isPainPoint || false, targetFramework }, genCtx);
           branchXml = renderActivity(classified.activityType, targetNode.name, classified.properties, classified.selectorHint, undefined, undefined, targetFramework);
         }
         const label = (outEdge.label || "").toLowerCase();
@@ -2401,7 +2382,7 @@ export function generateRichXamlFromNodes(
       }
 
       const agentDecisionXml = renderAgentDecision(node.name, node.description || "", node.role || "", thenActivities, elseActivities);
-      const wrappedDecision = wrapInTryCatch(agentDecisionXml, node.name, "catch", targetFramework);
+      const wrappedDecision = wrapInTryCatch(agentDecisionXml, node.name, "catch", targetFramework, genCtx);
       activities += wrappedDecision;
       allVariables.push({ name: "bool_AgentDecisionResult", type: "Boolean", defaultValue: "False" });
       allVariables.push({ name: "str_AgentDecisionInput", type: "String", defaultValue: '""' });
@@ -2433,13 +2414,13 @@ export function generateRichXamlFromNodes(
           const label = (outEdge.label || "").toLowerCase();
           let branchXml: string;
           if (targetEnriched && targetEnriched.activities.length > 0) {
-            const rendered = renderEnrichedActivities(targetEnriched, targetFramework);
+            const rendered = renderEnrichedActivities(targetEnriched, targetFramework, genCtx);
             branchXml = rendered.xml;
             rendered.packages.forEach(p => usedPackages.add(p));
             allVariables.push(...rendered.variables);
             allGaps.push(...rendered.gaps);
           } else {
-            const classified = classifyActivity({ system: targetNode.system || "", nodeType: targetNode.nodeType, name: targetNode.name, description: targetNode.description || "", role: targetNode.role || "", isPainPoint: targetNode.isPainPoint || false, targetFramework });
+            const classified = classifyActivity({ system: targetNode.system || "", nodeType: targetNode.nodeType, name: targetNode.name, description: targetNode.description || "", role: targetNode.role || "", isPainPoint: targetNode.isPainPoint || false, targetFramework }, genCtx);
             branchXml = renderActivity(classified.activityType, targetNode.name, classified.properties, classified.selectorHint, undefined, undefined, targetFramework);
           }
           if (label.includes("yes") || label.includes("true") || label.includes("approve") || label.includes("pass")) {
@@ -2468,7 +2449,7 @@ export function generateRichXamlFromNodes(
 
       activities += `
         <!-- Source: ${nodeTrace} | AI-Enriched: ${enrichedSpec.activities.length} activities -->`;
-      const rendered = renderEnrichedActivities(enrichedSpec, targetFramework);
+      const rendered = renderEnrichedActivities(enrichedSpec, targetFramework, genCtx);
       rendered.packages.forEach(p => usedPackages.add(p));
       allVariables.push(...rendered.variables);
       allGaps.push(...rendered.gaps);
@@ -2517,7 +2498,7 @@ export function generateRichXamlFromNodes(
           isPainPoint: targetNode.isPainPoint || false,
           targetFramework,
         };
-        const classified = classifyActivity(branchCtx);
+        const classified = classifyActivity(branchCtx, genCtx);
         const branchActivity = renderActivity(classified.activityType, targetNode.name, classified.properties, classified.selectorHint, undefined, undefined, targetFramework);
         const label = (outEdge.label || "").toLowerCase();
         if (label.includes("yes") || label.includes("true") || label.includes("approve") || label.includes("pass")) {
@@ -2547,7 +2528,7 @@ export function generateRichXamlFromNodes(
       continue;
     }
 
-    const classified = classifyActivity(ctx);
+    const classified = classifyActivity(ctx, genCtx);
     usedPackages.add(classified.activityPackage);
     for (const cv of classified.variables) {
       allVariables.push({ name: enforceVariableName(cv.name, mapClrType(cv.type)), type: cv.type, defaultValue: cv.defaultValue });
@@ -2574,7 +2555,7 @@ export function generateRichXamlFromNodes(
 
     activities += `
         <!-- Source: ${nodeTrace} | Activity: ${classified.activityType}${node.isPainPoint ? " | ⚠ Pain Point" : ""} -->`;
-    const wrappedXml = wrapInTryCatch(activityXml, node.name, classified.errorHandling, targetFramework);
+    const wrappedXml = wrapInTryCatch(activityXml, node.name, classified.errorHandling, targetFramework, genCtx);
     activities += wrappedXml;
   }
 
@@ -2621,9 +2602,9 @@ export function generateRichXamlFromSpec(
   sddContent?: string,
   aiCenterSkills?: AICenterSkill[],
   targetFramework?: TargetFramework,
-  autopilotEnabled?: boolean
+  autopilotEnabled?: boolean,
+  genCtx?: XamlGenerationContext
 ): XamlGeneratorResult {
-  if (aiCenterSkills) setAICenterSkillsContext(aiCenterSkills);
   const allGaps: XamlGap[] = [];
   const allVariables: VariableDecl[] = [];
   const usedPackages = new Set<string>(["UiPath.System.Activities"]);
@@ -2661,7 +2642,7 @@ export function generateRichXamlFromSpec(
       activities += `
         <!-- Agent Step: ${escapeXml(stepName)} -->`;
       const agentXml = renderAgentTaskSequence(stepName, step.notes || "", step.role || "");
-      const wrappedAgent = wrapInTryCatch(agentXml, stepName, "catch", targetFramework);
+      const wrappedAgent = wrapInTryCatch(agentXml, stepName, "catch", targetFramework, genCtx);
       activities += wrappedAgent;
       allVariables.push({ name: "str_AgentInput", type: "String", defaultValue: '""' });
       allVariables.push({ name: "str_AgentOutput", type: "String", defaultValue: '""' });
@@ -2679,7 +2660,7 @@ export function generateRichXamlFromSpec(
       activities += `
         <!-- Agent Decision: ${escapeXml(stepName)} -->`;
       const agentDecisionXml = renderAgentDecision(stepName, step.notes || "", step.role || "", "", "");
-      const wrappedDecision = wrapInTryCatch(agentDecisionXml, stepName, "catch", targetFramework);
+      const wrappedDecision = wrapInTryCatch(agentDecisionXml, stepName, "catch", targetFramework, genCtx);
       activities += wrappedDecision;
       allVariables.push({ name: "bool_AgentDecisionResult", type: "Boolean", defaultValue: "False" });
       allVariables.push({ name: "str_AgentDecisionInput", type: "String", defaultValue: '""' });
@@ -2740,7 +2721,7 @@ export function generateRichXamlFromSpec(
       }
 
       const errorHandling = step.errorHandling || "none";
-      const wrappedXml = wrapInTryCatch(activityXml, stepName, errorHandling, targetFramework);
+      const wrappedXml = wrapInTryCatch(activityXml, stepName, errorHandling, targetFramework, genCtx);
       activities += wrappedXml;
     } else {
       const ctx: ActivityContext = {
@@ -2754,7 +2735,7 @@ export function generateRichXamlFromSpec(
         autopilotEnabled,
       };
 
-      const classified = classifyActivity(ctx);
+      const classified = classifyActivity(ctx, genCtx);
       usedPackages.add(classified.activityPackage);
       allVariables.push(...classified.variables);
       allGaps.push(...classified.gaps);
@@ -2769,7 +2750,7 @@ export function generateRichXamlFromSpec(
         targetFramework
       );
 
-      const wrappedXml = wrapInTryCatch(activityXml, stepName, classified.errorHandling, targetFramework);
+      const wrappedXml = wrapInTryCatch(activityXml, stepName, classified.errorHandling, targetFramework, genCtx);
       activities += wrappedXml;
     }
   }

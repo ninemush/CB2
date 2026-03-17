@@ -538,6 +538,7 @@ export function registerUiPathRoutes(app: Express): void {
           archiveManifest: cachedPipeline.archiveManifest,
           usedFallbackStubs: cachedPipeline.usedFallbackStubs,
           generationMode: cachedPipeline.generationMode,
+          referencedMLSkillNames: cachedPipeline.referencedMLSkillNames || [],
         };
       } else {
         try {
@@ -555,6 +556,7 @@ export function registerUiPathRoutes(app: Express): void {
             archiveManifest: pipelineResult.archiveManifest,
             usedFallbackStubs: pipelineResult.usedFallbackStubs,
             generationMode: pipelineResult.generationMode,
+            referencedMLSkillNames: pipelineResult.referencedMLSkillNames || [],
           };
         } catch (err: any) {
           if (err instanceof QualityGateError) {
@@ -687,7 +689,7 @@ export function registerUiPathRoutes(app: Express): void {
 
             const deployResult = await deployAllArtifacts(reconciledArtifacts, releaseId, releaseKey, releaseName, (step) => {
               sendEvent({ deployStatus: step });
-            });
+            }, prebuiltResult?.referencedMLSkillNames);
 
             const reconciliationActions = reconciliation.actions;
             const removedArtifacts = reconciliationActions

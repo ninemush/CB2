@@ -1195,8 +1195,7 @@ describe("UiPath Generation Regression Tests", () => {
         description: "Test simple linear automation",
         workflows: [{ name: "Main", steps: [{ name: "Log Start", description: "Log start message" }] }],
         dependencies: ["UiPath.System.Activities"],
-        _processNodes: simpleLinearNodes,
-        _processEdges: simpleLinearEdges,
+        internal: { processNodes: simpleLinearNodes, processEdges: simpleLinearEdges },
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
 
@@ -1218,8 +1217,7 @@ describe("UiPath Generation Regression Tests", () => {
         description: "Test API driven automation",
         workflows: [{ name: "Main", steps: [{ name: "Call API", description: "HTTP request step" }] }],
         dependencies: ["UiPath.System.Activities", "UiPath.Web.Activities"],
-        _processNodes: apiDataDrivenNodes,
-        _processEdges: apiDataDrivenEdges,
+        internal: { processNodes: apiDataDrivenNodes, processEdges: apiDataDrivenEdges },
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
 
@@ -1240,6 +1238,7 @@ describe("UiPath Generation Regression Tests", () => {
         description: "Test result shape",
         workflows: [{ name: "Main", steps: [{ name: "Step", description: "Step" }] }],
         dependencies: ["UiPath.System.Activities"],
+        internal: {},
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
 
@@ -1264,8 +1263,7 @@ describe("UiPath Generation Regression Tests", () => {
         description: "Low confidence test",
         workflows: [],
         dependencies: ["UiPath.System.Activities"],
-        _processNodes: lowConfidenceNodes,
-        _processEdges: lowConfidenceEdges,
+        internal: { processNodes: lowConfidenceNodes, processEdges: lowConfidenceEdges },
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
 
@@ -1292,6 +1290,7 @@ describe("UiPath Generation Regression Tests", () => {
         description: "Manifest structure test",
         workflows: [{ name: "Main", steps: [{ name: "Step 1", description: "Do something" }] }],
         dependencies: ["UiPath.System.Activities"],
+        internal: {},
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
 
@@ -1308,8 +1307,7 @@ describe("UiPath Generation Regression Tests", () => {
         description: "Full validation test",
         workflows: [{ name: "Main", steps: [{ name: "Step 1", description: "Process data" }] }],
         dependencies: ["UiPath.System.Activities"],
-        _processNodes: simpleLinearNodes,
-        _processEdges: simpleLinearEdges,
+        internal: { processNodes: simpleLinearNodes, processEdges: simpleLinearEdges },
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
 
@@ -1326,6 +1324,7 @@ describe("UiPath Generation Regression Tests", () => {
         description: "Quality gate integration test",
         workflows: [{ name: "Main", steps: [{ name: "Step 1", description: "Process" }] }],
         dependencies: ["UiPath.System.Activities"],
+        internal: {},
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
 
@@ -1342,6 +1341,7 @@ describe("UiPath Generation Regression Tests", () => {
         description: "Verify flat scaffold with no REFramework files",
         workflows: [{ name: "Main", steps: [{ name: "Step 1", description: "Simple step" }] }],
         dependencies: ["UiPath.System.Activities"],
+        internal: {},
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
 

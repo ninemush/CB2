@@ -11,6 +11,7 @@ import { approveDocument } from "./document-service";
 import { escapeXml } from "./lib/xml-utils";
 import { sanitizeAndParseJson, trySanitizeAndParseJson, stripCodeFences, sanitizeJsonString } from "./lib/json-utils";
 import { z } from "zod";
+import { uipathPackageSchema, type UiPathPackage } from "./types/uipath-package";
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel,
   Table, TableRow, TableCell, WidthType, BorderStyle,
@@ -82,41 +83,6 @@ IMPORTANT RULES:
 
 Return ONLY the JSON object, no other text.`;
 
-const VALID_ERROR_HANDLING = new Set(["retry", "catch", "escalate", "none"]);
-
-const uipathPackageSchema = z.object({
-  projectName: z.string().default("UiPathPackage"),
-  description: z.string().default(""),
-  dependencies: z.array(z.string()).default([]),
-  workflows: z.array(z.object({
-    name: z.string().default("Main"),
-    description: z.string().default(""),
-    variables: z.array(z.object({
-      name: z.string().default("variable"),
-      type: z.string().default("String"),
-      defaultValue: z.preprocess(v => v == null ? "" : String(v), z.string().default("")),
-      scope: z.string().optional().default("workflow"),
-    })).optional().default([]),
-    steps: z.array(z.object({
-      activity: z.string().default("Activity"),
-      activityType: z.string().optional().default("ui:Comment"),
-      activityPackage: z.string().optional().default("UiPath.System.Activities"),
-      properties: z.record(z.unknown()).default({}),
-      selectorHint: z.preprocess(
-        v => typeof v === "object" && v !== null ? JSON.stringify(v) : v,
-        z.string().nullable().optional().default(null)
-      ),
-      errorHandling: z.preprocess(
-        v => {
-          const normalized = typeof v === "string" ? v.trim().toLowerCase() : "";
-          return VALID_ERROR_HANDLING.has(normalized) ? normalized : "none";
-        },
-        z.enum(["retry", "catch", "escalate", "none"]).optional().default("none")
-      ),
-      notes: z.preprocess(v => v == null ? "" : String(v), z.string().default("")),
-    })).default([]),
-  })).default([]),
-});
 
 function repairTruncatedPackageJson(rawText: string): any | null {
   try {
@@ -1159,7 +1125,7 @@ ${content}`
       const approvedSdd = await documentStorage.getDocument(sddApprovalCheck.documentId);
       const sddContent = approvedSdd?.content || "";
 
-      const isServerless = (pkg as any).targetFramework === "Portable" || (pkg as any).isServerless;
+      const isServerless = pkg.internal?.targetFramework === "Portable" || pkg.internal?.isServerless;
       const libPrefix = isServerless ? "lib/net6.0/" : "lib/net45/";
 
       const nupkgZip = new AdmZip(pipelineResult.packageBuffer);
@@ -1782,7 +1748,7 @@ function extractSddSection(sddContent: string, heading: string): string {
   return result.join("\n").trim();
 }
 
-function extractAgentPrompt(sddContent: string, type: "system" | "user", pkg: any): string {
+function extractAgentPrompt(sddContent: string, type: "system" | "user", pkg: UiPathPackage): string {
   const projectName = pkg.projectName || "Automation";
   const description = pkg.description || "";
 
@@ -1823,7 +1789,7 @@ function extractAgentPrompt(sddContent: string, type: "system" | "user", pkg: an
   return template;
 }
 
-function extractToolDefinitions(sddContent: string, pkg: any): any[] {
+function extractToolDefinitions(sddContent: string, pkg: UiPathPackage): any[] {
   const tools: any[] = [];
 
   const agentTools = pkg.agents?.[0]?.tools || [];
@@ -1858,7 +1824,7 @@ function extractToolDefinitions(sddContent: string, pkg: any): any[] {
   return tools;
 }
 
-function generateKBPlaceholder(sddContent: string, pkg: any): string {
+function generateKBPlaceholder(sddContent: string, pkg: UiPathPackage): string {
   const projectName = pkg.projectName || "Automation";
   let md = `# Knowledge Base — ${projectName}\n\n`;
   md += `This folder should contain the documents the agent needs for retrieval-augmented generation (RAG).\n\n`;
@@ -1885,7 +1851,7 @@ function generateKBPlaceholder(sddContent: string, pkg: any): string {
   return md;
 }
 
-function generateAgentConfig(agentName: string, sddContent: string, pkg: any): any {
+function generateAgentConfig(agentName: string, sddContent: string, pkg: UiPathPackage): any {
   const agent = pkg.agents?.[0] || {};
   return {
     name: agentName,

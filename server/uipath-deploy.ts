@@ -3,7 +3,6 @@ import { uipathFetch, isGenuineApiResponse, isValidCreation } from "./uipath-fet
 import { getToken as getSharedToken, getTmToken, getTestManagerBaseUrl, type UiPathAuthConfig } from "./uipath-auth";
 import { getLLM } from "./lib/llm";
 import { sanitizeJsonString, stripCodeFences } from "./lib/json-utils";
-import { getReferencedMLSkillNames } from "./xaml-generator";
 
 function odataEscape(value: string): string {
   return value.replace(/'/g, "''");
@@ -4237,16 +4236,13 @@ async function provisionAgentArtifacts(
   return results;
 }
 
-function extractReferencedMLSkillNames(artifacts: OrchestratorArtifacts): string[] {
+function extractReferencedMLSkillNames(artifacts: OrchestratorArtifacts, trackedMLSkillNames?: string[]): string[] {
   const names: string[] = [];
-  try {
-    const tracked = getReferencedMLSkillNames();
-    if (tracked && tracked.length > 0) {
-      for (const n of tracked) {
-        if (!names.includes(n)) names.push(n);
-      }
+  if (trackedMLSkillNames && trackedMLSkillNames.length > 0) {
+    for (const n of trackedMLSkillNames) {
+      if (!names.includes(n)) names.push(n);
     }
-  } catch { }
+  }
 
   const artifactStr = JSON.stringify(artifacts || {}).toLowerCase();
   const mlSkillPattern = /ml\s*skill[^"]*"([^"]+)"/gi;
@@ -4459,7 +4455,8 @@ export async function deployAllArtifacts(
   releaseId: number | null,
   releaseKey: string | null,
   releaseName: string | null = null,
-  onProgress?: (step: string) => void
+  onProgress?: (step: string) => void,
+  trackedMLSkillNames?: string[]
 ): Promise<{ results: DeploymentResult[]; summary: string }> {
   const config = await getUiPathConfig();
   if (!config) {
@@ -4491,7 +4488,7 @@ export async function deployAllArtifacts(
       console.log(`[UiPath Deploy] Service availability: AC=${svcAvail.actionCenter}, TM=${svcAvail.testManager}, DU=${svcAvail.documentUnderstanding}, GenExtract=${svcAvail.generativeExtraction}, CommsMining=${svcAvail.communicationsMining}, DS=${svcAvail.dataService}, PM=${svcAvail.platformManagement}, Env=${svcAvail.environments}, Trig=${svcAvail.triggers}, Agents=${svcAvail.agents}, AI=${svcAvail.aiCenter}, Maestro=${svcAvail.maestro}`);
     } catch { /* non-critical — proceed without filtering */ }
 
-    const referencedSkillNames = extractReferencedMLSkillNames(artifacts);
+    const referencedSkillNames = extractReferencedMLSkillNames(artifacts, trackedMLSkillNames);
     if (referencedSkillNames.length > 0 && svcAvail?.aiCenter && svcAvail.aiCenterSkills && svcAvail.aiCenterSkills.length > 0) {
       onProgress?.(`Validating ${referencedSkillNames.length} referenced AI Center ML Skill(s)...`);
       const deployed: string[] = [];

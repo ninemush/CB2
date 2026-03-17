@@ -12,10 +12,10 @@ import {
 } from "./uipath-integration";
 import {
   generateDeveloperHandoffGuide,
-  setAICenterSkillsContext,
   makeUiPathCompliant,
   type XamlGap,
 } from "./xaml-generator";
+import type { UiPathPackage, UiPathPackageSpec, UiPathPackageInternal } from "./types/uipath-package";
 import { analyzeAndFix, type AnalysisReport } from "./workflow-analyzer";
 import type { QualityGateResult } from "./uipath-quality-gate";
 
@@ -36,6 +36,7 @@ export interface PipelineResult {
   qualityGateWarnings: string[];
   generationMode: GenerationMode;
   usedFallbackStubs: boolean;
+  referencedMLSkillNames: string[];
 }
 
 export interface DhgResult {
@@ -67,7 +68,7 @@ function evictOldestPipelineCacheEntry(): void {
   }
 }
 
-function computeFingerprint(pkg: any, sddContent: string, nodes: any[], edges: any[]): string {
+function computeFingerprint(pkg: UiPathPackageSpec, sddContent: string, nodes: any[], edges: any[]): string {
   const hash = createHash("sha256");
   hash.update(JSON.stringify(pkg));
   hash.update(sddContent);
@@ -108,19 +109,21 @@ async function extractOrchestratorArtifacts(sddContent: string | undefined): Pro
 }
 
 function enrichPackageWithContext(
-  pkg: any,
+  pkg: UiPathPackageSpec,
   context: IdeaContext,
   orchestratorArtifacts: any | null,
-): any {
-  const enriched = { ...pkg };
-  if (context.sdd?.content) enriched._sddContent = context.sdd.content;
-  if (context.idea.automationType) enriched._automationType = context.idea.automationType;
+  aiCenterSkills?: any[],
+): UiPathPackage {
+  const internal: UiPathPackage["internal"] = {};
+  if (context.sdd?.content) internal.sddContent = context.sdd.content;
+  if (context.idea.automationType) internal.automationType = context.idea.automationType as UiPathPackageInternal["automationType"];
   if (context.mapNodes.length > 0) {
-    enriched._processNodes = context.mapNodes;
-    enriched._processEdges = context.processEdges;
+    internal.processNodes = context.mapNodes;
+    internal.processEdges = context.processEdges;
   }
-  if (orchestratorArtifacts) enriched._orchestratorArtifacts = orchestratorArtifacts;
-  return enriched;
+  if (orchestratorArtifacts) internal.orchestratorArtifacts = orchestratorArtifacts;
+  if (aiCenterSkills) internal.aiCenterSkills = aiCenterSkills;
+  return { ...pkg, internal };
 }
 
 export function computeVersion(): string {
@@ -135,16 +138,18 @@ export function findUiPathMessage(messages: any[]): any | null {
   ) || null;
 }
 
-export function parseUiPathPackage(uipathMsg: any): any {
+export function parseUiPathPackage(uipathMsg: any): UiPathPackage {
   let jsonStr = uipathMsg.content.slice(8);
   if (jsonStr.endsWith("]")) jsonStr = jsonStr.slice(0, -1);
   const braceEnd = jsonStr.lastIndexOf("}");
   if (braceEnd !== -1) jsonStr = jsonStr.slice(0, braceEnd + 1);
-  return JSON.parse(jsonStr);
+  const parsed = JSON.parse(jsonStr);
+  if (!parsed.internal) parsed.internal = {};
+  return parsed as UiPathPackage;
 }
 
 function buildDhgFromBuildResult(
-  pkg: any,
+  pkg: UiPathPackage,
   ctx: IdeaContext,
   buildResult: BuildResult,
 ): DhgResult {
@@ -159,14 +164,14 @@ function buildDhgFromBuildResult(
     analysisReports.push({ fileName: entry.name, report });
   }
 
-  const enrichment = pkg._enrichment || pkg.enrichment || null;
-  const useReFramework = enrichment?.useReFramework ?? pkg._useReFramework ?? pkg.useReFramework ?? false;
-  const painPoints = (pkg._painPoints || pkg.painPoints || []).map((p: any) => ({
+  const enrichment = pkg.internal?.enrichment || null;
+  const useReFramework = enrichment?.useReFramework ?? pkg.internal?.useReFramework ?? false;
+  const painPoints = (pkg.internal?.painPoints || []).map((p: any) => ({
     name: p.name || "",
     description: p.description || "",
   }));
 
-  const extractedArtifacts = pkg._extractedArtifacts || pkg.extractedArtifacts || undefined;
+  const extractedArtifacts = pkg.internal?.extractedArtifacts || undefined;
 
   const dhgContent = generateDeveloperHandoffGuide({
     projectName: pkg.projectName || ctx.idea.title.replace(/\s+/g, "_"),
@@ -192,7 +197,7 @@ function buildDhgFromBuildResult(
 
 export async function generateUiPathPackage(
   ideaId: string,
-  pkg: any,
+  pkg: UiPathPackageSpec,
   options?: {
     version?: string;
     generationMode?: GenerationMode;
@@ -204,7 +209,6 @@ export async function generateUiPathPackage(
 
   const ctx = await loadIdeaContext(ideaId);
   const artifacts = await extractOrchestratorArtifacts(ctx.sdd?.content);
-  const enriched = enrichPackageWithContext(pkg, ctx, artifacts);
 
   const fp = computeFingerprint(pkg, ctx.sdd?.content || "", ctx.mapNodes, ctx.processEdges);
   const cacheKey = `${ideaId}:${mode}`;
@@ -221,11 +225,12 @@ export async function generateUiPathPackage(
     const aiResult = await getAICenterSkills();
     if (aiResult.available) aiSkills = aiResult.skills;
   } catch {}
-  setAICenterSkillsContext(aiSkills);
+
+  const enriched = enrichPackageWithContext(pkg, ctx, artifacts, aiSkills);
 
   const buildResult = await buildNuGetPackage(enriched, ver, ideaId, mode);
 
-  const dhgResult = buildDhgFromBuildResult(pkg, ctx, buildResult);
+  const dhgResult = buildDhgFromBuildResult(enriched, ctx, buildResult);
 
   const qgResult = buildResult.qualityGateResult;
   const qualityGateBlocking = mode === "baseline_openable"
@@ -252,6 +257,7 @@ export async function generateUiPathPackage(
     qualityGateWarnings,
     generationMode: mode,
     usedFallbackStubs: buildResult.usedFallbackStubs,
+    referencedMLSkillNames: buildResult.referencedMLSkillNames || [],
   };
 
   evictOldestPipelineCacheEntry();
@@ -270,7 +276,7 @@ export function getCachedPipelineResult(ideaId: string, mode?: GenerationMode): 
 
 export async function generateDhg(
   ideaId: string,
-  pkg: any,
+  pkg: UiPathPackage,
 ): Promise<DhgResult> {
   const cached = getCachedPipelineResult(ideaId);
   if (cached) {

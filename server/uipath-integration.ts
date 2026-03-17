@@ -20,9 +20,7 @@ import {
   makeUiPathCompliant,
   validateXamlContent,
   generateStubWorkflow,
-  setAutomationPattern,
   selectGenerationMode,
-  setGenerationMode,
   applyActivityPolicy,
   isReFrameworkFile,
   type GenerationMode,
@@ -33,6 +31,8 @@ import {
   type XamlValidationViolation,
   type DhgQualityIssue,
 } from "./xaml-generator";
+export type { GenerationMode };
+import type { XamlGenerationContext, UiPathPackage } from "./types/uipath-package";
 import { enrichWithAI, type EnrichmentResult } from "./ai-xaml-enricher";
 import { analyzeAndFix, setGovernancePolicies, type AnalysisReport } from "./workflow-analyzer";
 import { runQualityGate, formatQualityGateViolations, classifyQualityIssues, getBlockingFiles, hasOnlyWarnings, hasBlockingIssues, type QualityGateResult, type ClassifiedIssue } from "./uipath-quality-gate";
@@ -116,6 +116,7 @@ type CachedBuild = {
   xamlEntries: { name: string; content: string }[];
   dependencyMap: Record<string, string>;
   archiveManifest: string[];
+  referencedMLSkillNames?: string[];
 };
 
 const packageBuildCache = new Map<string, CachedBuild>();
@@ -338,7 +339,7 @@ function generateUuid(): string {
   return uuid;
 }
 
-function generateConfigXlsx(pkg: any, sddContent?: string, orchestratorArtifacts?: any): string {
+function generateConfigXlsx(projectName: string, sddContent?: string, orchestratorArtifacts?: any): string {
   const settingsRows: string[][] = [["Name", "Value", "Description"]];
   const constantsRows: string[][] = [["Name", "Value", "Description"]];
 
@@ -403,10 +404,10 @@ function generateConfigXlsx(pkg: any, sddContent?: string, orchestratorArtifacts
   if (hasQueues) {
     settingsRows.push(["OrchestratorQueueName", orchestratorArtifacts.queues[0].name, "Primary transaction queue"]);
     settingsRows.push(["MaxRetryNumber", "3", "REFramework max retry attempts per transaction"]);
-    settingsRows.push(["ProcessName", pkg.projectName || "Automation", "REFramework process name"]);
+    settingsRows.push(["ProcessName", projectName || "Automation", "REFramework process name"]);
   }
 
-  constantsRows.push(["ApplicationName", pkg.projectName || "Automation", "Process name"]);
+  constantsRows.push(["ApplicationName", projectName || "Automation", "Process name"]);
   constantsRows.push(["Version", "1.0.0", "Package version"]);
   constantsRows.push(["MaxWaitTime", "30000", "Max wait time in milliseconds"]);
   constantsRows.push(["RetryInterval", "5000", "Retry interval in milliseconds"]);
@@ -449,16 +450,15 @@ export type BuildResult = {
   archiveManifest: string[];
   usedFallbackStubs: boolean;
   generationMode: GenerationMode;
+  referencedMLSkillNames: string[];
 };
 
-export type GenerationMode = "baseline_openable" | "full_implementation";
-
-export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ideaId?: string, generationMode: GenerationMode = "full_implementation"): Promise<BuildResult> {
+export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1.0.0", ideaId?: string, generationMode: GenerationMode = "full_implementation"): Promise<BuildResult> {
   const projectName = (pkg.projectName || "Automation").replace(/\s+/g, "_");
-  const sddContent = pkg._sddContent || "";
-  const orchestratorArtifacts = pkg._orchestratorArtifacts || null;
-  const processNodes = pkg._processNodes || [];
-  const processEdges = pkg._processEdges || [];
+  const sddContent = pkg.internal?.sddContent || "";
+  const orchestratorArtifacts = pkg.internal?.orchestratorArtifacts || null;
+  const processNodes = pkg.internal?.processNodes || [];
+  const processEdges = pkg.internal?.processEdges || [];
 
   let fingerprint: string | undefined;
   const buildCacheKey = ideaId ? `${ideaId}:${generationMode}` : undefined;
@@ -471,7 +471,7 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
         packageBuildCache.delete(buildCacheKey);
       } else {
         console.log(`[UiPath Cache] HIT for ${buildCacheKey} — skipping AI enrichment and XAML generation`);
-        return { buffer: cached.buffer, gaps: cached.gaps, usedPackages: cached.usedPackages, cacheHit: true, qualityGateResult: cached.qualityGateResult, xamlEntries: cached.xamlEntries, dependencyMap: cached.dependencyMap, archiveManifest: cached.archiveManifest, usedFallbackStubs: false, generationMode };
+        return { buffer: cached.buffer, gaps: cached.gaps, usedPackages: cached.usedPackages, cacheHit: true, qualityGateResult: cached.qualityGateResult, xamlEntries: cached.xamlEntries, dependencyMap: cached.dependencyMap, archiveManifest: cached.archiveManifest, usedFallbackStubs: false, generationMode, referencedMLSkillNames: cached.referencedMLSkillNames || [] };
       }
     }
     if (cached && cached.fingerprint === fingerprint && cached.version !== version) {
@@ -531,9 +531,13 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
   );
   const modeConfig = selectGenerationMode(automationPattern);
   generationMode = modeConfig.mode;
-  setGenerationMode(generationMode);
   const useReFramework = modeConfig.blockReFramework ? false : shouldUseReFramework(automationPattern);
-  setAutomationPattern(automationPattern);
+  const genCtx: XamlGenerationContext = {
+    generationMode,
+    automationPattern,
+    aiCenterSkills: pkg.internal?.aiCenterSkills || [],
+    referencedMLSkillNames: [],
+  };
   console.log(`[UiPath] Automation pattern: ${automationPattern}, generationMode: ${generationMode}, useReFramework: ${useReFramework}, reason: ${modeConfig.reason}`);
   const queueName = enrichment?.reframeworkConfig?.queueName
     || orchestratorArtifacts?.queues?.[0]?.name
@@ -568,9 +572,9 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
     },
   };
 
-  const explicitFramework = (pkg as any).targetFramework;
+  const explicitFramework = pkg.internal?.targetFramework;
   const isServerless = explicitFramework === "Portable"
-    || !!(pkg as any).isServerless
+    || !!pkg.internal?.isServerless
     || (!explicitFramework && !!(_probeCache?.serverlessDetected) && !_probeCache?.flags?.hasUnattendedSlots);
     const libPath = isServerless ? "lib/net6.0" : "lib/net45";
     const xamlResults: XamlGeneratorResult[] = [];
@@ -640,7 +644,7 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
     const xamlEntries: { name: string; content: string }[] = [];
     const deferredWrites = new Map<string, string>();
     const tf: TargetFramework = isServerless ? "Portable" : "Windows";
-    const apEnabled = !!(pkg as any).autopilotEnabled || !!(_probeCache?.flags?.autopilot);
+    const apEnabled = !!pkg.internal?.autopilotEnabled || !!(_probeCache?.flags?.autopilot);
     const earlyStubFallbacks: string[] = [];
     const allPolicyBlocked: Array<{ file: string; activities: string[] }> = [];
     const collectedQualityIssues: DhgQualityIssue[] = [];
@@ -713,7 +717,7 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
         );
         if (decompNodes.length > 0) {
           const result = tryGenerateOrStub(
-            () => generateRichXamlFromNodes(decompNodes, decompEdges, wfName, decomp.description || "", enrichment, tf, apEnabled),
+            () => generateRichXamlFromNodes(decompNodes, decompEdges, wfName, decomp.description || "", enrichment, tf, apEnabled, genCtx),
             wfName,
             decomp.description || "",
           );
@@ -732,7 +736,7 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
     for (const wf of workflows) {
       const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
       const result = tryGenerateOrStub(
-        () => generateRichXamlFromSpec(wf, sddContent || undefined, undefined, tf, apEnabled),
+        () => generateRichXamlFromSpec(wf, sddContent || undefined, undefined, tf, apEnabled, genCtx),
         wfName,
         wf.name || "Workflow",
       );
@@ -749,7 +753,7 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
     if (!hasMain && processNodes.length > 0 && !enrichment?.decomposition?.length) {
       const processFileName = useReFramework ? "Process" : projectName;
       const processResult = tryGenerateOrStub(
-        () => generateRichXamlFromNodes(processNodes, processEdges, processFileName, pkg.description || "", enrichment, tf, apEnabled),
+        () => generateRichXamlFromNodes(processNodes, processEdges, processFileName, pkg.description || "", enrichment, tf, apEnabled, genCtx),
         processFileName,
         pkg.description || "",
       );
@@ -813,7 +817,7 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
       deferredWrites.set(`${libPath}/Main.xaml`, compliancePass(mainXaml, "Main.xaml"));
     }
 
-    const configCsv = generateConfigXlsx(pkg, sddContent || undefined, orchestratorArtifacts);
+    const configCsv = generateConfigXlsx(projectName, sddContent || undefined, orchestratorArtifacts);
     archive.append(configCsv, { name: `${libPath}/Data/Config.xlsx` });
 
     const allXamlContent = xamlEntries.map(e => e.content).join("\n");
@@ -1359,10 +1363,10 @@ export async function buildNuGetPackage(pkg: any, version: string = "1.0.0", ide
       enrichment,
       useReFramework,
       painPoints,
-      deploymentResults: pkg._deploymentResults || undefined,
+      deploymentResults: pkg.internal?.deploymentResults || undefined,
       extractedArtifacts: orchestratorArtifacts || undefined,
       analysisReports,
-      automationType: pkg._automationType || undefined,
+      automationType: pkg.internal?.automationType || undefined,
       targetFramework: tf,
       autopilotEnabled: apEnabled,
       generationMode,
@@ -1501,10 +1505,10 @@ ${depEntries}
 
   if (buildCacheKey && fingerprint) {
     evictOldestCacheEntry();
-    packageBuildCache.set(buildCacheKey, { fingerprint, version, buffer, gaps: allGaps, usedPackages: allUsedPkgs, enrichment, qualityGatePassed: qualityGateResult.passed, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest });
+    packageBuildCache.set(buildCacheKey, { fingerprint, version, buffer, gaps: allGaps, usedPackages: allUsedPkgs, enrichment, qualityGatePassed: qualityGateResult.passed, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, referencedMLSkillNames: [...genCtx.referencedMLSkillNames] });
     console.log(`[UiPath Cache] Stored build for ${buildCacheKey} (${buffer.length} bytes, v${version})`);
   }
-  return { buffer, gaps: allGaps, usedPackages: allUsedPkgs, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, usedFallbackStubs: usedFallback, generationMode };
+  return { buffer, gaps: allGaps, usedPackages: allUsedPkgs, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, usedFallbackStubs: usedFallback, generationMode, referencedMLSkillNames: [...genCtx.referencedMLSkillNames] };
 }
 
 async function uploadNupkgBuffer(
@@ -1564,7 +1568,7 @@ async function uploadNupkgBuffer(
   }
 }
 
-export async function pushToUiPath(pkg: any, ideaId?: string, prebuiltResult?: BuildResult): Promise<{ success: boolean; message: string; details?: any }> {
+export async function pushToUiPath(pkg: UiPathPackage, ideaId?: string, prebuiltResult?: BuildResult): Promise<{ success: boolean; message: string; details?: any }> {
   const config = await getUiPathConfig();
   if (!config) {
     return { success: false, message: "UiPath Orchestrator is not configured. Go to Admin > Integrations to set it up." };
