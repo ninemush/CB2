@@ -13,9 +13,7 @@ import type { AICenterSkill } from "./uipath-integration";
 import { isActivityAllowed } from "./uipath-activity-policy";
 import type { AutomationPattern } from "./uipath-activity-registry";
 import type { XamlGenerationContext } from "./types/uipath-package";
-import { createRequire } from "node:module";
-const _require = createRequire(import.meta.url);
-const { DOMParser } = _require("@xmldom/xmldom");
+import { XMLValidator } from "fast-xml-parser";
 
 export type GenerationMode = "baseline_openable" | "full_implementation";
 
@@ -4533,19 +4531,16 @@ export function validateXamlContent(xamlEntries: { name: string; content: string
     try {
       const xmlHeader = '<?xml version="1.0" encoding="utf-8"?>';
       const xmlContent = content.startsWith("<?xml") ? content : xmlHeader + "\n" + content;
-      const xmlErrors: string[] = [];
-      const parser = new DOMParser({
-        errorHandler: {
-          error: (msg: string) => xmlErrors.push(msg),
-          fatalError: (msg: string) => xmlErrors.push(msg),
-        },
-      });
-      parser.parseFromString(xmlContent, "text/xml");
-      for (const xmlErr of xmlErrors) {
+      const result = XMLValidator.validate(xmlContent, { allowBooleanAttributes: true });
+      if (result !== true) {
+        const err = result.err;
+        const detail = err
+          ? `XML parse error at line ${err.line}, col ${err.col}: ${err.msg.substring(0, 200)}`
+          : "XML parse error: unknown";
         violations.push({
           check: "xml-wellformedness",
           file: shortName,
-          detail: `XML parse error: ${xmlErr.substring(0, 200)}`,
+          detail,
         });
       }
     } catch (xmlParseErr: any) {

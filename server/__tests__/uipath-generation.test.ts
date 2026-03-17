@@ -205,15 +205,15 @@ describe("UiPath Generation Regression Tests", () => {
       expect(pseudoXaml.length).toBeGreaterThan(0);
     });
 
-    it("xml-wellformedness validation works without require() errors (ESM regression)", () => {
+    it("xml-wellformedness validation works with pure ESM fast-xml-parser (no createRequire)", () => {
       const validXaml = makeValidXaml("Main", `<ui:LogMessage Message="[&quot;Hello&quot;]" DisplayName="Log" />`);
       const violations = validateXamlContent([{ name: "Main.xaml", content: validXaml }]);
       const xmlErrors = violations.filter(v => v.check === "xml-wellformedness");
       expect(xmlErrors.length).toBe(0);
-      const requireErrors = violations.filter(v =>
-        v.detail.includes("require is not defined") || v.detail.includes("require is not a function")
-      );
-      expect(requireErrors.length).toBe(0);
+      const allDetails = violations.map(v => v.detail).join(" ");
+      expect(allDetails).not.toContain("require is not defined");
+      expect(allDetails).not.toContain("require is not a function");
+      expect(allDetails).not.toContain("createRequire");
     });
 
     it("xml-wellformedness validation catches genuinely malformed XML", () => {
@@ -221,10 +221,9 @@ describe("UiPath Generation Regression Tests", () => {
       const violations = validateXamlContent([{ name: "Bad.xaml", content: badXaml }]);
       const xmlErrors = violations.filter(v => v.check === "xml-wellformedness");
       expect(xmlErrors.length).toBeGreaterThan(0);
-      const requireErrors = violations.filter(v =>
-        v.detail.includes("require is not defined") || v.detail.includes("require is not a function")
-      );
-      expect(requireErrors.length).toBe(0);
+      const allDetails = violations.map(v => v.detail).join(" ");
+      expect(allDetails).not.toContain("require is not defined");
+      expect(allDetails).not.toContain("require is not a function");
     });
   });
 
