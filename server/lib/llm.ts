@@ -203,6 +203,24 @@ function toOpenAIMessages(
   return result;
 }
 
+const MODELS_REQUIRING_MAX_COMPLETION_TOKENS = new Set([
+  "gpt-5",
+  "gpt-5.2",
+  "gpt-5.3-codex",
+]);
+
+const MODELS_NOT_SUPPORTING_CHAT = new Set([
+  "gpt-5.3-codex",
+]);
+
+function getOpenAITokenParams(model: string, maxTokens: number | undefined): { max_tokens?: number; max_completion_tokens?: number } {
+  if (maxTokens === undefined) return {};
+  if (MODELS_REQUIRING_MAX_COMPLETION_TOKENS.has(model)) {
+    return { max_completion_tokens: maxTokens };
+  }
+  return { max_tokens: maxTokens };
+}
+
 class OpenAIProvider implements LLMProvider {
   private client: OpenAI;
   private model: string;
@@ -221,27 +239,47 @@ class OpenAIProvider implements LLMProvider {
   }
 
   async create(options: LLMOptions): Promise<LLMResponse> {
-    const response = await this.client.chat.completions.create(
-      {
-        model: this.model,
-        max_tokens: options.maxTokens,
-        messages: toOpenAIMessages(options.system, options.messages),
-      },
-      options.abortSignal ? { signal: options.abortSignal } : undefined,
-    );
+    if (MODELS_NOT_SUPPORTING_CHAT.has(this.model)) {
+      throw new Error(
+        `Model "${this.model}" does not support chat completions. Please select a different model.`
+      );
+    }
 
-    const text = response.choices[0]?.message?.content || "";
-    const finishReason = response.choices[0]?.finish_reason || "";
-    return { text, stopReason: finishReason };
+    try {
+      const response = await this.client.chat.completions.create(
+        {
+          model: this.model,
+          ...getOpenAITokenParams(this.model, options.maxTokens),
+          messages: toOpenAIMessages(options.system, options.messages),
+        },
+        options.abortSignal ? { signal: options.abortSignal } : undefined,
+      );
+
+      const text = response.choices[0]?.message?.content || "";
+      const finishReason = response.choices[0]?.finish_reason || "";
+      return { text, stopReason: finishReason };
+    } catch (error: unknown) {
+      const paramType = MODELS_REQUIRING_MAX_COMPLETION_TOKENS.has(this.model) ? "max_completion_tokens" : "max_tokens";
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`OpenAI API error for model "${this.model}" (using ${paramType}):`, msg);
+      throw error;
+    }
   }
 
   stream(options: LLMOptions): LLMStream {
+    if (MODELS_NOT_SUPPORTING_CHAT.has(this.model)) {
+      throw new Error(
+        `Model "${this.model}" does not support chat completions. Please select a different model.`
+      );
+    }
+
     let abortController: AbortController | null = new AbortController();
+    const modelName = this.model;
 
     const streamPromise = this.client.chat.completions.create(
       {
         model: this.model,
-        max_tokens: options.maxTokens,
+        ...getOpenAITokenParams(this.model, options.maxTokens),
         messages: toOpenAIMessages(options.system, options.messages),
         stream: true,
       },
@@ -255,35 +293,42 @@ class OpenAIProvider implements LLMProvider {
 
         return {
           async next(): Promise<IteratorResult<LLMStreamEvent>> {
-            if (!openaiStream) {
-              openaiStream = await streamPromise;
-              iterator = openaiStream[Symbol.asyncIterator]();
+            try {
+              if (!openaiStream) {
+                openaiStream = await streamPromise;
+                iterator = openaiStream[Symbol.asyncIterator]();
+              }
+
+              const result = await iterator!.next();
+              if (result.done) {
+                return { done: true, value: undefined };
+              }
+
+              const chunk = result.value;
+              const delta = chunk.choices[0]?.delta;
+              const finishReason = chunk.choices[0]?.finish_reason;
+
+              if (finishReason) {
+                return {
+                  done: false,
+                  value: { type: "stop", stopReason: finishReason },
+                };
+              }
+
+              if (delta?.content) {
+                return {
+                  done: false,
+                  value: { type: "text_delta", text: delta.content },
+                };
+              }
+
+              return this.next();
+            } catch (error: unknown) {
+              const paramType = MODELS_REQUIRING_MAX_COMPLETION_TOKENS.has(modelName) ? "max_completion_tokens" : "max_tokens";
+              const msg = error instanceof Error ? error.message : String(error);
+              console.error(`OpenAI stream error for model "${modelName}" (using ${paramType}):`, msg);
+              throw error;
             }
-
-            const result = await iterator!.next();
-            if (result.done) {
-              return { done: true, value: undefined };
-            }
-
-            const chunk = result.value;
-            const delta = chunk.choices[0]?.delta;
-            const finishReason = chunk.choices[0]?.finish_reason;
-
-            if (finishReason) {
-              return {
-                done: false,
-                value: { type: "stop", stopReason: finishReason },
-              };
-            }
-
-            if (delta?.content) {
-              return {
-                done: false,
-                value: { type: "text_delta", text: delta.content },
-              };
-            }
-
-            return this.next();
           },
         };
       },
@@ -315,22 +360,29 @@ class GeminiProvider implements LLMProvider {
   }
 
   async create(options: LLMOptions): Promise<LLMResponse> {
-    const response = await this.client.chat.completions.create(
-      {
-        model: this.model,
-        max_tokens: options.maxTokens,
-        messages: toOpenAIMessages(options.system, options.messages),
-      },
-      options.abortSignal ? { signal: options.abortSignal } : undefined,
-    );
+    try {
+      const response = await this.client.chat.completions.create(
+        {
+          model: this.model,
+          max_tokens: options.maxTokens,
+          messages: toOpenAIMessages(options.system, options.messages),
+        },
+        options.abortSignal ? { signal: options.abortSignal } : undefined,
+      );
 
-    const text = response.choices[0]?.message?.content || "";
-    const finishReason = response.choices[0]?.finish_reason || "";
-    return { text, stopReason: finishReason };
+      const text = response.choices[0]?.message?.content || "";
+      const finishReason = response.choices[0]?.finish_reason || "";
+      return { text, stopReason: finishReason };
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`Gemini API error for model "${this.model}" (using max_tokens):`, msg);
+      throw error;
+    }
   }
 
   stream(options: LLMOptions): LLMStream {
     let abortController: AbortController | null = new AbortController();
+    const modelName = this.model;
 
     const streamPromise = this.client.chat.completions.create(
       {
@@ -349,35 +401,41 @@ class GeminiProvider implements LLMProvider {
 
         return {
           async next(): Promise<IteratorResult<LLMStreamEvent>> {
-            if (!openaiStream) {
-              openaiStream = await streamPromise;
-              iterator = openaiStream[Symbol.asyncIterator]();
+            try {
+              if (!openaiStream) {
+                openaiStream = await streamPromise;
+                iterator = openaiStream[Symbol.asyncIterator]();
+              }
+
+              const result = await iterator!.next();
+              if (result.done) {
+                return { done: true, value: undefined };
+              }
+
+              const chunk = result.value;
+              const delta = chunk.choices[0]?.delta;
+              const finishReason = chunk.choices[0]?.finish_reason;
+
+              if (finishReason) {
+                return {
+                  done: false,
+                  value: { type: "stop", stopReason: finishReason },
+                };
+              }
+
+              if (delta?.content) {
+                return {
+                  done: false,
+                  value: { type: "text_delta", text: delta.content },
+                };
+              }
+
+              return this.next();
+            } catch (error: unknown) {
+              const msg = error instanceof Error ? error.message : String(error);
+              console.error(`Gemini stream error for model "${modelName}" (using max_tokens):`, msg);
+              throw error;
             }
-
-            const result = await iterator!.next();
-            if (result.done) {
-              return { done: true, value: undefined };
-            }
-
-            const chunk = result.value;
-            const delta = chunk.choices[0]?.delta;
-            const finishReason = chunk.choices[0]?.finish_reason;
-
-            if (finishReason) {
-              return {
-                done: false,
-                value: { type: "stop", stopReason: finishReason },
-              };
-            }
-
-            if (delta?.content) {
-              return {
-                done: false,
-                value: { type: "text_delta", text: delta.content },
-              };
-            }
-
-            return this.next();
           },
         };
       },
@@ -404,7 +462,7 @@ export const SUPPORTED_MODELS = [
   { id: "claude-haiku-4-5", label: "Claude Haiku 4.5 (claude-haiku-4-5)", provider: "anthropic" },
   { id: "claude-opus-4", label: "Claude Opus 4 (claude-opus-4)", provider: "anthropic" },
   { id: "gpt-4o", label: "GPT-4o (gpt-4o)", provider: "openai" },
-  { id: "gpt-5.3-codex", label: "GPT-5.3 Codex (gpt-5.3-codex)", provider: "openai" },
+  { id: "gpt-5.3-codex", label: "GPT-5.3 Codex (gpt-5.3-codex) - Code only, no chat", provider: "openai" },
   { id: "gpt-5.2", label: "GPT-5.2 (gpt-5.2)", provider: "openai" },
   { id: "gpt-5", label: "GPT-5 (gpt-5)", provider: "openai" },
   { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro (gemini-2.5-pro)", provider: "google" },
