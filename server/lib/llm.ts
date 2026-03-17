@@ -404,6 +404,7 @@ export const SUPPORTED_MODELS = [
   { id: "claude-haiku-4-5", label: "Claude Haiku 4.5 (claude-haiku-4-5)", provider: "anthropic" },
   { id: "claude-opus-4", label: "Claude Opus 4 (claude-opus-4)", provider: "anthropic" },
   { id: "gpt-4o", label: "GPT-4o (gpt-4o)", provider: "openai" },
+  { id: "gpt-5.3-codex", label: "GPT-5.3 Codex (gpt-5.3-codex)", provider: "openai" },
   { id: "gpt-5.2", label: "GPT-5.2 (gpt-5.2)", provider: "openai" },
   { id: "gpt-5", label: "GPT-5 (gpt-5)", provider: "openai" },
   { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro (gemini-2.5-pro)", provider: "google" },
