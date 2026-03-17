@@ -3,6 +3,7 @@ import { uipathFetch, isGenuineApiResponse, isValidCreation } from "./uipath-fet
 import { getToken as getSharedToken, getTmToken, getTestManagerBaseUrl, type UiPathAuthConfig } from "./uipath-auth";
 import { getLLM } from "./lib/llm";
 import { sanitizeJsonString, stripCodeFences } from "./lib/json-utils";
+import { getReferencedMLSkillNames } from "./xaml-generator";
 
 function odataEscape(value: string): string {
   return value.replace(/'/g, "''");
@@ -4239,7 +4240,6 @@ async function provisionAgentArtifacts(
 function extractReferencedMLSkillNames(artifacts: OrchestratorArtifacts): string[] {
   const names: string[] = [];
   try {
-    const { getReferencedMLSkillNames } = require("./xaml-generator");
     const tracked = getReferencedMLSkillNames();
     if (tracked && tracked.length > 0) {
       for (const n of tracked) {

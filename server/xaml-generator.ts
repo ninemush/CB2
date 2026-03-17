@@ -12,6 +12,7 @@ import type { DeploymentResult } from "@shared/models/deployment";
 import type { AICenterSkill } from "./uipath-integration";
 import { isActivityAllowed } from "./uipath-activity-policy";
 import type { AutomationPattern } from "./uipath-activity-registry";
+import { DOMParser } from "@xmldom/xmldom";
 
 let _aiCenterSkillsCtx: AICenterSkill[] = [];
 let _currentAutomationPattern: string = "";
@@ -4549,7 +4550,6 @@ export function validateXamlContent(xamlEntries: { name: string; content: string
     try {
       const xmlHeader = '<?xml version="1.0" encoding="utf-8"?>';
       const xmlContent = content.startsWith("<?xml") ? content : xmlHeader + "\n" + content;
-      const { DOMParser } = require("@xmldom/xmldom");
       const xmlErrors: string[] = [];
       const parser = new DOMParser({
         errorHandler: {

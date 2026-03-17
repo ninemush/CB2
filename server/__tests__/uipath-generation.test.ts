@@ -204,6 +204,28 @@ describe("UiPath Generation Regression Tests", () => {
       const pseudoXaml = violations.filter(v => v.check === "pseudo-xaml");
       expect(pseudoXaml.length).toBeGreaterThan(0);
     });
+
+    it("xml-wellformedness validation works without require() errors (ESM regression)", () => {
+      const validXaml = makeValidXaml("Main", `<ui:LogMessage Message="[&quot;Hello&quot;]" DisplayName="Log" />`);
+      const violations = validateXamlContent([{ name: "Main.xaml", content: validXaml }]);
+      const xmlErrors = violations.filter(v => v.check === "xml-wellformedness");
+      expect(xmlErrors.length).toBe(0);
+      const requireErrors = violations.filter(v =>
+        v.detail.includes("require is not defined") || v.detail.includes("require is not a function")
+      );
+      expect(requireErrors.length).toBe(0);
+    });
+
+    it("xml-wellformedness validation catches genuinely malformed XML", () => {
+      const badXaml = `<?xml version="1.0"?><Activity><Sequence><Unclosed`;
+      const violations = validateXamlContent([{ name: "Bad.xaml", content: badXaml }]);
+      const xmlErrors = violations.filter(v => v.check === "xml-wellformedness");
+      expect(xmlErrors.length).toBeGreaterThan(0);
+      const requireErrors = violations.filter(v =>
+        v.detail.includes("require is not defined") || v.detail.includes("require is not a function")
+      );
+      expect(requireErrors.length).toBe(0);
+    });
   });
 
   describe("Quality Gate — Warning vs Blocking Classification", () => {
