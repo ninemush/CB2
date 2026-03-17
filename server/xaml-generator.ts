@@ -12,9 +12,14 @@ import type { DeploymentResult } from "@shared/models/deployment";
 import type { AICenterSkill } from "./uipath-integration";
 
 let _aiCenterSkillsCtx: AICenterSkill[] = [];
+let _currentAutomationPattern: string = "";
 
 export function setAICenterSkillsContext(skills: AICenterSkill[]): void {
   _aiCenterSkillsCtx = skills || [];
+}
+
+export function setAutomationPattern(pattern: string): void {
+  _currentAutomationPattern = pattern;
 }
 
 export function getReferencedMLSkillNames(): string[] {
@@ -226,12 +231,40 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
   xml = xml.replace(/Message="'([^']*)'"/g, 'Message="[&quot;$1&quot;]"');
   xml = xml.replace(/Default="'([^']*)'"/g, 'Default="[&quot;$1&quot;]"');
 
+  xml = xml.replace(/Message="'([^"]*)"/g, (match, content) => {
+    if (content.endsWith("'")) return match;
+    return `Message="[&quot;${content}&quot;]"`;
+  });
+
   let prevXml = "";
   while (prevXml !== xml) {
     prevXml = xml;
     xml = xml.replace(/(Message|Default|Value)="(\[[^"]*)'([^']*)'([^"]*\])"/g, (match, attr, pre, quoted, post) => {
       return `${attr}="${pre}&quot;${quoted}&quot;${post}"`;
     });
+  }
+
+  xml = xml.replace(/Default="([^"[\]]+)"/g, (match, val) => {
+    if (/^[0-9]+$/.test(val) || val === "True" || val === "False" || val === "Nothing" || val === "null" || val.startsWith("[") || val.startsWith("&quot;")) return match;
+    if (/^[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*(\(.*\))?$/.test(val)) {
+      return `Default="[${val}]"`;
+    }
+    return match;
+  });
+
+  xml = xml.replace(/(Message|Value)="("")([^"]*)""/g, (match, attr, _q1, inner) => {
+    return `${attr}="[&quot;${inner}&quot;]"`;
+  });
+
+  xml = xml.replace(/<sap:WorkflowViewState\.ViewStateManager>[\s\S]*?<\/sap:WorkflowViewState\.ViewStateManager>/g, "");
+  xml = xml.replace(/<WorkflowViewState\.ViewStateManager>[\s\S]*?<\/WorkflowViewState\.ViewStateManager>/g, "");
+
+  xml = xml.replace(/<ui:ExcelApplicationScope\.Body>\s*(?!<ActivityAction)<Sequence\s/g, () => {
+    return `<ui:ExcelApplicationScope.Body>\n        <ActivityAction x:TypeArguments="x:Object">\n          <ActivityAction.Handler>\n            <Sequence `;
+  });
+  if (xml.includes("<ui:ExcelApplicationScope.Body>") && !xml.includes("<ActivityAction.Handler>")) {
+    xml = xml.replace(/<\/Sequence>\s*<\/ui:ExcelApplicationScope\.Body>/g,
+      `</Sequence>\n          </ActivityAction.Handler>\n        </ActivityAction>\n      </ui:ExcelApplicationScope.Body>`);
   }
 
   if (isCrossPlatform) {
@@ -287,6 +320,25 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
               </${tag}.Condition>
             </${tag}>`;
   });
+  xml = xml.replace(/<Assign\s+([^>]*?)To="([^"]*)"([^>]*?)Value="([^"]*)"([^>]*?)\s*\/>/g, (_match, before, toVal, mid, valVal, after) => {
+    const displayMatch = (before + mid + after).match(/DisplayName="([^"]*)"/);
+    const dispName = displayMatch ? displayMatch[1] : "Assign";
+    const cleanAttrs = (before + mid + after).replace(/\s*(To|Value|DisplayName)="[^"]*"/g, "").trim();
+    return `<Assign DisplayName="${dispName}"${cleanAttrs ? " " + cleanAttrs : ""}>
+              <Assign.To><OutArgument x:TypeArguments="x:String">${toVal}</OutArgument></Assign.To>
+              <Assign.Value><InArgument x:TypeArguments="x:String">${valVal}</InArgument></Assign.Value>
+            </Assign>`;
+  });
+  xml = xml.replace(/<Assign\s+([^>]*?)Value="([^"]*)"([^>]*?)To="([^"]*)"([^>]*?)\s*\/>/g, (_match, before, valVal, mid, toVal, after) => {
+    const displayMatch = (before + mid + after).match(/DisplayName="([^"]*)"/);
+    const dispName = displayMatch ? displayMatch[1] : "Assign";
+    const cleanAttrs = (before + mid + after).replace(/\s*(To|Value|DisplayName)="[^"]*"/g, "").trim();
+    return `<Assign DisplayName="${dispName}"${cleanAttrs ? " " + cleanAttrs : ""}>
+              <Assign.To><OutArgument x:TypeArguments="x:String">${toVal}</OutArgument></Assign.To>
+              <Assign.Value><InArgument x:TypeArguments="x:String">${valVal}</InArgument></Assign.Value>
+            </Assign>`;
+  });
+
   xml = xml.replace(/<(While)\s+([^>]*?)\/>/g, (match, tag, attrs) => {
     return `<${tag} ${attrs}>
               <${tag}.Body>
@@ -379,6 +431,9 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
   });
 
   xml = ensureVariableDeclarations(xml);
+
+  xml = xml.replace(/WorkflowFileName="Workflows\\([^"]+)"/g, 'WorkflowFileName="$1"');
+  xml = xml.replace(/WorkflowFileName="Workflows\/([^"]+)"/g, 'WorkflowFileName="$1"');
 
   return xml;
 }
@@ -1570,7 +1625,7 @@ function renderControlFlowActivity(
         if (isNestedActivityObject(caseVal)) {
           caseBody = renderActivityOrControlFlow(caseVal.activityType, caseVal.displayName || caseKey, caseVal.properties || {}, caseVal, targetFramework);
         } else {
-          caseBody = `\n                  <ui:LogMessage Level="Info" Message="'Case: ${escapeXml(caseKey)}'" DisplayName="Case: ${escapeXml(caseKey)}" />`;
+          caseBody = `\n                  <ui:LogMessage Level="Info" Message="[&quot;Case: ${escapeXml(caseKey)}&quot;]" DisplayName="Case: ${escapeXml(caseKey)}" />`;
         }
         caseElements += `
                 <Sequence x:Key="${escapeXml(caseKey)}" DisplayName="Case: ${escapeXml(caseKey)}">${caseBody}
@@ -1590,7 +1645,7 @@ function renderControlFlowActivity(
             </Switch.Cases>
             <Switch.Default>
               <Sequence DisplayName="Default: ${escapeXml(enforced)}">
-                <ui:LogMessage Level="Info" Message="'Switch default: ${escapeXml(enforced)}'" DisplayName="Default Path" />
+                <ui:LogMessage Level="Info" Message="[&quot;Switch default: ${escapeXml(enforced)}&quot;]" DisplayName="Default Path" />
               </Sequence>
             </Switch.Default>
           </Switch>`;
@@ -1696,14 +1751,13 @@ function renderActivity(
     propAttrs += ` TimeoutMS="${timeout}"`;
   }
 
-  const ACTIVITIES_WITHOUT_CONTINUE_ON_ERROR = new Set([
-    "ui:LogMessage", "Assign", "ui:AddQueueItem", "ui:GetTransactionItem",
-    "ui:SetTransactionStatus", "While", "If", "Sequence", "TryCatch",
-    "Switch", "ForEach", "Rethrow", "Throw",
+  const ACTIVITIES_WITH_CONTINUE_ON_ERROR = new Set([
+    "ui:Click", "ui:TypeInto", "ui:GetText", "ui:ElementExists",
+    "ui:OpenBrowser", "ui:NavigateTo", "ui:AttachBrowser", "ui:AttachWindow",
+    "ui:UseBrowser", "ui:UseApplicationBrowser",
   ]);
-  const baseTypeName = activityType.replace("ui:", "");
-  if (!ACTIVITIES_WITHOUT_CONTINUE_ON_ERROR.has(activityType) && !ACTIVITIES_WITHOUT_CONTINUE_ON_ERROR.has(baseTypeName)) {
-    const continueOnError = operationalProps?.continueOnError ?? (isNonCriticalActivity(activityType) ? true : false);
+  if (ACTIVITIES_WITH_CONTINUE_ON_ERROR.has(activityType)) {
+    const continueOnError = operationalProps?.continueOnError ?? false;
     propAttrs += ` ContinueOnError="${continueOnError ? "True" : "False"}"`;
   }
 
@@ -1737,7 +1791,15 @@ function renderActivity(
   const hasConvertedArgs = (activityType === "ui:InvokeWorkflowFile" || activityType === "InvokeWorkflowFile") && (convertedInputArgs || convertedOutputArgs);
 
   let innerActivity: string;
-  if (hasConvertedArgs) {
+  if (activityType === "Assign") {
+    const toValue = properties["To"] || properties["to"] || "[variable]";
+    const assignValue = properties["Value"] || properties["value"] || "[value]";
+    const toType = properties["TypeArgument"] || "x:String";
+    innerActivity = `<Assign DisplayName="${escapeXml(enforced)}"${propAttrs.replace(/\s+(To|Value|to|value|TypeArgument)="[^"]*"/g, "")}>
+              <Assign.To><OutArgument x:TypeArguments="${toType}">${escapeXml(toValue)}</OutArgument></Assign.To>
+              <Assign.Value><InArgument x:TypeArguments="${toType}">${escapeXml(assignValue)}</InArgument></Assign.Value>
+            </Assign>`;
+  } else if (hasConvertedArgs) {
     let argsContent = "";
     if (convertedInputArgs) argsContent += parseInvokeArgs(convertedInputArgs, "In");
     if (convertedOutputArgs) argsContent += parseInvokeArgs(convertedOutputArgs, "Out");
@@ -1778,6 +1840,7 @@ function wrapInTryCatch(innerXml: string, stepName: string, errorHandling: "retr
 
   const isCSharp = targetFramework === "Portable";
   const concat = isCSharp ? " + " : " &amp; ";
+  const suppressDiagnostics = _currentAutomationPattern === "simple-linear" || _currentAutomationPattern === "api-data-driven";
 
   const strategyDesc = errorHandling === "retry" ? "Retry up to 3 times with 5s interval"
     : errorHandling === "escalate" ? "Log escalation and rethrow for manual intervention"
@@ -1787,7 +1850,7 @@ function wrapInTryCatch(innerXml: string, stepName: string, errorHandling: "retr
 
   if (errorHandling === "retry") {
     const escapedStep = escapeXml(stepName);
-    const retryScreenshot = `
+    const retryScreenshot = suppressDiagnostics ? "" : `
                         <TryCatch DisplayName="Safe Screenshot on Retry Failure">
                           <TryCatch.Try>
                             <Sequence DisplayName="Capture Screenshot">
@@ -1840,7 +1903,7 @@ function wrapInTryCatch(innerXml: string, stepName: string, errorHandling: "retr
   }
 
   const escapedStep = escapeXml(stepName);
-  const screenshotCapture = `
+  const screenshotCapture = suppressDiagnostics ? "" : `
                     <TryCatch DisplayName="Safe Screenshot Capture">
                       <TryCatch.Try>
                         <Sequence DisplayName="Capture Screenshot">
@@ -1870,7 +1933,7 @@ function wrapInTryCatch(innerXml: string, stepName: string, errorHandling: "retr
   const stackTraceExpr = isCSharp
     ? `[exception.StackTrace != null ? exception.StackTrace.Substring(0, Math.Min(exception.StackTrace.Length, 500)) : ""]`
     : `[If(exception.StackTrace IsNot Nothing, exception.StackTrace.Substring(0, Math.Min(exception.StackTrace.Length, 500)), "")]`;
-  const addLogFields = `
+  const addLogFields = suppressDiagnostics ? "" : `
                     <ui:AddLogFields DisplayName="Add Diagnostic Fields: ${escapedStep}">
                       <ui:AddLogFields.Fields>
                         <scg:Dictionary x:TypeArguments="x:String, x:Object">

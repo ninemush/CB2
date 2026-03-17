@@ -1,3 +1,14 @@
+import {
+  ACTIVITY_REGISTRY,
+  DESIGNER_PROPERTIES,
+  ACTIVITIES_SUPPORTING_CONTINUE_ON_ERROR,
+  scanXamlForRequiredPackages,
+  type ActivityPropertyInfo,
+  type VersionedProperty,
+} from "./uipath-activity-registry";
+
+const KNOWN_ACTIVITIES = ACTIVITY_REGISTRY;
+
 export type QualityGateViolation = {
   category: "blocked-pattern" | "completeness" | "accuracy" | "runtime-safety" | "logic-location";
   severity: "error" | "warning";
@@ -38,326 +49,6 @@ export type QualityGateInput = {
   targetFramework: "Windows" | "Portable";
   archiveManifest?: string[];
   archiveContentHashes?: Record<string, string>;
-};
-
-type ActivityPropertyInfo = {
-  required?: string[];
-  optional?: string[];
-};
-
-type VersionedProperty = {
-  name: string;
-  addedInMajor?: number;
-  removedInMajor?: number;
-};
-
-const KNOWN_ACTIVITIES: Record<string, { package: string; properties: ActivityPropertyInfo; versionedProperties?: VersionedProperty[] }> = {
-  "ui:Click": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["ClickType", "MouseButton", "KeyModifiers", "CursorPosition", "DelayAfter", "DelayBefore", "TimeoutMS", "ContinueOnError", "InformativeScreenshot"],
-    },
-    versionedProperties: [
-      { name: "InformativeScreenshot", addedInMajor: 23 },
-    ],
-  },
-  "ui:TypeInto": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Text", "ClickBeforeTyping", "EmptyField", "DelayBetweenKeys", "DelayAfter", "DelayBefore", "TimeoutMS", "ContinueOnError", "InformativeScreenshot"],
-    },
-    versionedProperties: [
-      { name: "InformativeScreenshot", addedInMajor: 23 },
-    ],
-  },
-  "ui:GetText": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Value", "DelayAfter", "DelayBefore", "TimeoutMS", "ContinueOnError", "InformativeScreenshot"],
-    },
-    versionedProperties: [
-      { name: "InformativeScreenshot", addedInMajor: 23 },
-    ],
-  },
-  "ui:OpenBrowser": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Url", "BrowserType", "NewSession", "Private", "Hidden", "ContinueOnError"],
-    },
-  },
-  "ui:UseBrowser": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Url", "BrowserType", "InformativeScreenshot"],
-    },
-    versionedProperties: [
-      { name: "InformativeScreenshot", addedInMajor: 23 },
-    ],
-  },
-  "ui:NavigateTo": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Url", "ContinueOnError"],
-    },
-  },
-  "ui:AttachBrowser": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["BrowserType", "Title", "Url", "ContinueOnError"],
-    },
-  },
-  "ui:AttachWindow": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["ContinueOnError"],
-    },
-  },
-  "ui:UseApplicationBrowser": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Url", "BrowserType", "InformativeScreenshot"],
-    },
-    versionedProperties: [
-      { name: "InformativeScreenshot", addedInMajor: 23 },
-    ],
-  },
-  "ui:ElementExists": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Result", "TimeoutMS", "ContinueOnError"],
-    },
-  },
-  "ui:ExcelApplicationScope": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["WorkbookPath", "AutoSave", "Visible", "CreateNewFile", "ReadOnly", "Password", "EditPassword"],
-    },
-    versionedProperties: [
-      { name: "EditPassword", addedInMajor: 2 },
-    ],
-  },
-  "ui:UseExcel": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["WorkbookPath", "CreateNewFile", "ReadOnly", "Password"],
-    },
-  },
-  "ui:ExcelReadRange": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["SheetName", "Range", "DataTable", "AddHeaders", "UseFilter"],
-    },
-  },
-  "ui:ExcelWriteRange": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["SheetName", "StartingCell", "DataTable", "AddHeaders"],
-    },
-  },
-  "ui:ExcelWriteCell": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["SheetName", "Cell", "Value"],
-    },
-  },
-  "ui:ReadRange": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["SheetName", "Range", "DataTable", "AddHeaders"],
-    },
-  },
-  "ui:WriteRange": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["SheetName", "StartingCell", "DataTable", "AddHeaders"],
-    },
-  },
-  "ui:SendSmtpMailMessage": {
-    package: "UiPath.Mail.Activities",
-    properties: {
-      optional: ["To", "Cc", "Bcc", "Subject", "Body", "IsBodyHtml", "Server", "Port", "SecureConnection", "Email", "Password", "ContinueOnError"],
-    },
-  },
-  "ui:SendOutlookMailMessage": {
-    package: "UiPath.Mail.Activities",
-    properties: {
-      optional: ["To", "Cc", "Bcc", "Subject", "Body", "IsBodyHtml", "Account", "Attachments", "ContinueOnError"],
-    },
-  },
-  "ui:GetImapMailMessage": {
-    package: "UiPath.Mail.Activities",
-    properties: {
-      optional: ["Server", "Port", "Email", "Password", "SecureConnection", "Top", "MailFolder", "OnlyUnreadMessages", "ContinueOnError"],
-    },
-  },
-  "ui:GetOutlookMailMessages": {
-    package: "UiPath.Mail.Activities",
-    properties: {
-      optional: ["Account", "MailFolder", "Top", "Filter", "OnlyUnreadMessages", "OrderByDate", "ContinueOnError"],
-    },
-  },
-  "ui:SendMail": {
-    package: "UiPath.Mail.Activities",
-    properties: {
-      optional: ["To", "Cc", "Bcc", "Subject", "Body", "IsBodyHtml", "ContinueOnError"],
-    },
-  },
-  "ui:GetMail": {
-    package: "UiPath.Mail.Activities",
-    properties: {
-      optional: ["Top", "MailFolder", "OnlyUnreadMessages", "ContinueOnError"],
-    },
-  },
-  "ui:HttpClient": {
-    package: "UiPath.Web.Activities",
-    properties: {
-      optional: ["EndPoint", "Endpoint", "Method", "AcceptFormat", "Body", "BodyFormat", "Headers", "ResponseContent", "ResponseStatus", "ContinueOnError", "TimeoutMS", "Url"],
-    },
-  },
-  "ui:DeserializeJson": {
-    package: "UiPath.Web.Activities",
-    properties: {
-      optional: ["JsonString", "JsonObject"],
-    },
-  },
-  "ui:SerializeJson": {
-    package: "UiPath.Web.Activities",
-    properties: {
-      optional: ["JsonObject", "JsonString"],
-    },
-  },
-  "ui:ExecuteQuery": {
-    package: "UiPath.Database.Activities",
-    properties: {
-      optional: ["ConnectionString", "ProviderName", "Sql", "DataTable", "Parameters", "ContinueOnError", "TimeoutMS"],
-    },
-  },
-  "ui:ExecuteNonQuery": {
-    package: "UiPath.Database.Activities",
-    properties: {
-      optional: ["ConnectionString", "ProviderName", "Sql", "AffectedRecords", "Parameters", "ContinueOnError"],
-    },
-  },
-  "ui:ConnectToDatabase": {
-    package: "UiPath.Database.Activities",
-    properties: {
-      optional: ["ConnectionString", "ProviderName", "DatabaseConnection"],
-    },
-  },
-  "ui:AddQueueItem": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["QueueName", "Reference", "Priority", "DeferDate", "DueDate", "ItemInformation", "ContinueOnError"],
-    },
-  },
-  "ui:GetTransactionItem": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["QueueName", "TransactionItem", "ContinueOnError"],
-    },
-  },
-  "ui:SetTransactionStatus": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["TransactionItem", "Status", "ErrorType", "Reason", "ContinueOnError"],
-    },
-  },
-  "ui:GetCredential": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["AssetName", "Username", "Password", "ContinueOnError"],
-    },
-  },
-  "ui:GetAsset": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["AssetName", "Value", "ContinueOnError"],
-    },
-  },
-  "ui:ReadTextFile": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["FileName", "Content", "Encoding", "ContinueOnError"],
-    },
-  },
-  "ui:WriteTextFile": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["FileName", "Text", "Content", "Encoding", "ContinueOnError"],
-    },
-  },
-  "ui:PathExists": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["Path", "PathType", "Result", "ContinueOnError"],
-    },
-  },
-  "ui:LogMessage": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["Level", "Message", "ContinueOnError"],
-    },
-  },
-  "ui:InvokeWorkflowFile": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["WorkflowFileName", "Arguments", "Isolated", "ContinueOnError"],
-    },
-  },
-  "ui:Comment": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["Text"],
-    },
-  },
-  "ui:CreateFormTask": {
-    package: "UiPath.Persistence.Activities",
-    properties: {
-      optional: ["TaskCatalog", "TaskTitle", "TaskPriority", "TaskObject", "TaskData", "ContinueOnError"],
-    },
-  },
-  "ui:WaitForFormTaskAndResume": {
-    package: "UiPath.Persistence.Activities",
-    properties: {
-      optional: ["TaskObject", "TaskAction", "TaskOutput", "ContinueOnError"],
-    },
-  },
-  "ui:MLSkill": {
-    package: "UiPath.MLActivities",
-    properties: {
-      optional: ["SkillName", "Input", "Output", "ContinueOnError", "TimeoutMS"],
-    },
-  },
-  "ui:Predict": {
-    package: "UiPath.MLActivities",
-    properties: {
-      optional: ["ModelName", "Input", "Output", "ContinueOnError"],
-    },
-  },
-  "ui:DigitizeDocument": {
-    package: "UiPath.IntelligentOCR.Activities",
-    properties: {
-      optional: ["DocumentPath", "DocumentObjectModel", "OcrEngine", "ContinueOnError"],
-    },
-  },
-  "ui:ClassifyDocument": {
-    package: "UiPath.IntelligentOCR.Activities",
-    properties: {
-      optional: ["DocumentObjectModel", "DocumentPath", "ClassifierResult", "ContinueOnError"],
-    },
-  },
-  "ui:ExtractDocumentData": {
-    package: "UiPath.IntelligentOCR.Activities",
-    properties: {
-      optional: ["DocumentObjectModel", "DocumentPath", "ExtractorResult", "ContinueOnError"],
-    },
-  },
-  "ui:ValidateDocumentData": {
-    package: "UiPath.IntelligentOCR.Activities",
-    properties: {
-      optional: ["DocumentObjectModel", "DocumentPath", "AutoValidated", "ContinueOnError"],
-    },
-  },
 };
 
 const VALID_XMLNS_PREFIXES = new Set([
@@ -784,8 +475,8 @@ function checkActivityProperties(content: string, shortName: string, violations:
     const allAllowed = new Set([
       ...(knownActivity.properties.required || []),
       ...(knownActivity.properties.optional || []),
-      "DisplayName", "sap2010:WorkflowViewState.IdRef", "sap:VirtualizedContainerService.HintSize",
-      "x:TypeArguments", "Selector", "Target",
+      "DisplayName", "Selector", "Target", "x:TypeArguments",
+      ...Array.from(DESIGNER_PROPERTIES),
     ]);
 
     const attrPattern = /\b([A-Za-z][A-Za-z0-9_.]*)\s*=/g;
@@ -803,6 +494,16 @@ function checkActivityProperties(content: string, shortName: string, violations:
           check: "invalid-activity-property",
           file: shortName,
           detail: `Line ${lineNum}: property "${propName}" is not a known property of ${activityName}`,
+        });
+      }
+      if (propName === "ContinueOnError" && !ACTIVITIES_SUPPORTING_CONTINUE_ON_ERROR.has(activityName)) {
+        const lineNum = content.substring(0, match.index).split("\n").length;
+        violations.push({
+          category: "accuracy",
+          severity: "error",
+          check: "invalid-continue-on-error",
+          file: shortName,
+          detail: `Line ${lineNum}: ContinueOnError is not supported on ${activityName} — only UI Automation activities may use ContinueOnError`,
         });
       }
     }
