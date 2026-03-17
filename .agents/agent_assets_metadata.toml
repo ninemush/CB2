@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "GGcXOfPEFHI0gE4mQFjyE"
+uri = "file://cannonball-codebase.zip"
+type = "unspecified"
+title = "Cannonball Full Codebase"
