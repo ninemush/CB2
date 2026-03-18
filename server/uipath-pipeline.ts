@@ -634,6 +634,30 @@ export async function generateDhg(
   };
 }
 
+export interface BuildPipelineOptions {
+  generationMode?: GenerationMode;
+  metaValidationMode?: MetaValidationMode;
+  onProgress?: (message: string) => void;
+  onMetaValidation?: (event: MetaValidationEvent) => void;
+  preloadedContext?: IdeaContext;
+  version?: string;
+}
+
+export async function runBuildPipeline(
+  ideaId: string,
+  pkg: UiPathPackageSpec,
+  options?: BuildPipelineOptions,
+): Promise<PipelineResult> {
+  return generateUiPathPackage(ideaId, pkg, {
+    version: options?.version || computeVersion(),
+    generationMode: options?.generationMode,
+    metaValidationMode: options?.metaValidationMode,
+    onProgress: options?.onProgress,
+    onMetaValidation: options?.onMetaValidation,
+    preloadedContext: options?.preloadedContext,
+  });
+}
+
 export { QualityGateError } from "./uipath-integration";
 
 export function normalizeXaml(

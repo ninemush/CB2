@@ -562,6 +562,19 @@ Generate the hierarchical WorkflowSpec JSON tree. Use tryCatch nodes to wrap act
           return null;
         }
 
+        if (parsed && typeof parsed === "object") {
+          if (parsed.reframeworkConfig == null || typeof parsed.reframeworkConfig !== "object") {
+            parsed.reframeworkConfig = undefined;
+            if (parsed.useReFramework) {
+              parsed.reframeworkConfig = { queueName: "", maxRetries: 1, processName: parsed.name || "" };
+            }
+          } else {
+            if (parsed.reframeworkConfig.maxRetries == null || parsed.reframeworkConfig.maxRetries < 0) {
+              parsed.reframeworkConfig.maxRetries = 1;
+            }
+          }
+        }
+
         const validation = validateWorkflowSpec(parsed);
         if (!validation.success) {
           lastValidationErrors = validation.errors;

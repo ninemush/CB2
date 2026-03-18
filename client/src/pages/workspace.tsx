@@ -530,6 +530,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
 
   useEffect(() => {
     initialScrollDoneRef.current = false;
+    setUipathBuildStatus(undefined);
+    setUipathBuildWarnings(undefined);
+    setUipathTemplateComplianceScore(undefined);
   }, [idea.id]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1317,6 +1320,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     setIsGeneratingDoc(true);
     setGeneratingDocType("UiPath");
     setDocProgressSection("");
+    setUipathBuildStatus("BUILDING");
+    setUipathBuildWarnings(undefined);
+    setUipathTemplateComplianceScore(undefined);
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 300000);
@@ -1331,6 +1337,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         console.error("Failed to generate UiPath package:", err);
+        setUipathBuildStatus("FAILED");
         toast({
           title: "Package generation failed",
           description: err.message || "Could not generate UiPath package. Please try again.",
@@ -1370,12 +1377,14 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                       setUipathTemplateComplianceScore(data.templateComplianceScore);
                     }
                     if (data.status === "FAILED") {
+                      setUipathBuildStatus("FAILED");
                       toast({
                         title: "Package build failed",
                         description: data.error || "Package build produced no output",
                         variant: "destructive",
                       });
                     } else if (data.error) {
+                      setUipathBuildStatus("FAILED");
                       toast({
                         title: "Package generation failed",
                         description: data.error,
@@ -1387,6 +1396,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
               }
             }
             if (success) {
+              if (!uipathBuildStatus || uipathBuildStatus === "BUILDING") {
+                setUipathBuildStatus("READY");
+              }
               toast({
                 title: "UiPath Package Ready",
                 description: "Package generated successfully. You can now deploy to UiPath.",
@@ -1394,6 +1406,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             }
           }
         } else {
+          setUipathBuildStatus("READY");
           toast({
             title: "UiPath Package Ready",
             description: "Package generated successfully. You can now deploy to UiPath.",
@@ -1401,6 +1414,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
         }
       }
     } catch (err: any) {
+      setUipathBuildStatus("FAILED");
       if (err?.name === "AbortError") {
         toast({
           title: "Timed out",
@@ -1713,6 +1727,34 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           }
 
           if (msg.uipathData) {
+            if (uipathBuildStatus === "BUILDING") {
+              return null;
+            }
+            if (uipathBuildStatus === "FAILED") {
+              return (
+                <div key={msg.id} className="flex justify-start" data-testid={`chat-message-${msg.id}`}>
+                  <div className="max-w-[95%] w-full">
+                    <div className="rounded-lg border-l-4 border-l-red-500 bg-card shadow-lg overflow-hidden p-4" data-testid="card-uipath-failed">
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/15 text-red-500 text-xs font-medium" data-testid="badge-status-failed">
+                          Build Failed
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mb-3">
+                        Package build failed. You can retry the generation.
+                      </p>
+                      <button
+                        onClick={() => generateUiPath(true)}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium transition-colors w-full justify-center"
+                        data-testid="button-retry-build"
+                      >
+                        Retry Build
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
             return (
               <div key={msg.id} className="flex justify-start" data-testid={`chat-message-${msg.id}`}>
                 <div className="max-w-[95%] w-full">
@@ -1867,6 +1909,20 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           const hasUiPath = displayMessages.some((m) => m.uipathData);
           const hasSddApproval = !!(sddApprovalData?.approval);
           if (hasSddApproval && !hasUiPath && !isGeneratingDoc) {
+            if (uipathBuildStatus === "FAILED") {
+              return (
+                <div className="flex justify-center py-2" data-testid="uipath-generate-section">
+                  <Button
+                    className="bg-amber-500 hover:bg-amber-600 text-white text-xs"
+                    onClick={() => generateUiPath(true)}
+                    data-testid="button-retry-build"
+                  >
+                    <Package className="h-3.5 w-3.5 mr-1.5" />
+                    Retry UiPath Package
+                  </Button>
+                </div>
+              );
+            }
             return (
               <div className="flex justify-center py-2" data-testid="uipath-generate-section">
                 <Button

@@ -742,6 +742,9 @@ export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDep
                 const res = await fetch(`/api/ideas/${ideaId}/download-uipath`, { credentials: "include" });
                 if (!res.ok) {
                   const errBody = await res.json().catch(() => null);
+                  if (errBody?.error === "PACKAGE_NOT_BUILT") {
+                    throw new Error("Package has not been generated yet. Please generate the package first.");
+                  }
                   throw new Error(errBody?.message || "Failed to download UiPath package");
                 }
                 const blob = await res.blob();

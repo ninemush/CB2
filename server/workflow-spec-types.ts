@@ -142,7 +142,7 @@ export const WorkflowSpecSchema = z.object({
   useReFramework: z.boolean().default(false),
   reframeworkConfig: z.object({
     queueName: z.string(),
-    maxRetries: z.number().int().positive(),
+    maxRetries: z.number().int().nonnegative(),
     processName: z.string(),
   }).optional(),
   dhgNotes: z.array(z.string()).default([]),

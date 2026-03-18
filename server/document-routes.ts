@@ -5,7 +5,7 @@ import { processMapStorage } from "./process-map-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
 import { getPlatformCapabilities, QualityGateError } from "./uipath-integration";
-import { generateUiPathPackage, generateDhg, findUiPathMessage, parseUiPathPackage, computeVersion, getCachedPipelineResult, type IdeaContext } from "./uipath-pipeline";
+import { generateUiPathPackage, generateDhg, findUiPathMessage, parseUiPathPackage, computeVersion, getCachedPipelineResult, runBuildPipeline, type IdeaContext } from "./uipath-pipeline";
 import type { MetaValidationMode } from "./meta-validation";
 import { evaluateTransition } from "./stage-transition";
 import { approveDocument } from "./document-service";
@@ -958,7 +958,7 @@ ${content}`
 
       const idea = await storage.getIdea(ideaId);
       if (!idea) {
-        res.write(`data: ${JSON.stringify({ error: "Idea not found" })}\n\n`);
+        res.write(`data: ${JSON.stringify({ done: false, status: "FAILED", error: "Idea not found" })}\n\n`);
         return res.end();
       }
 
@@ -1022,26 +1022,20 @@ ${content}`
         if (!packageJson) {
           console.error(`[UiPath] Package parse/validation failed for ${ideaId}:`, parseErr?.message || parseErr);
           console.error(`[UiPath] Raw LLM response (first 500 chars):`, rawText.slice(0, 500));
-          res.write(`data: ${JSON.stringify({ error: "Failed to parse AI-generated package. Please try again." })}\n\n`);
+          res.write(`data: ${JSON.stringify({ done: false, status: "FAILED", error: "Failed to parse AI-generated package. Please try again." })}\n\n`);
           return res.end();
         }
       }
 
       if (!packageJson.workflows || packageJson.workflows.length === 0) {
         console.error(`[UiPath] Generated package for ${ideaId} has 0 workflows — not storing`);
-        res.write(`data: ${JSON.stringify({ error: "AI generated a package with no workflows. Please try again." })}\n\n`);
+        res.write(`data: ${JSON.stringify({ done: false, status: "FAILED", error: "AI generated a package with no workflows. Please try again." })}\n\n`);
         return res.end();
       }
 
       sendProgress(`Validating ${packageJson.workflows.length} workflow(s)...`);
 
-      await chatStorage.createMessage(
-        ideaId,
-        "assistant",
-        `[UIPATH:${JSON.stringify(packageJson)}]`
-      );
-
-      sendProgress("Package spec stored. Pre-building .nupkg with AI enrichment...");
+      sendProgress("Pre-building .nupkg with AI enrichment...");
 
       const sddDoc = await documentStorage.getLatestDocument(ideaId, "SDD");
       const pddDoc = await documentStorage.getLatestDocument(ideaId, "PDD");
@@ -1065,7 +1059,7 @@ ${content}`
             userMetaValidationMode = storedMode;
           }
         } catch { /* default to Auto */ }
-        const pipelineResult = await generateUiPathPackage(ideaId, packageJson, {
+        const pipelineResult = await runBuildPipeline(ideaId, packageJson, {
           onProgress: sendProgress,
           onMetaValidation: (event) => {
             res.write(`data: ${JSON.stringify({ metaValidation: event })}\n\n`);
@@ -1090,6 +1084,7 @@ ${content}`
         }
 
         if (pipelineResult.warnings.length > 0) {
+          await chatStorage.createMessage(ideaId, "assistant", `[UIPATH:${JSON.stringify(packageJson)}]`);
           sendProgress(`Pre-build complete with ${pipelineResult.warnings.length} warning(s)`);
           res.write(`data: ${JSON.stringify({
             done: true,
@@ -1107,7 +1102,10 @@ ${content}`
           console.error(`[UiPath] Quality gate failed during pre-build:`, prebuildErr.message);
           const qgResult = prebuildErr.qualityGateResult;
           res.write(`data: ${JSON.stringify({
-            done: true,
+            done: false,
+            status: "FAILED",
+            stage: "quality-gate",
+            error: qgResult.summary || "Package failed quality gate validation",
             package: packageJson,
             qualityGateWarning: true,
             qualityGateViolations: qgResult.violations,
@@ -1127,6 +1125,7 @@ ${content}`
         return res.end();
       }
 
+      await chatStorage.createMessage(ideaId, "assistant", `[UIPATH:${JSON.stringify(packageJson)}]`);
       res.write(`data: ${JSON.stringify({ done: true, package: packageJson, status: "READY", templateComplianceScore: completedTemplateComplianceScore })}\n\n`);
       return res.end();
     } catch (error) {
@@ -1134,7 +1133,7 @@ ${content}`
       if (!res.headersSent) {
         return res.status(500).json({ message: "Failed to generate UiPath package" });
       }
-      res.write(`data: ${JSON.stringify({ error: "Failed to generate UiPath package" })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: false, status: "FAILED", error: "Failed to generate UiPath package" })}\n\n`);
       return res.end();
     }
   });
@@ -1153,9 +1152,21 @@ ${content}`
       if (!idea) return res.status(404).json({ message: "Idea not found" });
 
       const messages = await chatStorage.getMessagesByIdeaId(ideaId);
+      const pipelineResult = getCachedPipelineResult(ideaId);
+      if (!pipelineResult) {
+        return res.status(404).json({
+          error: "PACKAGE_NOT_BUILT",
+          message: "No package has been successfully generated for this idea. Use the Generate Package action to build one first.",
+        });
+      }
+      console.log(`[Download] Serving cached pipeline result for ${ideaId}`);
+
       const uipathMsg = findUiPathMessage(messages);
       if (!uipathMsg) {
-        return res.status(404).json({ message: "No UiPath package found" });
+        return res.status(404).json({
+          error: "PACKAGE_NOT_BUILT",
+          message: "No package has been successfully generated for this idea. Use the Generate Package action to build one first.",
+        });
       }
 
       let pkg;
@@ -1163,26 +1174,6 @@ ${content}`
         pkg = parseUiPathPackage(uipathMsg);
       } catch {
         return res.status(500).json({ message: "Invalid package data" });
-      }
-
-      let pipelineResult;
-      const cached = getCachedPipelineResult(ideaId);
-      if (cached) {
-        console.log(`[Download] Serving cached pipeline result for ${ideaId}`);
-        pipelineResult = cached;
-      } else {
-        try {
-          pipelineResult = await generateUiPathPackage(ideaId, pkg, { version: computeVersion() });
-        } catch (err: any) {
-          if (err instanceof QualityGateError) {
-            return res.status(422).json({
-              message: "Package failed quality gate validation",
-              qualityGateViolations: err.qualityGateResult.violations,
-              qualityGateSummary: err.qualityGateResult.summary,
-            });
-          }
-          throw err;
-        }
       }
 
       const approvedSdd = await documentStorage.getDocument(sddApprovalCheck.documentId);
