@@ -978,9 +978,18 @@ ${content}`
 
       sendProgress("Calling LLM to generate package specification...");
 
+      const keepAliveMessages = [
+        "Analysing your process specification...",
+        "Planning workflow structure...",
+        "Determining activity requirements...",
+        "Mapping data flows and variables...",
+        "Almost ready to build...",
+      ];
+      let keepAliveIdx = 0;
       const keepAliveInterval = setInterval(() => {
-        sendProgress("Still generating package specification...");
-      }, 15000);
+        sendProgress(keepAliveMessages[keepAliveIdx % keepAliveMessages.length]);
+        keepAliveIdx++;
+      }, 5000);
 
       let response;
       try {

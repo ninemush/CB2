@@ -1219,6 +1219,13 @@ CRITICAL RULES:
             let sseBuffer = "";
             let genDone = false;
             let genError: string | null = null;
+            const sendForwardedEvent = (data: Record<string, any>) => {
+              try {
+                if (res.writableEnded) return;
+                res.write(`data: ${JSON.stringify(data)}\n\n`);
+                if (typeof (res as any).flush === "function") (res as any).flush();
+              } catch {}
+            };
             while (true) {
               const { done: readDone, value } = await reader.read();
               if (readDone) break;
@@ -1229,16 +1236,24 @@ CRITICAL RULES:
                 if (!line.startsWith("data: ")) continue;
                 try {
                   const evt = JSON.parse(line.slice(6));
-                  if (evt.done) genDone = true;
+                  if (evt.done) {
+                    genDone = true;
+                    if (evt.status) sendForwardedEvent({ status: evt.status });
+                    if (evt.warnings) sendForwardedEvent({ warnings: evt.warnings });
+                    if (evt.templateComplianceScore !== undefined) sendForwardedEvent({ templateComplianceScore: evt.templateComplianceScore });
+                  }
                   if (evt.error) genError = evt.error;
                   if (evt.pipelineEvent) {
-                    try { res.write(`data: ${JSON.stringify({ pipelineEvent: evt.pipelineEvent })}\n\n`); } catch {}
+                    sendForwardedEvent({ pipelineEvent: evt.pipelineEvent });
                   }
                   if (evt.progress) {
-                    try { res.write(`data: ${JSON.stringify({ docProgress: { section: evt.progress, docType: "UiPath" } })}\n\n`); } catch {}
+                    sendForwardedEvent({ docProgress: { section: evt.progress, docType: "UiPath" } });
                   }
-                  if (evt.status) {
-                    try { res.write(`data: ${JSON.stringify({ docProgress: { section: `Build status: ${evt.status}`, docType: "UiPath" } })}\n\n`); } catch {}
+                  if (evt.status && !evt.done) {
+                    sendForwardedEvent({ status: evt.status });
+                  }
+                  if (evt.metaValidation) {
+                    sendForwardedEvent({ metaValidation: evt.metaValidation });
                   }
                 } catch {}
               }
@@ -1756,6 +1771,13 @@ CRITICAL RULES:
                 let sseBuffer = "";
                 let genDone = false;
                 let genError: string | null = null;
+                const sendForwardedEvent = (data: Record<string, any>) => {
+                  try {
+                    if (res.writableEnded) return;
+                    res.write(`data: ${JSON.stringify(data)}\n\n`);
+                    if (typeof (res as any).flush === "function") (res as any).flush();
+                  } catch {}
+                };
                 while (true) {
                   const { done: readDone, value } = await reader.read();
                   if (readDone) break;
@@ -1769,7 +1791,10 @@ CRITICAL RULES:
                       if (evt.done) genDone = true;
                       if (evt.error) genError = evt.error;
                       if (evt.progress) {
-                        try { res.write(`data: ${JSON.stringify({ deployStatus: evt.progress })}\n\n`); } catch {}
+                        sendForwardedEvent({ deployStatus: evt.progress });
+                      }
+                      if (evt.pipelineEvent) {
+                        sendForwardedEvent({ pipelineEvent: evt.pipelineEvent });
                       }
                     } catch {}
                   }

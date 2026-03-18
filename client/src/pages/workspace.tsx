@@ -60,7 +60,7 @@ const STAGE_THINKING_MESSAGES: Record<string, string> = {
   "Governance / Security Scan": "Running compliance checks...",
   "CoE Approval": "Processing approval...",
   "Deploy": "Preparing deployment...",
-  "Maintenance": "Processing...",
+  "Maintenance": "Getting things ready...",
 };
 
 const INTENT_THINKING_MESSAGES: Record<string, string> = {
@@ -340,6 +340,14 @@ const DOC_PROGRESS_STEPS: Record<string, string[]> = {
     "Generating XAML sequences...",
     "Creating deployment artifacts...",
     "Packaging .nupkg file...",
+  ],
+  DHG: [
+    "Analysing generated workflows...",
+    "Documenting activity dependencies...",
+    "Building go-live checklist...",
+    "Writing deployment instructions...",
+    "Generating test scenarios...",
+    "Finalising handoff guide...",
   ],
 };
 
@@ -926,6 +934,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       console.log(`[ProcessMap] Detected TO-BE modification from user message, setting toBeGeneratingRef=true`);
     }
 
+    let localClassifiedIntent = "";
+    let localDeployStarted = false;
     let docGenIdAtStart = docGenIdRef.current;
     const userMsg: ChatMsg = {
       id: `user-${Date.now()}`,
@@ -950,6 +960,168 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     const controller = new AbortController();
     abortControllerRef.current = controller;
     let didRetry = false;
+
+    const handleSSEEvent = (data: any) => {
+        if (data.token) {
+          if (!streamingMsgRef.current) {
+            setLiveStatus("");
+          }
+          streamingMsgRef.current += data.token;
+          const docTagMatch = streamingMsgRef.current.match(/^\[DOC:(PDD|SDD):/);
+          if (docTagMatch && !isGeneratingDocRef.current) {
+            startDocStreaming(docTagMatch[1]);
+            docGenIdAtStart = docGenIdRef.current;
+          }
+          if (isGeneratingDocRef.current && generatingDocTypeRef.current !== "DHG") {
+            const raw = streamingMsgRef.current;
+            const tagEnd = raw.match(/^\[DOC:(PDD|SDD):\d+\]/);
+            const docText = tagEnd ? raw.slice(tagEnd[0].length) : raw;
+            setStreamingDocContent(docText);
+          }
+          setStreamingMsg((prev) =>
+            prev ? { ...prev, content: prev.content + data.token } : prev
+          );
+        }
+        if (data.liveStatus) {
+          setLiveStatus(data.liveStatus);
+        }
+        if (data.metaValidation) {
+          const mv = data.metaValidation;
+          if (mv.status === "started") {
+            setMetaValidationChipStatus("validating");
+          } else if (mv.status === "assessing") {
+            setMetaValidationChipStatus("assessing");
+          } else if (mv.status === "will-validate") {
+            setMetaValidationChipStatus("will-validate");
+          } else if (mv.status === "not-needed") {
+            setMetaValidationChipStatus("not-needed");
+          } else if (mv.status === "completed") {
+            if (mv.correctionsApplied > 0) {
+              setMetaValidationChipStatus("fixed");
+              setMetaValidationFixCount(mv.correctionsApplied);
+            } else {
+              setMetaValidationChipStatus("clean");
+            }
+          } else if (mv.status === "warning") {
+            setMetaValidationChipStatus("warning");
+            setMetaValidationFixCount(mv.correctionsApplied || 0);
+          }
+        }
+        if (data.intentClassified) {
+          localClassifiedIntent = data.intentClassified;
+          setClassifiedIntent(data.intentClassified);
+          if (data.intentClassified === "UIPATH_GEN" && !isGeneratingDocRef.current) {
+            startDocStreaming("UiPath");
+            docGenIdAtStart = docGenIdRef.current;
+            setPipelineLogEntries([]);
+            setPipelineComplete(false);
+            pipelineEntryCounter.current = 0;
+          }
+        }
+        if (data.done) {
+          setStreamingMsg((prev) =>
+            prev ? { ...prev, isStreaming: false } : prev
+          );
+          setDocProgressSection("");
+          setClassifiedIntent("");
+          setLiveStatus("");
+          setTimeout(() => setMetaValidationChipStatus("ready"), 5000);
+        }
+        if (data.pipelineEvent) {
+          const evt = data.pipelineEvent;
+          pipelineEntryCounter.current++;
+          setPipelineLogEntries(prev => [...prev, {
+            id: `pe-${pipelineEntryCounter.current}`,
+            type: evt.type,
+            stage: evt.stage,
+            message: evt.message,
+            elapsed: evt.elapsed,
+            context: evt.context,
+            timestamp: Date.now(),
+          }]);
+          if (evt.stage === "complete" && evt.type === "completed") {
+            setPipelineComplete(true);
+          }
+        }
+        if (data.docProgress) {
+          if (data.docProgress.started && !isGeneratingDocRef.current) {
+            startDocStreaming(data.docProgress.docType || "PDD");
+            docGenIdAtStart = docGenIdRef.current;
+          }
+          if (data.docProgress.section) {
+            setDocProgressSection(data.docProgress.section);
+          }
+        }
+        if (data.deployStatus) {
+          if (data.deployComplete) {
+            setDeployStep("");
+            setClassifiedIntent("");
+            setStreamingMsg(null);
+            queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+          } else {
+            if (!localDeployStarted) {
+              localDeployStarted = true;
+              setPipelineLogEntries([]);
+              setPipelineComplete(false);
+              pipelineEntryCounter.current = 0;
+            }
+            setDeployStep(data.deployStatus);
+            setStreamingMsg((prev) => prev ? { ...prev } : prev);
+          }
+        }
+        if (data.mapApproval) {
+          queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "process-approval-history"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "approval-summary"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "process-map"] });
+          if ((data.mapApproval.nextAction === "generate-to-be" || data.mapApproval.nextAction === "generate-feasibility-and-to-be") && !toBeTriggeredRef.current) {
+            toBeTriggeredRef.current = true;
+            setTimeout(() => generateToBeRef.current?.(), 500);
+          }
+          if (data.mapApproval.nextAction === "generate-pdd" && !pddTriggeredRef.current) {
+            pddTriggeredRef.current = true;
+            setTimeout(() => generateDocRef.current?.("PDD"), 500);
+          }
+        }
+        if (data.transition) {
+          queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
+          queryClient.invalidateQueries({ queryKey: ["/api/ideas"] });
+          const { fromStage, toStage, reason } = data.transition;
+          toast({
+            title: fromStage && toStage && PIPELINE_STAGES.indexOf(fromStage) > PIPELINE_STAGES.indexOf(toStage)
+              ? `Stage Moved Back: ${toStage}`
+              : `Stage Advanced: ${toStage}`,
+            description: reason || `Moved from ${fromStage}`,
+          });
+        }
+        if (data.automationType) {
+          queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
+        }
+        if (data.dhgProgress) {
+          if (data.dhgProgress.started) {
+            startDocStreaming("DHG");
+            docGenIdAtStart = docGenIdRef.current;
+          }
+        }
+        if (data.status && localClassifiedIntent === "UIPATH_GEN") {
+          setUipathBuildStatus(data.status);
+        }
+        if (data.warnings) {
+          setUipathBuildWarnings(data.warnings);
+        }
+        if (data.templateComplianceScore !== undefined) {
+          setUipathTemplateComplianceScore(data.templateComplianceScore);
+        }
+        if (data.error) {
+          streamingMsgRef.current = "";
+          setStreamingMsg(null);
+          stopDocStreaming({ force: true });
+          toast({
+            title: "Message failed",
+            description: "Something went wrong. Please try sending your message again.",
+            variant: "destructive",
+          });
+        }
+    };
 
     try {
       const res = await fetch("/api/chat", {
@@ -982,143 +1154,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           if (line.startsWith("data: ")) {
             try {
               const data = JSON.parse(line.slice(6));
-              if (data.token) {
-                if (!streamingMsgRef.current) {
-                  setLiveStatus("");
-                }
-                streamingMsgRef.current += data.token;
-                const docTagMatch = streamingMsgRef.current.match(/^\[DOC:(PDD|SDD):/);
-                if (docTagMatch && !isGeneratingDocRef.current) {
-                  startDocStreaming(docTagMatch[1]);
-                  docGenIdAtStart = docGenIdRef.current;
-                }
-                if (isGeneratingDocRef.current) {
-                  const raw = streamingMsgRef.current;
-                  const tagEnd = raw.match(/^\[DOC:(PDD|SDD):\d+\]/);
-                  const docText = tagEnd ? raw.slice(tagEnd[0].length) : raw;
-                  setStreamingDocContent(docText);
-                }
-                setStreamingMsg((prev) =>
-                  prev ? { ...prev, content: prev.content + data.token } : prev
-                );
-              }
-              if (data.liveStatus) {
-                setLiveStatus(data.liveStatus);
-              }
-              if (data.metaValidation) {
-                const mv = data.metaValidation;
-                if (mv.status === "started") {
-                  setMetaValidationChipStatus("validating");
-                } else if (mv.status === "assessing") {
-                  setMetaValidationChipStatus("assessing");
-                } else if (mv.status === "will-validate") {
-                  setMetaValidationChipStatus("will-validate");
-                } else if (mv.status === "not-needed") {
-                  setMetaValidationChipStatus("not-needed");
-                } else if (mv.status === "completed") {
-                  if (mv.correctionsApplied > 0) {
-                    setMetaValidationChipStatus("fixed");
-                    setMetaValidationFixCount(mv.correctionsApplied);
-                  } else {
-                    setMetaValidationChipStatus("clean");
-                  }
-                } else if (mv.status === "warning") {
-                  setMetaValidationChipStatus("warning");
-                  setMetaValidationFixCount(mv.correctionsApplied || 0);
-                }
-              }
-              if (data.intentClassified) {
-                setClassifiedIntent(data.intentClassified);
-                if (data.intentClassified === "UIPATH_GEN" && !isGeneratingDocRef.current) {
-                  startDocStreaming("UiPath");
-                  docGenIdAtStart = docGenIdRef.current;
-                  setPipelineLogEntries([]);
-                  setPipelineComplete(false);
-                  pipelineEntryCounter.current = 0;
-                }
-              }
-              if (data.done) {
-                setStreamingMsg((prev) =>
-                  prev ? { ...prev, isStreaming: false } : prev
-                );
-                setDocProgressSection("");
-                setClassifiedIntent("");
-                setLiveStatus("");
-                setTimeout(() => setMetaValidationChipStatus("ready"), 5000);
-              }
-              if (data.pipelineEvent) {
-                const evt = data.pipelineEvent;
-                pipelineEntryCounter.current++;
-                setPipelineLogEntries(prev => [...prev, {
-                  id: `pe-${pipelineEntryCounter.current}`,
-                  type: evt.type,
-                  stage: evt.stage,
-                  message: evt.message,
-                  elapsed: evt.elapsed,
-                  context: evt.context,
-                  timestamp: Date.now(),
-                }]);
-                if (evt.stage === "complete" && evt.type === "completed") {
-                  setPipelineComplete(true);
-                }
-              }
-              if (data.docProgress) {
-                if (data.docProgress.started && !isGeneratingDocRef.current) {
-                  startDocStreaming(data.docProgress.docType || "PDD");
-                  docGenIdAtStart = docGenIdRef.current;
-                }
-                if (data.docProgress.section) {
-                  setDocProgressSection(data.docProgress.section);
-                }
-              }
-              if (data.deployStatus) {
-                if (data.deployComplete) {
-                  setDeployStep("");
-                  setClassifiedIntent("");
-                  setStreamingMsg(null);
-                  queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
-                } else {
-                  setDeployStep(data.deployStatus);
-                  setStreamingMsg((prev) => prev ? { ...prev } : prev);
-                }
-              }
-              if (data.mapApproval) {
-                queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "process-approval-history"] });
-                queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "approval-summary"] });
-                queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "process-map"] });
-                if ((data.mapApproval.nextAction === "generate-to-be" || data.mapApproval.nextAction === "generate-feasibility-and-to-be") && !toBeTriggeredRef.current) {
-                  toBeTriggeredRef.current = true;
-                  setTimeout(() => generateToBeRef.current?.(), 500);
-                }
-                if (data.mapApproval.nextAction === "generate-pdd" && !pddTriggeredRef.current) {
-                  pddTriggeredRef.current = true;
-                  setTimeout(() => generateDocRef.current?.("PDD"), 500);
-                }
-              }
-              if (data.transition) {
-                queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
-                queryClient.invalidateQueries({ queryKey: ["/api/ideas"] });
-                const { fromStage, toStage, reason } = data.transition;
-                toast({
-                  title: fromStage && toStage && PIPELINE_STAGES.indexOf(fromStage) > PIPELINE_STAGES.indexOf(toStage)
-                    ? `Stage Moved Back: ${toStage}`
-                    : `Stage Advanced: ${toStage}`,
-                  description: reason || `Moved from ${fromStage}`,
-                });
-              }
-              if (data.automationType) {
-                queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
-              }
-              if (data.error) {
-                streamingMsgRef.current = "";
-                setStreamingMsg(null);
-                stopDocStreaming({ force: true });
-                toast({
-                  title: "Message failed",
-                  description: "Something went wrong. Please try sending your message again.",
-                  variant: "destructive",
-                });
-              }
+              handleSSEEvent(data);
             } catch {}
           }
         }
@@ -1168,53 +1204,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
               if (retryLine.startsWith("data: ")) {
                 try {
                   const data = JSON.parse(retryLine.slice(6));
-                  if (data.token) {
-                    if (!streamingMsgRef.current) setLiveStatus("");
-                    streamingMsgRef.current += data.token;
-                    setStreamingMsg((prev) => prev ? { ...prev, content: prev.content + data.token } : prev);
-                  }
-                  if (data.liveStatus) setLiveStatus(data.liveStatus);
-                  if (data.intentClassified) {
-                    setClassifiedIntent(data.intentClassified);
-                    if (data.intentClassified === "UIPATH_GEN" && !isGeneratingDocRef.current) {
-                      startDocStreaming("UiPath");
-                      docGenIdAtStart = docGenIdRef.current;
-                    }
-                  }
-                  if (data.done) {
-                    setStreamingMsg((prev) => prev ? { ...prev, isStreaming: false } : prev);
-                    setDocProgressSection("");
-                    setClassifiedIntent("");
-                    setLiveStatus("");
-                  }
-                  if (data.docProgress) {
-                    if (data.docProgress.started && !isGeneratingDocRef.current) {
-                      startDocStreaming(data.docProgress.docType || "PDD");
-                      docGenIdAtStart = docGenIdRef.current;
-                    }
-                    if (data.docProgress.section) setDocProgressSection(data.docProgress.section);
-                  }
-                  if (data.deployStatus) {
-                    if (data.deployComplete) {
-                      setDeployStep("");
-                      setClassifiedIntent("");
-                      setStreamingMsg(null);
-                      queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
-                    } else {
-                      setDeployStep(data.deployStatus);
-                      setStreamingMsg((prev) => prev ? { ...prev } : prev);
-                    }
-                  }
-                  if (data.transition) {
-                    queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
-                    queryClient.invalidateQueries({ queryKey: ["/api/ideas"] });
-                  }
-                  if (data.error) {
-                    streamingMsgRef.current = "";
-                    setStreamingMsg(null);
-                    stopDocStreaming({ force: true });
-                    toast({ title: "Message failed", description: "Something went wrong. Please try sending your message again.", variant: "destructive" });
-                  }
+                  handleSSEEvent(data);
                 } catch {}
               }
             }
@@ -1988,6 +1978,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           }
 
           if (msg.isStreaming && msg.role === "assistant") {
+            if (deployStep && pipelineLogEntries.length > 0) {
+              return <PipelineLogPanel key={`${msg.id}-deploy-pipeline-log`} entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={undefined} />;
+            }
             if (deployStep) {
               return <StreamingProgressIndicator key={`${msg.id}-deploy`} mode="deploy" deployStep={deployStep} />;
             }
