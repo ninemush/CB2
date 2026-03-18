@@ -21,6 +21,15 @@ import type { QualityGateResult } from "./uipath-quality-gate";
 
 export type { GenerationMode };
 
+export type PackageStatus = "BUILDING" | "READY" | "READY_WITH_WARNINGS" | "FAILED";
+
+export interface PipelineWarning {
+  code: string;
+  message: string;
+  stage: string;
+  recoverable: boolean;
+}
+
 export interface PipelineResult {
   packageBuffer: Buffer;
   gaps: XamlGap[];
@@ -37,6 +46,8 @@ export interface PipelineResult {
   generationMode: GenerationMode;
   usedFallbackStubs: boolean;
   referencedMLSkillNames: string[];
+  warnings: PipelineWarning[];
+  status: PackageStatus;
 }
 
 export interface DhgResult {
@@ -96,14 +107,22 @@ async function loadIdeaContext(ideaId: string): Promise<IdeaContext> {
   return { idea, sdd, pdd, mapNodes, processEdges };
 }
 
-async function extractOrchestratorArtifacts(sddContent: string | undefined): Promise<any | null> {
+async function extractOrchestratorArtifacts(sddContent: string | undefined, warnings: PipelineWarning[]): Promise<any | null> {
   if (!sddContent) return null;
   try {
     const { parseArtifactsFromSDD, extractArtifactsWithLLM } = await import("./uipath-deploy");
     let artifacts = parseArtifactsFromSDD(sddContent);
     if (!artifacts) artifacts = await extractArtifactsWithLLM(sddContent);
     return artifacts || null;
-  } catch {
+  } catch (err: any) {
+    const msg = err?.message || "Unknown error";
+    console.warn(`[Pipeline] Artifact extraction failed: ${msg}`);
+    warnings.push({
+      code: "ARTIFACT_EXTRACTION_FAILED",
+      message: `Orchestrator artifact extraction failed: ${msg}`,
+      stage: "artifact-extraction",
+      recoverable: true,
+    });
     return null;
   }
 }
@@ -202,13 +221,15 @@ export async function generateUiPathPackage(
     version?: string;
     generationMode?: GenerationMode;
     onProgress?: (message: string) => void;
+    preloadedContext?: IdeaContext;
   },
 ): Promise<PipelineResult> {
   const ver = options?.version || computeVersion();
   const mode: GenerationMode = options?.generationMode || "full_implementation";
+  const pipelineWarnings: PipelineWarning[] = [];
 
-  const ctx = await loadIdeaContext(ideaId);
-  const artifacts = await extractOrchestratorArtifacts(ctx.sdd?.content);
+  const ctx = options?.preloadedContext || await loadIdeaContext(ideaId);
+  const artifacts = await extractOrchestratorArtifacts(ctx.sdd?.content, pipelineWarnings);
 
   const fp = computeFingerprint(pkg, ctx.sdd?.content || "", ctx.mapNodes, ctx.processEdges);
   const cacheKey = `${ideaId}:${mode}`;
@@ -224,11 +245,24 @@ export async function generateUiPathPackage(
   try {
     const aiResult = await getAICenterSkills();
     if (aiResult.available) aiSkills = aiResult.skills;
-  } catch {}
+  } catch (err: any) {
+    const msg = err?.message || "Unknown error";
+    console.warn(`[Pipeline] AI Center skills fetch failed: ${msg}`);
+    pipelineWarnings.push({
+      code: "AI_CENTER_SKILLS_UNAVAILABLE",
+      message: `AI Center skills could not be fetched: ${msg}`,
+      stage: "ai-center",
+      recoverable: true,
+    });
+  }
 
   const enriched = enrichPackageWithContext(pkg, ctx, artifacts, aiSkills);
 
   const buildResult = await buildNuGetPackage(enriched, ver, ideaId, mode);
+
+  if (buildResult.dependencyWarnings) {
+    pipelineWarnings.push(...buildResult.dependencyWarnings);
+  }
 
   const dhgResult = buildDhgFromBuildResult(enriched, ctx, buildResult);
 
@@ -241,6 +275,13 @@ export async function generateUiPathPackage(
         .filter((v: any) => v.severity === "warning" || (mode === "baseline_openable" && v.severity === "error"))
         .map((v: any) => v.detail)
     : [];
+
+  const hasNupkg = buildResult.buffer && buildResult.buffer.length > 0;
+  const status: PackageStatus = !hasNupkg
+    ? "FAILED"
+    : pipelineWarnings.length > 0
+      ? "READY_WITH_WARNINGS"
+      : "READY";
 
   const result: PipelineResult = {
     packageBuffer: buildResult.buffer,
@@ -258,11 +299,13 @@ export async function generateUiPathPackage(
     generationMode: mode,
     usedFallbackStubs: buildResult.usedFallbackStubs,
     referencedMLSkillNames: buildResult.referencedMLSkillNames || [],
+    warnings: pipelineWarnings,
+    status,
   };
 
   evictOldestPipelineCacheEntry();
   pipelineCache.set(cacheKey, { ...result, fingerprint: fp });
-  console.log(`[Pipeline] Cached result for ${ideaId} (mode=${mode}, fingerprint ${fp}, ${buildResult.buffer.length} bytes)`);
+  console.log(`[Pipeline] Cached result for ${ideaId} (mode=${mode}, fingerprint ${fp}, ${buildResult.buffer.length} bytes, status=${status}, warnings=${pipelineWarnings.length})`);
 
   return result;
 }

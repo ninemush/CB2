@@ -453,6 +453,7 @@ export type BuildResult = {
   usedFallbackStubs: boolean;
   generationMode: GenerationMode;
   referencedMLSkillNames: string[];
+  dependencyWarnings?: Array<{ code: string; message: string; stage: string; recoverable: boolean }>;
 };
 
 export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1.0.0", ideaId?: string, generationMode: GenerationMode = "full_implementation"): Promise<BuildResult> {
@@ -611,37 +612,29 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 </coreProperties>`;
     archive.append(coreProps, { name: `package/services/metadata/core-properties/${corePropsId}.psmdcp` });
 
-    const knownVersionMap: Record<string, string> = isServerless
+    const confirmedVersionMap: Record<string, string> = isServerless
       ? {
-          "UiPath.System.Activities": "[25.10.0, )",
-          "UiPath.UIAutomation.Activities": "[25.10.0, )",
-          "UiPath.Web.Activities": "[2.5.0, )",
-          "UiPath.Excel.Activities": "[3.18.0, )",
-          "UiPath.Mail.Activities": "[2.5.0, )",
-          "UiPath.Database.Activities": "[2.2.0, )",
-          "UiPath.Persistence.Activities": "[25.10.0, )",
-          "UiPath.MLActivities": "[25.10.0, )",
+          "UiPath.System.Activities": "25.10.0",
+          "UiPath.UIAutomation.Activities": "25.10.0",
+          "UiPath.Mail.Activities": "2.5.0",
+          "UiPath.Database.Activities": "2.2.0",
+          "UiPath.Persistence.Activities": "25.10.0",
+          "UiPath.MLActivities": "25.10.0",
         }
       : {
-          "UiPath.System.Activities": "[23.10.3, )",
-          "UiPath.UIAutomation.Activities": "[23.10.8, )",
-          "UiPath.Web.Activities": "[1.18.0, )",
-          "UiPath.Excel.Activities": "[2.24.0, )",
-          "UiPath.Mail.Activities": "[1.20.0, )",
-          "UiPath.Database.Activities": "[1.8.0, )",
-          "UiPath.Persistence.Activities": "[23.10.0, )",
-          "UiPath.MLActivities": "[23.10.0, )",
-          "UiPath.IntelligentOCR.Activities": "[8.20.0, )",
+          "UiPath.System.Activities": "23.10.3",
+          "UiPath.UIAutomation.Activities": "23.10.8",
+          "UiPath.Mail.Activities": "1.20.0",
+          "UiPath.Database.Activities": "1.8.0",
+          "UiPath.Persistence.Activities": "23.10.0",
+          "UiPath.MLActivities": "23.10.0",
+          "UiPath.IntelligentOCR.Activities": "8.20.0",
         };
+    const UNVERIFIED_PACKAGES = new Set(["UiPath.Web.Activities", "UiPath.Excel.Activities"]);
     const deps: Record<string, string> = {
-      "UiPath.System.Activities": knownVersionMap["UiPath.System.Activities"],
+      "UiPath.System.Activities": confirmedVersionMap["UiPath.System.Activities"],
     };
-    if (pkg.dependencies) {
-      for (const rawD of pkg.dependencies) {
-        const d = normalizePackageName(rawD);
-        if (!deps[d] && knownVersionMap[d]) deps[d] = knownVersionMap[d];
-      }
-    }
+    const dependencyWarnings: Array<{ code: string; message: string; stage: string; recoverable: boolean }> = [];
 
     const analysisReports: { fileName: string; report: AnalysisReport }[] = [];
     const xamlEntries: { name: string; content: string }[] = [];
@@ -826,29 +819,20 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     const allXamlContent = xamlEntries.map(e => e.content).join("\n");
     const scannedPackages = scanXamlForRequiredPackages(allXamlContent);
     for (const pkgName of scannedPackages) {
-      if (!deps[pkgName] && knownVersionMap[pkgName]) {
-        deps[pkgName] = knownVersionMap[pkgName];
-        console.log(`[UiPath] Auto-added dependency ${pkgName} (detected in emitted XAML activities)`);
+      if (deps[pkgName]) continue;
+      if (UNVERIFIED_PACKAGES.has(pkgName)) {
+        console.warn(`[UiPath] XAML uses activities from ${pkgName} but no confirmed version exists — omitting from project.json`);
+        dependencyWarnings.push({
+          code: "DEPENDENCY_VERSION_UNKNOWN",
+          message: `Activities from ${pkgName} are used in XAML but no confirmed-resolvable version is available. This dependency is omitted from project.json.`,
+          stage: "dependency-resolution",
+          recoverable: true,
+        });
+        continue;
       }
-    }
-
-    const allDepEntries = Object.entries(deps);
-    if (allDepEntries.length > 0) {
-      const feedResolutions = await Promise.allSettled(
-        allDepEntries.map(([pkgId, ver]) => resolvePackageVersionFromFeed(pkgId, ver))
-      );
-      for (let i = 0; i < allDepEntries.length; i++) {
-        const [pkgId, currentVer] = allDepEntries[i];
-        const result = feedResolutions[i];
-        if (result.status === "fulfilled" && result.value !== null && isValidNuGetVersion(result.value)) {
-          if (currentVer === "*" || currentVer === "[*]" || !isValidNuGetVersion(currentVer) || result.value !== currentVer) {
-            const resolvedVer = result.value;
-            deps[pkgId] = /^\[/.test(resolvedVer) ? resolvedVer : `[${resolvedVer}, )`;
-          }
-        } else if (!isValidNuGetVersion(currentVer)) {
-          console.log(`[UiPath Deps] Removing dep with no valid version: ${pkgId}=${currentVer}`);
-          delete deps[pkgId];
-        }
+      if (confirmedVersionMap[pkgName]) {
+        deps[pkgName] = confirmedVersionMap[pkgName];
+        console.log(`[UiPath] Auto-added dependency ${pkgName} v${confirmedVersionMap[pkgName]} (detected in emitted XAML activities)`);
       }
     }
 
@@ -1146,8 +1130,10 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
       const depsAfterScan = scanXamlForRequiredPackages(xamlEntries.map(e => e.content).join("\n"));
       for (const pkg of depsAfterScan) {
-        if (!deps[pkg] && knownVersionMap[pkg]) {
-          deps[pkg] = knownVersionMap[pkg];
+        if (deps[pkg]) continue;
+        if (UNVERIFIED_PACKAGES.has(pkg)) continue;
+        if (confirmedVersionMap[pkg]) {
+          deps[pkg] = confirmedVersionMap[pkg];
           autoFixSummary.push(`Added missing dependency: ${pkg}`);
         }
       }
@@ -1211,11 +1197,11 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           }
           for (const pkg of stubPackages) {
             if (!deps[pkg]) {
-              deps[pkg] = knownVersionMap[pkg] || (tf === "Windows" ? "[23.10.0, )" : "[25.10.0, )");
+              deps[pkg] = confirmedVersionMap[pkg] || (tf === "Windows" ? "23.10.0" : "25.10.0");
             }
           }
           if (!deps["UiPath.System.Activities"]) {
-            deps["UiPath.System.Activities"] = knownVersionMap["UiPath.System.Activities"];
+            deps["UiPath.System.Activities"] = confirmedVersionMap["UiPath.System.Activities"];
           }
           projectJson.dependencies = { ...deps };
           const stubProjectJsonStr = JSON.stringify(projectJson, null, 2);
@@ -1260,10 +1246,10 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
               }
               for (const key of Object.keys(deps)) delete deps[key];
               for (const pkg of escStubPackages) {
-                deps[pkg] = knownVersionMap[pkg] || (tf === "Windows" ? "[23.10.0, )" : "[25.10.0, )");
+                deps[pkg] = confirmedVersionMap[pkg] || (tf === "Windows" ? "23.10.0" : "25.10.0");
               }
               if (!deps["UiPath.System.Activities"]) {
-                deps["UiPath.System.Activities"] = knownVersionMap["UiPath.System.Activities"];
+                deps["UiPath.System.Activities"] = confirmedVersionMap["UiPath.System.Activities"];
               }
               projectJson.dependencies = { ...deps };
               qualityGateResult = runQualityGate({
@@ -1307,10 +1293,10 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           }
           for (const key of Object.keys(deps)) delete deps[key];
           for (const pkg of stubPackages) {
-            deps[pkg] = knownVersionMap[pkg] || (tf === "Windows" ? "23.10.0" : "25.10.0");
+            deps[pkg] = confirmedVersionMap[pkg] || (tf === "Windows" ? "23.10.0" : "25.10.0");
           }
           if (!deps["UiPath.System.Activities"]) {
-            deps["UiPath.System.Activities"] = knownVersionMap["UiPath.System.Activities"];
+            deps["UiPath.System.Activities"] = confirmedVersionMap["UiPath.System.Activities"];
           }
           projectJson.dependencies = { ...deps };
           const stubProjectJsonStr2 = JSON.stringify(projectJson, null, 2);
@@ -1518,7 +1504,7 @@ ${depEntries}
     packageBuildCache.set(buildCacheKey, { fingerprint, version, buffer, gaps: allGaps, usedPackages: allUsedPkgs, enrichment, qualityGatePassed: qualityGateResult.passed, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, referencedMLSkillNames: [...genCtx.referencedMLSkillNames] });
     console.log(`[UiPath Cache] Stored build for ${buildCacheKey} (${buffer.length} bytes, v${version})`);
   }
-  return { buffer, gaps: allGaps, usedPackages: allUsedPkgs, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, usedFallbackStubs: usedFallback, generationMode, referencedMLSkillNames: [...genCtx.referencedMLSkillNames] };
+  return { buffer, gaps: allGaps, usedPackages: allUsedPkgs, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, usedFallbackStubs: usedFallback, generationMode, referencedMLSkillNames: [...genCtx.referencedMLSkillNames], dependencyWarnings: dependencyWarnings.length > 0 ? dependencyWarnings : undefined };
 }
 
 async function uploadNupkgBuffer(

@@ -5,7 +5,7 @@ import { processMapStorage } from "./process-map-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
 import { getPlatformCapabilities, QualityGateError } from "./uipath-integration";
-import { generateUiPathPackage, generateDhg, findUiPathMessage, parseUiPathPackage, computeVersion, getCachedPipelineResult } from "./uipath-pipeline";
+import { generateUiPathPackage, generateDhg, findUiPathMessage, parseUiPathPackage, computeVersion, getCachedPipelineResult, type IdeaContext } from "./uipath-pipeline";
 import { evaluateTransition } from "./stage-transition";
 import { approveDocument } from "./document-service";
 import { escapeXml } from "./lib/xml-utils";
@@ -1042,10 +1042,46 @@ ${content}`
 
       sendProgress("Package spec stored. Pre-building .nupkg with AI enrichment...");
 
+      const sddDoc = await documentStorage.getLatestDocument(ideaId, "SDD");
+      const pddDoc = await documentStorage.getLatestDocument(ideaId, "PDD");
+      const toBeN = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
+      const asIsN = await processMapStorage.getNodesByIdeaId(ideaId, "as-is");
+      const mNodes = toBeN.length > 0 ? toBeN : asIsN;
+      const mVariant = toBeN.length > 0 ? "to-be" : "as-is";
+      let pEdges: any[] = [];
+      if (mNodes.length > 0) {
+        pEdges = await processMapStorage.getEdgesByIdeaId(ideaId, mVariant as "to-be" | "as-is");
+      }
+      const preloadedContext: IdeaContext = { idea, sdd: sddDoc, pdd: pddDoc, mapNodes: mNodes, processEdges: pEdges };
+
       try {
         const requestedMode = (req.body.generationMode === "baseline_openable") ? "baseline_openable" as const : undefined;
-        const pipelineResult = await generateUiPathPackage(ideaId, packageJson, { onProgress: sendProgress, generationMode: requestedMode });
+        const pipelineResult = await generateUiPathPackage(ideaId, packageJson, { onProgress: sendProgress, generationMode: requestedMode, preloadedContext });
         console.log(`[UiPath] Pre-built .nupkg for "${idea.title}" — ${pipelineResult.packageBuffer.length} bytes, ${pipelineResult.gaps.length} gaps`);
+
+        if (pipelineResult.status === "FAILED") {
+          sendProgress("Package build failed");
+          res.write(`data: ${JSON.stringify({
+            done: false,
+            status: "FAILED",
+            stage: "pre-build",
+            error: "Package build produced no output",
+            package: packageJson,
+          })}\n\n`);
+          return res.end();
+        }
+
+        if (pipelineResult.warnings.length > 0) {
+          sendProgress(`Pre-build complete with ${pipelineResult.warnings.length} warning(s)`);
+          res.write(`data: ${JSON.stringify({
+            done: true,
+            package: packageJson,
+            status: pipelineResult.status,
+            warnings: pipelineResult.warnings,
+          })}\n\n`);
+          return res.end();
+        }
+
         sendProgress(`Pre-build complete: ${packageJson.workflows.length} workflow(s) enriched`);
       } catch (prebuildErr: any) {
         if (prebuildErr instanceof QualityGateError) {
@@ -1060,11 +1096,19 @@ ${content}`
           })}\n\n`);
           return res.end();
         }
-        console.error(`[UiPath] Pre-build failed (deploy will rebuild):`, prebuildErr?.message);
-        sendProgress("Pre-build skipped — deploy will build on demand");
+        console.error(`[UiPath] Pre-build failed:`, prebuildErr?.message);
+        sendProgress("Package build failed");
+        res.write(`data: ${JSON.stringify({
+          done: false,
+          status: "FAILED",
+          stage: "pre-build",
+          error: prebuildErr?.message || "Pre-build failed",
+          package: packageJson,
+        })}\n\n`);
+        return res.end();
       }
 
-      res.write(`data: ${JSON.stringify({ done: true, package: packageJson })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, package: packageJson, status: "READY" })}\n\n`);
       return res.end();
     } catch (error) {
       console.error("Error generating UiPath package:", error);

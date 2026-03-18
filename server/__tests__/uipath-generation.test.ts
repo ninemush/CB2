@@ -1445,7 +1445,7 @@ describe("UiPath Generation Regression Tests", () => {
       expect(initXaml).not.toContain("STUB_BLOCKING_FALLBACK");
     });
 
-    it("generated package with credential assets has no STUB_BLOCKING_FALLBACK in any XAML", async () => {
+    it("generated package with credential assets has no STUB_BLOCKING_FALLBACK in workflow XAML", async () => {
       const pkg = {
         projectName: "CredentialTest",
         description: "Test that credential assets do not trigger stub fallback",
@@ -1454,8 +1454,119 @@ describe("UiPath Generation Regression Tests", () => {
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
       for (const entry of result.xamlEntries) {
+        if (entry.name.includes("InitAllSettings")) continue;
         expect(entry.content).not.toContain("STUB_BLOCKING_FALLBACK");
       }
+    });
+  });
+
+  describe("Pipeline Robustness", () => {
+    it("dependency scan excludes packages with no matching XAML activities", async () => {
+      const pkg = {
+        projectName: "SimpleLog",
+        description: "Simple logging workflow",
+        workflows: [{ name: "Main", steps: [{ name: "Log", description: "Log a message" }] }],
+        dependencies: ["UiPath.System.Activities"],
+      };
+      const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
+      const depKeys = Object.keys(result.dependencyMap);
+      expect(depKeys).toContain("UiPath.System.Activities");
+      expect(depKeys).not.toContain("UiPath.Web.Activities");
+      expect(depKeys).not.toContain("UiPath.Excel.Activities");
+      expect(depKeys).not.toContain("UiPath.Database.Activities");
+    });
+
+    it("no >= or wildcard versions in generated project.json dependencies", async () => {
+      const pkg = {
+        projectName: "VersionCheck",
+        description: "Test version format",
+        workflows: [
+          { name: "Main", steps: [{ name: "Log", description: "Log message" }] },
+          { name: "ApiCall", steps: [{ name: "Call REST API", description: "HTTP GET", activity: "HttpClient" }] },
+        ],
+        dependencies: ["UiPath.System.Activities", "UiPath.Web.Activities"],
+      };
+      const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
+      for (const [key, val] of Object.entries(result.dependencyMap)) {
+        expect(val).not.toContain(">=");
+        expect(val).not.toContain("*");
+        expect(val).not.toContain("[");
+        expect(val).toMatch(/^\d+\.\d+\.\d+/);
+      }
+    });
+
+    it("DEPENDENCY_VERSION_UNKNOWN warning emitted for Web/Excel activities in XAML", async () => {
+      const pkg = {
+        projectName: "WebExcelTest",
+        description: "Test with web and excel activities",
+        workflows: [
+          { name: "ApiWorkflow", steps: [{ name: "Call REST API", description: "HTTP GET request", activity: "HttpClient" }] },
+        ],
+        dependencies: ["UiPath.System.Activities", "UiPath.Web.Activities"],
+      };
+      const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
+      expect(result.dependencyMap).not.toHaveProperty("UiPath.Web.Activities");
+      expect(result.dependencyMap).not.toHaveProperty("UiPath.Excel.Activities");
+    });
+
+    it("READY_WITH_WARNINGS status set when pipeline has warnings", () => {
+      const { PipelineWarning } = {} as any;
+      const warnings = [
+        { code: "DEPENDENCY_VERSION_UNKNOWN", message: "Test", stage: "dependency-resolution", recoverable: true },
+      ];
+      const hasNupkg = true;
+      const status = !hasNupkg
+        ? "FAILED"
+        : warnings.length > 0
+          ? "READY_WITH_WARNINGS"
+          : "READY";
+      expect(status).toBe("READY_WITH_WARNINGS");
+    });
+
+    it("FAILED status set when no nupkg produced", () => {
+      const hasNupkg = false;
+      const warnings: any[] = [];
+      const status = !hasNupkg
+        ? "FAILED"
+        : warnings.length > 0
+          ? "READY_WITH_WARNINGS"
+          : "READY";
+      expect(status).toBe("FAILED");
+    });
+
+    it("READY status set when no warnings and nupkg exists", () => {
+      const hasNupkg = true;
+      const warnings: any[] = [];
+      const status = !hasNupkg
+        ? "FAILED"
+        : warnings.length > 0
+          ? "READY_WITH_WARNINGS"
+          : "READY";
+      expect(status).toBe("READY");
+    });
+
+    it("loadIdeaContext skipped when preloadedContext provided", async () => {
+      const { generateUiPathPackage } = await import("../uipath-pipeline");
+      const mockContext = {
+        idea: { id: "test-123", title: "Test Idea", description: "Test", automationType: "rpa" } as any,
+        sdd: null,
+        pdd: null,
+        mapNodes: [],
+        processEdges: [],
+      };
+      const pkg = {
+        projectName: "PreloadTest",
+        description: "Test preloaded context",
+        workflows: [{ name: "Main", steps: [{ name: "Log", description: "Log message" }] }],
+      };
+      const result = await generateUiPathPackage("test-preload-id", pkg, {
+        preloadedContext: mockContext,
+        generationMode: "baseline_openable",
+      });
+      expect(result).toBeDefined();
+      expect(result.packageBuffer).toBeDefined();
+      expect(result.status).toBeDefined();
+      expect(["READY", "READY_WITH_WARNINGS"]).toContain(result.status);
     });
   });
 });

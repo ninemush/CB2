@@ -427,7 +427,7 @@ export function ArtifactHub({ ideaId, ideaTitle }: ArtifactHubProps) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = "UiPathPackage.zip";
+        a.download = `${ideaTitle.replace(/[^a-zA-Z0-9_-]/g, "_")}.zip`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -494,7 +494,7 @@ export function ArtifactHub({ ideaId, ideaTitle }: ArtifactHubProps) {
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
-          a.download = "UiPathPackage.zip";
+          a.download = `${ideaTitle.replace(/[^a-zA-Z0-9_-]/g, "_")}.zip`;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);

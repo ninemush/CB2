@@ -498,6 +498,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const [generatingDocType, setGeneratingDocType] = useState<string>("");
   const [docProgressSection, setDocProgressSection] = useState<string>("");
   const [deployStep, setDeployStep] = useState<string>("");
+  const [uipathBuildStatus, setUipathBuildStatus] = useState<string | undefined>();
+  const [uipathBuildWarnings, setUipathBuildWarnings] = useState<Array<{ code: string; message: string; stage: string; recoverable: boolean }> | undefined>();
   const [streamingDocContent, setStreamingDocContent] = useState<string>("");
   const [streamingDocElapsed, setStreamingDocElapsed] = useState(0);
   const streamingDocElapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -587,7 +589,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const sddTriggeredRef = useRef(false);
   const uipathTriggeredRef = useRef(false);
   const generateDocRef = useRef<((type: "PDD" | "SDD") => void) | null>(null);
-  const generateUiPathRef = useRef<(() => void) | null>(null);
+  const generateUiPathRef = useRef<((force?: boolean) => void) | null>(null);
   const generateToBeRef = useRef<(() => void) | null>(null);
 
   const guidance = STAGE_GUIDANCE[idea.stage];
@@ -1149,7 +1151,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     onMapApprovalReady?.(handleMapApprovalFromPanel);
   }, [onMapApprovalReady, handleMapApprovalFromPanel]);
 
-  const generateUiPath = useCallback(async () => {
+  const generateUiPath = useCallback(async (force?: boolean) => {
     if (isGeneratingDoc || isStreaming) {
       uipathTriggeredRef.current = false;
       return;
@@ -1160,7 +1162,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 300000);
-      const res = await fetch(`/api/ideas/${idea.id}/generate-uipath`, {
+      const url = force ? `/api/ideas/${idea.id}/generate-uipath?force=true` : `/api/ideas/${idea.id}/generate-uipath`;
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -1199,7 +1202,19 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                     if (data.done) {
                       success = true;
                     }
-                    if (data.error) {
+                    if (data.status) {
+                      setUipathBuildStatus(data.status);
+                    }
+                    if (data.warnings) {
+                      setUipathBuildWarnings(data.warnings);
+                    }
+                    if (data.status === "FAILED") {
+                      toast({
+                        title: "Package build failed",
+                        description: data.error || "Package build produced no output",
+                        variant: "destructive",
+                      });
+                    } else if (data.error) {
                       toast({
                         title: "Package generation failed",
                         description: data.error,
@@ -1539,6 +1554,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                     ideaId={idea.id}
                     onDeployProgress={(step) => setDeployStep(step)}
                     onDeployComplete={() => setDeployStep("")}
+                    onRetry={() => generateUiPath(true)}
+                    status={uipathBuildStatus as any}
+                    warnings={uipathBuildWarnings}
                   />
                 </div>
               </div>
@@ -1685,7 +1703,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
               <div className="flex justify-center py-2" data-testid="uipath-generate-section">
                 <Button
                   className="bg-primary hover:bg-primary/90 text-primary-foreground text-xs"
-                  onClick={generateUiPath}
+                  onClick={() => generateUiPath()}
                   data-testid="button-generate-uipath"
                 >
                   <Package className="h-3.5 w-3.5 mr-1.5" />
