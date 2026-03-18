@@ -34,7 +34,9 @@ import {
 } from "./xaml-generator";
 export type { GenerationMode };
 import type { XamlGenerationContext, UiPathPackage } from "./types/uipath-package";
-import { enrichWithAI, type EnrichmentResult } from "./ai-xaml-enricher";
+import { enrichWithAI, enrichWithAITree, type EnrichmentResult, type TreeEnrichmentResult } from "./ai-xaml-enricher";
+import { assembleWorkflowFromSpec } from "./workflow-tree-assembler";
+import type { WorkflowSpec as TreeWorkflowSpec } from "./workflow-spec-types";
 import { analyzeAndFix, setGovernancePolicies, type AnalysisReport } from "./workflow-analyzer";
 import { runQualityGate, formatQualityGateViolations, classifyQualityIssues, getBlockingFiles, hasOnlyWarnings, hasBlockingIssues, type QualityGateResult, type ClassifiedIssue } from "./uipath-quality-gate";
 import { escapeXml } from "./lib/xml-utils";
@@ -510,6 +512,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
   );
 
   let enrichment: EnrichmentResult | null = null;
+  let treeEnrichment: TreeEnrichmentResult | null = null;
   if (generationMode === "baseline_openable") {
     console.log(`[UiPath] baseline_openable mode — skipping AI enrichment, using flat scaffold`);
   } else {
@@ -524,8 +527,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
     } else if (processNodes.length > 0 && sddContent) {
       try {
-        console.log(`[UiPath] Requesting AI enrichment for ${processNodes.length} process nodes...`);
-        enrichment = await enrichWithAI(
+        console.log(`[UiPath] Requesting tree-based AI enrichment for ${processNodes.length} process nodes...`);
+        const treeResult = await enrichWithAITree(
           processNodes,
           processEdges,
           sddContent,
@@ -534,11 +537,39 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           45000,
           automationPattern
         );
-        if (enrichment) {
-          console.log(`[UiPath] AI enrichment successful: ${enrichment.nodes.length} enriched nodes, REFramework=${enrichment.useReFramework}, ${enrichment.decomposition?.length || 0} sub-workflows`);
+        if (treeResult && treeResult.status === "success") {
+          treeEnrichment = treeResult;
+          console.log(`[UiPath] Tree enrichment successful: "${treeResult.workflowSpec.name}", ${treeResult.workflowSpec.variables.length} variables`);
+        } else if (treeResult && treeResult.status === "validation_failed") {
+          const errorSummary = treeResult.validationErrors.join("; ");
+          console.log(`[UiPath] Tree enrichment validation failed after retry: ${errorSummary}`);
+          throw new Error(`WorkflowSpec validation failed after retry: ${errorSummary}`);
         }
       } catch (err: any) {
-        console.log(`[UiPath] AI enrichment failed (falling back to keyword classification): ${err.message}`);
+        if (err.message?.startsWith("WorkflowSpec validation failed")) {
+          throw err;
+        }
+        console.log(`[UiPath] Tree enrichment error: ${err.message} — falling back to legacy`);
+      }
+
+      if (!treeEnrichment) {
+        try {
+          console.log(`[UiPath] Falling back to legacy AI enrichment for ${processNodes.length} process nodes...`);
+          enrichment = await enrichWithAI(
+            processNodes,
+            processEdges,
+            sddContent,
+            orchestratorArtifacts,
+            projectName,
+            45000,
+            automationPattern
+          );
+          if (enrichment) {
+            console.log(`[UiPath] AI enrichment successful: ${enrichment.nodes.length} enriched nodes, REFramework=${enrichment.useReFramework}, ${enrichment.decomposition?.length || 0} sub-workflows`);
+          }
+        } catch (err: any) {
+          console.log(`[UiPath] AI enrichment failed (falling back to keyword classification): ${err.message}`);
+        }
       }
     }
   }
@@ -721,7 +752,34 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     let hasMain = false;
     const generatedWorkflowNames = new Set<string>();
 
-    if (enrichment?.decomposition?.length) {
+    if (treeEnrichment && treeEnrichment.status === "success") {
+      const spec = treeEnrichment.workflowSpec;
+      const specJson = JSON.stringify(spec, null, 2);
+      const truncatedSpec = specJson.length > 5000 ? specJson.slice(0, 5000) + "\n... [truncated]" : specJson;
+      console.log(`[UiPath] WorkflowSpec tree (validated) before assembly:\n${truncatedSpec}`);
+      console.log(`[UiPath] Using tree-based assembly for "${spec.name}"`);
+
+      const wfName = (spec.name || projectName).replace(/\s+/g, "_");
+      try {
+        const { xaml, variables } = assembleWorkflowFromSpec(spec, treeEnrichment.processType);
+        const compliant = compliancePass(xaml, `${wfName}.xaml`);
+        deferredWrites.set(`${libPath}/${wfName}.xaml`, compliant);
+        generatedWorkflowNames.add(wfName);
+        if (wfName === "Main" || wfName === "Process") hasMain = true;
+        xamlResults.push({
+          xaml: compliant,
+          gaps: [],
+          usedPackages: ["UiPath.System.Activities"],
+          variables: variables.map(v => ({ name: v.name, type: v.type, defaultValue: v.default || "" })),
+        });
+        console.log(`[UiPath] Tree assembly produced XAML for "${wfName}" (${variables.length} variables)`);
+      } catch (err: any) {
+        console.log(`[UiPath] Tree assembly failed for "${wfName}": ${err.message} — falling back to legacy path`);
+        treeEnrichment = null;
+      }
+    }
+
+    if (enrichment?.decomposition?.length && !treeEnrichment) {
       console.log(`[UiPath] Using AI decomposition: ${enrichment.decomposition.length} sub-workflows`);
       for (const decomp of enrichment.decomposition) {
         const wfName = decomp.name.replace(/\s+/g, "_");
@@ -783,7 +841,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
     }
 
-    if (!hasMain && processNodes.length > 0 && !enrichment?.decomposition?.length) {
+    if (!hasMain && processNodes.length > 0 && !enrichment?.decomposition?.length && !treeEnrichment) {
       const processFileName = useReFramework ? "Process" : projectName;
       const processResult = tryGenerateOrStub(
         () => generateRichXamlFromNodes(processNodes, processEdges, processFileName, pkg.description || "", enrichment, tf, apEnabled, genCtx),

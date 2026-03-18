@@ -2021,13 +2021,13 @@
               "typeArguments": "x:String"
             },
             {
-              "name": "Value",
+              "name": "AssetValue",
               "direction": "Out",
-              "clrType": "System.Object",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
               "required": false,
-              "typeArguments": "x:Object"
+              "typeArguments": "x:String"
             }
           ]
         },

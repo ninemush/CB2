@@ -37,6 +37,7 @@ const MAIL_ACTIVITIES = [
 
 const ALWAYS_BLOCKED = [
   "ui:AddLogFields",
+  "ui:InvokeCode",
 ];
 
 const SILENTLY_BLOCKED = new Set([

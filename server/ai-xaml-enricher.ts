@@ -5,6 +5,7 @@ import { isActivityAllowed } from "./uipath-activity-policy";
 import type { AutomationPattern } from "./uipath-activity-registry";
 import { catalogService, type ProcessType, type PaletteEntry } from "./catalog/catalog-service";
 import { buildTemplateBlock, formatTemplateBlockForPrompt } from "./catalog/xaml-template-builder";
+import { validateWorkflowSpec, type WorkflowSpec as TreeWorkflowSpec } from "./workflow-spec-types";
 
 export interface EnrichedActivity {
   activityType: string;
@@ -93,60 +94,71 @@ Variables must be declared inside the nearest enclosing Sequence.Variables block
 Variable names must be context-specific (str_CustomerEmail not str_Email, dt_InvoiceData not dt_Data).`;
 
 const SECTION_4_OUTPUT = `=== SECTION 4: WORKFLOW SPECIFICATION ===
-OUTPUT FORMAT — respond with ONLY valid JSON matching this schema:
+OUTPUT FORMAT — respond with ONLY valid JSON matching this schema.
+
+You MUST output a HIERARCHICAL TREE — NOT a flat list. Activities that can fail MUST be children of a tryCatch node, not flat siblings. Use if, while, forEach, retryScope, and sequence nodes to express control flow. NEVER place activities as flat siblings when they belong inside a structural parent.
+
+BLOCKED ACTIVITY: ui:InvokeCode is BLOCKED. If you need to parse JSON, use Newtonsoft.Json.Linq patterns instead:
+  - Assign: JObject.Parse(str_JsonResponse) → obj_Parsed
+  - Assign: obj_Parsed("fieldName").ToString() → str_FieldValue
+  - For arrays: JArray from obj_Parsed("items") and iterate with ForEach
+
+VARIABLE PRE-DECLARATION: ALL variables MUST be listed in the top-level "variables" array BEFORE they appear in any activity. Every variable referenced in any expression must have a corresponding entry in "variables" with its correct type. Variables MUST use type prefixes (str_, int_, bool_, dt_, dbl_, dec_, obj_, ts_, drow_).
+
 {
-  "nodes": [
-    {
-      "nodeId": <number>,
-      "nodeName": "<string>",
-      "steps": [
-        {
-          "template": "<template name from Section 2>",
-          "displayName": "<descriptive name>",
-          "errorHandling": "retry|catch|escalate|none",
-          "properties": { "<PropertyName>": "<real_value_from_SDD_or_PLACEHOLDER_description>" },
-          "outputVar": "<variable name if activity produces output, or null>",
-          "outputType": "<.NET type for output variable, or null>"
-        }
-      ],
-      "activities": [
-        {
-          "activityType": "<full UiPath activity type e.g. ui:TypeInto>",
-          "displayName": "<descriptive name>",
-          "package": "<UiPath package name>",
-          "properties": { "<PropertyName>": "<real_value_from_SDD_or_PLACEHOLDER_description>" },
-          "selectorHint": "<system-specific selector XML or null>",
-          "errorHandling": "retry|catch|escalate|none",
-          "timeout": <milliseconds, default 30000 for UI activities>,
-          "continueOnError": <true for non-critical like logging/notification, false for critical>,
-          "delayBefore": <milliseconds or 0>,
-          "delayAfter": <milliseconds or 0>,
-          "variables": [{ "name": "<var_name>", "type": "<.NET type>", "defaultValue": "<optional>" }]
-        }
-      ],
-      "gaps": [
-        {
-          "category": "selector|credential|endpoint|logic|config",
-          "activity": "<activity type>",
-          "description": "<specific actionable instruction>",
-          "placeholder": "<current placeholder value>",
-          "estimatedMinutes": <number>
-        }
-      ]
-    }
+  "name": "<WorkflowName>",
+  "description": "<purpose>",
+  "variables": [
+    { "name": "<var_name>", "type": "<.NET type e.g. String, Int32, Boolean, Object, DataTable>", "default": "<optional default value>" }
   ],
-  "decomposition": [
-    { "name": "<WorkflowName>", "description": "<purpose>", "nodeIds": [<ids>], "isDispatcher": false, "isPerformer": false }
+  "arguments": [
+    { "name": "in_TransactionItem", "direction": "InArgument", "type": "x:String", "required": true }
   ],
+  "rootSequence": {
+    "kind": "sequence",
+    "displayName": "<workflow display name>",
+    "children": [
+      <WorkflowNode entries — see node types below>
+    ]
+  },
   "useReFramework": true|false,
   "reframeworkConfig": { "queueName": "<from SDD>", "maxRetries": 3, "processName": "<name>" },
   "dhgNotes": ["<architecture decision or risk note>"],
-  "arguments": [
-    { "name": "in_TransactionItem", "direction": "InArgument", "type": "x:String", "required": true }
+  "decomposition": [
+    { "name": "<SubWorkflowName>", "description": "<purpose>", "nodeIds": [<ids>], "isDispatcher": false, "isPerformer": false }
   ]
 }
 
-IMPORTANT: Each "steps" entry references a template name from Section 2. The "activities" array provides the full activity specification for backward compatibility. Both should be consistent.`;
+=== WorkflowNode types (discriminated by "kind") ===
+
+1. ActivityNode — a single UiPath activity:
+   { "kind": "activity", "template": "<template name from Section 2>", "displayName": "<name>", "properties": { "<Key>": "<value>" }, "outputVar": "<var or null>", "outputType": "<.NET type or null>", "errorHandling": "retry|catch|escalate|none" }
+
+2. SequenceNode — ordered list of children:
+   { "kind": "sequence", "displayName": "<name>", "children": [<WorkflowNode>...] }
+
+3. TryCatchNode — wrap activities that can fail:
+   { "kind": "tryCatch", "displayName": "<name>", "tryChildren": [<WorkflowNode>...], "catchChildren": [<WorkflowNode>...], "finallyChildren": [<WorkflowNode>...] }
+
+4. IfNode — conditional branch:
+   { "kind": "if", "displayName": "<name>", "condition": "<VB.NET boolean expression>", "thenChildren": [<WorkflowNode>...], "elseChildren": [<WorkflowNode>...] }
+
+5. WhileNode — loop with condition:
+   { "kind": "while", "displayName": "<name>", "condition": "<VB.NET boolean expression>", "bodyChildren": [<WorkflowNode>...] }
+
+6. ForEachNode — iterate collection:
+   { "kind": "forEach", "displayName": "<name>", "itemType": "x:String", "valuesExpression": "<VB.NET expression>", "iteratorName": "item", "bodyChildren": [<WorkflowNode>...] }
+
+7. RetryScopeNode — retry on failure:
+   { "kind": "retryScope", "displayName": "<name>", "numberOfRetries": 3, "retryInterval": "00:00:05", "bodyChildren": [<WorkflowNode>...] }
+
+=== NESTING RULES ===
+- Activities that make API calls, read files, or interact with external systems MUST be inside a tryCatch or retryScope node.
+- Decision points MUST use IfNode with activities in thenChildren/elseChildren — NEVER emit Then/Else as string property values.
+- Loops MUST use WhileNode or ForEachNode with activities in bodyChildren.
+- Each "template" value in an ActivityNode MUST reference a template name from Section 2.
+
+IMPORTANT: Respond with ONLY the JSON object. No markdown fences, no explanation.`;
 
 export async function enrichWithAI(
   nodes: ProcessNode[],
@@ -432,4 +444,171 @@ function formatActivityConstraints(palette: PaletteEntry[], processType: Process
   }
 
   return lines.join("\n");
+}
+
+export type TreeEnrichmentResult =
+  | {
+      status: "success";
+      workflowSpec: TreeWorkflowSpec;
+      processType: ProcessType;
+    }
+  | {
+      status: "validation_failed";
+      processType: ProcessType;
+      validationErrors: string[];
+    };
+
+export async function enrichWithAITree(
+  nodes: ProcessNode[],
+  edges: ProcessEdge[],
+  sddContent: string,
+  orchestratorArtifacts: any,
+  projectName: string,
+  timeoutMs: number = 45000,
+  automationPattern?: AutomationPattern
+): Promise<TreeEnrichmentResult | null> {
+  try {
+    const nodeDescriptions = nodes
+      .filter(n => n.nodeType !== "start" && n.nodeType !== "end")
+      .map(n => ({
+        id: n.id,
+        name: n.name,
+        type: n.nodeType,
+        system: n.system || "Unknown",
+        role: n.role || "System",
+        description: n.description || "",
+        isPainPoint: n.isPainPoint || false,
+      }));
+
+    const edgeDescriptions = edges.map(e => ({
+      from: nodes.find(n => n.id === e.sourceNodeId)?.name || `Node${e.sourceNodeId}`,
+      to: nodes.find(n => n.id === e.targetNodeId)?.name || `Node${e.targetNodeId}`,
+      label: e.label || "",
+    }));
+
+    const sddSummary = sddContent ? sddContent.slice(0, 8000) : "No SDD available";
+    const artifactsJson = orchestratorArtifacts
+      ? JSON.stringify(orchestratorArtifacts, null, 2).slice(0, 3000)
+      : "No artifacts defined";
+
+    const userMessage = `Project: ${projectName}
+
+PROCESS MAP NODES:
+${JSON.stringify(nodeDescriptions, null, 2)}
+
+PROCESS MAP EDGES:
+${JSON.stringify(edgeDescriptions, null, 2)}
+
+ORCHESTRATOR ARTIFACTS (from SDD):
+${artifactsJson}
+
+SDD CONTENT (excerpts):
+${sddSummary}
+
+Generate the hierarchical WorkflowSpec JSON tree. Use tryCatch nodes to wrap activities that can fail. Use if nodes for decision points. Reference template names from Section 2 for each activity node. Pre-declare all variables in the top-level variables array.`;
+
+    let section2Block = "";
+    const processType = classifyProcessType(sddSummary, nodeDescriptions);
+
+    if (catalogService.isLoaded()) {
+      try {
+        const templateBlock = buildTemplateBlock(processType);
+        section2Block = "\n\n" + formatTemplateBlockForPrompt(templateBlock);
+        console.log(`[AI XAML Enricher Tree] Injected ACTIVITY TEMPLATES for processType="${processType}"`);
+      } catch (err: any) {
+        console.warn(`[AI XAML Enricher Tree] Failed to build template block: ${err.message}`);
+      }
+    }
+
+    const systemPrompt = SECTION_1_ROLE + section2Block + "\n\n" + SECTION_3_VARIABLES + "\n\n" + SECTION_4_OUTPUT;
+
+    let lastValidationErrors: string[] = [];
+    let lastParseError: string | null = null;
+
+    const attemptTreeEnrichment = async (extraContext?: string): Promise<TreeWorkflowSpec | null> => {
+      lastValidationErrors = [];
+      lastParseError = null;
+
+      const messages: Array<{ role: "user"; content: string }> = [
+        { role: "user", content: extraContext ? userMessage + "\n\n" + extraContext : userMessage },
+      ];
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const response = await getCodeLLM().create({
+          maxTokens: 8192,
+          system: systemPrompt,
+          messages,
+        });
+
+        clearTimeout(timeout);
+
+        if (!response.text) {
+          console.log("[AI XAML Enricher Tree] Empty response received");
+          lastParseError = "Empty response from LLM";
+          return null;
+        }
+
+        let parsed: any;
+        try {
+          const jsonText = stripCodeFences(response.text.trim());
+          const sanitized = sanitizeJsonString(jsonText);
+          parsed = JSON.parse(sanitized);
+        } catch (parseErr: any) {
+          lastParseError = `JSON parse error: ${parseErr.message}`;
+          console.log(`[AI XAML Enricher Tree] ${lastParseError}`);
+          return null;
+        }
+
+        const validation = validateWorkflowSpec(parsed);
+        if (!validation.success) {
+          lastValidationErrors = validation.errors;
+          console.log(`[AI XAML Enricher Tree] Validation failed: ${validation.errors.join("; ")}`);
+          return null;
+        }
+
+        return validation.data;
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+
+    console.log(`[AI XAML Enricher Tree] Requesting tree enrichment for ${nodeDescriptions.length} nodes...`);
+    let spec = await attemptTreeEnrichment();
+
+    if (!spec) {
+      const errorContext = lastValidationErrors.length > 0
+        ? `IMPORTANT: Your previous response FAILED Zod schema validation with these specific errors:\n${lastValidationErrors.map((e, i) => `  ${i + 1}. ${e}`).join("\n")}\n\nFix these errors. The root must have 'name' (non-empty string), 'rootSequence' (object with kind='sequence', displayName, children array), and 'variables' (array). All nodes in children arrays must have a valid 'kind' field: activity, sequence, tryCatch, if, while, forEach, or retryScope.`
+        : lastParseError
+          ? `IMPORTANT: Your previous response was not valid JSON: ${lastParseError}. Respond with ONLY the JSON object, no markdown fences or explanation.`
+          : "IMPORTANT: Your previous response was invalid. Ensure the output matches the WorkflowSpec schema exactly.";
+
+      console.log("[AI XAML Enricher Tree] First attempt failed, retrying with specific error context...");
+      spec = await attemptTreeEnrichment(errorContext);
+
+      if (!spec) {
+        const allErrors = lastValidationErrors.length > 0
+          ? lastValidationErrors
+          : lastParseError ? [lastParseError] : ["Unknown validation failure"];
+        console.log(`[AI XAML Enricher Tree] Retry also failed — returning validation_failed status with ${allErrors.length} errors`);
+        return {
+          status: "validation_failed",
+          processType,
+          validationErrors: allErrors,
+        };
+      }
+    }
+
+    console.log(`[AI XAML Enricher Tree] Successfully produced WorkflowSpec tree: "${spec.name}", ${spec.variables.length} variables, REFramework=${spec.useReFramework}`);
+    return { workflowSpec: spec, processType, status: "success" };
+  } catch (err: any) {
+    if (err.name === "AbortError") {
+      console.log("[AI XAML Enricher Tree] Timed out");
+    } else {
+      console.log(`[AI XAML Enricher Tree] Error: ${err.message}`);
+    }
+    return null;
+  }
 }

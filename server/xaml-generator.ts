@@ -297,6 +297,22 @@ function parseInvokeArgs(rawValue: string, direction: "In" | "Out" | "InOut"): s
   return result;
 }
 
+function collapseDoubledArgumentsXmlParser(xml: string): string {
+  const argTags = ["InArgument", "OutArgument"];
+  for (const tag of argTags) {
+    const outerOpenPattern = new RegExp(
+      `<${tag}(\\s[^>]*)?>\\s*<${tag}(\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>\\s*<\\/${tag}>`,
+      "g"
+    );
+    xml = xml.replace(outerOpenPattern, (_match, outerAttrs, innerAttrs, content) => {
+      const attrs = ((innerAttrs || outerAttrs) || "").trim();
+      const trimmedContent = content.trim();
+      return `<${tag}${attrs ? " " + attrs : ""}>${trimmedContent}</${tag}>`;
+    });
+  }
+  return xml;
+}
+
 export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFramework = "Windows"): string {
   let idCounter = 0;
   const viewStateEntries: { id: string; width: number; height: number }[] = [];
@@ -563,10 +579,17 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
   });
 
 
-  xml = xml.replace(/<(InArgument|OutArgument)([^>]*)><\1([^>]*)>([^<]*)<\/\1><\/\1>/g, (_m, tag, outerAttrs, innerAttrs, content) => {
+  xml = xml.replace(/<(InArgument|OutArgument)([^>]*)>\s*<\1([^>]*)>([^<]*)<\/\1>\s*<\/\1>/g, (_m, tag, outerAttrs, innerAttrs, content) => {
     const attrs = (innerAttrs || outerAttrs).trim();
     return `<${tag}${attrs ? " " + attrs : ""}>${content}</${tag}>`;
   });
+
+  xml = xml.replace(/<(InArgument|OutArgument)([^>]*)>\s*\n\s*<\1([^>]*)>([^<]*)<\/\1>\s*\n\s*<\/\1>/g, (_m, tag, outerAttrs, innerAttrs, content) => {
+    const attrs = (innerAttrs || outerAttrs).trim();
+    return `<${tag}${attrs ? " " + attrs : ""}>${content}</${tag}>`;
+  });
+
+  xml = collapseDoubledArgumentsXmlParser(xml);
 
   xml = ensureVariableDeclarations(xml);
 
@@ -2948,7 +2971,11 @@ export function generateInitAllSettingsXaml(orchestratorArtifacts?: any, targetF
     for (const asset of textAssets) {
       const varType = asset.type === "Integer" ? "x:Int32" : asset.type === "Bool" ? "x:Boolean" : "x:String";
       assetActivities += `
-          <ui:GetAsset DisplayName="Get ${escapeXml(asset.name)}" AssetName="${escapeXml(asset.name)}" Value="[str_AssetValue]" />`;
+          <ui:GetAsset DisplayName="Get ${escapeXml(asset.name)}" AssetName="${escapeXml(asset.name)}">
+            <ui:GetAsset.AssetValue>
+              <OutArgument x:TypeArguments="x:String">[str_AssetValue]</OutArgument>
+            </ui:GetAsset.AssetValue>
+          </ui:GetAsset>`;
     }
   }
 
