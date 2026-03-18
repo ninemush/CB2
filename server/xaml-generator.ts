@@ -487,18 +487,9 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
     return `<ui:InvokeWorkflowFile ${(before + after).trim()}${closing}`;
   });
 
-  xml = xml.replace(/<ui:TakeScreenshot\s+([^>]*?)OutputPath="([^"]*)"([^>]*?)\/>/g, (match, before, outputPathVal, after) => {
+  xml = xml.replace(/<ui:TakeScreenshot\s+([^>]*?)OutputPath="([^"]*)"([^>]*?)\/>/g, (_match, before, _outputPathVal, after) => {
     const attrs = (before + after).trim();
-    let resultVar = "img_Screenshot";
-    const varMatch = outputPathVal.match(/\[(\w+)\]/);
-    if (varMatch) {
-      resultVar = varMatch[1];
-    }
-    return `<ui:TakeScreenshot ${attrs}>
-                <ui:TakeScreenshot.Result>
-                  <OutArgument x:TypeArguments="ui:Image">[${resultVar}]</OutArgument>
-                </ui:TakeScreenshot.Result>
-              </ui:TakeScreenshot>`;
+    return `<ui:TakeScreenshot ${attrs} />`;
   });
 
   xml = xml.replace(/<(ui:HttpClient\s)([^>]*?)>/g, (match, prefix, attrs) => {
@@ -1975,11 +1966,7 @@ function wrapInTryCatch(innerXml: string, stepName: string, errorHandling: "retr
                         <TryCatch DisplayName="Safe Screenshot on Retry Failure">
                           <TryCatch.Try>
                             <Sequence DisplayName="Capture Screenshot">
-                              <ui:TakeScreenshot DisplayName="Screenshot on Retry Failure: ${escapedStep}">
-                                <ui:TakeScreenshot.Result>
-                                  <OutArgument x:TypeArguments="ui:Image">[img_Screenshot]</OutArgument>
-                                </ui:TakeScreenshot.Result>
-                              </ui:TakeScreenshot>
+                              <ui:TakeScreenshot DisplayName="Screenshot on Retry Failure: ${escapedStep}" />
                               <ui:LogMessage Level="Warn" Message="[&quot;Retry exhausted for ${escapedStep}, screenshot captured&quot;]" DisplayName="Log Retry Screenshot" />
                             </Sequence>
                           </TryCatch.Try>
@@ -2029,11 +2016,7 @@ function wrapInTryCatch(innerXml: string, stepName: string, errorHandling: "retr
                     <TryCatch DisplayName="Safe Screenshot Capture">
                       <TryCatch.Try>
                         <Sequence DisplayName="Capture Screenshot">
-                          <ui:TakeScreenshot DisplayName="Screenshot on Error: ${escapedStep}">
-                            <ui:TakeScreenshot.Result>
-                              <OutArgument x:TypeArguments="ui:Image">[img_Screenshot]</OutArgument>
-                            </ui:TakeScreenshot.Result>
-                          </ui:TakeScreenshot>
+                          <ui:TakeScreenshot DisplayName="Screenshot on Error: ${escapedStep}" />
                           <ui:LogMessage Level="Info" Message="[&quot;Screenshot captured for error diagnostics&quot;]" DisplayName="Log Screenshot Captured" />
                         </Sequence>
                       </TryCatch.Try>
@@ -3009,11 +2992,7 @@ export function generateReframeworkMainXaml(projectName: string, queueName: stri
                   </Sequence.Variables>
                   <TryCatch DisplayName="Safe Screenshot Capture">
                     <TryCatch.Try>
-                      <ui:TakeScreenshot DisplayName="Screenshot on Transaction Error">
-                        <ui:TakeScreenshot.Result>
-                          <OutArgument x:TypeArguments="ui:Image">[img_Screenshot]</OutArgument>
-                        </ui:TakeScreenshot.Result>
-                      </ui:TakeScreenshot>
+                      <ui:TakeScreenshot DisplayName="Screenshot on Transaction Error" />
                     </TryCatch.Try>
                     <TryCatch.Catches>
                       <Catch x:TypeArguments="s:Exception">
@@ -3148,11 +3127,7 @@ export function generateSetTransactionStatusXaml(targetFramework?: TargetFramewo
           <TryCatch DisplayName="Safe Screenshot on Transaction Failure">
             <TryCatch.Try>
               <Sequence DisplayName="Capture Screenshot">
-                <ui:TakeScreenshot DisplayName="Screenshot on Transaction Failure">
-                  <ui:TakeScreenshot.Result>
-                    <OutArgument x:TypeArguments="ui:Image">[img_Screenshot]</OutArgument>
-                  </ui:TakeScreenshot.Result>
-                </ui:TakeScreenshot>
+                <ui:TakeScreenshot DisplayName="Screenshot on Transaction Failure" />
                 <ui:LogMessage Level="Info" Message="[&quot;Transaction failure screenshot: &quot;${concat}str_ScreenshotPath]" DisplayName="Log Failure Screenshot" />
               </Sequence>
             </TryCatch.Try>

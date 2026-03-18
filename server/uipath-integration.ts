@@ -83,7 +83,7 @@ export const UIPATH_PACKAGE_ALIAS_MAP: Record<string, string> = {
 };
 
 function isValidNuGetVersion(version: string): boolean {
-  return /^\[?\d+\.\d+(\.\d+){0,2}\]?$/.test(version);
+  return /^\[?\d+\.\d+(\.\d+){0,2}(,\s*\))?\]?$/.test(version);
 }
 
 function sanitizeDeps(deps: Record<string, string>): void {
@@ -91,6 +91,8 @@ function sanitizeDeps(deps: Record<string, string>): void {
     if (val === "*" || val === "[*]" || !isValidNuGetVersion(val)) {
       console.log(`[UiPath Sanitize] Removing invalid dependency version: ${key}=${val}`);
       delete deps[key];
+    } else if (/^\[\d+\.\d+(\.\d+){0,2},\s*\)$/.test(val)) {
+      // valid minimum-version range format [X.Y.Z, ) — keep as-is
     } else {
       const stripped = val.replace(/^\[|\]$/g, "");
       if (stripped !== val) {
@@ -611,25 +613,25 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
     const knownVersionMap: Record<string, string> = isServerless
       ? {
-          "UiPath.System.Activities": "25.10.0",
-          "UiPath.UIAutomation.Activities": "25.10.0",
-          "UiPath.Web.Activities": "2.5.0",
-          "UiPath.Excel.Activities": "3.18.0",
-          "UiPath.Mail.Activities": "2.5.0",
-          "UiPath.Database.Activities": "2.2.0",
-          "UiPath.Persistence.Activities": "25.10.0",
-          "UiPath.MLActivities": "25.10.0",
+          "UiPath.System.Activities": "[25.10.0, )",
+          "UiPath.UIAutomation.Activities": "[25.10.0, )",
+          "UiPath.Web.Activities": "[2.5.0, )",
+          "UiPath.Excel.Activities": "[3.18.0, )",
+          "UiPath.Mail.Activities": "[2.5.0, )",
+          "UiPath.Database.Activities": "[2.2.0, )",
+          "UiPath.Persistence.Activities": "[25.10.0, )",
+          "UiPath.MLActivities": "[25.10.0, )",
         }
       : {
-          "UiPath.System.Activities": "23.10.3",
-          "UiPath.UIAutomation.Activities": "23.10.8",
-          "UiPath.Web.Activities": "1.18.0",
-          "UiPath.Excel.Activities": "2.24.0",
-          "UiPath.Mail.Activities": "1.20.0",
-          "UiPath.Database.Activities": "1.8.0",
-          "UiPath.Persistence.Activities": "23.10.0",
-          "UiPath.MLActivities": "23.10.0",
-          "UiPath.IntelligentOCR.Activities": "8.20.0",
+          "UiPath.System.Activities": "[23.10.3, )",
+          "UiPath.UIAutomation.Activities": "[23.10.8, )",
+          "UiPath.Web.Activities": "[1.18.0, )",
+          "UiPath.Excel.Activities": "[2.24.0, )",
+          "UiPath.Mail.Activities": "[1.20.0, )",
+          "UiPath.Database.Activities": "[1.8.0, )",
+          "UiPath.Persistence.Activities": "[23.10.0, )",
+          "UiPath.MLActivities": "[23.10.0, )",
+          "UiPath.IntelligentOCR.Activities": "[8.20.0, )",
         };
     const deps: Record<string, string> = {
       "UiPath.System.Activities": knownVersionMap["UiPath.System.Activities"],
@@ -840,7 +842,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         const result = feedResolutions[i];
         if (result.status === "fulfilled" && result.value !== null && isValidNuGetVersion(result.value)) {
           if (currentVer === "*" || currentVer === "[*]" || !isValidNuGetVersion(currentVer) || result.value !== currentVer) {
-            deps[pkgId] = result.value;
+            const resolvedVer = result.value;
+            deps[pkgId] = /^\[/.test(resolvedVer) ? resolvedVer : `[${resolvedVer}, )`;
           }
         } else if (!isValidNuGetVersion(currentVer)) {
           console.log(`[UiPath Deps] Removing dep with no valid version: ${pkgId}=${currentVer}`);
@@ -1012,6 +1015,9 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
     }
     for (const [depName, depVer] of Object.entries(deps)) {
+      if (/^\[\d+\.\d+(\.\d+){0,2},\s*\)$/.test(String(depVer))) {
+        continue;
+      }
       const cleanVer = String(depVer).replace(/[\[\]]/g, "");
       if (cleanVer !== depVer) {
         deps[depName] = cleanVer;
@@ -1097,13 +1103,10 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           return `WorkflowFileName="${cleaned}"`;
         });
 
-        content = content.replace(/<ui:TakeScreenshot\s+([^>]*?)OutputPath="([^"]*)"([^>]*?)\/>/g, (match, before, outputPathVal, after) => {
+        content = content.replace(/<ui:TakeScreenshot\s+([^>]*?)OutputPath="([^"]*)"([^>]*?)\/>/g, (_match, before, _outputPathVal, after) => {
           const attrs = (before + after).trim();
-          let resultVar = "img_Screenshot";
-          const varMatch = outputPathVal.match(/\[(\w+)\]/);
-          if (varMatch) resultVar = varMatch[1];
-          autoFixSummary.push(`Fixed TakeScreenshot OutputPath in ${xamlEntries[i].name}`);
-          return `<ui:TakeScreenshot ${attrs}><ui:TakeScreenshot.Result><OutArgument x:TypeArguments="ui:Image">[${resultVar}]</OutArgument></ui:TakeScreenshot.Result></ui:TakeScreenshot>`;
+          autoFixSummary.push(`Stripped TakeScreenshot OutputPath in ${xamlEntries[i].name}`);
+          return `<ui:TakeScreenshot ${attrs} />`;
         });
 
         content = content.replace(/Dictionary<String,\s*ui:InArgument>/g, 'Dictionary<x:String, x:Object>');
@@ -1208,7 +1211,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           }
           for (const pkg of stubPackages) {
             if (!deps[pkg]) {
-              deps[pkg] = knownVersionMap[pkg] || (tf === "Windows" ? "23.10.0" : "25.10.0");
+              deps[pkg] = knownVersionMap[pkg] || (tf === "Windows" ? "[23.10.0, )" : "[25.10.0, )");
             }
           }
           if (!deps["UiPath.System.Activities"]) {
@@ -1257,7 +1260,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
               }
               for (const key of Object.keys(deps)) delete deps[key];
               for (const pkg of escStubPackages) {
-                deps[pkg] = knownVersionMap[pkg] || (tf === "Windows" ? "23.10.0" : "25.10.0");
+                deps[pkg] = knownVersionMap[pkg] || (tf === "Windows" ? "[23.10.0, )" : "[25.10.0, )");
               }
               if (!deps["UiPath.System.Activities"]) {
                 deps["UiPath.System.Activities"] = knownVersionMap["UiPath.System.Activities"];

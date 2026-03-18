@@ -146,6 +146,39 @@ function scanBlockedPatterns(input: QualityGateInput): QualityGateViolation[] {
     const shortName = entry.name.split("/").pop() || entry.name;
     const content = entry.content;
 
+    if (content.includes("TakeScreenshot.Result") || content.includes("TakeScreenshot.OutputPath") || /TakeScreenshot[^>]*OutputPath=/.test(content)) {
+      const lines = content.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes("TakeScreenshot.Result")) {
+          violations.push({
+            category: "blocked-pattern",
+            severity: "error",
+            check: "invalid-takescreenshot-result",
+            file: shortName,
+            detail: `Line ${i + 1}: TakeScreenshot.Result is not a valid property — TakeScreenshot has no Result output`,
+          });
+        }
+        if (lines[i].includes("TakeScreenshot.OutputPath")) {
+          violations.push({
+            category: "blocked-pattern",
+            severity: "error",
+            check: "invalid-takescreenshot-outputpath",
+            file: shortName,
+            detail: `Line ${i + 1}: TakeScreenshot.OutputPath is not a valid property — strip OutputPath entirely`,
+          });
+        }
+        if (/TakeScreenshot[^>]*OutputPath="/.test(lines[i])) {
+          violations.push({
+            category: "blocked-pattern",
+            severity: "error",
+            check: "invalid-takescreenshot-outputpath-attr",
+            file: shortName,
+            detail: `Line ${i + 1}: TakeScreenshot has invalid OutputPath attribute — this attribute is not supported`,
+          });
+        }
+      }
+    }
+
     if (content.includes("[object Object]")) {
       const lines = content.split("\n");
       for (let i = 0; i < lines.length; i++) {
