@@ -64,6 +64,11 @@ ABSOLUTE RULES:
 1. Each process node should map to ONE OR MORE UiPath activities — reference template names from Section 2 for each activity.
 2. Use ONLY activity types present in the Activity Templates (Section 2). Do NOT invent activity names or properties not in the templates.
 3. For LogMessage, the Level property MUST be one of: Info, Warn, Error, Fatal, Trace. NEVER use "Information", "Warning", "Debug", or "Critical" — these are INVALID enum values and constitute a generation failure.
+   These are .NET LogLevel names that UiPath does NOT accept:
+     Information ✗ → use Info instead
+     Warning ✗ → use Warn instead
+     Debug ✗ → use Trace instead
+     Critical ✗ → use Fatal instead
 4. For Assign, ALWAYS use child-element syntax with Assign.To (OutArgument) and Assign.Value (InArgument). NEVER use To= or Value= as XML attributes.
 5. For properties marked as child-element in templates, ALWAYS emit them as nested child XML elements with the correct argument wrapper. NEVER place them as XML attributes.
 6. NEVER double-wrap arguments — do NOT nest InArgument inside InArgument or OutArgument inside OutArgument.

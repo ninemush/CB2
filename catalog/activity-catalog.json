@@ -1034,8 +1034,8 @@
               "name": "Body",
               "direction": "In",
               "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
               "required": false,
               "typeArguments": "x:String"
             },
@@ -1144,8 +1144,8 @@
               "name": "Body",
               "direction": "In",
               "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
               "required": false,
               "typeArguments": "x:String"
             },
@@ -1376,8 +1376,8 @@
               "name": "Body",
               "direction": "In",
               "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
               "required": false,
               "typeArguments": "x:String"
             },
