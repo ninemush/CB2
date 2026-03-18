@@ -15,6 +15,23 @@ import type { AutomationPattern } from "./uipath-activity-registry";
 import type { XamlGenerationContext } from "./types/uipath-package";
 import { XMLValidator } from "fast-xml-parser";
 
+function ensureBracketWrapped(val: string): string {
+  const trimmed = val.trim();
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
+  return `[${trimmed}]`;
+}
+
+function looksLikeVariableRef(val: string): boolean {
+  const trimmed = val.trim();
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return false;
+  if (/^[0-9]/.test(trimmed)) return false;
+  if (/^".*"$/.test(trimmed)) return false;
+  if (/^&quot;/.test(trimmed)) return false;
+  if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing" || trimmed === "null" || trimmed === "") return false;
+  if (/^[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*$/.test(trimmed)) return true;
+  return false;
+}
+
 export type GenerationMode = "baseline_openable" | "full_implementation";
 
 export interface GenerationModeConfig {
@@ -430,18 +447,22 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
     const displayMatch = (before + mid + after).match(/DisplayName="([^"]*)"/);
     const dispName = displayMatch ? displayMatch[1] : "Assign";
     const cleanAttrs = (before + mid + after).replace(/\s*(To|Value|DisplayName)="[^"]*"/g, "").trim();
+    const wrappedTo = ensureBracketWrapped(toVal);
+    const wrappedVal = looksLikeVariableRef(valVal) ? ensureBracketWrapped(valVal) : valVal;
     return `<Assign DisplayName="${dispName}"${cleanAttrs ? " " + cleanAttrs : ""}>
-              <Assign.To><OutArgument x:TypeArguments="x:String">${toVal}</OutArgument></Assign.To>
-              <Assign.Value><InArgument x:TypeArguments="x:String">${valVal}</InArgument></Assign.Value>
+              <Assign.To><OutArgument x:TypeArguments="x:String">${wrappedTo}</OutArgument></Assign.To>
+              <Assign.Value><InArgument x:TypeArguments="x:String">${wrappedVal}</InArgument></Assign.Value>
             </Assign>`;
   });
   xml = xml.replace(/<Assign\s+([^>]*?)Value="([^"]*)"([^>]*?)To="([^"]*)"([^>]*?)\s*\/>/g, (_match, before, valVal, mid, toVal, after) => {
     const displayMatch = (before + mid + after).match(/DisplayName="([^"]*)"/);
     const dispName = displayMatch ? displayMatch[1] : "Assign";
     const cleanAttrs = (before + mid + after).replace(/\s*(To|Value|DisplayName)="[^"]*"/g, "").trim();
+    const wrappedTo = ensureBracketWrapped(toVal);
+    const wrappedVal = looksLikeVariableRef(valVal) ? ensureBracketWrapped(valVal) : valVal;
     return `<Assign DisplayName="${dispName}"${cleanAttrs ? " " + cleanAttrs : ""}>
-              <Assign.To><OutArgument x:TypeArguments="x:String">${toVal}</OutArgument></Assign.To>
-              <Assign.Value><InArgument x:TypeArguments="x:String">${valVal}</InArgument></Assign.Value>
+              <Assign.To><OutArgument x:TypeArguments="x:String">${wrappedTo}</OutArgument></Assign.To>
+              <Assign.Value><InArgument x:TypeArguments="x:String">${wrappedVal}</InArgument></Assign.Value>
             </Assign>`;
   });
 
@@ -534,6 +555,16 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
   xml = xml.replace(/WorkflowFileName="([^"]+)"/g, (_match: string, p1: string) => {
     const cleaned = p1.replace(/\\/g, "/").replace(/^[./]+/, "");
     return `WorkflowFileName="${cleaned}"`;
+  });
+
+  xml = xml.replace(/<Assign\.To>\s*<OutArgument([^>]*)>([^<]*)<\/OutArgument>\s*<\/Assign\.To>/g, (_match, attrs, expr) => {
+    const wrappedExpr = ensureBracketWrapped(expr);
+    return `<Assign.To><OutArgument${attrs}>${wrappedExpr}</OutArgument></Assign.To>`;
+  });
+
+  xml = xml.replace(/<Assign\.Value>\s*<InArgument([^>]*)>([^<]*)<\/InArgument>\s*<\/Assign\.Value>/g, (_match, attrs, expr) => {
+    const wrappedExpr = looksLikeVariableRef(expr) ? ensureBracketWrapped(expr) : expr;
+    return `<Assign.Value><InArgument${attrs}>${wrappedExpr}</InArgument></Assign.Value>`;
   });
 
   return xml;
@@ -1902,9 +1933,11 @@ function renderActivity(
 
   let innerActivity: string;
   if (activityType === "Assign") {
-    const toValue = properties["To"] || properties["to"] || "[variable]";
-    const assignValue = properties["Value"] || properties["value"] || "[value]";
+    const rawToValue = properties["To"] || properties["to"] || "[variable]";
+    const rawAssignValue = properties["Value"] || properties["value"] || "[value]";
     const toType = properties["TypeArgument"] || "x:String";
+    const toValue = ensureBracketWrapped(rawToValue);
+    const assignValue = looksLikeVariableRef(rawAssignValue) ? ensureBracketWrapped(rawAssignValue) : rawAssignValue;
     innerActivity = `<Assign DisplayName="${escapeXml(enforced)}"${propAttrs.replace(/\s+(To|Value|to|value|TypeArgument)="[^"]*"/g, "")}>
               <Assign.To><OutArgument x:TypeArguments="${toType}">${escapeXml(toValue)}</OutArgument></Assign.To>
               <Assign.Value><InArgument x:TypeArguments="${toType}">${escapeXml(assignValue)}</InArgument></Assign.Value>
