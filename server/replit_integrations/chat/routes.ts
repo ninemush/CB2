@@ -928,7 +928,7 @@ export function registerChatRoutes(app: Express): void {
         if (!clientDisconnected) {
           try { res.write(`: heartbeat\n\n`); } catch {}
         }
-      }, 5000);
+      }, 2000);
 
       let classifiedIntent: "PDD" | "SDD" | "PDD_SDD" | "DEPLOY" | "UIPATH_GEN" | "DHG" | "CHAT" = "CHAT";
       const lowerContent = content.toLowerCase();
@@ -967,7 +967,14 @@ export function registerChatRoutes(app: Express): void {
       } else if (hasGenVerb && hasPddKeyword) {
         classifiedIntent = "PDD";
         console.log(`[Chat] Keyword intent classification: PDD`);
-      } else {
+      }
+
+      if (classifiedIntent !== "CHAT") {
+        try { res.write(`data: ${JSON.stringify({ intentClassified: classifiedIntent })}\n\n`); } catch {}
+        console.log(`[Chat] Sent early intentClassified SSE event: ${classifiedIntent} (keyword-matched, before service probe)`);
+      }
+
+      if (classifiedIntent === "CHAT") {
         try {
           let recentMessages = chatMessages.slice(-4);
           if (recentMessages.length > 0 && recentMessages[0].role === "assistant") {

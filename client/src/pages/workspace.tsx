@@ -59,7 +59,7 @@ const STAGE_THINKING_MESSAGES: Record<string, string> = {
   "Governance / Security Scan": "Running compliance checks...",
   "CoE Approval": "Processing approval...",
   "Deploy": "Preparing deployment...",
-  "Maintenance": "Checking status...",
+  "Maintenance": "Processing...",
 };
 
 const INTENT_THINKING_MESSAGES: Record<string, string> = {
@@ -762,6 +762,26 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     return false;
   }, [idea.stage]);
 
+  const preClassifyIntent = useCallback((text: string): string => {
+    const lower = text.toLowerCase();
+    const hasPackageRegenKeyword = /\b(regenerate|rebuild|redo|build)\b/.test(lower) && /\b(package|nupkg|uipath)\b/.test(lower);
+    const hasDeployVerb = /\b(deploy|push)\b/.test(lower) && /\b(uipath|orchestrator)\b/.test(lower);
+    const hasUiPathGenVerb = /\b(generate|regenerate|rebuild|build|create|redo)\b/.test(lower) && /\b(uipath|package|nupkg|automation\s+package)\b/.test(lower);
+    const hasPddKeyword = /\b(pdd|process\s+design\s+document)\b/.test(lower);
+    const hasSddKeyword = /\b(sdd|solution\s+design\s+document)\b/.test(lower);
+    const hasDhgKeyword = /\b(dhg|developer\s+handoff(\s+guide)?|handoff\s+guide|deployment\s+handoff)\b/.test(lower);
+    const hasGenVerb = /\b(generate|write|create|regenerate|redo|produce|build|draft)\b/.test(lower);
+
+    if (hasPackageRegenKeyword && !hasDeployVerb) return "UIPATH_GEN";
+    if (hasDeployVerb) return "DEPLOY";
+    if (hasUiPathGenVerb && !hasPddKeyword && !hasSddKeyword) return "UIPATH_GEN";
+    if (hasDhgKeyword) return "DHG";
+    if (hasGenVerb && hasPddKeyword && hasSddKeyword) return "PDD_SDD";
+    if (hasGenVerb && hasPddKeyword) return "PDD";
+    if (hasGenVerb && hasSddKeyword) return "SDD";
+    return "";
+  }, []);
+
   const sendMessageDirect = useCallback(async (text: string, imageData?: { base64: string; mediaType: string }) => {
     lastUserMessageRef.current = text;
     setClassifiedIntent("");
@@ -770,6 +790,12 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       toBeGeneratingRef.current = true;
       console.log(`[ProcessMap] Detected TO-BE modification from user message, setting toBeGeneratingRef=true`);
     }
+
+    const preIntent = preClassifyIntent(text);
+    if (preIntent) {
+      setClassifiedIntent(preIntent);
+    }
+
     let docGenIdAtStart = docGenIdRef.current;
     const userMsg: ChatMsg = {
       id: `user-${Date.now()}`,
@@ -790,10 +816,10 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     setStreamingMsg(streamMsg);
     streamingMsgRef.current = "";
     setLiveStatus("");
-    setClassifiedIntent("");
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    let didRetry = false;
 
     try {
       const res = await fetch("/api/chat", {
@@ -931,6 +957,100 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       if (err?.name === "AbortError") {
         queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
         return;
+      }
+      if (!didRetry) {
+        didRetry = true;
+        console.log("[Chat] Connection error, attempting automatic retry in 2s...");
+        setLiveStatus("Reconnecting...");
+        await new Promise((r) => setTimeout(r, 2000));
+        try {
+          const retryController = new AbortController();
+          abortControllerRef.current = retryController;
+          setStreamingMsg({
+            id: `assistant-${Date.now()}`,
+            role: "assistant",
+            content: "",
+            timestamp: new Date(),
+            isStreaming: true,
+          });
+          streamingMsgRef.current = "";
+          const retryRes = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: retryController.signal,
+            credentials: "include",
+            body: JSON.stringify({ ideaId: idea.id, content: text, ...(imageData ? { imageData } : {}) }),
+          });
+          if (!retryRes.ok) throw new Error("Retry request failed");
+          const retryReader = retryRes.body?.getReader();
+          if (!retryReader) throw new Error("No retry stream reader");
+          const retryDecoder = new TextDecoder();
+          let retryBuffer = "";
+          while (true) {
+            const { done: retryDone, value: retryValue } = await retryReader.read();
+            if (retryDone) break;
+            retryBuffer += retryDecoder.decode(retryValue, { stream: true });
+            const retryLines = retryBuffer.split("\n");
+            retryBuffer = retryLines.pop() || "";
+            for (const retryLine of retryLines) {
+              if (retryLine.startsWith("data: ")) {
+                try {
+                  const data = JSON.parse(retryLine.slice(6));
+                  if (data.token) {
+                    if (!streamingMsgRef.current) setLiveStatus("");
+                    streamingMsgRef.current += data.token;
+                    setStreamingMsg((prev) => prev ? { ...prev, content: prev.content + data.token } : prev);
+                  }
+                  if (data.liveStatus) setLiveStatus(data.liveStatus);
+                  if (data.intentClassified) {
+                    setClassifiedIntent(data.intentClassified);
+                    if (data.intentClassified === "UIPATH_GEN" && !isGeneratingDocRef.current) {
+                      startDocStreaming("UiPath");
+                      docGenIdAtStart = docGenIdRef.current;
+                    }
+                  }
+                  if (data.done) {
+                    setStreamingMsg((prev) => prev ? { ...prev, isStreaming: false } : prev);
+                    setDocProgressSection("");
+                    setClassifiedIntent("");
+                    setLiveStatus("");
+                  }
+                  if (data.docProgress) {
+                    if (data.docProgress.started && !isGeneratingDocRef.current) {
+                      startDocStreaming(data.docProgress.docType || "PDD");
+                      docGenIdAtStart = docGenIdRef.current;
+                    }
+                    if (data.docProgress.section) setDocProgressSection(data.docProgress.section);
+                  }
+                  if (data.deployStatus) {
+                    if (data.deployComplete) {
+                      setDeployStep("");
+                      setClassifiedIntent("");
+                      setStreamingMsg(null);
+                      queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+                    } else {
+                      setDeployStep(data.deployStatus);
+                      setStreamingMsg((prev) => prev ? { ...prev } : prev);
+                    }
+                  }
+                  if (data.transition) {
+                    queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/ideas"] });
+                  }
+                  if (data.error) {
+                    streamingMsgRef.current = "";
+                    setStreamingMsg(null);
+                    stopDocStreaming({ force: true });
+                    toast({ title: "Message failed", description: "Something went wrong. Please try sending your message again.", variant: "destructive" });
+                  }
+                } catch {}
+              }
+            }
+          }
+          return;
+        } catch {
+          setLiveStatus("");
+        }
       }
       toast({
         title: "Connection error",
