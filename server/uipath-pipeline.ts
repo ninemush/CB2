@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import AdmZip from "adm-zip";
 import { storage } from "./storage";
 import { documentStorage } from "./document-storage";
 import { processMapStorage } from "./process-map-storage";
@@ -13,14 +14,36 @@ import {
 import {
   generateDeveloperHandoffGuide,
   makeUiPathCompliant,
+  validateXamlContent,
   type XamlGap,
 } from "./xaml-generator";
 import type { UiPathPackage, UiPathPackageSpec, UiPathPackageInternal } from "./types/uipath-package";
 import { analyzeAndFix, type AnalysisReport } from "./workflow-analyzer";
-import type { QualityGateResult } from "./uipath-quality-gate";
+import { runQualityGate, type QualityGateResult } from "./uipath-quality-gate";
 import { calculateTemplateCompliance } from "./catalog/xaml-template-builder";
+import {
+  calculateConfidenceScore,
+  runMetaValidation,
+  applyCorrections,
+  calculateEstimatedCost,
+  recordGenerationMetrics,
+  type MetaValidationMode,
+  type MetaValidationResult,
+  type ConfidenceScorerInput,
+  type GenerationMetrics,
+} from "./meta-validation";
 
 export type { GenerationMode };
+
+export interface MetaValidationEvent {
+  status: string;
+  correctionsApplied?: number;
+  correctionsSkipped?: number;
+  correctionsFailed?: number;
+  flatStructureWarnings?: number;
+  confidenceScore?: number;
+  durationMs?: number;
+}
 
 export type PackageStatus = "BUILDING" | "READY" | "READY_WITH_WARNINGS" | "FAILED";
 
@@ -50,6 +73,7 @@ export interface PipelineResult {
   warnings: PipelineWarning[];
   status: PackageStatus;
   templateComplianceScore?: number;
+  metaValidationResult?: MetaValidationResult;
 }
 
 export interface DhgResult {
@@ -173,21 +197,23 @@ function buildDhgFromBuildResult(
   pkg: UiPathPackage,
   ctx: IdeaContext,
   buildResult: BuildResult,
+  overrideXamlEntries?: { name: string; content: string }[],
 ): DhgResult {
   const sddContent = ctx.sdd?.content || "";
   const workflows = pkg.workflows || [];
+  const xamlEntries = overrideXamlEntries || buildResult.xamlEntries;
 
-  const wfNames = workflows.map((wf: any) => (wf.name || "Workflow").replace(/\s+/g, "_"));
+  const wfNames = workflows.map((wf: { name?: string }) => (wf.name || "Workflow").replace(/\s+/g, "_"));
 
   const analysisReports: Array<{ fileName: string; report: AnalysisReport }> = [];
-  for (const entry of buildResult.xamlEntries) {
+  for (const entry of xamlEntries) {
     const { report } = analyzeAndFix(entry.content);
     analysisReports.push({ fileName: entry.name, report });
   }
 
   const enrichment = pkg.internal?.enrichment || null;
   const useReFramework = enrichment?.useReFramework ?? pkg.internal?.useReFramework ?? false;
-  const painPoints = (pkg.internal?.painPoints || []).map((p: any) => ({
+  const painPoints = (pkg.internal?.painPoints || []).map((p: { name?: string; description?: string }) => ({
     name: p.name || "",
     description: p.description || "",
   }));
@@ -199,7 +225,7 @@ function buildDhgFromBuildResult(
     description: pkg.description || ctx.idea.description,
     gaps: buildResult.gaps,
     usedPackages: buildResult.usedPackages,
-    workflowNames: wfNames.length > 0 ? wfNames : buildResult.xamlEntries.map(e => e.name.replace(".xaml", "")),
+    workflowNames: wfNames.length > 0 ? wfNames : xamlEntries.map(e => e.name.replace(".xaml", "")),
     sddContent: sddContent || undefined,
     enrichment,
     useReFramework,
@@ -223,7 +249,9 @@ export async function generateUiPathPackage(
     version?: string;
     generationMode?: GenerationMode;
     onProgress?: (message: string) => void;
+    onMetaValidation?: (event: MetaValidationEvent) => void;
     preloadedContext?: IdeaContext;
+    metaValidationMode?: MetaValidationMode;
   },
 ): Promise<PipelineResult> {
   const ver = options?.version || computeVersion();
@@ -233,11 +261,12 @@ export async function generateUiPathPackage(
   const ctx = options?.preloadedContext || await loadIdeaContext(ideaId);
   const artifacts = await extractOrchestratorArtifacts(ctx.sdd?.content, pipelineWarnings);
 
+  const mvMode: MetaValidationMode = options?.metaValidationMode || "Auto";
   const fp = computeFingerprint(pkg, ctx.sdd?.content || "", ctx.mapNodes, ctx.processEdges);
-  const cacheKey = `${ideaId}:${mode}`;
+  const cacheKey = `${ideaId}:${mode}:${mvMode}`;
   const cached = pipelineCache.get(cacheKey);
   if (cached && cached.fingerprint === fp) {
-    console.log(`[Pipeline] Serving cached result for ${ideaId} (mode=${mode}, fingerprint ${fp})`);
+    console.log(`[Pipeline] Serving cached result for ${ideaId} (mode=${mode}, mv=${mvMode}, fingerprint ${fp})`);
     return cached;
   }
 
@@ -266,24 +295,18 @@ export async function generateUiPathPackage(
     pipelineWarnings.push(...buildResult.dependencyWarnings);
   }
 
-  const dhgResult = buildDhgFromBuildResult(enriched, ctx, buildResult);
-
   const qgResult = buildResult.qualityGateResult;
-  const qualityGateBlocking = mode === "baseline_openable"
+  let qualityGateBlocking = mode === "baseline_openable"
     ? false
     : (qgResult ? !qgResult.passed : false);
-  const qualityGateWarnings = qgResult
+  let qualityGateWarnings: string[] = qgResult
     ? qgResult.violations
-        .filter((v: any) => v.severity === "warning" || (mode === "baseline_openable" && v.severity === "error"))
-        .map((v: any) => v.detail)
+        .filter((v: { severity: string }) => v.severity === "warning" || (mode === "baseline_openable" && v.severity === "error"))
+        .map((v: { detail: string }) => v.detail)
     : [];
+  let postCorrectionQualityGate: QualityGateResult | null = null;
 
   const hasNupkg = buildResult.buffer && buildResult.buffer.length > 0;
-  const status: PackageStatus = !hasNupkg
-    ? "FAILED"
-    : pipelineWarnings.length > 0
-      ? "READY_WITH_WARNINGS"
-      : "READY";
 
   let templateComplianceScore: number | undefined;
   try {
@@ -305,15 +328,217 @@ export async function generateUiPathPackage(
     console.warn(`[Pipeline] Template compliance calculation failed: ${err.message}`);
   }
 
+  let metaValidationResult: MetaValidationResult | undefined;
+  let finalXamlEntries = buildResult.xamlEntries;
+  let finalPackageBuffer = buildResult.buffer;
+  let mvInputTokens = 0;
+  let mvOutputTokens = 0;
+
+  if (hasNupkg) {
+    try {
+      const scorerInput: ConfidenceScorerInput = {
+        workflowCount: buildResult.xamlEntries.length,
+        activityCount: buildResult.xamlEntries.reduce((sum, e) => sum + (e.content.match(/<ui:[A-Z]/g)?.length || 0), 0),
+        templateComplianceScore,
+        catalogViolationCount: qgResult?.violations.filter(v => v.check === "catalog-violation").length || 0,
+        uncataloguedActivityCount: qgResult?.violations.filter(v => v.check === "uncatalogued-activity").length || 0,
+        hasReFramework: buildResult.xamlEntries.some(e => e.name.includes("GetTransactionData") || e.name.includes("SetTransactionStatus")),
+        hasDocumentUnderstanding: buildResult.xamlEntries.some(e => e.content.includes("DigitizeDocument") || e.content.includes("ClassifyDocument")),
+        hasAICenter: buildResult.xamlEntries.some(e => e.content.includes("MLSkill") || e.content.includes("Predict")),
+        priorGenerationHadStubs: buildResult.usedFallbackStubs,
+        qualityGateWarningCount: qgResult?.summary.totalWarnings || 0,
+      };
+
+      const confidenceResult = calculateConfidenceScore(scorerInput);
+      const shouldEngage = mvMode !== "Off" && (mvMode === "Always" || (mvMode === "Auto" && confidenceResult.shouldEngage));
+
+      options?.onMetaValidation?.({ status: "assessing", confidenceScore: confidenceResult.score });
+
+      if (shouldEngage) {
+        options?.onMetaValidation?.({ status: "will-validate", confidenceScore: confidenceResult.score });
+        if (options?.onProgress) options.onProgress("Running meta-validation review...");
+        console.log(`[Pipeline] Meta-validation engaged (mode=${mvMode}, score=${confidenceResult.score.toFixed(2)}, categories=${confidenceResult.triggeredCategories.join(",")})`);
+
+        options?.onMetaValidation?.({ status: "started" });
+
+        const correctionSet = await runMetaValidation(
+          buildResult.xamlEntries,
+          confidenceResult.triggeredCategories,
+          options?.onProgress,
+        );
+
+        mvInputTokens = correctionSet.inputTokens;
+        mvOutputTokens = correctionSet.outputTokens;
+
+        const applicationResult = applyCorrections(buildResult.xamlEntries, correctionSet);
+        finalXamlEntries = applicationResult.updatedXamlEntries;
+
+        if (applicationResult.applied > 0 && buildResult.buffer.length > 0) {
+          try {
+            const zip = new AdmZip(buildResult.buffer);
+            for (const entry of finalXamlEntries) {
+              const archivePaths = buildResult.archiveManifest.filter(p => p === entry.name || p.endsWith(`/${entry.name}`) || p.endsWith(`\\${entry.name}`));
+              for (const archivePath of archivePaths) {
+                zip.updateFile(archivePath, Buffer.from(entry.content, "utf-8"));
+              }
+            }
+            finalPackageBuffer = zip.toBuffer();
+            console.log(`[Pipeline] Rebuilt .nupkg with ${applicationResult.applied} correction(s) applied (${finalPackageBuffer.length} bytes)`);
+          } catch (rebuildErr: unknown) {
+            const errMsg = rebuildErr instanceof Error ? rebuildErr.message : String(rebuildErr);
+            console.warn(`[Pipeline] Failed to rebuild .nupkg after corrections: ${errMsg}`);
+          }
+        }
+
+        if (applicationResult.applied > 0) {
+          try {
+            const xamlValidationViolations = validateXamlContent(finalXamlEntries);
+            if (xamlValidationViolations.length > 0) {
+              console.log(`[Pipeline] Post-correction XAML validation: ${xamlValidationViolations.length} issue(s) found`);
+              for (const v of xamlValidationViolations) {
+                pipelineWarnings.push({
+                  code: `POST_MV_XAML_${v.check.toUpperCase().replace(/-/g, "_")}`,
+                  message: `[Post-MV] ${v.detail}`,
+                  stage: "meta-validation",
+                  recoverable: true,
+                });
+              }
+            }
+
+            const projectJsonEntry = buildResult.archiveManifest.find(p => p.endsWith("project.json"));
+            let projectJsonContent = "{}";
+            if (projectJsonEntry) {
+              const zip = new AdmZip(buildResult.buffer);
+              const pjEntry = zip.getEntry(projectJsonEntry);
+              if (pjEntry) projectJsonContent = pjEntry.getData().toString("utf-8");
+            }
+            const revalidationResult = runQualityGate({
+              xamlEntries: finalXamlEntries,
+              projectJsonContent,
+              targetFramework: "Windows",
+              archiveManifest: buildResult.archiveManifest,
+            });
+
+            postCorrectionQualityGate = revalidationResult;
+
+            if (!revalidationResult.passed) {
+              const postFixWarnings = revalidationResult.violations.filter(v => v.severity === "warning");
+              const postFixErrors = revalidationResult.violations.filter(v => v.severity === "error");
+              qualityGateBlocking = postFixErrors.length > 0;
+              qualityGateWarnings = postFixWarnings.map(v => v.detail);
+              if (postFixErrors.length > 0) {
+                console.warn(`[Pipeline] Post-correction quality gate found ${postFixErrors.length} error(s)`);
+                for (const e of postFixErrors) {
+                  pipelineWarnings.push({
+                    code: "POST_MV_QG_ERROR",
+                    message: `[Post-MV QG] ${e.detail}`,
+                    stage: "meta-validation",
+                    recoverable: false,
+                  });
+                }
+              }
+              if (postFixWarnings.length > 0) {
+                console.log(`[Pipeline] Post-correction quality gate: ${postFixWarnings.length} warning(s) remain`);
+              }
+            } else {
+              qualityGateBlocking = false;
+              qualityGateWarnings = [];
+              console.log(`[Pipeline] Post-correction quality gate: PASSED`);
+            }
+          } catch (qgErr: unknown) {
+            const errMsg = qgErr instanceof Error ? qgErr.message : String(qgErr);
+            console.warn(`[Pipeline] Post-correction revalidation failed: ${errMsg}`);
+          }
+        }
+
+        if (applicationResult.flatStructureWarnings > 0) {
+          pipelineWarnings.push({
+            code: "META_VALIDATION_FLAT_STRUCTURE",
+            message: `${applicationResult.flatStructureWarnings} FLAT_STRUCTURE issue(s) detected — manual review recommended`,
+            stage: "meta-validation",
+            recoverable: true,
+          });
+        }
+
+        const mvStatus = applicationResult.applied > 0
+          ? "fixed"
+          : applicationResult.flatStructureWarnings > 0
+            ? "warnings"
+            : "clean";
+
+        metaValidationResult = {
+          engaged: true,
+          mode: mvMode,
+          confidenceScore: confidenceResult.score,
+          correctionsApplied: applicationResult.applied,
+          correctionsSkipped: applicationResult.skipped,
+          correctionsFailed: applicationResult.failed,
+          flatStructureWarnings: applicationResult.flatStructureWarnings,
+          durationMs: applicationResult.durationMs + correctionSet.reviewDurationMs,
+          status: mvStatus,
+        };
+
+        console.log(`[Pipeline] Meta-validation complete: ${applicationResult.applied} applied, ${applicationResult.skipped} skipped, ${applicationResult.failed} failed (${metaValidationResult.durationMs}ms)`);
+
+        const completionEvent: MetaValidationEvent = {
+          status: mvStatus === "fixed" ? "completed" : mvStatus === "warnings" ? "warning" : "completed",
+          correctionsApplied: applicationResult.applied,
+          correctionsSkipped: applicationResult.skipped,
+          correctionsFailed: applicationResult.failed,
+          flatStructureWarnings: applicationResult.flatStructureWarnings,
+          confidenceScore: confidenceResult.score,
+          durationMs: metaValidationResult.durationMs,
+        };
+
+        if (applicationResult.skipped > 0 && mvStatus !== "warnings") {
+          completionEvent.status = "warning";
+        }
+
+        options?.onMetaValidation?.(completionEvent);
+      } else {
+        options?.onMetaValidation?.({ status: "not-needed", confidenceScore: confidenceResult.score, durationMs: 0 });
+        metaValidationResult = {
+          engaged: false,
+          mode: mvMode,
+          confidenceScore: confidenceResult.score,
+          correctionsApplied: 0,
+          correctionsSkipped: 0,
+          correctionsFailed: 0,
+          flatStructureWarnings: 0,
+          durationMs: 0,
+          status: "skipped",
+        };
+        console.log(`[Pipeline] Meta-validation skipped (mode=${mvMode}, score=${confidenceResult.score.toFixed(2)})`);
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[Pipeline] Meta-validation failed: ${errMsg}`);
+      pipelineWarnings.push({
+        code: "META_VALIDATION_FAILED",
+        message: `Meta-validation review failed: ${errMsg}`,
+        stage: "meta-validation",
+        recoverable: true,
+      });
+    }
+  }
+
+  const dhgResult = buildDhgFromBuildResult(enriched, ctx, buildResult, finalXamlEntries);
+
+  const finalStatus: PackageStatus = !hasNupkg
+    ? "FAILED"
+    : (pipelineWarnings.length > 0 || metaValidationResult?.flatStructureWarnings)
+      ? "READY_WITH_WARNINGS"
+      : "READY";
+
   const result: PipelineResult = {
-    packageBuffer: buildResult.buffer,
+    packageBuffer: finalPackageBuffer,
     gaps: buildResult.gaps,
     usedPackages: buildResult.usedPackages,
-    qualityGateResult: buildResult.qualityGateResult,
+    qualityGateResult: postCorrectionQualityGate || buildResult.qualityGateResult,
     cacheHit: buildResult.cacheHit,
     dhgContent: dhgResult.dhgContent,
     projectName: dhgResult.projectName,
-    xamlEntries: buildResult.xamlEntries,
+    xamlEntries: finalXamlEntries,
     dependencyMap: buildResult.dependencyMap,
     archiveManifest: buildResult.archiveManifest,
     qualityGateBlocking,
@@ -322,22 +547,61 @@ export async function generateUiPathPackage(
     usedFallbackStubs: buildResult.usedFallbackStubs,
     referencedMLSkillNames: buildResult.referencedMLSkillNames || [],
     warnings: pipelineWarnings,
-    status,
+    status: finalStatus,
     templateComplianceScore,
+    metaValidationResult,
   };
 
   evictOldestPipelineCacheEntry();
   pipelineCache.set(cacheKey, { ...result, fingerprint: fp });
-  console.log(`[Pipeline] Cached result for ${ideaId} (mode=${mode}, fingerprint ${fp}, ${buildResult.buffer.length} bytes, status=${status}, warnings=${pipelineWarnings.length}, templateCompliance=${templateComplianceScore ?? "N/A"})`);
+  try {
+    const mvTokens = { input: mvInputTokens, output: mvOutputTokens };
+    const totalXamlLength = finalXamlEntries.reduce((sum, e) => sum + e.content.length, 0);
+    const estimatedAssemblyOutputTokens = Math.ceil(totalXamlLength / 3.5);
+    const estimatedAssemblyInputTokens = Math.ceil(estimatedAssemblyOutputTokens * 1.5);
+    const assemblyTokens = { input: estimatedAssemblyInputTokens, output: estimatedAssemblyOutputTokens };
+    const totalTokens = {
+      input: assemblyTokens.input + mvTokens.input,
+      output: assemblyTokens.output + mvTokens.output,
+    };
+    const assemblyCost = calculateEstimatedCost(assemblyTokens.input, assemblyTokens.output, "default");
+    const mvCost = mvInputTokens > 0 ? calculateEstimatedCost(mvTokens.input, mvTokens.output, "haiku") : 0;
+    const estimatedCost = assemblyCost + mvCost;
+    await recordGenerationMetrics({
+      id: `gen-${ideaId}-${Date.now()}`,
+      timestamp: new Date(),
+      ideaId,
+      decompositionTokens: { input: 0, output: 0 },
+      assemblyTokens,
+      metaValidationTokens: mvTokens,
+      totalTokens,
+      estimatedCostUsd: estimatedCost,
+      templateComplianceScore: templateComplianceScore || 0,
+      confidenceScore: metaValidationResult?.confidenceScore || 0,
+      metaValidationEngaged: metaValidationResult?.engaged || false,
+      metaValidationMode: mvMode,
+      correctionsApplied: metaValidationResult?.correctionsApplied || 0,
+      finalStatus,
+    });
+  } catch (metricsErr: unknown) {
+    const errMsg = metricsErr instanceof Error ? metricsErr.message : String(metricsErr);
+    console.warn(`[Pipeline] Failed to record generation metrics: ${errMsg}`);
+  }
+
+  console.log(`[Pipeline] Cached result for ${ideaId} (mode=${mode}, fingerprint ${fp}, ${buildResult.buffer.length} bytes, status=${finalStatus}, warnings=${pipelineWarnings.length}, templateCompliance=${templateComplianceScore ?? "N/A"})`);
 
   return result;
 }
 
 export function getCachedPipelineResult(ideaId: string, mode?: GenerationMode): PipelineResult | null {
-  if (mode) {
-    return pipelineCache.get(`${ideaId}:${mode}`) || null;
+  for (const [key, value] of pipelineCache.entries()) {
+    if (mode) {
+      if (key.startsWith(`${ideaId}:${mode}:`)) return value;
+    } else {
+      if (key.startsWith(`${ideaId}:`)) return value;
+    }
   }
-  return pipelineCache.get(`${ideaId}:full_implementation`) || pipelineCache.get(`${ideaId}:baseline_openable`) || null;
+  return null;
 }
 
 export async function generateDhg(

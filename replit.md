@@ -65,6 +65,7 @@ The application uses a modern web stack for scalability and an intuitive user ex
 - **JSON Sanitization**: Robust parsing of AI-generated JSON with error recovery.
 - **Shared Utilities**: Consolidated server and client utilities for common functions and shared types.
 - **Deploy Parallelization**: Groups independent UiPath API calls into parallel batches to reduce deployment time.
+- **High Confidence Mode (Meta-Validation)**: Optional post-generation review layer in `server/meta-validation/`. Deterministic confidence scoring (10 weighted signals, normalized 0–1) determines whether to engage targeted Haiku-based LLM review for 6 XAML error categories (ENUM_VIOLATIONS, NESTED_ARGUMENTS, LITERAL_EXPRESSIONS, MISSING_PROPERTIES, UNDECLARED_VARIABLES, FLAT_STRUCTURE). High/medium confidence corrections are applied programmatically; FLAT_STRUCTURE corrections are never auto-applied (logged as warnings); low-confidence corrections are skipped. User toggle bar (Auto/Always/Off) in chat panel with 9-state dynamic status chip. Admin Quality dashboard with cost tracking, engagement rates, and compliance trends. SSE events stream real-time meta-validation progress to the frontend.
 
 ## External Dependencies
 - **AI Services**: Anthropic Claude, OpenAI, Google Gemini (via Replit AI Integrations)

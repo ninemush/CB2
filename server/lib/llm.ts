@@ -747,6 +747,18 @@ export function getLLM(): LLMProvider {
   return cachedProvider;
 }
 
+export function getLLMForModel(modelId: string): LLMProvider {
+  const providerName = getProviderForModel(modelId);
+  const factory = PROVIDER_REGISTRY[providerName];
+  if (!factory) {
+    throw new Error(
+      `Unknown LLM provider "${providerName}" for model "${modelId}". Available: ${Object.keys(PROVIDER_REGISTRY).join(", ")}`
+    );
+  }
+  console.log(`[LLM] Creating provider="${providerName}" for model="${modelId}"`);
+  return factory(modelId);
+}
+
 export function getModel(): string {
   return getActiveModel();
 }

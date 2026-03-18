@@ -6,6 +6,7 @@ import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
 import { getPlatformCapabilities, QualityGateError } from "./uipath-integration";
 import { generateUiPathPackage, generateDhg, findUiPathMessage, parseUiPathPackage, computeVersion, getCachedPipelineResult, type IdeaContext } from "./uipath-pipeline";
+import type { MetaValidationMode } from "./meta-validation";
 import { evaluateTransition } from "./stage-transition";
 import { approveDocument } from "./document-service";
 import { escapeXml } from "./lib/xml-utils";
@@ -1057,7 +1058,22 @@ ${content}`
       let completedTemplateComplianceScore: number | undefined;
       try {
         const requestedMode = (req.body.generationMode === "baseline_openable") ? "baseline_openable" as const : undefined;
-        const pipelineResult = await generateUiPathPackage(ideaId, packageJson, { onProgress: sendProgress, generationMode: requestedMode, preloadedContext });
+        let userMetaValidationMode: MetaValidationMode = "Auto";
+        try {
+          const storedMode = await storage.getAppSetting(`meta_validation_mode_${req.session.userId}`);
+          if (storedMode === "Always" || storedMode === "Off" || storedMode === "Auto") {
+            userMetaValidationMode = storedMode;
+          }
+        } catch { /* default to Auto */ }
+        const pipelineResult = await generateUiPathPackage(ideaId, packageJson, {
+          onProgress: sendProgress,
+          onMetaValidation: (event) => {
+            res.write(`data: ${JSON.stringify({ metaValidation: event })}\n\n`);
+          },
+          generationMode: requestedMode,
+          metaValidationMode: userMetaValidationMode,
+          preloadedContext,
+        });
         console.log(`[UiPath] Pre-built .nupkg for "${idea.title}" — ${pipelineResult.packageBuffer.length} bytes, ${pipelineResult.gaps.length} gaps`);
         completedTemplateComplianceScore = pipelineResult.templateComplianceScore;
 

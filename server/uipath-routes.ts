@@ -545,6 +545,7 @@ export function registerUiPathRoutes(app: Express): void {
           const pipelineResult = await generateUiPathPackage(ideaId, pkg, {
             version: computeVersion(),
             onProgress: (msg) => sendEvent({ deployStatus: msg }),
+            onMetaValidation: (event) => sendEvent({ metaValidation: event }),
           });
           prebuiltResult = {
             buffer: pipelineResult.packageBuffer,

@@ -46,6 +46,7 @@ import ProcessMapPanel from "@/components/process-map-panel";
 import { parseStepsFromText, parseStepsByView } from "@/lib/step-parser";
 import { DocumentCard, UiPathPackageCard } from "@/components/document-card";
 import { ArtifactHub } from "@/components/artifact-hub";
+import { MetaValidationBar } from "@/components/meta-validation-bar";
 import { formatEST, getStageBadgeClass } from "@/lib/utils";
 
 let currentProcessView: "as-is" | "to-be" | "sdd" = "as-is";
@@ -518,6 +519,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const [uipathBuildStatus, setUipathBuildStatus] = useState<string | undefined>();
   const [uipathBuildWarnings, setUipathBuildWarnings] = useState<Array<{ code: string; message: string; stage: string; recoverable: boolean }> | undefined>();
   const [uipathTemplateComplianceScore, setUipathTemplateComplianceScore] = useState<number | undefined>();
+  const [metaValidationChipStatus, setMetaValidationChipStatus] = useState<"ready" | "assessing" | "will-validate" | "not-needed" | "active" | "validating" | "fixed" | "clean" | "warning">("ready");
+  const [metaValidationFixCount, setMetaValidationFixCount] = useState(0);
   const [streamingDocContent, setStreamingDocContent] = useState<string>("");
   const [streamingDocElapsed, setStreamingDocElapsed] = useState(0);
   const streamingDocElapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -851,6 +854,28 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
               if (data.liveStatus) {
                 setLiveStatus(data.liveStatus);
               }
+              if (data.metaValidation) {
+                const mv = data.metaValidation;
+                if (mv.status === "started") {
+                  setMetaValidationChipStatus("validating");
+                } else if (mv.status === "assessing") {
+                  setMetaValidationChipStatus("assessing");
+                } else if (mv.status === "will-validate") {
+                  setMetaValidationChipStatus("will-validate");
+                } else if (mv.status === "not-needed") {
+                  setMetaValidationChipStatus("not-needed");
+                } else if (mv.status === "completed") {
+                  if (mv.correctionsApplied > 0) {
+                    setMetaValidationChipStatus("fixed");
+                    setMetaValidationFixCount(mv.correctionsApplied);
+                  } else {
+                    setMetaValidationChipStatus("clean");
+                  }
+                } else if (mv.status === "warning") {
+                  setMetaValidationChipStatus("warning");
+                  setMetaValidationFixCount(mv.correctionsApplied || 0);
+                }
+              }
               if (data.intentClassified) {
                 setClassifiedIntent(data.intentClassified);
                 if (data.intentClassified === "UIPATH_GEN" && !isGeneratingDocRef.current) {
@@ -865,6 +890,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                 setDocProgressSection("");
                 setClassifiedIntent("");
                 setLiveStatus("");
+                setTimeout(() => setMetaValidationChipStatus("ready"), 5000);
               }
               if (data.docProgress) {
                 if (data.docProgress.started && !isGeneratingDocRef.current) {
@@ -1640,6 +1666,12 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           )}
         </div>
       </div>
+
+      <MetaValidationBar
+        isGenerating={isStreaming}
+        metaValidationStatus={metaValidationChipStatus}
+        fixCount={metaValidationFixCount}
+      />
 
       {guidance && (
         <div className="mx-3 mt-3 p-3 rounded-md bg-primary/5 border border-primary/10">

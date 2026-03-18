@@ -12,6 +12,7 @@ import { registerUiPathRoutes } from "./uipath-routes";
 import { registerFileUploadRoutes } from "./file-upload";
 import { evaluateTransition } from "./stage-transition";
 import { SUPPORTED_MODELS, CHAT_SUPPORTED_MODELS, setDbModel, getActiveModel, getProviderName, setDbCodeModel, getActiveCodeModel, getCodeProviderName } from "./lib/llm";
+import { getMetricsSummary, getAllMetrics, type MetaValidationMode } from "./meta-validation";
 
 declare module "express-session" {
   interface SessionData {
@@ -478,6 +479,52 @@ export async function registerRoutes(
       provider: getCodeProviderName(),
       supportedModels: SUPPORTED_MODELS,
     });
+  });
+
+  app.get("/api/settings/meta-validation", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const mode = await storage.getAppSetting(`meta_validation_mode_${req.session.userId}`);
+    return res.json({ mode: mode || "Auto" });
+  });
+
+  app.put("/api/settings/meta-validation", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const { mode } = req.body;
+    const validModes: MetaValidationMode[] = ["Auto", "Always", "Off"];
+    if (!mode || !validModes.includes(mode)) {
+      return res.status(400).json({ message: "Invalid mode. Must be Auto, Always, or Off." });
+    }
+    await storage.setAppSetting(`meta_validation_mode_${req.session.userId}`, mode);
+    return res.json({ mode });
+  });
+
+  app.get("/api/admin/meta-validation/metrics", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const dbUser = await storage.getUser(req.session.userId);
+    if (!dbUser || (req.session.activeRole || dbUser.role) !== "Admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const days = parseInt(req.query.days as string) || 30;
+    const summary = await getMetricsSummary(days);
+    return res.json(summary);
+  });
+
+  app.get("/api/admin/meta-validation/history", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const dbUser = await storage.getUser(req.session.userId);
+    if (!dbUser || (req.session.activeRole || dbUser.role) !== "Admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const metrics = await getAllMetrics();
+    return res.json(metrics.slice(-50));
   });
 
   return httpServer;

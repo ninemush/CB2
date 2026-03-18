@@ -13,8 +13,10 @@ import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
+import { MetaValidationDashboard } from "@/components/meta-validation-dashboard";
 import {
   ShieldAlert,
+  Shield,
   Users,
   ScrollText,
   Monitor,
@@ -2998,6 +3000,10 @@ export default function SettingsPage() {
               <Plug className="mr-1.5 sm:mr-2 h-4 w-4" />
               <span className="text-xs sm:text-sm">Integrations</span>
             </TabsTrigger>
+            <TabsTrigger value="quality" data-testid="tab-quality">
+              <Shield className="mr-1.5 sm:mr-2 h-4 w-4" />
+              <span className="text-xs sm:text-sm">Quality</span>
+            </TabsTrigger>
           </TabsList>
         </div>
 
@@ -3012,6 +3018,11 @@ export default function SettingsPage() {
         </TabsContent>
         <TabsContent value="integrations" className="mt-4">
           <IntegrationsTab />
+        </TabsContent>
+        <TabsContent value="quality" className="mt-4">
+          <Card data-testid="card-quality-metrics">
+            <MetaValidationDashboard />
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
