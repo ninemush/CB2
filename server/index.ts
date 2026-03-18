@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { catalogService } from "./catalog/catalog-service";
 
 const app = express();
 const httpServer = createServer(app);
@@ -65,6 +66,8 @@ process.on("uncaughtException", (err) => {
 
 (async () => {
   try {
+    catalogService.load();
+
     await registerRoutes(httpServer, app);
 
     app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

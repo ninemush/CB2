@@ -3,6 +3,7 @@ import type { ProcessNode, ProcessEdge } from "@shared/schema";
 import { sanitizeJsonString, stripCodeFences } from "./lib/json-utils";
 import { isActivityAllowed } from "./uipath-activity-policy";
 import type { AutomationPattern } from "./uipath-activity-registry";
+import { catalogService, type ProcessType, type PaletteEntry } from "./catalog/catalog-service";
 
 export interface EnrichedActivity {
   activityType: string;
@@ -191,6 +192,26 @@ ${sddSummary}
 
 Generate the enriched workflow specification. For each node, provide the specific UiPath activities with system-aware properties and selectors. Determine if REFramework is appropriate and suggest workflow decomposition.`;
 
+    let systemPrompt = ENRICHMENT_PROMPT;
+
+    if (catalogService.isLoaded()) {
+      try {
+        const processType = classifyProcessType(sddSummary, nodeDescriptions);
+        const palette = catalogService.buildActivityPalette(processType);
+        if (palette.length > 0) {
+          const paletteBlock = formatActivityConstraints(palette, processType);
+          systemPrompt = systemPrompt + "\n\n" + paletteBlock;
+          console.log(`[AI XAML Enricher] Injected ACTIVITY CONSTRAINTS block for processType="${processType}" (${palette.length} activities)`);
+        } else {
+          console.warn(`[AI XAML Enricher] Catalog loaded but palette empty for processType="${processType}" — no activity constraints available`);
+        }
+      } catch (err: any) {
+        console.warn(`[AI XAML Enricher] Failed to inject catalog constraints: ${err.message}`);
+      }
+    } else {
+      console.warn(`[AI XAML Enricher] Activity catalog not loaded — skipping ACTIVITY CONSTRAINTS injection; LLM output may use incorrect XAML syntax`);
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -198,7 +219,7 @@ Generate the enriched workflow specification. For each node, provide the specifi
       console.log(`[AI XAML Enricher] Requesting enrichment for ${nodeDescriptions.length} nodes...`);
       const response = await getCodeLLM().create({
         maxTokens: 8192,
-        system: ENRICHMENT_PROMPT,
+        system: systemPrompt,
         messages: [{ role: "user", content: userMessage }],
       });
 
@@ -345,4 +366,57 @@ Generate the enriched workflow specification. For each node, provide the specifi
     }
     return null;
   }
+}
+
+export function classifyProcessType(
+  sddContent: string,
+  nodeDescriptions: any[]
+): ProcessType {
+  const text = (sddContent + " " + nodeDescriptions.map(n => `${n.name || ""} ${n.description || ""}`).join(" ")).toLowerCase();
+
+  const signals: Record<ProcessType, string[]> = {
+    "api-integration": ["api", "http", "rest", "endpoint", "web service", "json", "soap"],
+    "document-processing": ["ocr", "document", "digitize", "classify document", "extract data", "intelligent ocr", "pdf", "invoice processing"],
+    "attended-ui": ["attended", "user interaction", "form task", "input dialog", "message box", "human in the loop"],
+    "unattended-ui": ["unattended", "scheduled", "background process", "headless", "selector", "click", "type into", "get text", "browser"],
+    "orchestration": ["queue", "transaction", "orchestrator", "dispatcher", "performer", "reframework"],
+    "general": [],
+  };
+
+  let bestType: ProcessType = "general";
+  let bestScore = 0;
+
+  for (const [pType, keywords] of Object.entries(signals)) {
+    if (pType === "general") continue;
+    const score = keywords.filter(k => text.includes(k)).length;
+    if (score > bestScore) {
+      bestScore = score;
+      bestType = pType as ProcessType;
+    }
+  }
+
+  return bestType;
+}
+
+function formatActivityConstraints(palette: PaletteEntry[], processType: ProcessType): string {
+  const lines = [
+    `ACTIVITY CONSTRAINTS (processType: ${processType})`,
+    "You MUST only use activities and properties listed below. Do NOT use activities or property names not present in this catalog.",
+    "Properties marked [child-element] MUST be emitted as nested child XML elements, NOT as XML attributes.",
+    "Properties marked [attribute] should be emitted as XML attributes on the activity element.",
+    "",
+  ];
+
+  for (const entry of palette) {
+    let line = `- ${entry.className} (${entry.packageId || "System.Activities"})`;
+    const propDescs: string[] = [];
+    for (const p of entry.properties) {
+      const req = p.required ? "REQUIRED" : "optional";
+      propDescs.push(`${p.name}[${p.xamlSyntax},${req}]`);
+    }
+    if (propDescs.length > 0) line += `: ${propDescs.join(", ")}`;
+    lines.push(line);
+  }
+
+  return lines.join("\n");
 }

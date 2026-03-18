@@ -1,0 +1,2929 @@
+{
+  "catalogVersion": "bootstrap",
+  "generatedAt": "2025-01-01T00:00:00Z",
+  "studioVersion": "23.10.6",
+  "packages": [
+    {
+      "packageId": "UiPath.UIAutomation.Activities",
+      "version": "23.10.8",
+      "activities": [
+        {
+          "className": "Click",
+          "displayName": "Click",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "ClickType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "MouseButton",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "KeyModifiers",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "CursorPosition",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DelayAfter",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DelayBefore",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "InformativeScreenshot",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "TypeInto",
+          "displayName": "Type Into",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Text",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "ClickBeforeTyping",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "EmptyField",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DelayBetweenKeys",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DelayAfter",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DelayBefore",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "InformativeScreenshot",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "GetText",
+          "displayName": "Get Text",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Value",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "DelayAfter",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DelayBefore",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "InformativeScreenshot",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "OpenBrowser",
+          "displayName": "Open Browser",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Url",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "BrowserType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "NewSession",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Private",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Hidden",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "UseBrowser",
+          "displayName": "Use Browser",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Url",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "BrowserType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "InformativeScreenshot",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "NavigateTo",
+          "displayName": "Navigate To",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Url",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "AttachBrowser",
+          "displayName": "Attach Browser",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "BrowserType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Title",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Url",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "AttachWindow",
+          "displayName": "Attach Window",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "UseApplicationBrowser",
+          "displayName": "Use Application/Browser",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Url",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "BrowserType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "InformativeScreenshot",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "ElementExists",
+          "displayName": "Element Exists",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Result",
+              "direction": "Out",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:Boolean"
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "TakeScreenshot",
+          "displayName": "Take Screenshot",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Result",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "UseApplication",
+          "displayName": "Use Application",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "ApplicationPath",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Arguments",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "CloseApplication",
+          "displayName": "Close Application",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "DisplayName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "UiPath.Excel.Activities",
+      "version": "2.22.0",
+      "activities": [
+        {
+          "className": "ExcelApplicationScope",
+          "displayName": "Excel Application Scope",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "WorkbookPath",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "AutoSave",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Visible",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "CreateNewFile",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "ReadOnly",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Password",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "EditPassword",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            }
+          ]
+        },
+        {
+          "className": "UseExcel",
+          "displayName": "Use Excel File",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "WorkbookPath",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "CreateNewFile",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "ReadOnly",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Password",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            }
+          ]
+        },
+        {
+          "className": "ExcelReadRange",
+          "displayName": "Read Range",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "SheetName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Range",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DataTable",
+              "direction": "Out",
+              "clrType": "System.Data.DataTable",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "scg:DataTable"
+            },
+            {
+              "name": "AddHeaders",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "UseFilter",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "ExcelWriteRange",
+          "displayName": "Write Range",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "SheetName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "StartingCell",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DataTable",
+              "direction": "In",
+              "clrType": "System.Data.DataTable",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "scg:DataTable"
+            },
+            {
+              "name": "AddHeaders",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "ExcelWriteCell",
+          "displayName": "Write Cell",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "SheetName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Cell",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Value",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            }
+          ]
+        },
+        {
+          "className": "ReadRange",
+          "displayName": "Read Range (Workbook)",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "SheetName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Range",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DataTable",
+              "direction": "Out",
+              "clrType": "System.Data.DataTable",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "scg:DataTable"
+            },
+            {
+              "name": "AddHeaders",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "WriteRange",
+          "displayName": "Write Range (Workbook)",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "SheetName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "StartingCell",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DataTable",
+              "direction": "In",
+              "clrType": "System.Data.DataTable",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "scg:DataTable"
+            },
+            {
+              "name": "AddHeaders",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "UiPath.Mail.Activities",
+      "version": "1.20.0",
+      "activities": [
+        {
+          "className": "SendSmtpMailMessage",
+          "displayName": "Send SMTP Mail Message",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "To",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Cc",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Bcc",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Subject",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Body",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "IsBodyHtml",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Server",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Port",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:Int32"
+            },
+            {
+              "name": "SecureConnection",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Email",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Password",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            }
+          ]
+        },
+        {
+          "className": "SendOutlookMailMessage",
+          "displayName": "Send Outlook Mail Message",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "To",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Cc",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Bcc",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Subject",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Body",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "IsBodyHtml",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Account",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Attachments",
+              "direction": "In",
+              "clrType": "System.String[]",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String[]"
+            }
+          ]
+        },
+        {
+          "className": "GetImapMailMessage",
+          "displayName": "Get IMAP Mail Messages",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "Server",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Port",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:Int32"
+            },
+            {
+              "name": "Email",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Password",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "SecureConnection",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Top",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "MailFolder",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "OnlyUnreadMessages",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "GetOutlookMailMessages",
+          "displayName": "Get Outlook Mail Messages",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "Account",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "MailFolder",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Top",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Filter",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "OnlyUnreadMessages",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "OrderByDate",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "SendMail",
+          "displayName": "Send Mail",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "To",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Cc",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Bcc",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Subject",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Body",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "IsBodyHtml",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "GetMail",
+          "displayName": "Get Mail",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "Top",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "MailFolder",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "OnlyUnreadMessages",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "UiPath.Web.Activities",
+      "version": "1.17.0",
+      "activities": [
+        {
+          "className": "HttpClient",
+          "displayName": "HTTP Client",
+          "browsable": true,
+          "processTypes": [
+            "api-integration",
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "EndPoint",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Endpoint",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Method",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "AcceptFormat",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Body",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "BodyFormat",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Headers",
+              "direction": "In",
+              "clrType": "System.Collections.Generic.Dictionary`2[System.String,System.String]",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "ResponseContent",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "ResponseStatus",
+              "direction": "Out",
+              "clrType": "System.Net.HttpStatusCode",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "s:HttpStatusCode"
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Url",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            }
+          ]
+        },
+        {
+          "className": "DeserializeJson",
+          "displayName": "Deserialize JSON",
+          "browsable": true,
+          "processTypes": [
+            "api-integration",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "JsonString",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "JsonObject",
+              "direction": "Out",
+              "clrType": "Newtonsoft.Json.Linq.JObject",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "DeserializeJSON",
+          "displayName": "Deserialize JSON (alt)",
+          "browsable": true,
+          "processTypes": [
+            "api-integration",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "JsonString",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "JsonObject",
+              "direction": "Out",
+              "clrType": "Newtonsoft.Json.Linq.JObject",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "SerializeJson",
+          "displayName": "Serialize JSON",
+          "browsable": true,
+          "processTypes": [
+            "api-integration",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "JsonObject",
+              "direction": "In",
+              "clrType": "Newtonsoft.Json.Linq.JObject",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "JsonString",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "UiPath.Database.Activities",
+      "version": "1.8.0",
+      "activities": [
+        {
+          "className": "ExecuteQuery",
+          "displayName": "Execute Query",
+          "browsable": true,
+          "processTypes": [
+            "api-integration",
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "ConnectionString",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "ProviderName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Sql",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "DataTable",
+              "direction": "Out",
+              "clrType": "System.Data.DataTable",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "scg:DataTable"
+            },
+            {
+              "name": "Parameters",
+              "direction": "In",
+              "clrType": "System.Collections.Generic.Dictionary`2[System.String,System.Object]",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "ExecuteNonQuery",
+          "displayName": "Execute Non Query",
+          "browsable": true,
+          "processTypes": [
+            "api-integration",
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "ConnectionString",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "ProviderName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Sql",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "AffectedRecords",
+              "direction": "Out",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:Int32"
+            },
+            {
+              "name": "Parameters",
+              "direction": "In",
+              "clrType": "System.Collections.Generic.Dictionary`2[System.String,System.Object]",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "ConnectToDatabase",
+          "displayName": "Connect To Database",
+          "browsable": true,
+          "processTypes": [
+            "api-integration",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "ConnectionString",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "ProviderName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DatabaseConnection",
+              "direction": "Out",
+              "clrType": "System.Data.Common.DbConnection",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "UiPath.System.Activities",
+      "version": "23.10.3",
+      "activities": [
+        {
+          "className": "AddQueueItem",
+          "displayName": "Add Queue Item",
+          "browsable": true,
+          "processTypes": [
+            "orchestration",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "QueueName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Reference",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Priority",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DeferDate",
+              "direction": "In",
+              "clrType": "System.DateTime",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "s:DateTime"
+            },
+            {
+              "name": "DueDate",
+              "direction": "In",
+              "clrType": "System.DateTime",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "s:DateTime"
+            },
+            {
+              "name": "ItemInformation",
+              "direction": "In",
+              "clrType": "System.Collections.Generic.Dictionary`2[System.String,System.Object]",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "GetTransactionItem",
+          "displayName": "Get Transaction Item",
+          "browsable": true,
+          "processTypes": [
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "QueueName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "TransactionItem",
+              "direction": "Out",
+              "clrType": "UiPath.Core.QueueItem",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "SetTransactionStatus",
+          "displayName": "Set Transaction Status",
+          "browsable": true,
+          "processTypes": [
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "TransactionItem",
+              "direction": "In",
+              "clrType": "UiPath.Core.QueueItem",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Status",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "ErrorType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Reason",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            }
+          ]
+        },
+        {
+          "className": "GetCredential",
+          "displayName": "Get Credential",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "AssetName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Username",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Password",
+              "direction": "Out",
+              "clrType": "System.Security.SecureString",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "s:SecureString"
+            }
+          ]
+        },
+        {
+          "className": "GetAsset",
+          "displayName": "Get Asset",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "AssetName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Value",
+              "direction": "Out",
+              "clrType": "System.Object",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:Object"
+            }
+          ]
+        },
+        {
+          "className": "ReadTextFile",
+          "displayName": "Read Text File",
+          "browsable": true,
+          "processTypes": [
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "FileName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Content",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Encoding",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "WriteTextFile",
+          "displayName": "Write Text File",
+          "browsable": true,
+          "processTypes": [
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "FileName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Text",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Content",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Encoding",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "PathExists",
+          "displayName": "Path Exists",
+          "browsable": true,
+          "processTypes": [
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "Path",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "PathType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Result",
+              "direction": "Out",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:Boolean"
+            }
+          ]
+        },
+        {
+          "className": "LogMessage",
+          "displayName": "Log Message",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "Level",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Message",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            }
+          ]
+        },
+        {
+          "className": "InvokeWorkflowFile",
+          "displayName": "Invoke Workflow File",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "WorkflowFileName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Arguments",
+              "direction": "In",
+              "clrType": "System.Collections.Generic.Dictionary`2[System.String,System.Object]",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Isolated",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "Comment",
+          "displayName": "Comment",
+          "browsable": true,
+          "processTypes": [
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "Text",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "AddLogFields",
+          "displayName": "Add Log Fields",
+          "browsable": true,
+          "processTypes": [
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "Fields",
+              "direction": "In",
+              "clrType": "System.Collections.Generic.Dictionary`2[System.String,System.Object]",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "ShouldRetry",
+          "displayName": "Should Retry",
+          "browsable": true,
+          "processTypes": [
+            "general"
+          ],
+          "properties": []
+        },
+        {
+          "className": "RetryScope",
+          "displayName": "Retry Scope",
+          "browsable": true,
+          "processTypes": [
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "NumberOfRetries",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "RetryInterval",
+              "direction": "In",
+              "clrType": "System.TimeSpan",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "KillProcess",
+          "displayName": "Kill Process",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "ProcessName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "DisplayName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "UiPath.Persistence.Activities",
+      "version": "23.10.0",
+      "activities": [
+        {
+          "className": "CreateFormTask",
+          "displayName": "Create Form Task",
+          "browsable": true,
+          "processTypes": [
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "TaskCatalog",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "TaskTitle",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "TaskPriority",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "TaskObject",
+              "direction": "Out",
+              "clrType": "UiPath.Persistence.TaskObject",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "TaskData",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            }
+          ]
+        },
+        {
+          "className": "WaitForFormTaskAndResume",
+          "displayName": "Wait For Form Task And Resume",
+          "browsable": true,
+          "processTypes": [
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "TaskObject",
+              "direction": "In",
+              "clrType": "UiPath.Persistence.TaskObject",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "TaskAction",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "TaskOutput",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "UiPath.MLActivities",
+      "version": "23.10.0",
+      "activities": [
+        {
+          "className": "MLSkill",
+          "displayName": "ML Skill",
+          "browsable": true,
+          "processTypes": [
+            "document-processing",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "SkillName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Input",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Output",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "Predict",
+          "displayName": "Predict",
+          "browsable": true,
+          "processTypes": [
+            "document-processing",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "ModelName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Input",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Output",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "UiPath.IntelligentOCR.Activities",
+      "version": "8.20.0",
+      "activities": [
+        {
+          "className": "DigitizeDocument",
+          "displayName": "Digitize Document",
+          "browsable": true,
+          "processTypes": [
+            "document-processing"
+          ],
+          "properties": [
+            {
+              "name": "DocumentPath",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "DocumentObjectModel",
+              "direction": "Out",
+              "clrType": "UiPath.DocumentProcessing.DOM.Document",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "OcrEngine",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "ClassifyDocument",
+          "displayName": "Classify Document Scope",
+          "browsable": true,
+          "processTypes": [
+            "document-processing"
+          ],
+          "properties": [
+            {
+              "name": "DocumentObjectModel",
+              "direction": "InOut",
+              "clrType": "UiPath.DocumentProcessing.DOM.Document",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DocumentPath",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "ClassifierResult",
+              "direction": "Out",
+              "clrType": "UiPath.DocumentProcessing.Contracts.Results.ClassificationResult",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "ExtractDocumentData",
+          "displayName": "Extract Document Data",
+          "browsable": true,
+          "processTypes": [
+            "document-processing"
+          ],
+          "properties": [
+            {
+              "name": "DocumentObjectModel",
+              "direction": "InOut",
+              "clrType": "UiPath.DocumentProcessing.DOM.Document",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DocumentPath",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "ExtractorResult",
+              "direction": "Out",
+              "clrType": "UiPath.DocumentProcessing.Contracts.Results.ExtractionResult",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "ValidateDocumentData",
+          "displayName": "Validate Document Data",
+          "browsable": true,
+          "processTypes": [
+            "document-processing"
+          ],
+          "properties": [
+            {
+              "name": "DocumentObjectModel",
+              "direction": "InOut",
+              "clrType": "UiPath.DocumentProcessing.DOM.Document",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "DocumentPath",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "AutoValidated",
+              "direction": "Out",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:Boolean"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "System.Activities",
+      "version": "4.0.0",
+      "activities": [
+        {
+          "className": "Assign",
+          "displayName": "Assign",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "document-processing",
+            "attended-ui",
+            "unattended-ui",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "To",
+              "direction": "Out",
+              "clrType": "System.Object",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "required": true,
+              "typeArguments": "x:Object"
+            },
+            {
+              "name": "Value",
+              "direction": "In",
+              "clrType": "System.Object",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "required": true,
+              "typeArguments": "x:Object"
+            }
+          ]
+        },
+        {
+          "className": "Throw",
+          "displayName": "Throw",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "document-processing",
+            "attended-ui",
+            "unattended-ui",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "Exception",
+              "direction": "In",
+              "clrType": "System.Exception",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "required": false,
+              "typeArguments": "s:Exception"
+            }
+          ]
+        },
+        {
+          "className": "Sequence",
+          "namespace": "System.Activities.Statements",
+          "processTypes": [
+            "attended",
+            "unattended",
+            "reframework"
+          ],
+          "properties": [],
+          "displayName": "Sequence",
+          "browsable": true
+        },
+        {
+          "className": "If",
+          "namespace": "System.Activities.Statements",
+          "processTypes": [
+            "attended",
+            "unattended",
+            "reframework"
+          ],
+          "properties": [
+            {
+              "name": "Condition",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "typeArguments": null,
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true
+            }
+          ],
+          "displayName": "If",
+          "browsable": true
+        },
+        {
+          "className": "TryCatch",
+          "namespace": "System.Activities.Statements",
+          "processTypes": [
+            "attended",
+            "unattended",
+            "reframework"
+          ],
+          "properties": [],
+          "displayName": "Try Catch",
+          "browsable": true
+        },
+        {
+          "className": "Flowchart",
+          "namespace": "System.Activities.Statements",
+          "processTypes": [
+            "attended",
+            "unattended",
+            "reframework"
+          ],
+          "properties": [],
+          "displayName": "Flowchart",
+          "browsable": true
+        },
+        {
+          "className": "FlowDecision",
+          "namespace": "System.Activities.Statements",
+          "processTypes": [
+            "attended",
+            "unattended",
+            "reframework"
+          ],
+          "properties": [
+            {
+              "name": "Condition",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "typeArguments": null,
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true
+            }
+          ],
+          "displayName": "Flow Decision",
+          "browsable": true
+        },
+        {
+          "className": "FlowSwitch",
+          "namespace": "System.Activities.Statements",
+          "processTypes": [
+            "attended",
+            "unattended",
+            "reframework"
+          ],
+          "properties": [
+            {
+              "name": "Expression",
+              "direction": "In",
+              "clrType": "System.Object",
+              "typeArguments": null,
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true
+            }
+          ],
+          "displayName": "Flow Switch",
+          "browsable": true
+        },
+        {
+          "className": "While",
+          "namespace": "System.Activities.Statements",
+          "processTypes": [
+            "attended",
+            "unattended",
+            "reframework"
+          ],
+          "properties": [
+            {
+              "name": "Condition",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "typeArguments": null,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "required": true
+            }
+          ],
+          "displayName": "While",
+          "browsable": true
+        },
+        {
+          "className": "DoWhile",
+          "namespace": "System.Activities.Statements",
+          "processTypes": [
+            "attended",
+            "unattended",
+            "reframework"
+          ],
+          "properties": [
+            {
+              "name": "Condition",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "typeArguments": null,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "required": true
+            }
+          ],
+          "displayName": "Do While",
+          "browsable": true
+        },
+        {
+          "className": "ForEach",
+          "namespace": "System.Activities.Statements",
+          "processTypes": [
+            "attended",
+            "unattended",
+            "reframework"
+          ],
+          "properties": [
+            {
+              "name": "Values",
+              "direction": "In",
+              "clrType": "System.Collections.IEnumerable",
+              "typeArguments": null,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "required": true
+            }
+          ],
+          "displayName": "For Each",
+          "browsable": true
+        },
+        {
+          "className": "Switch",
+          "namespace": "System.Activities.Statements",
+          "processTypes": [
+            "attended",
+            "unattended",
+            "reframework"
+          ],
+          "properties": [
+            {
+              "name": "Expression",
+              "direction": "In",
+              "clrType": "System.Object",
+              "typeArguments": null,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "required": true
+            }
+          ],
+          "displayName": "Switch",
+          "browsable": true
+        },
+        {
+          "className": "Delay",
+          "namespace": "System.Activities.Statements",
+          "processTypes": [
+            "attended",
+            "unattended",
+            "reframework"
+          ],
+          "properties": [
+            {
+              "name": "Duration",
+              "direction": "In",
+              "clrType": "System.TimeSpan",
+              "typeArguments": null,
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true
+            }
+          ],
+          "displayName": "Delay",
+          "browsable": true
+        }
+      ]
+    }
+  ]
+}

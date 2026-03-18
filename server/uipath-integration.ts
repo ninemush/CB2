@@ -40,6 +40,22 @@ import { escapeXml } from "./lib/xml-utils";
 import { computePackageFingerprint } from "./lib/utils";
 import { scanXamlForRequiredPackages, classifyAutomationPattern, shouldUseReFramework, type AutomationPattern } from "./uipath-activity-registry";
 import { filterBlockedActivitiesFromXaml } from "./uipath-activity-policy";
+import { catalogService } from "./catalog/catalog-service";
+
+function clrToXamlType(clrType: string): string {
+  const map: Record<string, string> = {
+    "System.Object": "x:Object",
+    "System.String": "x:String",
+    "System.Boolean": "x:Boolean",
+    "System.Int32": "x:Int32",
+    "System.Int64": "x:Int64",
+    "System.Double": "x:Double",
+    "System.DateTime": "s:DateTime",
+    "System.TimeSpan": "s:TimeSpan",
+    "System.Exception": "s:Exception",
+  };
+  return map[clrType] || "x:String";
+}
 
 export class QualityGateError extends Error {
   qualityGateResult: QualityGateResult;
@@ -833,6 +849,12 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       if (confirmedVersionMap[pkgName]) {
         deps[pkgName] = confirmedVersionMap[pkgName];
         console.log(`[UiPath] Auto-added dependency ${pkgName} v${confirmedVersionMap[pkgName]} (detected in emitted XAML activities)`);
+      } else if (catalogService.isLoaded()) {
+        const catalogVersion = catalogService.getConfirmedVersion(pkgName);
+        if (catalogVersion) {
+          deps[pkgName] = catalogVersion;
+          console.log(`[Activity Catalog] Providing version for ${pkgName}: ${catalogVersion} (not in confirmedVersionMap)`);
+        }
       }
     }
 
@@ -1032,6 +1054,164 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       nuspecPath,
     ];
 
+    const autoFixSummary: string[] = [];
+
+    const catalogViolations: Array<{ file: string; detail: string }> = [];
+    if (catalogService.isLoaded()) {
+      try {
+        for (let i = 0; i < xamlEntries.length; i++) {
+          let content = xamlEntries[i].content;
+          let modified = false;
+          const fileName = xamlEntries[i].name.split("/").pop() || xamlEntries[i].name;
+
+          const nsMap = new Map<string, string>();
+          const nsRegex = /xmlns:(\w+)="([^"]+)"/g;
+          let nsMatch;
+          while ((nsMatch = nsRegex.exec(content)) !== null) {
+            nsMap.set(nsMatch[1], nsMatch[2]);
+          }
+
+          const activityPrefixes = new Set<string>();
+          for (const [prefix, uri] of nsMap.entries()) {
+            if (uri.includes("clr-namespace:") || uri.includes("UiPath") || prefix === "ui") {
+              activityPrefixes.add(prefix);
+            }
+          }
+
+          const collectChildPropertyNames = (tagName: string, xmlContent: string, startPos: number): string[] => {
+            const className = tagName.includes(":") ? tagName.split(":").pop()! : tagName;
+            const escapedClassName = className.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const escapedTag = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+            const openTagRegex = new RegExp(`<${escapedTag}[\\s>]`);
+            const closeTagRegex = new RegExp(`</${escapedTag}>`);
+            const afterStart = xmlContent.slice(startPos);
+            const closeMatch = closeTagRegex.exec(afterStart);
+            if (!closeMatch) return [];
+
+            const elementBlock = afterStart.slice(0, closeMatch.index + closeMatch[0].length);
+
+            const childPropRegex = new RegExp(`<${escapedClassName}\\.([\\w]+)[\\s>]`, "g");
+            const children: string[] = [];
+            let cm;
+            while ((cm = childPropRegex.exec(elementBlock)) !== null) {
+              children.push(cm[1]);
+              children.push(`${className}.${cm[1]}`);
+            }
+            return children;
+          };
+
+          const elementRegex = /<((?:[\w]+:)?[\w]+)(\s[^>]*?|\s*)(\/?>)/g;
+          let elMatch;
+
+          while ((elMatch = elementRegex.exec(content)) !== null) {
+            const fullTag = elMatch[1];
+            const attrString = elMatch[2];
+
+            if (fullTag.includes(".")) continue;
+            if (fullTag.startsWith("x:") || fullTag.startsWith("sap") || fullTag.startsWith("mc:")) continue;
+
+            const prefix = fullTag.includes(":") ? fullTag.split(":")[0] : null;
+            const isActivityCandidate = !prefix || activityPrefixes.has(prefix) ||
+              ["Assign", "Throw", "Sequence", "If", "ForEach", "Switch", "TryCatch", "Delay"].includes(fullTag);
+
+            if (!isActivityCandidate) continue;
+
+            const schema = catalogService.getActivitySchema(fullTag);
+            if (!schema) continue;
+
+            const attrs: Record<string, string> = {};
+            const attrRegex = /([\w]+(?:\.[\w]+)?)="([^"]*)"/g;
+            let attrMatch;
+            while ((attrMatch = attrRegex.exec(attrString)) !== null) {
+              if (attrMatch[1].startsWith("xmlns") || attrMatch[1].includes(":")) continue;
+              attrs[attrMatch[1]] = attrMatch[2];
+            }
+
+            const children = collectChildPropertyNames(fullTag, content, elMatch.index);
+            const validation = catalogService.validateEmittedActivity(fullTag, attrs, children);
+
+            if (validation.corrections.length > 0 || !validation.valid) {
+              const correctedProperties = new Set<string>();
+
+              for (const correction of validation.corrections) {
+                if (correction.type === "move-to-child-element") {
+                  const propName = correction.property;
+                  const propVal = attrs[propName];
+                  if (propVal !== undefined) {
+                    const className = fullTag.includes(":") ? fullTag.split(":").pop()! : fullTag;
+                    const wrapper = correction.argumentWrapper || "InArgument";
+                    const xType = correction.typeArguments || clrToXamlType("System.String");
+
+                    const escapedTag = fullTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const escapedVal = propVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const childElement = `<${className}.${propName}>\n            <${wrapper} x:TypeArguments="${xType}">${propVal}</${wrapper}>\n          </${className}.${propName}>`;
+
+                    const selfClosingRegex = new RegExp(`(<${escapedTag}\\s[^>]*?)${propName}="${escapedVal}"([^>]*?)(\\s*\\/>)`);
+                    const openTagRegex = new RegExp(`(<${escapedTag}\\s[^>]*?)${propName}="${escapedVal}"([^>]*?>)`);
+
+                    if (selfClosingRegex.test(content)) {
+                      content = content.replace(selfClosingRegex, `$1$2>\n          ${childElement}\n        </${fullTag}>`);
+                      correctedProperties.add(propName);
+                      modified = true;
+                      autoFixSummary.push(`Catalog: Moved ${fullTag}.${propName} from attribute to child-element in ${fileName}`);
+                    } else if (openTagRegex.test(content)) {
+                      content = content.replace(openTagRegex, `$1$2\n          ${childElement}`);
+                      correctedProperties.add(propName);
+                      modified = true;
+                      autoFixSummary.push(`Catalog: Moved ${fullTag}.${propName} from attribute to child-element in ${fileName}`);
+                    }
+                  }
+                } else if (correction.type === "wrap-in-argument" && correction.argumentWrapper) {
+                  const propName = correction.property;
+                  const className = fullTag.includes(":") ? fullTag.split(":").pop()! : fullTag;
+                  const escapedClassName = className.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  const wrapper = correction.argumentWrapper;
+                  const xType = correction.typeArguments || clrToXamlType("System.String");
+
+                  const childTagRegex = new RegExp(
+                    `(<${escapedClassName}\\.${propName}>)\\s*(?!<${wrapper}[\\s>])([\\s\\S]*?)\\s*(<\\/${escapedClassName}\\.${propName}>)`,
+                  );
+                  if (childTagRegex.test(content)) {
+                    content = content.replace(childTagRegex,
+                      `$1\n            <${wrapper} x:TypeArguments="${xType}">$2</${wrapper}>\n          $3`
+                    );
+                    correctedProperties.add(propName);
+                    modified = true;
+                    autoFixSummary.push(`Catalog: Wrapped ${fullTag}.${propName} child content in <${wrapper}> in ${fileName}`);
+                  }
+                }
+              }
+
+              for (const v of validation.violations) {
+                const propMatch = v.match(/"([^"]+)"/);
+                const violationProp = propMatch ? propMatch[1] : null;
+                if (!violationProp || !correctedProperties.has(violationProp)) {
+                  catalogViolations.push({ file: fileName, detail: v });
+                }
+              }
+            }
+          }
+
+          if (modified) {
+            xamlEntries[i] = { name: xamlEntries[i].name, content };
+            const archivePath = Array.from(deferredWrites.keys()).find(
+              p => (p.split("/").pop() || p) === fileName
+            );
+            if (archivePath) {
+              deferredWrites.set(archivePath, content);
+            }
+          }
+        }
+
+        if (catalogViolations.length > 0) {
+          console.log(`[Activity Catalog] ${catalogViolations.length} unfixable catalog violation(s) found`);
+        }
+      } catch (err: any) {
+        console.warn(`[Activity Catalog] Post-generation validation failed: ${err.message}`);
+      }
+    }
+
     let qualityGateResult = runQualityGate({
       xamlEntries,
       projectJsonContent: projectJsonStr,
@@ -1043,7 +1223,37 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       automationPattern,
     });
 
-    const autoFixSummary: string[] = [];
+    const applyCatalogViolations = (result: typeof qualityGateResult) => {
+      if (catalogViolations.length > 0) {
+        const existingKeys = new Set(
+          result.violations
+            .filter(v => v.check === "CATALOG_VIOLATION")
+            .map(v => `${v.file}::${v.detail}`)
+        );
+        let added = 0;
+        for (const cv of catalogViolations) {
+          const key = `${cv.file}::${cv.detail}`;
+          if (!existingKeys.has(key)) {
+            result.violations.push({
+              category: "accuracy",
+              severity: "error",
+              check: "CATALOG_VIOLATION",
+              file: cv.file,
+              detail: cv.detail,
+            });
+            existingKeys.add(key);
+            added++;
+          }
+        }
+        if (added > 0) {
+          result.summary.accuracyErrors += added;
+          result.summary.totalErrors += added;
+          result.passed = false;
+        }
+      }
+    };
+    applyCatalogViolations(qualityGateResult);
+
     let usedFallback = false;
 
     if (!qualityGateResult.passed) {
@@ -1135,6 +1345,13 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         if (confirmedVersionMap[pkg]) {
           deps[pkg] = confirmedVersionMap[pkg];
           autoFixSummary.push(`Added missing dependency: ${pkg}`);
+        } else if (catalogService.isLoaded()) {
+          const catalogVersion = catalogService.getConfirmedVersion(pkg);
+          if (catalogVersion) {
+            deps[pkg] = catalogVersion;
+            autoFixSummary.push(`Added dependency from catalog: ${pkg}@${catalogVersion}`);
+            console.log(`[Activity Catalog] Providing version for ${pkg}: ${catalogVersion} (not in confirmedVersionMap)`);
+          }
         }
       }
 
@@ -1150,6 +1367,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         archiveContentHashes: buildContentHashRecord(),
         automationPattern,
       });
+      applyCatalogViolations(qualityGateResult);
 
       if (!qualityGateResult.passed) {
         const reClassified = classifyQualityIssues(qualityGateResult);
@@ -1216,6 +1434,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
             archiveContentHashes: buildContentHashRecord(),
             automationPattern,
           });
+          applyCatalogViolations(qualityGateResult);
 
           if (!qualityGateResult.passed) {
             const finalClassified = classifyQualityIssues(qualityGateResult);
@@ -1262,6 +1481,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                 archiveContentHashes: buildContentHashRecord(),
                 automationPattern,
               });
+              applyCatalogViolations(qualityGateResult);
             }
           }
         } else {
@@ -1311,6 +1531,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
             archiveContentHashes: buildContentHashRecord(),
             automationPattern,
           });
+          applyCatalogViolations(qualityGateResult);
         }
       }
 
