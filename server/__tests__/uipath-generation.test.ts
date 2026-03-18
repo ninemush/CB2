@@ -225,6 +225,40 @@ describe("UiPath Generation Regression Tests", () => {
       expect(allDetails).not.toContain("require is not defined");
       expect(allDetails).not.toContain("require is not a function");
     });
+
+    it("XAML with raw ampersands passes validation after auto-remediation sanitization", () => {
+      const xamlWithRawAmpersand = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="Main"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence DisplayName="Main">
+    <Assign DisplayName="Set Category">
+      <Assign.To><OutArgument x:TypeArguments="x:String">[category]</OutArgument></Assign.To>
+      <Assign.Value><InArgument x:TypeArguments="x:String">Weather & Travel</InArgument></Assign.Value>
+    </Assign>
+  </Sequence>
+</Activity>`;
+      expect(xamlWithRawAmpersand).toContain("Weather & Travel");
+
+      const rawViolations = validateXamlContent([{ name: "Main.xaml", content: xamlWithRawAmpersand }]);
+      const rawXmlErrors = rawViolations.filter(v => v.check === "xml-wellformedness");
+      expect(rawXmlErrors.length).toBeGreaterThan(0);
+
+      const ampersandRegex = /&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[\da-fA-F]+;)/g;
+      const sanitized = xamlWithRawAmpersand.replace(ampersandRegex, "&amp;");
+
+      expect(sanitized).toContain("Weather &amp; Travel");
+
+      const sanitizedViolations = validateXamlContent([{ name: "Main.xaml", content: sanitized }]);
+      const sanitizedXmlErrors = sanitizedViolations.filter(v => v.check === "xml-wellformedness");
+      expect(sanitizedXmlErrors.length).toBe(0);
+
+      expect(sanitized).not.toMatch(/&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[\da-fA-F]+;)/);
+    });
   });
 
   describe("Quality Gate — Warning vs Blocking Classification", () => {

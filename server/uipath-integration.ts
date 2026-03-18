@@ -1447,6 +1447,13 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         content = content.replace(/<sap:WorkflowViewState\.ViewStateManager>[\s\S]*?<\/sap:WorkflowViewState\.ViewStateManager>/g, "");
         content = content.replace(/<WorkflowViewState\.ViewStateManager>[\s\S]*?<\/WorkflowViewState\.ViewStateManager>/g, "");
 
+        const ampersandRegex = /&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[\da-fA-F]+;)/g;
+        if (ampersandRegex.test(content)) {
+          content = content.replace(/&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[\da-fA-F]+;)/g, "&amp;");
+          autoFixSummary.push(`Escaped raw ampersands in ${xamlEntries[i].name}`);
+          wasFixed = true;
+        }
+
         const continueOnErrorWhitelist = new Set([
           "ui:Click", "ui:TypeInto", "ui:GetText", "ui:ElementExists",
           "ui:OpenBrowser", "ui:NavigateTo", "ui:AttachBrowser", "ui:AttachWindow",
