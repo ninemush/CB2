@@ -534,8 +534,9 @@ If any services are NOT AVAILABLE, the SDD MUST include a final section titled "
 3. Frames this as an opportunity, not a limitation — "When X is enabled, the solution can be extended to include Y"
 If ALL services are available, omit this section entirely.
 
-- CONVERSATIONAL DEPLOYMENT: When the SDD is approved and the user wants to deploy, respond with exactly: [DEPLOY_UIPATH] — the system intercepts this tag and executes deployment with live status. Do NOT tell the user to click a button — deployment happens in the conversation.
+- CONVERSATIONAL DEPLOYMENT: When the SDD is approved and the user EXPLICITLY asks to deploy (using words like "deploy", "push to orchestrator"), respond with exactly: [DEPLOY_UIPATH] — the system intercepts this tag and executes deployment with live status. Do NOT tell the user to click a button — deployment happens in the conversation.
 - If the SDD is already approved (see document context above), you can deploy immediately when the user asks. Do not re-ask for approval.
+- CRITICAL: Do NOT emit [DEPLOY_UIPATH] when the user asks to generate, regenerate, rebuild, or build a package. "Regenerate uipath package", "rebuild the package", "redo the uipath package" are PACKAGE GENERATION requests, NOT deployment requests. Only emit [DEPLOY_UIPATH] for explicit deployment requests.
 
 DEVELOPER HANDOFF GUIDE (DHG):
 - The DHG is a comprehensive developer handoff document generated after the UiPath automation package has been built.
@@ -941,7 +942,14 @@ export function registerChatRoutes(app: Express): void {
 
       try { res.write(`data: ${JSON.stringify({ liveStatus: "Classifying your request..." })}\n\n`); } catch {}
 
-      if (hasDeployVerb) {
+      console.log(`[Chat] Keyword classification debug — content: "${lowerContent.substring(0, 120)}" | hasDeployVerb=${hasDeployVerb} hasUiPathGenVerb=${hasUiPathGenVerb} hasDhgKeyword=${hasDhgKeyword} hasGenVerb=${hasGenVerb} hasPddKeyword=${hasPddKeyword} hasSddKeyword=${hasSddKeyword}`);
+
+      const hasPackageRegenKeyword = /\b(regenerate|rebuild|redo|build)\b/.test(lowerContent) && /\b(package|nupkg|uipath)\b/.test(lowerContent);
+
+      if (hasPackageRegenKeyword && !hasDeployVerb) {
+        classifiedIntent = "UIPATH_GEN";
+        console.log(`[Chat] Keyword intent classification: UIPATH_GEN (package regen shortcut — matched regen/rebuild/redo/build + package/nupkg/uipath)`);
+      } else if (hasDeployVerb) {
         classifiedIntent = "DEPLOY";
         console.log(`[Chat] Keyword intent classification: DEPLOY`);
       } else if (hasUiPathGenVerb) {
@@ -990,6 +998,11 @@ CRITICAL RULES:
             classifiedIntent = normalized as typeof classifiedIntent;
           }
           console.log(`[Chat] LLM intent classification: "${rawClassify}" → ${classifiedIntent}`);
+
+          if ((classifiedIntent as string) === "DEPLOY" && hasPackageRegenKeyword) {
+            console.warn(`[Chat] LLM classified as DEPLOY but user message contains package regen keywords — overriding to UIPATH_GEN`);
+            classifiedIntent = "UIPATH_GEN";
+          }
         } catch (classifyErr: any) {
           console.warn(`[Chat] Intent classification failed (falling back to CHAT):`, classifyErr?.message);
         }
@@ -1747,7 +1760,13 @@ CRITICAL RULES:
         }
       }
 
-      if (fullResponse.includes("[DEPLOY_UIPATH]")) {
+      const userMessageIsPackageRegen = /\b(regenerate|rebuild|redo|build)\b/i.test(content) && /\b(package|nupkg|uipath)\b/i.test(content) && !/\b(deploy|push)\b/i.test(content);
+
+      if (fullResponse.includes("[DEPLOY_UIPATH]") && ((classifiedIntent as string) === "UIPATH_GEN" || userMessageIsPackageRegen)) {
+        console.warn(`[Chat] Prevented false-positive deployment — classifiedIntent=${classifiedIntent}, userMessage="${content.substring(0, 100)}". LLM emitted [DEPLOY_UIPATH] but user requested package generation, not deployment.`);
+      }
+
+      if (fullResponse.includes("[DEPLOY_UIPATH]") && (classifiedIntent as string) !== "UIPATH_GEN" && !userMessageIsPackageRegen) {
         try {
           res.write(`data: ${JSON.stringify({ deployStatus: "Initiating deployment pipeline..." })}\n\n`);
 
