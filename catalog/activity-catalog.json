@@ -1,6 +1,6 @@
 {
   "catalogVersion": "bootstrap",
-  "generatedAt": "2025-01-01T00:00:00Z",
+  "generatedAt": "2026-03-18T00:00:00Z",
   "studioVersion": "23.10.6",
   "packages": [
     {
@@ -613,7 +613,7 @@
     },
     {
       "packageId": "UiPath.Excel.Activities",
-      "version": "2.22.0",
+      "version": "23.10.1",
       "activities": [
         {
           "className": "ExcelApplicationScope",
@@ -629,9 +629,9 @@
               "name": "WorkbookPath",
               "direction": "In",
               "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "required": true,
               "typeArguments": "x:String"
             },
             {
@@ -770,9 +770,9 @@
               "name": "DataTable",
               "direction": "Out",
               "clrType": "System.Data.DataTable",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "required": true,
               "typeArguments": "scg:DataTable"
             },
             {
@@ -914,9 +914,9 @@
               "name": "DataTable",
               "direction": "Out",
               "clrType": "System.Data.DataTable",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "required": true,
               "typeArguments": "scg:DataTable"
             },
             {
@@ -1434,7 +1434,7 @@
     },
     {
       "packageId": "UiPath.Web.Activities",
-      "version": "1.17.0",
+      "version": "23.10.1",
       "activities": [
         {
           "className": "HttpClient",
@@ -1446,6 +1446,15 @@
             "orchestration"
           ],
           "properties": [
+            {
+              "name": "EndpointUrl",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true,
+              "typeArguments": "x:String"
+            },
             {
               "name": "EndPoint",
               "direction": "In",
@@ -1470,7 +1479,7 @@
               "clrType": "System.String",
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
-              "required": false,
+              "required": true,
               "typeArguments": null
             },
             {
@@ -1486,8 +1495,8 @@
               "name": "Body",
               "direction": "In",
               "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
               "required": false,
               "typeArguments": "x:String"
             },
@@ -1513,19 +1522,28 @@
               "name": "ResponseContent",
               "direction": "Out",
               "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
               "required": false,
               "typeArguments": "x:String"
             },
             {
-              "name": "ResponseStatus",
+              "name": "ResponseStatusCode",
               "direction": "Out",
-              "clrType": "System.Net.HttpStatusCode",
+              "clrType": "System.Int32",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "required": false,
+              "typeArguments": "x:Int32"
+            },
+            {
+              "name": "Timeout",
+              "direction": "In",
+              "clrType": "System.TimeSpan",
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": "s:HttpStatusCode"
+              "typeArguments": null
             },
             {
               "name": "TimeoutMS",
@@ -1560,19 +1578,19 @@
               "name": "JsonString",
               "direction": "In",
               "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "required": true,
               "typeArguments": "x:String"
             },
             {
-              "name": "JsonObject",
+              "name": "Result",
               "direction": "Out",
-              "clrType": "Newtonsoft.Json.Linq.JObject",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
+              "clrType": "System.Object",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "required": true,
+              "typeArguments": "x:Object"
             }
           ]
         },
@@ -1589,19 +1607,19 @@
               "name": "JsonString",
               "direction": "In",
               "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "required": true,
               "typeArguments": "x:String"
             },
             {
-              "name": "JsonObject",
+              "name": "Result",
               "direction": "Out",
-              "clrType": "Newtonsoft.Json.Linq.JObject",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
+              "clrType": "System.Object",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "required": true,
+              "typeArguments": "x:Object"
             }
           ]
         },

@@ -217,13 +217,23 @@ class CatalogService {
 
     const FRAMEWORK_ATTRIBUTES = new Set([
       "DisplayName", "ContinueOnError", "sap2010:Annotation.AnnotationText",
-      "sap2010:WorkflowViewState.IdRef", "Timeout", "DelayAfter", "DelayBefore",
+      "sap2010:WorkflowViewState.IdRef", "WorkflowViewState.IdRef",
+      "sap:VirtualizedContainerService.HintSize",
+      "sap2010:VirtualizedContainerService.HintSize", "VirtualizedContainerService.HintSize",
+      "Annotation.AnnotationText",
+      "Timeout", "DelayAfter", "DelayBefore",
+      "mc:Ignorable", "x:Class", "x:TypeArguments", "x:Name",
+    ]);
+
+    const FRAMEWORK_CHILD_ELEMENTS = new Set([
+      "Variables", "VirtualizedContainerService.HintSize", "WorkflowViewState.IdRef",
     ]);
 
     const knownPropertyNames = new Set(schema.activity.properties.map(p => p.name));
     const className = tag.includes(":") ? tag.split(":").pop()! : tag;
 
     for (const attrName of Object.keys(attributes)) {
+      if (attrName.startsWith("xmlns")) continue;
       if (!knownPropertyNames.has(attrName) && !FRAMEWORK_ATTRIBUTES.has(attrName)) {
         result.valid = false;
         result.violations.push(`Unrecognized attribute "${attrName}" on ${tag} — not in catalog schema`);
@@ -232,6 +242,7 @@ class CatalogService {
 
     for (const childName of children) {
       const simpleName = childName.includes(".") ? childName.split(".").pop()! : childName;
+      if (FRAMEWORK_CHILD_ELEMENTS.has(simpleName) || FRAMEWORK_CHILD_ELEMENTS.has(childName)) continue;
       if (!knownPropertyNames.has(simpleName) && !FRAMEWORK_ATTRIBUTES.has(simpleName)) {
         result.valid = false;
         result.violations.push(`Unrecognized child property "${childName}" on ${tag} — not in catalog schema`);

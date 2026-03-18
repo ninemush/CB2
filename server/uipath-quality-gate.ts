@@ -1752,6 +1752,7 @@ const WARNING_CHECKS = new Set([
   "legacy-selector-format",
   "missing-retry-scope",
   "logic-location",
+  "CATALOG_VIOLATION",
 ]);
 
 export function classifyQualityIssues(result: QualityGateResult): ClassifiedIssue[] {

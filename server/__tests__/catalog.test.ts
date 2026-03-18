@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { validateCatalog } from "../catalog/catalog-validator";
 import { catalogService, type ProcessType } from "../catalog/catalog-service";
 import { classifyProcessType } from "../ai-xaml-enricher";
+import { classifyQualityIssues, getBlockingFiles } from "../uipath-quality-gate";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -124,6 +125,9 @@ describe("Activity Catalog", () => {
       expect(schema).not.toBeNull();
       expect(schema!.activity.className).toBe("HttpClient");
       expect(schema!.packageId).toBe("UiPath.Web.Activities");
+      const methodProp = schema!.activity.properties.find(p => p.name === "Method");
+      expect(methodProp).toBeDefined();
+      expect(methodProp!.required).toBe(true);
     });
 
     it("returns null for unknown activity", () => {
@@ -346,6 +350,247 @@ describe("Activity Catalog", () => {
   describe("Catalog loading edge cases", () => {
     it("isLoaded returns true after successful load", () => {
       expect(catalogService.isLoaded()).toBe(true);
+    });
+  });
+
+  describe("Framework attribute whitelist", () => {
+    it("does not flag WorkflowViewState.IdRef as a violation", () => {
+      const result = catalogService.validateEmittedActivity(
+        "Assign",
+        { "sap2010:WorkflowViewState.IdRef": "Assign_1", "WorkflowViewState.IdRef": "Assign_1" },
+        ["Assign.To", "Assign.Value"]
+      );
+      expect(result.violations.filter(v => v.includes("WorkflowViewState"))).toHaveLength(0);
+    });
+
+    it("does not flag VirtualizedContainerService.HintSize as a violation", () => {
+      const result = catalogService.validateEmittedActivity(
+        "Assign",
+        { "sap2010:VirtualizedContainerService.HintSize": "200,22" },
+        ["Assign.To", "Assign.Value"]
+      );
+      expect(result.violations.filter(v => v.includes("VirtualizedContainerService"))).toHaveLength(0);
+    });
+
+    it("does not flag Variables as a child element violation", () => {
+      const result = catalogService.validateEmittedActivity(
+        "Assign",
+        {},
+        ["Assign.To", "Assign.Value", "Variables"]
+      );
+      expect(result.violations.filter(v => v.includes("Variables"))).toHaveLength(0);
+    });
+
+    it("does not flag xmlns declarations as violations", () => {
+      const result = catalogService.validateEmittedActivity(
+        "Assign",
+        { "xmlns": "http://schemas.microsoft.com/netfx/2009/xaml/activities", "xmlns:x": "http://schemas.microsoft.com/winfx/2006/xaml" },
+        ["Assign.To", "Assign.Value"]
+      );
+      expect(result.violations.filter(v => v.includes("xmlns"))).toHaveLength(0);
+    });
+
+    it("does not flag x:Class, x:TypeArguments, x:Name, mc:Ignorable as violations", () => {
+      const result = catalogService.validateEmittedActivity(
+        "Assign",
+        { "x:Class": "MyClass", "x:TypeArguments": "x:String", "x:Name": "assign1", "mc:Ignorable": "sap sap2010" },
+        ["Assign.To", "Assign.Value"]
+      );
+      expect(result.violations).toHaveLength(0);
+    });
+
+    it("does not flag VirtualizedContainerService.HintSize as a child element violation", () => {
+      const result = catalogService.validateEmittedActivity(
+        "Assign",
+        {},
+        ["Assign.To", "Assign.Value", "VirtualizedContainerService.HintSize"]
+      );
+      expect(result.violations.filter(v => v.includes("VirtualizedContainerService"))).toHaveLength(0);
+    });
+
+    it("does not flag sap:VirtualizedContainerService.HintSize as a violation", () => {
+      const result = catalogService.validateEmittedActivity(
+        "Assign",
+        { "sap:VirtualizedContainerService.HintSize": "200,22" },
+        ["Assign.To", "Assign.Value"]
+      );
+      expect(result.violations.filter(v => v.includes("VirtualizedContainerService"))).toHaveLength(0);
+    });
+
+    it("does not flag WorkflowViewState.IdRef as a child element violation", () => {
+      const result = catalogService.validateEmittedActivity(
+        "Assign",
+        {},
+        ["Assign.To", "Assign.Value", "WorkflowViewState.IdRef"]
+      );
+      expect(result.violations.filter(v => v.includes("WorkflowViewState"))).toHaveLength(0);
+    });
+  });
+
+  describe("CATALOG_VIOLATION classification", () => {
+    it("classifies CATALOG_VIOLATION as warning, not blocking", () => {
+      const mockResult = {
+        passed: true,
+        violations: [{
+          category: "accuracy" as const,
+          severity: "warning" as const,
+          check: "CATALOG_VIOLATION",
+          file: "Main.xaml",
+          detail: "Some catalog violation",
+        }],
+        positiveEvidence: [],
+        summary: {
+          blockedPatterns: 0,
+          completenessErrors: 0,
+          completenessWarnings: 0,
+          accuracyErrors: 0,
+          accuracyWarnings: 1,
+          runtimeSafetyErrors: 0,
+          runtimeSafetyWarnings: 0,
+          logicLocationWarnings: 0,
+          totalErrors: 0,
+          totalWarnings: 1,
+        },
+      };
+      const issues = classifyQualityIssues(mockResult);
+      expect(issues).toHaveLength(1);
+      expect(issues[0].severity).toBe("warning");
+    });
+
+    it("CATALOG_VIOLATION does not produce blocking files (no STUB_BLOCKING_FALLBACK)", () => {
+      const mockResult = {
+        passed: true,
+        violations: [
+          {
+            category: "accuracy" as const,
+            severity: "warning" as const,
+            check: "CATALOG_VIOLATION",
+            file: "Main.xaml",
+            detail: "Unrecognized attribute on SomeActivity",
+          },
+          {
+            category: "accuracy" as const,
+            severity: "warning" as const,
+            check: "CATALOG_VIOLATION",
+            file: "InitAllSettings.xaml",
+            detail: "Another catalog violation",
+          },
+        ],
+        positiveEvidence: [],
+        summary: {
+          blockedPatterns: 0,
+          completenessErrors: 0,
+          completenessWarnings: 0,
+          accuracyErrors: 0,
+          accuracyWarnings: 2,
+          runtimeSafetyErrors: 0,
+          runtimeSafetyWarnings: 0,
+          logicLocationWarnings: 0,
+          totalErrors: 0,
+          totalWarnings: 2,
+        },
+      };
+      const issues = classifyQualityIssues(mockResult);
+      const blockingFiles = getBlockingFiles(issues);
+      expect(blockingFiles.size).toBe(0);
+      expect(issues.every(i => i.severity === "warning")).toBe(true);
+    });
+  });
+
+  describe("Catalog Service - package versions", () => {
+    it("returns version 23.10.1 for UiPath.Web.Activities", () => {
+      const version = catalogService.getConfirmedVersion("UiPath.Web.Activities");
+      expect(version).toBe("23.10.1");
+    });
+
+    it("returns version 23.10.1 for UiPath.Excel.Activities", () => {
+      const version = catalogService.getConfirmedVersion("UiPath.Excel.Activities");
+      expect(version).toBe("23.10.1");
+    });
+  });
+
+  describe("Updated activity schemas", () => {
+    it("HttpClient has EndpointUrl required and Method required", () => {
+      const schema = catalogService.getActivitySchema("HttpClient");
+      expect(schema).not.toBeNull();
+      const endpointUrl = schema!.activity.properties.find(p => p.name === "EndpointUrl");
+      expect(endpointUrl).toBeDefined();
+      expect(endpointUrl!.required).toBe(true);
+      const method = schema!.activity.properties.find(p => p.name === "Method");
+      expect(method).toBeDefined();
+      expect(method!.required).toBe(true);
+    });
+
+    it("HttpClient ResponseContent uses child-element with OutArgument", () => {
+      const schema = catalogService.getActivitySchema("HttpClient");
+      expect(schema).not.toBeNull();
+      const rc = schema!.activity.properties.find(p => p.name === "ResponseContent");
+      expect(rc).toBeDefined();
+      expect(rc!.xamlSyntax).toBe("child-element");
+      expect(rc!.argumentWrapper).toBe("OutArgument");
+    });
+
+    it("HttpClient ResponseStatusCode uses Int32 with child-element OutArgument", () => {
+      const schema = catalogService.getActivitySchema("HttpClient");
+      expect(schema).not.toBeNull();
+      const rsc = schema!.activity.properties.find(p => p.name === "ResponseStatusCode");
+      expect(rsc).toBeDefined();
+      expect(rsc!.clrType).toBe("System.Int32");
+      expect(rsc!.xamlSyntax).toBe("child-element");
+      expect(rsc!.argumentWrapper).toBe("OutArgument");
+    });
+
+    it("HttpClient Headers uses attribute syntax", () => {
+      const schema = catalogService.getActivitySchema("HttpClient");
+      expect(schema).not.toBeNull();
+      const headers = schema!.activity.properties.find(p => p.name === "Headers");
+      expect(headers).toBeDefined();
+      expect(headers!.xamlSyntax).toBe("attribute");
+    });
+
+    it("DeserializeJson has required JsonString and Result properties with child-element wrappers", () => {
+      const schema = catalogService.getActivitySchema("DeserializeJson");
+      expect(schema).not.toBeNull();
+      const jsonString = schema!.activity.properties.find(p => p.name === "JsonString");
+      expect(jsonString).toBeDefined();
+      expect(jsonString!.required).toBe(true);
+      expect(jsonString!.xamlSyntax).toBe("child-element");
+      expect(jsonString!.argumentWrapper).toBe("InArgument");
+      const result = schema!.activity.properties.find(p => p.name === "Result");
+      expect(result).toBeDefined();
+      expect(result!.required).toBe(true);
+      expect(result!.xamlSyntax).toBe("child-element");
+      expect(result!.argumentWrapper).toBe("OutArgument");
+    });
+
+    it("ExcelApplicationScope has required WorkbookPath with child-element InArgument", () => {
+      const schema = catalogService.getActivitySchema("ExcelApplicationScope");
+      expect(schema).not.toBeNull();
+      const wp = schema!.activity.properties.find(p => p.name === "WorkbookPath");
+      expect(wp).toBeDefined();
+      expect(wp!.required).toBe(true);
+      expect(wp!.xamlSyntax).toBe("child-element");
+      expect(wp!.argumentWrapper).toBe("InArgument");
+    });
+
+    it("ExcelReadRange has required DataTable with child-element OutArgument", () => {
+      const schema = catalogService.getActivitySchema("ExcelReadRange");
+      expect(schema).not.toBeNull();
+      const dt = schema!.activity.properties.find(p => p.name === "DataTable");
+      expect(dt).toBeDefined();
+      expect(dt!.required).toBe(true);
+      expect(dt!.xamlSyntax).toBe("child-element");
+      expect(dt!.argumentWrapper).toBe("OutArgument");
+    });
+
+    it("ReadRange (Workbook) has required DataTable with child-element OutArgument", () => {
+      const schema = catalogService.getActivitySchema("ReadRange");
+      expect(schema).not.toBeNull();
+      const dt = schema!.activity.properties.find(p => p.name === "DataTable");
+      expect(dt).toBeDefined();
+      expect(dt!.required).toBe(true);
+      expect(dt!.xamlSyntax).toBe("child-element");
+      expect(dt!.argumentWrapper).toBe("OutArgument");
     });
   });
 });

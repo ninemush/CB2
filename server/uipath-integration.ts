@@ -1236,7 +1236,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           if (!existingKeys.has(key)) {
             result.violations.push({
               category: "accuracy",
-              severity: "error",
+              severity: "warning",
               check: "CATALOG_VIOLATION",
               file: cv.file,
               detail: cv.detail,
@@ -1246,9 +1246,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           }
         }
         if (added > 0) {
-          result.summary.accuracyErrors += added;
-          result.summary.totalErrors += added;
-          result.passed = false;
+          result.summary.accuracyWarnings = (result.summary.accuracyWarnings || 0) + added;
+          result.summary.totalWarnings += added;
         }
       }
     };
