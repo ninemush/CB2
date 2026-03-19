@@ -1348,6 +1348,76 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
     }
 
+    for (let i = 0; i < xamlEntries.length; i++) {
+      let content = xamlEntries[i].content;
+      let wasFixed = false;
+
+      const logLevelMap: Record<string, string> = {
+        "Information": "Info",
+        "Warning": "Warn",
+        "Debug": "Trace",
+        "Critical": "Fatal",
+      };
+      for (const [badLevel, goodLevel] of Object.entries(logLevelMap)) {
+        const logLevelRegex = new RegExp(`(<ui:LogMessage\\s[^>]*?)Level="${badLevel}"`, "g");
+        if (logLevelRegex.test(content)) {
+          content = content.replace(new RegExp(`(<ui:LogMessage\\s[^>]*?)Level="${badLevel}"`, "g"), `$1Level="${goodLevel}"`);
+          autoFixSummary.push(`Normalised LogMessage Level="${badLevel}" → "${goodLevel}" in ${xamlEntries[i].name}`);
+          wasFixed = true;
+        }
+      }
+
+      content = content.replace(/<sap:WorkflowViewState\.ViewStateManager>[\s\S]*?<\/sap:WorkflowViewState\.ViewStateManager>/g, "");
+      content = content.replace(/<WorkflowViewState\.ViewStateManager>[\s\S]*?<\/WorkflowViewState\.ViewStateManager>/g, "");
+
+      const ampersandRegex = /&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[\da-fA-F]+;)/g;
+      if (ampersandRegex.test(content)) {
+        content = content.replace(/&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[\da-fA-F]+;)/g, "&amp;");
+        autoFixSummary.push(`Escaped raw ampersands in ${xamlEntries[i].name}`);
+        wasFixed = true;
+      }
+
+      const dupResult = removeDuplicateAttributes(content);
+      if (dupResult.changed) {
+        content = dupResult.content;
+        for (const tag of dupResult.fixedTags) {
+          autoFixSummary.push(`Removed duplicate attributes on <${tag}> in ${xamlEntries[i].name}`);
+        }
+        wasFixed = true;
+      }
+
+      content = content.replace(/<ui:TakeScreenshot\s+([^>]*?)OutputPath="([^"]*)"([^>]*?)\/>/g, (_match, before, _outputPathVal, after) => {
+        const attrs = (before + after).trim();
+        autoFixSummary.push(`Stripped TakeScreenshot OutputPath in ${xamlEntries[i].name}`);
+        return `<ui:TakeScreenshot ${attrs} />`;
+      });
+
+      const continueOnErrorWhitelist = new Set([
+        "ui:Click", "ui:TypeInto", "ui:GetText", "ui:ElementExists",
+        "ui:OpenBrowser", "ui:NavigateTo", "ui:AttachBrowser", "ui:AttachWindow",
+        "ui:UseBrowser", "ui:UseApplicationBrowser",
+      ]);
+      content = content.replace(/<(ui:\w+)\s+([^>]*?)ContinueOnError="[^"]*"([^>]*?)(\s*\/?>)/g, (match, tag, before, after, closing) => {
+        if (continueOnErrorWhitelist.has(tag)) return match;
+        return `<${tag} ${(before + after).trim()}${closing}`;
+      });
+
+      content = content.replace(/Message="'([^"]*)(?<!')]"/g, (match, val) => {
+        if (val.endsWith("'")) return match;
+        return `Message="[&quot;${val}&quot;]"`;
+      });
+
+      if (content !== xamlEntries[i].content) {
+        xamlEntries[i] = { name: xamlEntries[i].name, content };
+        const basename = xamlEntries[i].name.split("/").pop() || xamlEntries[i].name;
+        const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === basename);
+        if (archivePath) {
+          deferredWrites.set(archivePath, content);
+        }
+        if (!wasFixed) autoFixSummary.push(`Applied XAML sanitization fixes to ${xamlEntries[i].name}`);
+      }
+    }
+
     let qualityGateResult = runQualityGate({
       xamlEntries,
       projectJsonContent: projectJsonStr,
@@ -1456,63 +1526,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           return `WorkflowFileName="${cleaned}"`;
         });
 
-        content = content.replace(/<ui:TakeScreenshot\s+([^>]*?)OutputPath="([^"]*)"([^>]*?)\/>/g, (_match, before, _outputPathVal, after) => {
-          const attrs = (before + after).trim();
-          autoFixSummary.push(`Stripped TakeScreenshot OutputPath in ${xamlEntries[i].name}`);
-          return `<ui:TakeScreenshot ${attrs} />`;
-        });
-
         content = content.replace(/Dictionary<String,\s*ui:InArgument>/g, 'Dictionary<x:String, x:Object>');
         content = content.replace(/x:TypeArguments="x:String, ui:InArgument"/g, 'x:TypeArguments="x:String, x:Object"');
-
-        const logLevelMap: Record<string, string> = {
-          "Information": "Info",
-          "Warning": "Warn",
-          "Debug": "Trace",
-          "Critical": "Fatal",
-        };
-        for (const [badLevel, goodLevel] of Object.entries(logLevelMap)) {
-          const logLevelRegex = new RegExp(`(<ui:LogMessage\\s[^>]*?)Level="${badLevel}"`, "g");
-          if (logLevelRegex.test(content)) {
-            content = content.replace(new RegExp(`(<ui:LogMessage\\s[^>]*?)Level="${badLevel}"`, "g"), `$1Level="${goodLevel}"`);
-            autoFixSummary.push(`Normalised LogMessage Level="${badLevel}" → "${goodLevel}" in ${xamlEntries[i].name}`);
-            wasFixed = true;
-          }
-        }
-
-        content = content.replace(/<sap:WorkflowViewState\.ViewStateManager>[\s\S]*?<\/sap:WorkflowViewState\.ViewStateManager>/g, "");
-        content = content.replace(/<WorkflowViewState\.ViewStateManager>[\s\S]*?<\/WorkflowViewState\.ViewStateManager>/g, "");
-
-        const ampersandRegex = /&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[\da-fA-F]+;)/g;
-        if (ampersandRegex.test(content)) {
-          content = content.replace(/&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[\da-fA-F]+;)/g, "&amp;");
-          autoFixSummary.push(`Escaped raw ampersands in ${xamlEntries[i].name}`);
-          wasFixed = true;
-        }
-
-        const dupResult = removeDuplicateAttributes(content);
-        if (dupResult.changed) {
-          content = dupResult.content;
-          for (const tag of dupResult.fixedTags) {
-            autoFixSummary.push(`Removed duplicate attributes on <${tag}> in ${xamlEntries[i].name}`);
-          }
-          wasFixed = true;
-        }
-
-        const continueOnErrorWhitelist = new Set([
-          "ui:Click", "ui:TypeInto", "ui:GetText", "ui:ElementExists",
-          "ui:OpenBrowser", "ui:NavigateTo", "ui:AttachBrowser", "ui:AttachWindow",
-          "ui:UseBrowser", "ui:UseApplicationBrowser",
-        ]);
-        content = content.replace(/<(ui:\w+)\s+([^>]*?)ContinueOnError="[^"]*"([^>]*?)(\s*\/?>)/g, (match, tag, before, after, closing) => {
-          if (continueOnErrorWhitelist.has(tag)) return match;
-          return `<${tag} ${(before + after).trim()}${closing}`;
-        });
-
-        content = content.replace(/Message="'([^"]*)(?<!')]"/g, (match, val) => {
-          if (val.endsWith("'")) return match;
-          return `Message="[&quot;${val}&quot;]"`;
-        });
 
         if (content !== xamlEntries[i].content) {
           xamlEntries[i] = { name: xamlEntries[i].name, content };

@@ -259,6 +259,35 @@ describe("UiPath Generation Regression Tests", () => {
 
       expect(sanitized).not.toMatch(/&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[\da-fA-F]+;)/);
     });
+
+    it("ampersand sanitizer runs even when quality gate passes with warnings only (integration)", async () => {
+      const result = await buildNuGetPackage(
+        {
+          projectName: "AmpersandSanitizeTest",
+          description: "Test that bare ampersands are escaped before quality gate",
+          workflows: [
+            {
+              name: "WeatherAndTravelNotification",
+              steps: [
+                { name: "Set Category", description: "Set category to Weather & Travel" },
+                { name: "Log Result", description: "Log the category value" },
+              ],
+            },
+          ],
+          dependencies: ["UiPath.System.Activities"],
+        },
+        "1.0.0-amptest",
+        undefined,
+        "baseline_openable",
+      );
+
+      const allXaml = result.xamlEntries.map(e => e.content).join("\n");
+      const bareAmpersandRegex = /&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[\da-fA-F]+;)/g;
+      expect(allXaml).not.toMatch(bareAmpersandRegex);
+
+      const xmlErrors = validateXamlContent(result.xamlEntries).filter(v => v.check === "xml-wellformedness");
+      expect(xmlErrors.length).toBe(0);
+    });
   });
 
   describe("Quality Gate — Warning vs Blocking Classification", () => {

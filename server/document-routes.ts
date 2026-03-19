@@ -952,6 +952,7 @@ ${content}`
 
       const sendProgress = (message: string) => {
         res.write(`data: ${JSON.stringify({ progress: message })}\n\n`);
+        if (typeof (res as any).flush === "function") (res as any).flush();
       };
 
       sendProgress("Loading idea and documents...");
@@ -1060,6 +1061,7 @@ ${content}`
 
       const sendPipelineEvent = (event: PipelineProgressEvent) => {
         res.write(`data: ${JSON.stringify({ pipelineEvent: event })}\n\n`);
+        if (typeof (res as any).flush === "function") (res as any).flush();
         if (event.type === "completed" || event.type === "started") {
           sendProgress(event.message);
         }
