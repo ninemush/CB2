@@ -782,6 +782,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const pddTriggeredRef = useRef(false);
   const sddTriggeredRef = useRef(false);
   const uipathTriggeredRef = useRef(false);
+  const pendingUiPathGenRef = useRef(false);
   const generateDocRef = useRef<((type: "PDD" | "SDD") => void) | null>(null);
   const generateUiPathRef = useRef<((force?: boolean) => void) | null>(null);
   const generateToBeRef = useRef<(() => void) | null>(null);
@@ -1026,16 +1027,12 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             setMetaValidationFixCount(mv.correctionsApplied || 0);
           }
         }
+        if (data.triggerUiPathGen) {
+          pendingUiPathGenRef.current = true;
+        }
         if (data.intentClassified) {
           localClassifiedIntent = data.intentClassified;
           setClassifiedIntent(data.intentClassified);
-          if (data.intentClassified === "UIPATH_GEN" && !isGeneratingDocRef.current) {
-            startDocStreaming("UiPath");
-            docGenIdAtStart = docGenIdRef.current;
-            setPipelineLogEntries([]);
-            setPipelineComplete(false);
-            pipelineEntryCounter.current = 0;
-          }
         }
         if (data.done) {
           isGeneratingDocRef.current = false;
@@ -1122,9 +1119,6 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             startDocStreaming("DHG");
             docGenIdAtStart = docGenIdRef.current;
           }
-        }
-        if (data.status && localClassifiedIntent === "UIPATH_GEN") {
-          setUipathBuildStatus(data.status);
         }
         if (data.warnings) {
           setUipathBuildWarnings(data.warnings);
@@ -1267,6 +1261,11 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
         stopDocStreaming({ force: true });
       } else if (wasGeneratingDoc && isGeneratingDocRef.current && docGenIdRef.current === docGenIdAtStart) {
         stopDocStreaming({ force: true });
+      }
+
+      if (pendingUiPathGenRef.current) {
+        pendingUiPathGenRef.current = false;
+        setTimeout(() => generateUiPathRef.current?.(true), 100);
       }
 
       const isToBeRun = toBeGeneratingRef.current;
@@ -1499,6 +1498,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     setIsGeneratingDoc(true);
     setGeneratingDocType("UiPath");
     setDocProgressSection("");
+    setStreamingDocContent("");
     setUipathBuildStatus("BUILDING");
     setUipathBuildWarnings(undefined);
     setUipathTemplateComplianceScore(undefined);
@@ -1632,6 +1632,14 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       setIsGeneratingDoc(false);
       setGeneratingDocType("");
       setDocProgressSection("");
+      setStreamingDocContent("");
+      setStreamingDocElapsed(0);
+      if (streamingDocElapsedRef.current) {
+        clearInterval(streamingDocElapsedRef.current);
+        streamingDocElapsedRef.current = null;
+      }
+      isGeneratingDocRef.current = false;
+      generatingDocTypeRef.current = "";
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
     }
   }, [idea.id, isGeneratingDoc, isStreaming]);
@@ -2091,7 +2099,13 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           );
         })}
         {isGeneratingDoc && !streamingMsg && (
-          streamingDocContent && streamingDocContent.length > 10 ? (
+          generatingDocType === "UiPath" ? (
+            pipelineLogEntries.length > 0 ? (
+              <PipelineLogPanel entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={cancelDocGeneration} />
+            ) : (
+              <StreamingProgressIndicator mode="thinking" liveStatus={liveStatus} stage={idea.stage} classifiedIntent={classifiedIntent} onCancel={cancelDocGeneration} />
+            )
+          ) : streamingDocContent && streamingDocContent.length > 10 ? (
             <div className="flex justify-start" data-testid="streaming-doc-card-bottom">
               <div className="max-w-[95%] w-full">
                 <DocumentCard

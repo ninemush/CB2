@@ -1205,118 +1205,15 @@ CRITICAL RULES:
       }
 
       if (classifiedIntent === "UIPATH_GEN") {
-        try { res.write(`data: ${JSON.stringify({ liveStatus: "Starting UiPath package generation..." })}\n\n`); } catch {}
+        const ackMsg = "Starting UiPath package generation...";
+        await chatStorage.createMessage(ideaId, "assistant", ackMsg);
         try {
-          const genUrl = `http://localhost:${process.env.PORT || 5000}/api/ideas/${ideaId}/generate-uipath?force=true`;
-          const genRes = await fetch(genUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Cookie": req.headers.cookie || "",
-            },
-          });
-          if (!genRes.ok) {
-            const genErr = await genRes.json().catch(() => ({}));
-            const errMsg = `UiPath package generation failed: ${genErr.message || "Unknown error"}`;
-            await chatStorage.createMessage(ideaId, "assistant", errMsg);
-            try {
-              res.write(`data: ${JSON.stringify({ token: errMsg })}\n\n`);
-              res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-            } catch {}
-            if (heartbeat) clearInterval(heartbeat);
-            res.end();
-            return;
-          }
-          const contentType = genRes.headers.get("content-type") || "";
-          if (contentType.includes("text/event-stream") && genRes.body) {
-            const reader = genRes.body.getReader();
-            const decoder = new TextDecoder();
-            let sseBuffer = "";
-            let genDone = false;
-            let genError: string | null = null;
-            const sendForwardedEvent = (data: Record<string, any>) => {
-              try {
-                if (res.writableEnded) return;
-                res.write(`data: ${JSON.stringify(data)}\n\n`);
-                if (typeof (res as any).flush === "function") (res as any).flush();
-              } catch {}
-            };
-            while (true) {
-              const { done: readDone, value } = await reader.read();
-              if (readDone) break;
-              sseBuffer += decoder.decode(value, { stream: true });
-              const lines = sseBuffer.split("\n");
-              sseBuffer = lines.pop() || "";
-              for (const line of lines) {
-                if (!line.startsWith("data: ")) continue;
-                try {
-                  const evt = JSON.parse(line.slice(6));
-                  if (evt.done) {
-                    genDone = true;
-                    if (evt.status) sendForwardedEvent({ status: evt.status });
-                    if (evt.warnings) sendForwardedEvent({ warnings: evt.warnings });
-                    if (evt.templateComplianceScore !== undefined) sendForwardedEvent({ templateComplianceScore: evt.templateComplianceScore });
-                  }
-                  if (evt.error) genError = evt.error;
-                  if (evt.pipelineEvent) {
-                    sendForwardedEvent({ pipelineEvent: evt.pipelineEvent });
-                  }
-                  if (evt.progress) {
-                    sendForwardedEvent({ docProgress: { section: evt.progress, docType: "UiPath" } });
-                  }
-                  if (evt.status && !evt.done) {
-                    sendForwardedEvent({ status: evt.status });
-                  }
-                  if (evt.metaValidation) {
-                    sendForwardedEvent({ metaValidation: evt.metaValidation });
-                  }
-                } catch {}
-              }
-            }
-            if (genError) {
-              const errMsg = `UiPath package generation failed: ${genError}`;
-              await chatStorage.createMessage(ideaId, "assistant", errMsg);
-              try {
-                res.write(`data: ${JSON.stringify({ token: errMsg })}\n\n`);
-                res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-              } catch {}
-              if (heartbeat) clearInterval(heartbeat);
-              res.end();
-              return;
-            }
-            if (!genDone) {
-              const errMsg = "UiPath package generation stream ended without completion.";
-              await chatStorage.createMessage(ideaId, "assistant", errMsg);
-              try {
-                res.write(`data: ${JSON.stringify({ token: errMsg })}\n\n`);
-                res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-              } catch {}
-              if (heartbeat) clearInterval(heartbeat);
-              res.end();
-              return;
-            }
-          }
-          const successMsg = "UiPath automation package generated successfully. You can now deploy it to UiPath Orchestrator.";
-          await chatStorage.createMessage(ideaId, "assistant", successMsg);
-          try {
-            res.write(`data: ${JSON.stringify({ token: successMsg })}\n\n`);
-            res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-          } catch {}
-          if (heartbeat) clearInterval(heartbeat);
-          res.end();
-          return;
-        } catch (uipathGenErr: any) {
-          console.error("[Chat] UIPATH_GEN failed:", uipathGenErr?.message);
-          const errMsg = `UiPath package generation error: ${uipathGenErr?.message || "Unknown error"}`;
-          await chatStorage.createMessage(ideaId, "assistant", errMsg);
-          try {
-            res.write(`data: ${JSON.stringify({ token: errMsg })}\n\n`);
-            res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-          } catch {}
-          if (heartbeat) clearInterval(heartbeat);
-          res.end();
-          return;
-        }
+          res.write(`data: ${JSON.stringify({ token: ackMsg, triggerUiPathGen: true })}\n\n`);
+          res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        } catch {}
+        if (heartbeat) clearInterval(heartbeat);
+        res.end();
+        return;
       }
 
       try { res.write(`data: ${JSON.stringify({ liveStatus: "Building AI context..." })}\n\n`); } catch {}

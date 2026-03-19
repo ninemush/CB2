@@ -180,7 +180,7 @@ export function DocumentCard({ docType, docId, content, ideaId, isApproved, vers
     });
   }
 
-  const docTitle = docType === "PDD" ? "Process Design Document" : "Solution Design Document";
+  const docTitle = docType === "PDD" ? "Process Design Document" : docType === "UiPath" ? "UiPath Automation Package" : "Solution Design Document";
 
   return (
     <div
