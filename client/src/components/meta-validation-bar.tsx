@@ -1,7 +1,8 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Shield, Info } from "lucide-react";
+import { Shield, ShieldOff, ShieldCheck, ShieldAlert, Info } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useEffect, useRef, useState } from "react";
 import {
   Tooltip,
   TooltipContent,
@@ -79,14 +80,94 @@ function getChipConfig(status: StatusChipState, fixCount?: number): { label: str
   }
 }
 
+function getAccentColor(status: StatusChipState, isOff: boolean): string {
+  if (isOff) return "transparent";
+  switch (status) {
+    case "assessing":
+    case "will-validate":
+      return "rgb(245 158 11)";
+    case "active":
+    case "validating":
+      return "rgb(249 115 22)";
+    case "fixed":
+    case "clean":
+      return "rgb(34 197 94)";
+    case "warning":
+      return "rgb(245 158 11)";
+    default:
+      return "transparent";
+  }
+}
+
+function getShieldIcon(status: StatusChipState, isOff: boolean) {
+  if (isOff) return ShieldOff;
+  switch (status) {
+    case "fixed":
+    case "clean":
+      return ShieldCheck;
+    case "warning":
+      return ShieldAlert;
+    default:
+      return Shield;
+  }
+}
+
+function getShieldColorClass(status: StatusChipState, isOff: boolean): string {
+  if (isOff) return "text-muted-foreground/40";
+  switch (status) {
+    case "assessing":
+    case "will-validate":
+      return "text-amber-500 dark:text-amber-400";
+    case "active":
+    case "validating":
+      return "text-orange-500 dark:text-orange-400";
+    case "fixed":
+    case "clean":
+      return "text-green-500 dark:text-green-400";
+    case "warning":
+      return "text-amber-500 dark:text-amber-400";
+    default:
+      return "text-muted-foreground";
+  }
+}
+
+function isActiveState(status: StatusChipState): boolean {
+  return status === "assessing" || status === "validating" || status === "active" || status === "will-validate";
+}
+
+function isResultState(status: StatusChipState): boolean {
+  return status === "fixed" || status === "clean";
+}
+
+function getShimmerGradient(status: StatusChipState): string {
+  let r = 249, g = 115, b = 22;
+  if (status === "assessing" || status === "will-validate") {
+    r = 245; g = 158; b = 11;
+  }
+  return `linear-gradient(90deg, transparent 0%, rgba(${r},${g},${b},0.03) 30%, rgba(${r},${g},${b},0.06) 50%, rgba(${r},${g},${b},0.03) 70%, transparent 100%)`;
+}
+
 export function MetaValidationBar({ isGenerating, metaValidationStatus = "ready", fixCount }: MetaValidationBarProps) {
   const { toast } = useToast();
+  const [flash, setFlash] = useState(false);
+  const prevStatusRef = useRef<StatusChipState>(metaValidationStatus);
 
   const { data: settings } = useQuery<{ mode: MetaValidationMode }>({
     queryKey: ["/api/settings/meta-validation"],
   });
 
   const currentMode = settings?.mode || "Auto";
+  const isOff = currentMode === "Off";
+
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = metaValidationStatus;
+    if (prev !== metaValidationStatus && isResultState(metaValidationStatus)) {
+      setFlash(true);
+      const timer = setTimeout(() => setFlash(false), 1200);
+      return () => clearTimeout(timer);
+    }
+  }, [metaValidationStatus]);
 
   const updateMode = useMutation({
     mutationFn: async (mode: MetaValidationMode) => {
@@ -108,17 +189,60 @@ export function MetaValidationBar({ isGenerating, metaValidationStatus = "ready"
   };
 
   const chipConfig = getChipConfig(metaValidationStatus, fixCount);
+  const accentColor = getAccentColor(metaValidationStatus, isOff);
+  const ShieldIcon = getShieldIcon(metaValidationStatus, isOff);
+  const shieldColorClass = getShieldColorClass(metaValidationStatus, isOff);
+  const active = isActiveState(metaValidationStatus) && !isOff;
+  const isChipActive = (isActiveState(metaValidationStatus) || metaValidationStatus === "warning") && !isOff;
 
   return (
     <TooltipProvider delayDuration={200}>
       <div
-        className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-background/80 backdrop-blur-sm"
+        className={`relative flex items-center justify-between px-3 py-1.5 border-b border-border bg-background/80 backdrop-blur-sm overflow-hidden transition-all duration-300 ${isOff ? "opacity-60" : ""}`}
         style={{ maxHeight: "40px" }}
         data-testid="meta-validation-bar"
       >
-        <div className="flex items-center gap-2">
-          <Shield className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="text-[10px] font-medium text-muted-foreground" data-testid="quality-check-label">Quality Check</span>
+        <div
+          className="absolute left-0 top-0 bottom-0 transition-all duration-500"
+          style={{
+            width: accentColor === "transparent" ? "0px" : "3px",
+            backgroundColor: accentColor,
+            opacity: active ? 1 : 0.8,
+            animation: active ? "accent-pulse 1.5s ease-in-out infinite" : "none",
+          }}
+          data-testid="meta-validation-accent"
+        />
+
+        {active && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              background: getShimmerGradient(metaValidationStatus),
+              animation: "shimmer-sweep 2s ease-in-out infinite",
+            }}
+            data-testid="meta-validation-shimmer"
+          />
+        )}
+
+        {flash && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundColor: metaValidationStatus === "fixed" || metaValidationStatus === "clean"
+                ? "rgb(34 197 94 / 0.12)"
+                : "rgb(245 158 11 / 0.12)",
+              animation: "result-flash 1.2s ease-out forwards",
+            }}
+            data-testid="meta-validation-flash"
+          />
+        )}
+
+        <div className="flex items-center gap-2 relative z-10">
+          <ShieldIcon
+            className={`h-3.5 w-3.5 transition-colors duration-300 ${shieldColorClass} ${active && !isOff ? "animate-[shield-spin_2s_ease-in-out_infinite]" : ""}`}
+            data-testid="meta-validation-shield-icon"
+          />
+          <span className={`text-[10px] font-medium transition-colors duration-300 ${isOff ? "text-muted-foreground/50" : "text-muted-foreground"}`} data-testid="quality-check-label">Quality Check</span>
           <Tooltip>
             <TooltipTrigger asChild>
               <button type="button" className="inline-flex items-center" data-testid="quality-check-info-icon">
@@ -159,12 +283,32 @@ export function MetaValidationBar({ isGenerating, metaValidationStatus = "ready"
         </div>
 
         <div
-          className={`flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium transition-all duration-300 ${chipConfig.className} ${chipConfig.pulse ? "animate-pulse" : ""}`}
+          className={`relative z-10 flex items-center px-2 py-0.5 rounded-full transition-all duration-300 ${chipConfig.className} ${chipConfig.pulse ? "animate-pulse" : ""} ${isChipActive ? "text-[11px] font-semibold" : "text-[10px] font-medium"}`}
           data-testid="meta-validation-status-chip"
         >
           {chipConfig.label}
         </div>
       </div>
+
+      <style>{`
+        @keyframes shimmer-sweep {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+        @keyframes result-flash {
+          0% { opacity: 1; }
+          100% { opacity: 0; }
+        }
+        @keyframes accent-pulse {
+          0%, 100% { opacity: 0.6; }
+          50% { opacity: 1; }
+        }
+        @keyframes shield-spin {
+          0%, 100% { transform: scale(1); }
+          25% { transform: scale(1.15) rotate(-5deg); }
+          75% { transform: scale(1.15) rotate(5deg); }
+        }
+      `}</style>
     </TooltipProvider>
   );
 }
