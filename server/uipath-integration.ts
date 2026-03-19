@@ -1273,12 +1273,12 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                     const openTagRegex = new RegExp(`(<${escapedTag}\\s[^>]*?)${propName}="${escapedVal}"([^>]*?>)`);
 
                     if (selfClosingRegex.test(content)) {
-                      content = content.replace(selfClosingRegex, `$1$2>\n          ${childElement}\n        </${fullTag}>`);
+                      content = content.replace(selfClosingRegex, `$1 $2>\n          ${childElement}\n        </${fullTag}>`);
                       correctedProperties.add(propName);
                       modified = true;
                       autoFixSummary.push(`Catalog: Moved ${fullTag}.${propName} from attribute to child-element in ${fileName}`);
                     } else if (openTagRegex.test(content)) {
-                      content = content.replace(openTagRegex, `$1$2\n          ${childElement}`);
+                      content = content.replace(openTagRegex, `$1 $2\n          ${childElement}`);
                       correctedProperties.add(propName);
                       modified = true;
                       autoFixSummary.push(`Catalog: Moved ${fullTag}.${propName} from attribute to child-element in ${fileName}`);

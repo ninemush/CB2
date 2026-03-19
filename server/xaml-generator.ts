@@ -4684,6 +4684,7 @@ export function validateXamlContent(xamlEntries: { name: string; content: string
         const detail = err
           ? `XML parse error at line ${err.line}, col ${err.col}: ${err.msg.substring(0, 200)}`
           : "XML parse error: unknown";
+        console.debug(`[XAML wellformedness] Validation failed for ${shortName}: ${detail}\nFull XAML content:\n${content}`);
         violations.push({
           check: "xml-wellformedness",
           file: shortName,
@@ -4691,6 +4692,7 @@ export function validateXamlContent(xamlEntries: { name: string; content: string
         });
       }
     } catch (xmlParseErr: any) {
+      console.debug(`[XAML wellformedness] Parse exception for ${shortName}: ${xmlParseErr.message || String(xmlParseErr)}\nFull XAML content:\n${content}`);
       violations.push({
         check: "xml-wellformedness",
         file: shortName,
