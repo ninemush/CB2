@@ -418,6 +418,24 @@ async function failRunInternal(
   scheduleCleanup(runId, activeRun.ideaId);
 }
 
+export async function cancelActiveRun(runId: string): Promise<boolean> {
+  const activeRun = activeRuns.get(runId);
+  if (!activeRun || activeRun.completed) return false;
+
+  activeRun.completed = true;
+  activeRun.finalStatus = "cancelled";
+
+  Array.from(activeRun.sseListeners).forEach(listener => {
+    try {
+      listener({ type: "failed", stage: "run_manager", message: "Run cancelled by user" });
+    } catch {}
+  });
+
+  await storage.failGenerationRun(runId, "Cancelled by user").catch(() => {});
+  scheduleCleanup(runId, activeRun.ideaId);
+  return true;
+}
+
 function scheduleCleanup(runId: string, ideaId: string): void {
   setTimeout(() => {
     const run = activeRuns.get(runId);
@@ -440,3 +458,176 @@ class RunError extends Error {
     this.context = context;
   }
 }
+
+import { EventEmitter } from "events";
+
+export type ObserverRunStatus = "PENDING" | "BUILDING" | "STALLED" | "READY" | "READY_WITH_WARNINGS" | "FALLBACK_READY" | "FAILED" | "CANCELLED";
+
+export interface ObserverRunEvent {
+  type: "status" | "progress" | "pipeline" | "heartbeat" | "metaValidation" | "done" | "error" | "warnings" | "complianceScore" | "outcomeSummary";
+  data: any;
+  timestamp: number;
+}
+
+export interface ObserverRunState {
+  runId: string;
+  ideaId: string;
+  status: ObserverRunStatus;
+  source: "chat" | "retry" | "approval" | "auto";
+  createdAt: number;
+  updatedAt: number;
+  currentPhase?: string;
+  phaseProgress?: string;
+  warnings?: Array<{ code: string; message: string; stage: string; recoverable: boolean }>;
+  complianceScore?: number;
+  outcomeSummary?: {
+    stubbedActivities: number;
+    stubbedSequences: number;
+    stubbedWorkflows: number;
+    autoRepairs: number;
+    fullyGenerated: number;
+    totalEstimatedMinutes: number;
+  };
+  error?: string;
+}
+
+interface ObserverRunEntry {
+  state: ObserverRunState;
+  emitter: EventEmitter;
+  events: ObserverRunEvent[];
+}
+
+const observerRuns = new Map<string, ObserverRunEntry>();
+const latestObserverRunByIdea = new Map<string, string>();
+
+export function createObserverRun(runId: string, ideaId: string, source: "chat" | "retry" | "approval" | "auto"): ObserverRunState {
+  const now = Date.now();
+  const state: ObserverRunState = {
+    runId,
+    ideaId,
+    status: "BUILDING",
+    source,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const entry: ObserverRunEntry = {
+    state,
+    emitter: new EventEmitter(),
+    events: [],
+  };
+  entry.emitter.setMaxListeners(20);
+  observerRuns.set(runId, entry);
+  latestObserverRunByIdea.set(ideaId, runId);
+  return { ...state };
+}
+
+export function getObserverRun(runId: string): ObserverRunState | null {
+  const entry = observerRuns.get(runId);
+  return entry ? { ...entry.state } : null;
+}
+
+export function getLatestObserverRun(ideaId: string): ObserverRunState | null {
+  const runId = latestObserverRunByIdea.get(ideaId);
+  if (!runId) return null;
+  return getObserverRun(runId);
+}
+
+export function emitObserverProgress(runId: string, message: string): void {
+  const entry = observerRuns.get(runId);
+  if (!entry) return;
+  entry.state.phaseProgress = message;
+  entry.state.updatedAt = Date.now();
+  emitObserverEvent(runId, { type: "progress", data: { progress: message }, timestamp: Date.now() });
+}
+
+export function emitObserverPipelineEvent(runId: string, evt: PipelineProgressEvent): void {
+  emitObserverEvent(runId, { type: "pipeline", data: { pipelineEvent: evt }, timestamp: Date.now() });
+}
+
+export function emitObserverHeartbeat(runId: string): void {
+  emitObserverEvent(runId, { type: "heartbeat", data: { heartbeat: true }, timestamp: Date.now() });
+}
+
+export function emitObserverMetaValidation(runId: string, event: any): void {
+  emitObserverEvent(runId, { type: "metaValidation", data: { metaValidation: event }, timestamp: Date.now() });
+}
+
+export function emitObserverDone(runId: string, payload: any): void {
+  const entry = observerRuns.get(runId);
+  if (!entry) return;
+  if (payload.status) entry.state.status = payload.status as ObserverRunStatus;
+  if (payload.warnings) entry.state.warnings = payload.warnings;
+  if (payload.templateComplianceScore !== undefined) entry.state.complianceScore = payload.templateComplianceScore;
+  if (payload.outcomeSummary) entry.state.outcomeSummary = payload.outcomeSummary;
+  entry.state.updatedAt = Date.now();
+  emitObserverEvent(runId, { type: "done", data: { done: true, ...payload }, timestamp: Date.now() });
+}
+
+export function emitObserverError(runId: string, error: string): void {
+  const entry = observerRuns.get(runId);
+  if (!entry) return;
+  entry.state.status = "FAILED";
+  entry.state.error = error;
+  entry.state.updatedAt = Date.now();
+  emitObserverEvent(runId, { type: "error", data: { status: "FAILED", error }, timestamp: Date.now() });
+}
+
+export function cancelObserverRun(runId: string): boolean {
+  const entry = observerRuns.get(runId);
+  if (!entry) return false;
+  if (entry.state.status !== "BUILDING" && entry.state.status !== "PENDING") return false;
+  entry.state.status = "CANCELLED";
+  entry.state.updatedAt = Date.now();
+  emitObserverEvent(runId, { type: "status", data: { status: "CANCELLED" }, timestamp: Date.now() });
+  emitObserverEvent(runId, { type: "done", data: { done: true, status: "CANCELLED" }, timestamp: Date.now() });
+  return true;
+}
+
+export function isObserverRunCancelled(runId: string): boolean {
+  const entry = observerRuns.get(runId);
+  return entry ? entry.state.status === "CANCELLED" : false;
+}
+
+function emitObserverEvent(runId: string, event: ObserverRunEvent): void {
+  const entry = observerRuns.get(runId);
+  if (!entry) return;
+  entry.events.push(event);
+  entry.emitter.emit("event", event);
+}
+
+export function subscribeToObserverRun(runId: string, onEvent: (event: ObserverRunEvent) => void, replayAll?: boolean): () => void {
+  const entry = observerRuns.get(runId);
+  if (!entry) {
+    onEvent({ type: "error", data: { error: "Run not found" }, timestamp: Date.now() });
+    return () => {};
+  }
+
+  if (replayAll) {
+    for (const evt of entry.events) {
+      onEvent(evt);
+    }
+  }
+
+  const handler = (evt: ObserverRunEvent) => onEvent(evt);
+  entry.emitter.on("event", handler);
+
+  return () => {
+    entry.emitter.off("event", handler);
+  };
+}
+
+export function isObserverTerminalStatus(status: ObserverRunStatus): boolean {
+  return status === "READY" || status === "READY_WITH_WARNINGS" || status === "FALLBACK_READY" || status === "FAILED" || status === "CANCELLED";
+}
+
+export function cleanupOldObserverRuns(): void {
+  const cutoff = Date.now() - 2 * 60 * 60 * 1000;
+  for (const [runId, entry] of observerRuns) {
+    if (isObserverTerminalStatus(entry.state.status) && entry.state.updatedAt < cutoff) {
+      entry.emitter.removeAllListeners();
+      observerRuns.delete(runId);
+    }
+  }
+}
+
+setInterval(cleanupOldObserverRuns, 30 * 60 * 1000);

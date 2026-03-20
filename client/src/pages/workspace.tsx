@@ -45,6 +45,7 @@ import { PIPELINE_STAGES, type Idea, type PipelineStage, type ChatMessage as DBC
 import ProcessMapPanel from "@/components/process-map-panel";
 import { parseStepsFromText, parseStepsByView } from "@/lib/step-parser";
 import { DocumentCard, UiPathPackageCard } from "@/components/document-card";
+import { useUiPathRun, type PipelineLogEntry } from "@/hooks/use-uipath-run";
 import { ArtifactHub } from "@/components/artifact-hub";
 import { MetaValidationBar } from "@/components/meta-validation-bar";
 import { formatEST, getStageBadgeClass } from "@/lib/utils";
@@ -175,15 +176,6 @@ function StreamingProgressIndicator({ mode, liveStatus, docType, currentSection,
   );
 }
 
-interface PipelineLogEntry {
-  id: string;
-  type: "started" | "heartbeat" | "completed" | "warning" | "failed";
-  stage: string;
-  message: string;
-  elapsed?: number;
-  context?: Record<string, any>;
-  timestamp: number;
-}
 
 function PipelineLogPanel({
   entries,
@@ -682,38 +674,28 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const [docProgressSection, setDocProgressSection] = useState<string>("");
   const [deployStep, setDeployStep] = useState<string>("");
   const [classifiedIntent, setClassifiedIntent] = useState<string>("");
-  const [liveStatus, setLiveStatus] = useState<string>("");
-  type UiPathRunStatus = "BUILDING" | "STALLED" | "READY" | "READY_WITH_WARNINGS" | "FALLBACK_READY" | "FAILED";
-  type UiPathRunWarning = { code: string; message: string; stage: string; recoverable: boolean };
-  type UiPathOutcomeSummary = { stubbedActivities: number; stubbedSequences: number; stubbedWorkflows: number; autoRepairs: number; fullyGenerated: number; totalEstimatedMinutes: number };
-  interface UiPathRunState {
-    runId: string;
-    source: "chat" | "retry" | "approval" | "auto";
-    startedAt: number;
-    status: UiPathRunStatus;
-    warnings?: UiPathRunWarning[];
-    complianceScore?: number;
-    outcomeSummary?: UiPathOutcomeSummary;
-    linkedMessageId?: string;
-    preExistingMessageIds: Set<string>;
-  }
-  interface CompletedRunResult {
-    runId: string;
-    status: UiPathRunStatus;
-    warnings?: UiPathRunWarning[];
-    complianceScore?: number;
-    outcomeSummary?: UiPathOutcomeSummary;
-    preExistingMessageIds: Set<string>;
-  }
-  const [currentUiPathRun, setCurrentUiPathRun] = useState<UiPathRunState | null>(null);
-  const currentUiPathRunRef = useRef<UiPathRunState | null>(null);
-  const [completedUiPathRuns, setCompletedUiPathRuns] = useState<Map<string, CompletedRunResult>>(new Map());
+  const [liveStatusLocal, setLiveStatus] = useState<string>("");
+  const {
+    currentRun: currentUiPathRun,
+    completedRuns: completedUiPathRuns,
+    pipelineLogEntries,
+    pipelineComplete,
+    isRunning: uipathIsRunning,
+    startRun: startUiPathRun,
+    cancelRun: cancelUiPathRun,
+    metaValidationChipStatus,
+    metaValidationFixCount,
+    liveStatus: uipathLiveStatus,
+  } = useUiPathRun(idea.id);
+  const liveStatus = uipathIsRunning ? uipathLiveStatus : liveStatusLocal;
+  const [docMetaValidationChipStatus, setDocMetaValidationChipStatus] = useState<string>("ready");
+  const [docMetaValidationFixCount, setDocMetaValidationFixCount] = useState(0);
+  const effectiveMetaValidationChipStatus = (uipathIsRunning ? metaValidationChipStatus : docMetaValidationChipStatus) as "ready" | "assessing" | "will-validate" | "not-needed" | "active" | "validating" | "fixed" | "clean" | "warning";
+  const effectiveMetaValidationFixCount = uipathIsRunning ? metaValidationFixCount : docMetaValidationFixCount;
   const [messageToRunId, setMessageToRunId] = useState<Map<string, string>>(new Map());
-  const [metaValidationChipStatus, setMetaValidationChipStatus] = useState<"ready" | "assessing" | "will-validate" | "not-needed" | "active" | "validating" | "fixed" | "clean" | "warning">("ready");
-  const [metaValidationFixCount, setMetaValidationFixCount] = useState(0);
-  const [pipelineLogEntries, setPipelineLogEntries] = useState<PipelineLogEntry[]>([]);
-  const [pipelineComplete, setPipelineComplete] = useState(false);
-  const pipelineEntryCounter = useRef(0);
+  const [deployPipelineLogEntries, setDeployPipelineLogEntries] = useState<PipelineLogEntry[]>([]);
+  const [deployPipelineComplete, setDeployPipelineComplete] = useState(false);
+  const deployPipelineEntryCounter = useRef(0);
   const [streamingDocContent, setStreamingDocContent] = useState<string>("");
   const [streamingDocElapsed, setStreamingDocElapsed] = useState(0);
   const streamingDocElapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -723,14 +705,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
 
   useEffect(() => {
     initialScrollDoneRef.current = false;
-    setCurrentUiPathRun(null);
-    currentUiPathRunRef.current = null;
-    setCompletedUiPathRuns(new Map());
     setMessageToRunId(new Map());
-    setUipathGenRequestId(0);
-    uipathGenRequestIdRef.current = 0;
-    uipathGenConsumedIdRef.current = 0;
-    uipathGenInFlightRef.current = false;
     uipathTriggeredRef.current = false;
   }, [idea.id]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -811,12 +786,6 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const pddTriggeredRef = useRef(false);
   const sddTriggeredRef = useRef(false);
   const uipathTriggeredRef = useRef(false);
-  const [uipathGenRequestId, setUipathGenRequestId] = useState(0);
-  const uipathGenRequestIdRef = useRef(0);
-  const uipathGenConsumedIdRef = useRef(0);
-  const uipathGenInFlightRef = useRef(false);
-  const uipathAbortControllerRef = useRef<AbortController | null>(null);
-  const uipathUserCancelledRef = useRef(false);
   const generateDocRef = useRef<((type: "PDD" | "SDD") => void) | null>(null);
   const generateUiPathRef = useRef<((force?: boolean, source?: "chat" | "retry" | "approval" | "auto") => void) | null>(null);
   const generateToBeRef = useRef<(() => void) | null>(null);
@@ -943,27 +912,18 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       let needsUpdate = false;
       const newMap = new Map(messageToRunId);
       const assignedRunIds = new Set(newMap.values());
-      for (const [runId, run] of Array.from(completedUiPathRuns.entries())) {
-        if (assignedRunIds.has(runId)) continue;
-        if (run.status === "FAILED") continue;
-        const newMsg = uipathMessages.find(m => {
-          const msgId = String(m.id);
-          return !newMap.has(msgId) && !run.preExistingMessageIds.has(msgId);
-        });
-        if (newMsg) {
-          const msgId = String(newMsg.id);
-          newMap.set(msgId, runId);
-          assignedRunIds.add(runId);
-          needsUpdate = true;
-          setCurrentUiPathRun(prev => {
-            if (prev && prev.runId === runId && !prev.linkedMessageId) {
-              const updated = { ...prev, linkedMessageId: msgId };
-              currentUiPathRunRef.current = updated;
-              return updated;
-            }
-            return prev;
-          });
-        }
+      const unassignedRuns = Array.from(completedUiPathRuns.entries())
+        .filter(([runId, run]) => !assignedRunIds.has(runId) && run.status !== "FAILED");
+      const unassignedMsgs = uipathMessages.filter(m => !newMap.has(String(m.id)));
+      const pairs = Math.min(unassignedRuns.length, unassignedMsgs.length);
+      for (let i = 0; i < pairs; i++) {
+        const msgIdx = unassignedMsgs.length - pairs + i;
+        const runIdx = unassignedRuns.length - pairs + i;
+        const msgId = String(unassignedMsgs[msgIdx].id);
+        const [runId] = unassignedRuns[runIdx];
+        newMap.set(msgId, runId);
+        assignedRunIds.add(runId);
+        needsUpdate = true;
       }
       if (needsUpdate) {
         setMessageToRunId(newMap);
@@ -1077,33 +1037,31 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
         if (data.metaValidation) {
           const mv = data.metaValidation;
           if (mv.status === "started") {
-            setMetaValidationChipStatus("validating");
+            setDocMetaValidationChipStatus("validating");
           } else if (mv.status === "assessing") {
-            setMetaValidationChipStatus("assessing");
+            setDocMetaValidationChipStatus("assessing");
           } else if (mv.status === "will-validate") {
-            setMetaValidationChipStatus("will-validate");
+            setDocMetaValidationChipStatus("will-validate");
           } else if (mv.status === "not-needed") {
-            setMetaValidationChipStatus("not-needed");
+            setDocMetaValidationChipStatus("not-needed");
           } else if (mv.status === "completed") {
             if (mv.correctionsApplied > 0) {
-              setMetaValidationChipStatus("fixed");
-              setMetaValidationFixCount(mv.correctionsApplied);
+              setDocMetaValidationChipStatus("fixed");
+              setDocMetaValidationFixCount(mv.correctionsApplied);
             } else {
-              setMetaValidationChipStatus("clean");
+              setDocMetaValidationChipStatus("clean");
             }
           } else if (mv.status === "warning") {
-            setMetaValidationChipStatus("warning");
-            setMetaValidationFixCount(mv.correctionsApplied || 0);
+            setDocMetaValidationChipStatus("warning");
+            setDocMetaValidationFixCount(mv.correctionsApplied || 0);
           }
         }
         if (data.triggerUiPathGen) {
-          if (uipathGenInFlightRef.current) {
+          if (uipathIsRunning) {
             console.log("[UiPath Trigger] triggerUiPathGen received but generation already in flight — ignoring");
           } else {
-            const nextId = uipathGenRequestIdRef.current + 1;
-            uipathGenRequestIdRef.current = nextId;
-            console.log("[UiPath Trigger] triggerUiPathGen received from server — request ID created: %d", nextId);
-            setUipathGenRequestId(nextId);
+            console.log("[UiPath Trigger] triggerUiPathGen received — calling new run endpoint");
+            setTimeout(() => generateUiPathRef.current?.(true, "chat"), 500);
           }
         }
         if (data.intentClassified) {
@@ -1117,25 +1075,14 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             prev ? { ...prev, isStreaming: false } : prev
           );
           setDocProgressSection("");
-          if (uipathGenRequestIdRef.current > uipathGenConsumedIdRef.current) {
-            console.log("[UiPath Trigger] done received — preserving intent/status for pending UiPath gen (requestId=%d, consumedId=%d)", uipathGenRequestIdRef.current, uipathGenConsumedIdRef.current);
-            console.log("[UiPath Trigger] done handler — clearing isGeneratingDoc blocking state for UiPath handoff");
-            setIsGeneratingDoc(false);
-            setGeneratingDocType("");
-            stopDocStreaming({ force: true });
-            setClassifiedIntent("UIPATH_GEN");
-            setLiveStatus("Generating UiPath package...");
-          } else {
-            setClassifiedIntent("");
-            setLiveStatus("");
-          }
-          setTimeout(() => setMetaValidationChipStatus("ready"), 5000);
+          setClassifiedIntent("");
+          setLiveStatus("");
         }
         if (data.pipelineEvent) {
           const evt = data.pipelineEvent;
-          pipelineEntryCounter.current++;
-          setPipelineLogEntries(prev => [...prev, {
-            id: `pe-${pipelineEntryCounter.current}`,
+          deployPipelineEntryCounter.current++;
+          setDeployPipelineLogEntries(prev => [...prev, {
+            id: `pe-${deployPipelineEntryCounter.current}`,
             type: evt.type,
             stage: evt.stage,
             message: evt.message,
@@ -1144,7 +1091,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             timestamp: Date.now(),
           }]);
           if (evt.stage === "complete" && evt.type === "completed") {
-            setPipelineComplete(true);
+            setDeployPipelineComplete(true);
           }
         }
         if (data.docProgress) {
@@ -1170,9 +1117,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           } else {
             if (!localDeployStarted) {
               localDeployStarted = true;
-              setPipelineLogEntries([]);
-              setPipelineComplete(false);
-              pipelineEntryCounter.current = 0;
+              setDeployPipelineLogEntries([]);
+              setDeployPipelineComplete(false);
+              deployPipelineEntryCounter.current = 0;
             }
             setDeployStep(data.deployStatus);
             setStreamingMsg((prev) => prev ? { ...prev } : prev);
@@ -1210,30 +1157,6 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             startDocStreaming("DHG");
             docGenIdAtStart = docGenIdRef.current;
           }
-        }
-        if (data.warnings) {
-          setCurrentUiPathRun(prev => {
-            if (!prev) return prev;
-            const updated = { ...prev, warnings: data.warnings };
-            currentUiPathRunRef.current = updated;
-            return updated;
-          });
-        }
-        if (data.templateComplianceScore !== undefined) {
-          setCurrentUiPathRun(prev => {
-            if (!prev) return prev;
-            const updated = { ...prev, complianceScore: data.templateComplianceScore };
-            currentUiPathRunRef.current = updated;
-            return updated;
-          });
-        }
-        if (data.outcomeSummary) {
-          setCurrentUiPathRun(prev => {
-            if (!prev) return prev;
-            const updated = { ...prev, outcomeSummary: data.outcomeSummary };
-            currentUiPathRunRef.current = updated;
-            return updated;
-          });
         }
         if (data.error) {
           streamingMsgRef.current = "";
@@ -1370,18 +1293,6 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
         stopDocStreaming({ force: true });
       } else if (wasGeneratingDoc && isGeneratingDocRef.current && docGenIdRef.current === docGenIdAtStart) {
         stopDocStreaming({ force: true });
-      }
-
-      if (uipathGenRequestIdRef.current > uipathGenConsumedIdRef.current) {
-        console.log("[UiPath Trigger] finally block — pending trigger detected (requestId=%d, consumedId=%d), will fire via effect", uipathGenRequestIdRef.current, uipathGenConsumedIdRef.current);
-        if (isGeneratingDocRef.current) {
-          console.log("[UiPath Trigger] finally block — safety clearing isGeneratingDoc for pending UiPath handoff");
-          isGeneratingDocRef.current = false;
-          generatingDocTypeRef.current = "";
-          setIsGeneratingDoc(false);
-          setGeneratingDocType("");
-          stopDocStreaming({ force: true });
-        }
       }
 
       const isToBeRun = toBeGeneratingRef.current;
@@ -1611,273 +1522,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   // inputs (same SDD, same map, same spec), the pipeline returns the cached build artifact. This is a
   // known follow-up — if users expect force=true to produce a fresh build, pipeline cache eviction
   // logic will need a separate change.
-  const startUiPathRun = useCallback(async (source: "chat" | "retry" | "approval" | "auto" = "auto", force?: boolean) => {
-    if (uipathGenInFlightRef.current) {
-      console.log("[UiPath Trigger] generation already in flight — bail");
-      return;
-    }
-    if (isGeneratingDoc || isStreaming) {
-      console.log("[UiPath Trigger] blocked by isGeneratingDoc=%s isStreaming=%s — keeping pending", isGeneratingDoc, isStreaming);
-      return;
-    }
-    const runId = crypto.randomUUID();
-    console.log("[UiPath Trigger] starting run %s (source=%s, force=%s) — POST /api/ideas/%s/generate-uipath", runId, source, force, idea.id);
-    uipathGenInFlightRef.current = true;
-    uipathUserCancelledRef.current = false;
-    uipathGenConsumedIdRef.current = uipathGenRequestIdRef.current;
-    console.log("[UiPath Trigger] trigger consumed (consumedId=%d)", uipathGenConsumedIdRef.current);
-    setIsGeneratingDoc(true);
-    setGeneratingDocType("UiPath");
-    setDocProgressSection("");
-    setStreamingDocContent("");
-    setLiveStatus("Generating UiPath package...");
-    setClassifiedIntent("UIPATH_GEN");
-    const preExistingIds = new Set<string>();
-    const currentMessages = savedMessagesRef.current;
-    if (currentMessages) {
-      for (const m of currentMessages) {
-        if (m.content.startsWith("[UIPATH:")) {
-          preExistingIds.add(String(m.id));
-        }
-      }
-    }
-    const newRun: UiPathRunState = { runId, source, startedAt: Date.now(), status: "BUILDING", preExistingMessageIds: preExistingIds };
-    setCurrentUiPathRun(newRun);
-    currentUiPathRunRef.current = newRun;
-    setPipelineLogEntries([]);
-    setPipelineComplete(false);
-    pipelineEntryCounter.current = 0;
-    let safetyTimer: ReturnType<typeof setTimeout> | null = null;
-    let stalledLivenessInterval: ReturnType<typeof setInterval> | null = null;
-    const activeRunId = runId;
-    const updateRun = (patch: Partial<UiPathRunState>) => {
-      setCurrentUiPathRun(prev => {
-        if (!prev || prev.runId !== activeRunId) return prev;
-        const updated = { ...prev, ...patch };
-        currentUiPathRunRef.current = updated;
-        return updated;
-      });
-    };
-    const resetSafetyTimer = () => {
-      if (safetyTimer) clearTimeout(safetyTimer);
-      if (stalledLivenessInterval) { clearInterval(stalledLivenessInterval); stalledLivenessInterval = null; }
-      const currentStatus = currentUiPathRunRef.current?.status;
-      if (currentStatus === "STALLED") {
-        updateRun({ status: "BUILDING" });
-        setLiveStatus("Generating UiPath package...");
-      }
-      safetyTimer = setTimeout(() => {
-        if (uipathGenInFlightRef.current && currentUiPathRunRef.current?.runId === activeRunId) {
-          console.warn("[UiPath Trigger] safety timeout — no progress in 90s, entering STALLED state (run=%s)", activeRunId);
-          updateRun({ status: "STALLED" });
-          setLiveStatus("Still processing — waiting for server updates...");
-          stalledLivenessInterval = setInterval(() => {
-            if (uipathGenInFlightRef.current && currentUiPathRunRef.current?.runId === activeRunId && currentUiPathRunRef.current?.status === "STALLED") {
-              console.log("[UiPath Trigger] liveness check — still waiting for server (run=%s, elapsed=%ds)", activeRunId, Math.round((Date.now() - newRun.startedAt) / 1000));
-              setLiveStatus(`Still processing — waiting for server updates... (${Math.round((Date.now() - newRun.startedAt) / 1000)}s)`);
-            }
-          }, 30000);
-        }
-      }, 90000);
-    };
-    resetSafetyTimer();
-    try {
-      const controller = new AbortController();
-      uipathAbortControllerRef.current = controller;
-      const timeout = setTimeout(() => controller.abort(), 300000);
-      const url = force ? `/api/ideas/${idea.id}/generate-uipath?force=true` : `/api/ideas/${idea.id}/generate-uipath`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      console.log("[UiPath Trigger] fetch response received — POST /api/ideas/%s/generate-uipath (run=%s)", idea.id, activeRunId);
-      resetSafetyTimer();
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        console.error("Failed to generate UiPath package:", err);
-        updateRun({ status: "FAILED" });
-        toast({
-          title: "Package generation failed",
-          description: err.message || "Could not generate UiPath package. Please try again.",
-          variant: "destructive",
-        });
-      } else {
-        const contentType = res.headers.get("content-type") || "";
-        if (contentType.includes("text/event-stream")) {
-          const reader = res.body?.getReader();
-          const decoder = new TextDecoder();
-          if (reader) {
-            let buffer = "";
-            let success = false;
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split("\n");
-              buffer = lines.pop() || "";
-              for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                  try {
-                    const data = JSON.parse(line.slice(6));
-                    if (data.heartbeat) {
-                      resetSafetyTimer();
-                      continue;
-                    }
-                    if (data.pipelineEvent) {
-                      resetSafetyTimer();
-                      const evt = data.pipelineEvent;
-                      pipelineEntryCounter.current++;
-                      setPipelineLogEntries(prev => [...prev, {
-                        id: `pe-${pipelineEntryCounter.current}`,
-                        type: evt.type,
-                        stage: evt.stage,
-                        message: evt.message,
-                        elapsed: evt.elapsed,
-                        context: evt.context,
-                        timestamp: Date.now(),
-                      }]);
-                      if (evt.stage === "complete" && evt.type === "completed") {
-                        setPipelineComplete(true);
-                      }
-                    }
-                    if (data.progress) {
-                      resetSafetyTimer();
-                      setDocProgressSection(data.progress);
-                      setLiveStatus(data.progress);
-                    }
-                    if (data.done) {
-                      success = true;
-                      setPipelineComplete(true);
-                    }
-                    if (data.status) {
-                      updateRun({ status: data.status as UiPathRunStatus });
-                    }
-                    if (data.warnings) {
-                      updateRun({ warnings: data.warnings });
-                    }
-                    if (data.templateComplianceScore !== undefined) {
-                      updateRun({ complianceScore: data.templateComplianceScore });
-                    }
-                    if (data.outcomeSummary) {
-                      updateRun({ outcomeSummary: data.outcomeSummary });
-                    }
-                    if (data.status === "FAILED") {
-                      updateRun({ status: "FAILED" });
-                      toast({
-                        title: "Package build failed",
-                        description: data.error || "Package build produced no output",
-                        variant: "destructive",
-                      });
-                    } else if (data.error) {
-                      updateRun({ status: "FAILED" });
-                      toast({
-                        title: "Package generation failed",
-                        description: data.error,
-                        variant: "destructive",
-                      });
-                    }
-                  } catch {}
-                }
-              }
-            }
-            if (success) {
-              const currentStatus = currentUiPathRunRef.current?.status;
-              if (!currentStatus || currentStatus === "BUILDING" || currentStatus === "STALLED") {
-                updateRun({ status: "READY" });
-              }
-              toast({
-                title: "UiPath Package Ready",
-                description: "Package generated successfully. You can now deploy to UiPath.",
-              });
-            }
-          }
-        } else {
-          const currentStatus = currentUiPathRunRef.current?.status;
-          if (!currentStatus || currentStatus === "BUILDING" || currentStatus === "STALLED") {
-            updateRun({ status: "READY" });
-          }
-          toast({
-            title: "UiPath Package Ready",
-            description: "Package generated successfully. You can now deploy to UiPath.",
-          });
-        }
-      }
-    } catch (err: any) {
-      updateRun({ status: "FAILED" });
-      if (err?.name === "AbortError") {
-        if (uipathUserCancelledRef.current) {
-          toast({
-            title: "Cancelled",
-            description: "Package generation was cancelled.",
-          });
-        } else {
-          toast({
-            title: "Timed out",
-            description: "Package generation took too long. Please try again.",
-            variant: "destructive",
-          });
-        }
-      } else {
-        console.error("Error generating UiPath package:", err);
-        toast({
-          title: "Error",
-          description: "Could not generate UiPath package. Please try again.",
-          variant: "destructive",
-        });
-      }
-    } finally {
-      if (safetyTimer) clearTimeout(safetyTimer);
-      if (stalledLivenessInterval) clearInterval(stalledLivenessInterval);
-      uipathAbortControllerRef.current = null;
-      const finalRun = currentUiPathRunRef.current;
-      if (finalRun && finalRun.runId === activeRunId) {
-        setCompletedUiPathRuns(prev => {
-          const next = new Map(prev);
-          next.set(activeRunId, {
-            runId: activeRunId,
-            status: finalRun.status,
-            warnings: finalRun.warnings,
-            complianceScore: finalRun.complianceScore,
-            outcomeSummary: finalRun.outcomeSummary,
-            preExistingMessageIds: finalRun.preExistingMessageIds,
-          });
-          return next;
-        });
-      }
-      uipathGenInFlightRef.current = false;
-      setIsGeneratingDoc(false);
-      setGeneratingDocType("");
-      setDocProgressSection("");
-      setStreamingDocContent("");
-      setStreamingDocElapsed(0);
-      setLiveStatus("");
-      setClassifiedIntent("");
-      if (streamingDocElapsedRef.current) {
-        clearInterval(streamingDocElapsedRef.current);
-        streamingDocElapsedRef.current = null;
-      }
-      isGeneratingDocRef.current = false;
-      generatingDocTypeRef.current = "";
-      queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
-      console.log("[UiPath Trigger] generation complete, state reset (run=%s)", activeRunId);
-    }
-  }, [idea.id, isGeneratingDoc, isStreaming]);
-
   generateUiPathRef.current = (force?: boolean, source?: "chat" | "retry" | "approval" | "auto") => startUiPathRun(source || "auto", force);
-
-  useEffect(() => {
-    const hasPending = uipathGenRequestId > uipathGenConsumedIdRef.current;
-    if (!hasPending) return;
-    if (!isStreaming && !isGeneratingDoc && !uipathGenInFlightRef.current) {
-      console.log("[UiPath Trigger] effect eligible and firing — dispatching generation (requestId=%d, consumedId=%d, isStreaming=%s, isGeneratingDoc=%s, inFlight=%s)", uipathGenRequestId, uipathGenConsumedIdRef.current, isStreaming, isGeneratingDoc, uipathGenInFlightRef.current);
-      generateUiPathRef.current?.(true, "chat");
-    } else {
-      console.log("[UiPath Trigger] effect deferred — isStreaming=%s, isGeneratingDoc=%s, inFlight=%s (requestId=%d)", isStreaming, isGeneratingDoc, uipathGenInFlightRef.current, uipathGenRequestId);
-    }
-  }, [uipathGenRequestId, isStreaming, isGeneratingDoc]);
 
   const [approvedDocIds, setApprovedDocIds] = useState<Set<number>>(new Set());
 
@@ -2123,8 +1768,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
 
       <MetaValidationBar
         isGenerating={isStreaming}
-        metaValidationStatus={metaValidationChipStatus}
-        fixCount={metaValidationFixCount}
+        metaValidationStatus={effectiveMetaValidationChipStatus}
+        fixCount={effectiveMetaValidationFixCount}
       />
 
       {guidance && (
@@ -2169,7 +1814,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           if (msg.uipathData) {
             const linkedRunId = messageToRunId.get(msg.id);
             const completedRun = linkedRunId ? completedUiPathRuns.get(linkedRunId) : undefined;
-            const cardStatus = completedRun?.status;
+            const cardStatus = completedRun?.status as "BUILDING" | "READY" | "READY_WITH_WARNINGS" | "FALLBACK_READY" | "FAILED" | undefined;
             const cardWarnings = completedRun?.warnings;
             const cardComplianceScore = completedRun?.complianceScore;
             const cardOutcomeSummary = completedRun?.outcomeSummary;
@@ -2221,18 +1866,21 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           }
 
           if (msg.isStreaming && msg.role === "assistant") {
-            if (deployStep && pipelineLogEntries.length > 0) {
-              return <PipelineLogPanel key={`${msg.id}-deploy-pipeline-log`} entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={undefined} />;
+            if (deployStep && deployPipelineLogEntries.length > 0) {
+              return <PipelineLogPanel key={`${msg.id}-deploy-pipeline-log`} entries={deployPipelineLogEntries} isComplete={deployPipelineComplete} onCancel={undefined} />;
             }
             if (deployStep) {
               return <StreamingProgressIndicator key={`${msg.id}-deploy`} mode="deploy" deployStep={deployStep} />;
             }
-            if (isGeneratingDoc || isGeneratingDocRef.current) {
-              const docType = (generatingDocType || generatingDocTypeRef.current || "PDD") as "PDD" | "SDD" | "UiPath";
-              if (docType === "UiPath" && pipelineLogEntries.length > 0) {
-                return <PipelineLogPanel key={`${msg.id}-pipeline-log`} entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={cancelDocGeneration} />;
+            if (uipathIsRunning) {
+              if (pipelineLogEntries.length > 0) {
+                return <PipelineLogPanel key={`${msg.id}-pipeline-log`} entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={() => cancelUiPathRun()} />;
               }
-              if (docType !== "UiPath" && streamingDocContent && streamingDocContent.length > 10) {
+              return <StreamingProgressIndicator key={`${msg.id}-doc-uipath`} mode="thinking" liveStatus={liveStatus} stage={idea.stage} classifiedIntent={"UIPATH_GEN"} onCancel={() => cancelUiPathRun()} />;
+            }
+            if (isGeneratingDoc || isGeneratingDocRef.current) {
+              const docType = (generatingDocType || generatingDocTypeRef.current || "PDD") as "PDD" | "SDD";
+              if (streamingDocContent && streamingDocContent.length > 10) {
                 return (
                   <div key={`${msg.id}-streaming-doc`} className="flex justify-start" data-testid="streaming-doc-card">
                     <div className="max-w-[95%] w-full">
@@ -2248,9 +1896,6 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                     </div>
                   </div>
                 );
-              }
-              if (docType === "UiPath" && pipelineLogEntries.length === 0) {
-                return <StreamingProgressIndicator key={`${msg.id}-doc-${docType}`} mode="thinking" liveStatus={liveStatus} stage={idea.stage} classifiedIntent={classifiedIntent} onCancel={cancelDocGeneration} />;
               }
               return <StreamingProgressIndicator key={`${msg.id}-doc-${docType}`} mode="doc" docType={docType} currentSection={docProgressSection} onCancel={cancelDocGeneration} />;
             }
@@ -2311,14 +1956,15 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             </div>
           );
         })}
-        {isGeneratingDoc && !streamingMsg && (
-          generatingDocType === "UiPath" ? (
-            pipelineLogEntries.length > 0 ? (
-              <PipelineLogPanel entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={cancelDocGeneration} />
-            ) : (
-              <StreamingProgressIndicator mode="thinking" liveStatus={liveStatus} stage={idea.stage} classifiedIntent={classifiedIntent} onCancel={cancelDocGeneration} />
-            )
-          ) : streamingDocContent && streamingDocContent.length > 10 ? (
+        {uipathIsRunning && !streamingMsg && (
+          pipelineLogEntries.length > 0 ? (
+            <PipelineLogPanel entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={() => cancelUiPathRun()} />
+          ) : (
+            <StreamingProgressIndicator mode="thinking" liveStatus={liveStatus} stage={idea.stage} classifiedIntent={"UIPATH_GEN"} onCancel={() => cancelUiPathRun()} />
+          )
+        )}
+        {isGeneratingDoc && !streamingMsg && !uipathIsRunning && (
+          streamingDocContent && streamingDocContent.length > 10 ? (
             <div className="flex justify-start" data-testid="streaming-doc-card-bottom">
               <div className="max-w-[95%] w-full">
                 <DocumentCard
@@ -2360,26 +2006,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                 variant="outline"
                 size="sm"
                 className="text-xs"
-                onClick={() => {
-                  uipathUserCancelledRef.current = true;
-                  if (uipathAbortControllerRef.current) {
-                    uipathAbortControllerRef.current.abort();
-                    uipathAbortControllerRef.current = null;
-                  }
-                  setCurrentUiPathRun(prev => {
-                    if (!prev) return prev;
-                    const updated = { ...prev, status: "FAILED" as UiPathRunStatus };
-                    currentUiPathRunRef.current = updated;
-                    return updated;
-                  });
-                  uipathGenInFlightRef.current = false;
-                  setIsGeneratingDoc(false);
-                  setGeneratingDocType("");
-                  setLiveStatus("");
-                  setClassifiedIntent("");
-                  isGeneratingDocRef.current = false;
-                  generatingDocTypeRef.current = "";
-                }}
+                onClick={() => cancelUiPathRun()}
                 data-testid="button-cancel-stalled"
               >
                 Cancel

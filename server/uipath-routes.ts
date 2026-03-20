@@ -12,6 +12,14 @@ import * as prereqs from "./prerequisite-checker";
 import { db } from "./db";
 import { pipelineJobs, provisioningLog, actionTasks, testResults, uipathConnections, appSettings } from "@shared/schema";
 import { eq, desc, ne } from "drizzle-orm";
+import {
+  startUiPathGenerationRun, getActiveRunForIdea, getActiveRun, subscribeToRun, cancelActiveRun,
+  createObserverRun, getObserverRun, getLatestObserverRun,
+  emitObserverProgress, emitObserverPipelineEvent, emitObserverHeartbeat,
+  emitObserverMetaValidation, emitObserverDone, emitObserverError,
+  cancelObserverRun, isObserverRunCancelled, subscribeToObserverRun, isObserverTerminalStatus,
+  type ObserverRunState,
+} from "./uipath-run-manager";
 
 function extractOrgSlug(input: string): string {
   let val = input.trim();
@@ -1854,6 +1862,89 @@ export function registerUiPathRoutes(app: Express): void {
     }
   });
 
+  app.post("/api/ideas/:ideaId/uipath-runs", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const ideaId = req.params.ideaId;
+    const idea = await storage.getIdea(ideaId);
+    if (!idea) return res.status(404).json({ message: "Idea not found" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user) return res.status(401).json({ message: "User not found" });
+    const activeRole = (req.session.activeRole || user.role) as string;
+    if (idea.ownerEmail !== user.email && activeRole !== "Admin" && activeRole !== "CoE") {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const source = (req.body.source as "chat" | "retry" | "approval" | "auto") || "auto";
+    const force = req.body.force === true;
+
+    try {
+      const triggerSource: "manual" | "chat" | "api" = source === "chat" ? "chat" : source === "retry" ? "manual" : "api";
+
+      let userMetaValidationMode: "Auto" | "Always" | "Off" = "Auto";
+      try {
+        const storedMode = await storage.getAppSetting(`meta_validation_mode_${req.session.userId}`);
+        if (storedMode === "Always" || storedMode === "Off" || storedMode === "Auto") {
+          userMetaValidationMode = storedMode;
+        }
+      } catch {}
+
+      const observerRunId = crypto.randomUUID();
+      createObserverRun(observerRunId, ideaId, source);
+
+      let runId: string;
+      try {
+        const result = await startUiPathGenerationRun(ideaId, triggerSource, {
+          forceRegenerate: force,
+          metaValidationMode: userMetaValidationMode,
+          callbacks: {
+            onProgress: (message: string) => emitObserverProgress(observerRunId, message),
+            onPipelineEvent: (evt) => {
+              emitObserverPipelineEvent(observerRunId, evt);
+              if (evt.type === "completed" || evt.type === "started") {
+                emitObserverProgress(observerRunId, evt.message);
+              }
+            },
+            onMetaValidation: (event: Record<string, unknown>) => emitObserverMetaValidation(observerRunId, event),
+            onComplete: (result) => {
+              const pr = result.pipelineResult;
+              const buildOutcomeSummary = pr?.outcomeReport ? {
+                stubbedActivities: pr.outcomeReport.remediations.filter((r: { level: string }) => r.level === "activity").length,
+                stubbedSequences: pr.outcomeReport.remediations.filter((r: { level: string }) => r.level === "sequence").length,
+                stubbedWorkflows: pr.outcomeReport.remediations.filter((r: { level: string }) => r.level === "workflow").length,
+                autoRepairs: pr.outcomeReport.autoRepairs.length,
+                fullyGenerated: pr.outcomeReport.fullyGeneratedFiles.length,
+                totalEstimatedMinutes: pr.outcomeReport.totalEstimatedEffortMinutes,
+              } : undefined;
+              emitObserverDone(observerRunId, {
+                status: result.status,
+                warnings: pr?.warnings || [],
+                templateComplianceScore: pr?.templateComplianceScore,
+                outcomeSummary: buildOutcomeSummary,
+              });
+            },
+            onFail: (error: string) => {
+              emitObserverError(observerRunId, error);
+            },
+          },
+        });
+        runId = result.runId;
+      } catch (startErr: unknown) {
+        emitObserverError(observerRunId, startErr instanceof Error ? startErr.message : String(startErr));
+        throw startErr;
+      }
+
+      return res.json({ runId: observerRunId, dbRunId: runId, status: "BUILDING" });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes("already in progress")) {
+        return res.status(409).json({ message: errMsg });
+      }
+      return res.status(500).json({ message: errMsg });
+    }
+  });
+
   app.get("/api/ideas/:ideaId/uipath-runs/latest", async (req: Request, res: Response) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
@@ -1868,11 +1959,39 @@ export function registerUiPathRoutes(app: Express): void {
       return res.status(403).json({ message: "Access denied" });
     }
 
-    const { getActiveRunForIdea } = await import("./uipath-run-manager");
-    const activeRun = getActiveRunForIdea(ideaId);
+    const observerRun = getLatestObserverRun(ideaId);
+    if (observerRun && !isObserverTerminalStatus(observerRun.status)) {
+      return res.json({
+        run: {
+          runId: observerRun.runId,
+          ideaId: observerRun.ideaId,
+          status: observerRun.status,
+          source: observerRun.source,
+          warnings: observerRun.warnings,
+          complianceScore: observerRun.complianceScore,
+          outcomeSummary: observerRun.outcomeSummary,
+          createdAt: observerRun.createdAt,
+        },
+      });
+    }
 
+    const activeRun = getActiveRunForIdea(ideaId);
     const dbRun = await storage.getLatestGenerationRunForIdea(ideaId);
     if (!dbRun) {
+      if (observerRun) {
+        return res.json({
+          run: {
+            runId: observerRun.runId,
+            ideaId: observerRun.ideaId,
+            status: observerRun.status,
+            source: observerRun.source,
+            warnings: observerRun.warnings,
+            complianceScore: observerRun.complianceScore,
+            outcomeSummary: observerRun.outcomeSummary,
+            createdAt: observerRun.createdAt,
+          },
+        });
+      }
       return res.json({ run: null });
     }
 
@@ -1881,9 +2000,26 @@ export function registerUiPathRoutes(app: Express): void {
     let parsedOutcomeReport = null;
     try { if (dbRun.phaseProgress) parsedPhaseProgress = JSON.parse(dbRun.phaseProgress); } catch {}
     try { if (dbRun.outcomeReport) parsedOutcomeReport = JSON.parse(dbRun.outcomeReport); } catch {}
+
+    const statusMap: Record<string, string> = {
+      running: "BUILDING",
+      completed: "READY",
+      completed_with_warnings: "READY_WITH_WARNINGS",
+      failed: "FAILED",
+      cancelled: "CANCELLED",
+    };
+
+    const sourceMap: Record<string, string> = {
+      manual: "retry",
+      chat: "chat",
+      api: "auto",
+    };
+
     return res.json({
       run: {
         ...dbRun,
+        status: isActive ? "BUILDING" : (statusMap[dbRun.status] || dbRun.status),
+        source: sourceMap[dbRun.triggeredBy || ""] || "auto",
         phaseProgress: parsedPhaseProgress,
         outcomeReport: parsedOutcomeReport,
         isActive: !!isActive,
@@ -1905,12 +2041,16 @@ export function registerUiPathRoutes(app: Express): void {
       return res.status(403).json({ message: "Access denied" });
     }
 
+    const observerRun = getObserverRun(runId);
+    if (observerRun) {
+      return res.json({ run: observerRun });
+    }
+
     const dbRun = await storage.getGenerationRun(runId);
     if (!dbRun || dbRun.ideaId !== ideaId) {
       return res.status(404).json({ message: "Run not found" });
     }
 
-    const { getActiveRun } = await import("./uipath-run-manager");
     const activeRun = getActiveRun(runId);
     const isActive = activeRun && !activeRun.completed;
 
@@ -1941,13 +2081,35 @@ export function registerUiPathRoutes(app: Express): void {
     if (idea.ownerEmail !== user.email && activeRole !== "Admin" && activeRole !== "CoE") {
       return res.status(403).json({ message: "Access denied" });
     }
-    const dbRunCheck = await storage.getGenerationRun(runId);
-    if (!dbRunCheck || dbRunCheck.ideaId !== ideaId) {
-      return res.status(404).json({ message: "Run not found" });
+
+    const observerRun = getObserverRun(runId);
+    const dbActiveRun = !observerRun ? getActiveRun(runId) : null;
+
+    if (!observerRun && !dbActiveRun) {
+      const dbRun = await storage.getGenerationRun(runId);
+      if (!dbRun || dbRun.ideaId !== ideaId) {
+        return res.status(404).json({ message: "Run not found" });
+      }
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
+
+      const statusMap: Record<string, string> = {
+        running: "BUILDING", completed: "READY",
+        completed_with_warnings: "READY_WITH_WARNINGS",
+        failed: "FAILED", cancelled: "CANCELLED",
+      };
+      const finalStatus = statusMap[dbRun.status] || dbRun.status;
+      res.write(`data: ${JSON.stringify({ done: true, status: finalStatus })}\n\n`);
+      return res.end();
     }
 
-    const { getActiveRun, subscribeToRun } = await import("./uipath-run-manager");
-    const activeRun = getActiveRun(runId);
+    if (observerRun && observerRun.ideaId !== ideaId) {
+      return res.status(403).json({ message: "Run does not belong to this idea" });
+    }
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -1955,59 +2117,108 @@ export function registerUiPathRoutes(app: Express): void {
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
 
-    if (!activeRun) {
-      const finalRun = await storage.getGenerationRun(runId);
-      const finalStatus = finalRun?.status || "unknown";
-      if (finalRun) {
-        let pp = null;
-        try { if (finalRun.phaseProgress) pp = JSON.parse(finalRun.phaseProgress); } catch {}
-        res.write(`data: ${JSON.stringify({ type: "snapshot", run: { ...finalRun, phaseProgress: pp } })}\n\n`);
-      }
-      res.write(`data: ${JSON.stringify({ type: "done", status: finalStatus })}\n\n`);
-      return res.end();
-    }
+    const replay = req.query.replay === "true";
 
-    for (const event of activeRun.events) {
-      res.write(`data: ${JSON.stringify({ type: "event", event })}\n\n`);
-    }
-    if (typeof (res as any).flush === "function") (res as any).flush();
+    if (observerRun) {
+      const unsubscribe = subscribeToObserverRun(runId, (event) => {
+        try {
+          if (res.writableEnded) return;
+          res.write(`data: ${JSON.stringify(event.data)}\n\n`);
+          if (typeof (res as any).flush === "function") (res as any).flush();
 
-    if (activeRun.completed) {
-      res.write(`data: ${JSON.stringify({ type: "done", status: activeRun.finalStatus || "completed" })}\n\n`);
-      return res.end();
-    }
-
-    const unsubscribe = subscribeToRun(runId, (event) => {
-      try {
-        if (res.writableEnded) return;
-        res.write(`data: ${JSON.stringify({ type: "event", event })}\n\n`);
-        if (typeof (res as any).flush === "function") (res as any).flush();
-        if (event.type === "failed" || (event.type === "completed" && event.stage === "run_manager")) {
-          res.write(`data: ${JSON.stringify({ type: "done", status: event.type === "failed" ? "failed" : "completed" })}\n\n`);
-          res.end();
+          if (event.type === "done" || event.type === "error") {
+            res.end();
+          }
+        } catch {
+          unsubscribe();
         }
-      } catch {
-        unsubscribe();
-      }
-    });
+      }, replay);
 
-    const heartbeat = setInterval(() => {
-      try {
-        if (res.writableEnded) {
+      if (isObserverTerminalStatus(observerRun.status) && !replay) {
+        res.write(`data: ${JSON.stringify({ done: true, status: observerRun.status, warnings: observerRun.warnings, templateComplianceScore: observerRun.complianceScore, outcomeSummary: observerRun.outcomeSummary })}\n\n`);
+        res.end();
+        unsubscribe();
+        return;
+      }
+
+      req.on("close", () => {
+        unsubscribe();
+      });
+    } else if (dbActiveRun) {
+      for (const event of dbActiveRun.events) {
+        res.write(`data: ${JSON.stringify({ pipelineEvent: event })}\n\n`);
+      }
+      if (typeof (res as any).flush === "function") (res as any).flush();
+
+      if (dbActiveRun.completed) {
+        res.write(`data: ${JSON.stringify({ done: true, status: dbActiveRun.finalStatus === "failed" ? "FAILED" : "READY" })}\n\n`);
+        return res.end();
+      }
+
+      const unsubscribe = subscribeToRun(runId, (event) => {
+        try {
+          if (res.writableEnded) return;
+          res.write(`data: ${JSON.stringify({ pipelineEvent: event })}\n\n`);
+          if (typeof (res as any).flush === "function") (res as any).flush();
+          if (event.type === "failed" || (event.type === "completed" && event.stage === "run_manager")) {
+            res.write(`data: ${JSON.stringify({ done: true, status: event.type === "failed" ? "FAILED" : "READY" })}\n\n`);
+            res.end();
+          }
+        } catch {
+          unsubscribe();
+        }
+      });
+
+      const heartbeat = setInterval(() => {
+        try {
+          if (res.writableEnded) {
+            clearInterval(heartbeat);
+            unsubscribe();
+            return;
+          }
+          res.write(`data: ${JSON.stringify({ heartbeat: true })}\n\n`);
+        } catch {
           clearInterval(heartbeat);
           unsubscribe();
-          return;
         }
-        res.write(`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`);
-      } catch {
+      }, 15000);
+
+      req.on("close", () => {
         clearInterval(heartbeat);
         unsubscribe();
-      }
-    }, 15000);
+      });
+    }
+  });
 
-    req.on("close", () => {
-      clearInterval(heartbeat);
-      unsubscribe();
-    });
+  app.post("/api/ideas/:ideaId/uipath-runs/:runId/cancel", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const ideaId = req.params.ideaId;
+    const idea = await storage.getIdea(ideaId);
+    if (!idea) return res.status(404).json({ message: "Idea not found" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user) return res.status(401).json({ message: "User not found" });
+    const activeRole = (req.session.activeRole || user.role) as string;
+    if (idea.ownerEmail !== user.email && activeRole !== "Admin" && activeRole !== "CoE") {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    const runId = req.params.runId;
+    const observerRun = getObserverRun(runId);
+    if (observerRun && observerRun.ideaId !== ideaId) {
+      return res.status(403).json({ message: "Run does not belong to this idea" });
+    }
+    const observerCancelled = cancelObserverRun(runId);
+
+    const activeRun = getActiveRunForIdea(ideaId);
+    let dbCancelled = false;
+    if (activeRun && !activeRun.completed) {
+      dbCancelled = await cancelActiveRun(activeRun.runId);
+    }
+
+    if (!observerCancelled && !dbCancelled) {
+      return res.status(400).json({ message: "Cannot cancel this run" });
+    }
+    return res.json({ success: true });
   });
 }
