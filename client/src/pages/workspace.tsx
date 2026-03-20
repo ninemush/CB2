@@ -1499,6 +1499,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     setGeneratingDocType("UiPath");
     setDocProgressSection("");
     setStreamingDocContent("");
+    setLiveStatus("Generating UiPath package...");
+    setClassifiedIntent("UIPATH_GEN");
     setUipathBuildStatus("BUILDING");
     setUipathBuildWarnings(undefined);
     setUipathTemplateComplianceScore(undefined);
@@ -1561,6 +1563,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                     }
                     if (data.progress) {
                       setDocProgressSection(data.progress);
+                      setLiveStatus(data.progress);
                     }
                     if (data.done) {
                       success = true;
@@ -1634,6 +1637,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       setDocProgressSection("");
       setStreamingDocContent("");
       setStreamingDocElapsed(0);
+      setLiveStatus("");
+      setClassifiedIntent("");
       if (streamingDocElapsedRef.current) {
         clearInterval(streamingDocElapsedRef.current);
         streamingDocElapsedRef.current = null;
