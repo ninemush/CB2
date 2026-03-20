@@ -704,6 +704,10 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     setUipathBuildStatus(undefined);
     setUipathBuildWarnings(undefined);
     setUipathTemplateComplianceScore(undefined);
+    pendingUiPathGenRef.current = false;
+    setPendingUiPathGen(false);
+    uipathGenInFlightRef.current = false;
+    uipathTriggeredRef.current = false;
   }, [idea.id]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -783,7 +787,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const pddTriggeredRef = useRef(false);
   const sddTriggeredRef = useRef(false);
   const uipathTriggeredRef = useRef(false);
+  const [pendingUiPathGen, setPendingUiPathGen] = useState(false);
   const pendingUiPathGenRef = useRef(false);
+  const uipathGenInFlightRef = useRef(false);
   const generateDocRef = useRef<((type: "PDD" | "SDD") => void) | null>(null);
   const generateUiPathRef = useRef<((force?: boolean) => void) | null>(null);
   const generateToBeRef = useRef<(() => void) | null>(null);
@@ -1029,7 +1035,13 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           }
         }
         if (data.triggerUiPathGen) {
-          pendingUiPathGenRef.current = true;
+          if (uipathGenInFlightRef.current) {
+            console.log("[UiPath Trigger] triggerUiPathGen received but generation already in flight — ignoring");
+          } else {
+            console.log("[UiPath Trigger] triggerUiPathGen received from server");
+            pendingUiPathGenRef.current = true;
+            setPendingUiPathGen(true);
+          }
         }
         if (data.intentClassified) {
           localClassifiedIntent = data.intentClassified;
@@ -1042,8 +1054,14 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             prev ? { ...prev, isStreaming: false } : prev
           );
           setDocProgressSection("");
-          setClassifiedIntent("");
-          setLiveStatus("");
+          if (pendingUiPathGenRef.current) {
+            console.log("[UiPath Trigger] done received — preserving intent/status for pending UiPath gen");
+            setClassifiedIntent("UIPATH_GEN");
+            setLiveStatus("Generating UiPath package...");
+          } else {
+            setClassifiedIntent("");
+            setLiveStatus("");
+          }
           setTimeout(() => setMetaValidationChipStatus("ready"), 5000);
         }
         if (data.pipelineEvent) {
@@ -1268,8 +1286,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       }
 
       if (pendingUiPathGenRef.current) {
-        pendingUiPathGenRef.current = false;
-        setTimeout(() => generateUiPathRef.current?.(true), 100);
+        console.log("[UiPath Trigger] finally block — pending trigger detected, will fire via effect");
       }
 
       const isToBeRun = toBeGeneratingRef.current;
@@ -1495,10 +1512,19 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   }, [onMapApprovalReady, handleMapApprovalFromPanel]);
 
   const generateUiPath = useCallback(async (force?: boolean) => {
+    if (uipathGenInFlightRef.current) {
+      console.log("[UiPath Trigger] generation already in flight — bail");
+      return;
+    }
     if (isGeneratingDoc || isStreaming) {
+      console.log("[UiPath Trigger] blocked by isGeneratingDoc=%s isStreaming=%s — keeping pending", isGeneratingDoc, isStreaming);
       uipathTriggeredRef.current = false;
       return;
     }
+    console.log("[UiPath Trigger] executing generation (force=%s)", force);
+    uipathGenInFlightRef.current = true;
+    pendingUiPathGenRef.current = false;
+    setPendingUiPathGen(false);
     setIsGeneratingDoc(true);
     setGeneratingDocType("UiPath");
     setDocProgressSection("");
@@ -1511,6 +1537,24 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     setPipelineLogEntries([]);
     setPipelineComplete(false);
     pipelineEntryCounter.current = 0;
+    let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+    const resetSafetyTimer = () => {
+      if (safetyTimer) clearTimeout(safetyTimer);
+      safetyTimer = setTimeout(() => {
+        if (uipathGenInFlightRef.current) {
+          console.warn("[UiPath Trigger] safety timeout — no progress in 30s, resetting stuck state");
+          uipathGenInFlightRef.current = false;
+          setIsGeneratingDoc(false);
+          setGeneratingDocType("");
+          setLiveStatus("");
+          setClassifiedIntent("");
+          isGeneratingDocRef.current = false;
+          generatingDocTypeRef.current = "";
+          setUipathBuildStatus("FAILED");
+        }
+      }, 30000);
+    };
+    resetSafetyTimer();
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 300000);
@@ -1522,6 +1566,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
         signal: controller.signal,
       });
       clearTimeout(timeout);
+      console.log("[UiPath Trigger] fetch response received — POST /api/ideas/%s/generate-uipath", idea.id);
+      resetSafetyTimer();
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         console.error("Failed to generate UiPath package:", err);
@@ -1550,6 +1596,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                   try {
                     const data = JSON.parse(line.slice(6));
                     if (data.pipelineEvent) {
+                      resetSafetyTimer();
                       const evt = data.pipelineEvent;
                       pipelineEntryCounter.current++;
                       setPipelineLogEntries(prev => [...prev, {
@@ -1566,6 +1613,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                       }
                     }
                     if (data.progress) {
+                      resetSafetyTimer();
                       setDocProgressSection(data.progress);
                       setLiveStatus(data.progress);
                     }
@@ -1639,6 +1687,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
         });
       }
     } finally {
+      if (safetyTimer) clearTimeout(safetyTimer);
+      uipathGenInFlightRef.current = false;
       setIsGeneratingDoc(false);
       setGeneratingDocType("");
       setDocProgressSection("");
@@ -1653,10 +1703,20 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       isGeneratingDocRef.current = false;
       generatingDocTypeRef.current = "";
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+      console.log("[UiPath Trigger] generation complete, state reset");
     }
   }, [idea.id, isGeneratingDoc, isStreaming]);
 
   generateUiPathRef.current = generateUiPath;
+
+  useEffect(() => {
+    if (pendingUiPathGen && !isStreaming && !isGeneratingDoc && !uipathGenInFlightRef.current) {
+      console.log("[UiPath Trigger] effect firing — pending=%s, isStreaming=%s, isGeneratingDoc=%s", pendingUiPathGen, isStreaming, isGeneratingDoc);
+      generateUiPathRef.current?.(true);
+    } else if (pendingUiPathGen) {
+      console.log("[UiPath Trigger] effect deferred — isStreaming=%s, isGeneratingDoc=%s, inFlight=%s", isStreaming, isGeneratingDoc, uipathGenInFlightRef.current);
+    }
+  }, [pendingUiPathGen, isStreaming, isGeneratingDoc]);
 
   const [approvedDocIds, setApprovedDocIds] = useState<Set<number>>(new Set());
 
