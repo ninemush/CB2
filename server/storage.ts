@@ -1,7 +1,7 @@
-import { users, ideas, auditLogs, type User, type InsertUser, type Idea, type InsertIdea, type AuditLog, type InsertAuditLog } from "@shared/schema";
+import { users, ideas, auditLogs, uipathGenerationRuns, type User, type InsertUser, type Idea, type InsertIdea, type AuditLog, type InsertAuditLog, type UipathGenerationRun, type InsertUipathGenerationRun } from "@shared/schema";
 import { appSettings } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 
 export interface IStorage {
   getAppSetting(key: string): Promise<string | undefined>;
@@ -20,6 +20,13 @@ export interface IStorage {
   updateIdea(id: string, updates: Partial<Pick<Idea, "title" | "description" | "tag" | "automationType" | "automationTypeRationale" | "agentConfig">>): Promise<Idea | undefined>;
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(ideaId?: string): Promise<AuditLog[]>;
+  createGenerationRun(run: InsertUipathGenerationRun): Promise<UipathGenerationRun>;
+  getGenerationRun(runId: string): Promise<UipathGenerationRun | undefined>;
+  getLatestGenerationRunForIdea(ideaId: string): Promise<UipathGenerationRun | undefined>;
+  updateGenerationRunStatus(runId: string, status: string, currentPhase?: string): Promise<UipathGenerationRun | undefined>;
+  updateGenerationRunPhaseProgress(runId: string, phaseProgress: string): Promise<UipathGenerationRun | undefined>;
+  completeGenerationRun(runId: string, updates: { status: string; outcomeReport?: string; dhgContent?: string; generationMode?: string }): Promise<UipathGenerationRun | undefined>;
+  failGenerationRun(runId: string, errorMessage: string): Promise<UipathGenerationRun | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -116,6 +123,58 @@ export class DatabaseStorage implements IStorage {
       return db.select().from(auditLogs).where(eq(auditLogs.ideaId, ideaId)).orderBy(desc(auditLogs.createdAt));
     }
     return db.select().from(auditLogs).orderBy(desc(auditLogs.createdAt));
+  }
+
+  async createGenerationRun(run: InsertUipathGenerationRun): Promise<UipathGenerationRun> {
+    const [created] = await db.insert(uipathGenerationRuns).values(run).returning();
+    return created;
+  }
+
+  async getGenerationRun(runId: string): Promise<UipathGenerationRun | undefined> {
+    const [run] = await db.select().from(uipathGenerationRuns).where(eq(uipathGenerationRuns.runId, runId));
+    return run;
+  }
+
+  async getLatestGenerationRunForIdea(ideaId: string): Promise<UipathGenerationRun | undefined> {
+    const [run] = await db.select().from(uipathGenerationRuns)
+      .where(eq(uipathGenerationRuns.ideaId, ideaId))
+      .orderBy(desc(uipathGenerationRuns.createdAt))
+      .limit(1);
+    return run;
+  }
+
+  async updateGenerationRunStatus(runId: string, status: string, currentPhase?: string): Promise<UipathGenerationRun | undefined> {
+    const updates: Record<string, any> = { status, updatedAt: new Date() };
+    if (currentPhase !== undefined) updates.currentPhase = currentPhase;
+    const [updated] = await db.update(uipathGenerationRuns)
+      .set(updates)
+      .where(eq(uipathGenerationRuns.runId, runId))
+      .returning();
+    return updated;
+  }
+
+  async updateGenerationRunPhaseProgress(runId: string, phaseProgress: string): Promise<UipathGenerationRun | undefined> {
+    const [updated] = await db.update(uipathGenerationRuns)
+      .set({ phaseProgress, updatedAt: new Date() })
+      .where(eq(uipathGenerationRuns.runId, runId))
+      .returning();
+    return updated;
+  }
+
+  async completeGenerationRun(runId: string, updates: { status: string; outcomeReport?: string; dhgContent?: string; generationMode?: string }): Promise<UipathGenerationRun | undefined> {
+    const [updated] = await db.update(uipathGenerationRuns)
+      .set({ ...updates, updatedAt: new Date(), completedAt: new Date() })
+      .where(eq(uipathGenerationRuns.runId, runId))
+      .returning();
+    return updated;
+  }
+
+  async failGenerationRun(runId: string, errorMessage: string): Promise<UipathGenerationRun | undefined> {
+    const [updated] = await db.update(uipathGenerationRuns)
+      .set({ status: "failed", errorMessage, updatedAt: new Date(), completedAt: new Date() })
+      .where(eq(uipathGenerationRuns.runId, runId))
+      .returning();
+    return updated;
   }
 }
 

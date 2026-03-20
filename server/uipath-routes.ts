@@ -1853,4 +1853,161 @@ export function registerUiPathRoutes(app: Express): void {
       return res.status(500).json({ message: err.message });
     }
   });
+
+  app.get("/api/ideas/:ideaId/uipath-runs/latest", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const ideaId = req.params.ideaId;
+    const idea = await storage.getIdea(ideaId);
+    if (!idea) return res.status(404).json({ message: "Idea not found" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user) return res.status(401).json({ message: "User not found" });
+    const activeRole = (req.session.activeRole || user.role) as string;
+    if (idea.ownerEmail !== user.email && activeRole !== "Admin" && activeRole !== "CoE") {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const { getActiveRunForIdea } = await import("./uipath-run-manager");
+    const activeRun = getActiveRunForIdea(ideaId);
+
+    const dbRun = await storage.getLatestGenerationRunForIdea(ideaId);
+    if (!dbRun) {
+      return res.json({ run: null });
+    }
+
+    const isActive = activeRun && !activeRun.completed && activeRun.runId === dbRun.runId;
+    let parsedPhaseProgress = null;
+    let parsedOutcomeReport = null;
+    try { if (dbRun.phaseProgress) parsedPhaseProgress = JSON.parse(dbRun.phaseProgress); } catch {}
+    try { if (dbRun.outcomeReport) parsedOutcomeReport = JSON.parse(dbRun.outcomeReport); } catch {}
+    return res.json({
+      run: {
+        ...dbRun,
+        phaseProgress: parsedPhaseProgress,
+        outcomeReport: parsedOutcomeReport,
+        isActive: !!isActive,
+      },
+    });
+  });
+
+  app.get("/api/ideas/:ideaId/uipath-runs/:runId", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const { ideaId, runId } = req.params;
+    const idea = await storage.getIdea(ideaId);
+    if (!idea) return res.status(404).json({ message: "Idea not found" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user) return res.status(401).json({ message: "User not found" });
+    const activeRole = (req.session.activeRole || user.role) as string;
+    if (idea.ownerEmail !== user.email && activeRole !== "Admin" && activeRole !== "CoE") {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const dbRun = await storage.getGenerationRun(runId);
+    if (!dbRun || dbRun.ideaId !== ideaId) {
+      return res.status(404).json({ message: "Run not found" });
+    }
+
+    const { getActiveRun } = await import("./uipath-run-manager");
+    const activeRun = getActiveRun(runId);
+    const isActive = activeRun && !activeRun.completed;
+
+    let parsedPhaseProgress = null;
+    let parsedOutcomeReport = null;
+    try { if (dbRun.phaseProgress) parsedPhaseProgress = JSON.parse(dbRun.phaseProgress); } catch {}
+    try { if (dbRun.outcomeReport) parsedOutcomeReport = JSON.parse(dbRun.outcomeReport); } catch {}
+    return res.json({
+      run: {
+        ...dbRun,
+        phaseProgress: parsedPhaseProgress,
+        outcomeReport: parsedOutcomeReport,
+        isActive: !!isActive,
+      },
+    });
+  });
+
+  app.get("/api/ideas/:ideaId/uipath-runs/:runId/stream", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const { ideaId, runId } = req.params;
+    const idea = await storage.getIdea(ideaId);
+    if (!idea) return res.status(404).json({ message: "Idea not found" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user) return res.status(401).json({ message: "User not found" });
+    const activeRole = (req.session.activeRole || user.role) as string;
+    if (idea.ownerEmail !== user.email && activeRole !== "Admin" && activeRole !== "CoE") {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    const dbRunCheck = await storage.getGenerationRun(runId);
+    if (!dbRunCheck || dbRunCheck.ideaId !== ideaId) {
+      return res.status(404).json({ message: "Run not found" });
+    }
+
+    const { getActiveRun, subscribeToRun } = await import("./uipath-run-manager");
+    const activeRun = getActiveRun(runId);
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    if (!activeRun) {
+      const finalRun = await storage.getGenerationRun(runId);
+      const finalStatus = finalRun?.status || "unknown";
+      if (finalRun) {
+        let pp = null;
+        try { if (finalRun.phaseProgress) pp = JSON.parse(finalRun.phaseProgress); } catch {}
+        res.write(`data: ${JSON.stringify({ type: "snapshot", run: { ...finalRun, phaseProgress: pp } })}\n\n`);
+      }
+      res.write(`data: ${JSON.stringify({ type: "done", status: finalStatus })}\n\n`);
+      return res.end();
+    }
+
+    for (const event of activeRun.events) {
+      res.write(`data: ${JSON.stringify({ type: "event", event })}\n\n`);
+    }
+    if (typeof (res as any).flush === "function") (res as any).flush();
+
+    if (activeRun.completed) {
+      res.write(`data: ${JSON.stringify({ type: "done", status: activeRun.finalStatus || "completed" })}\n\n`);
+      return res.end();
+    }
+
+    const unsubscribe = subscribeToRun(runId, (event) => {
+      try {
+        if (res.writableEnded) return;
+        res.write(`data: ${JSON.stringify({ type: "event", event })}\n\n`);
+        if (typeof (res as any).flush === "function") (res as any).flush();
+        if (event.type === "failed" || (event.type === "completed" && event.stage === "run_manager")) {
+          res.write(`data: ${JSON.stringify({ type: "done", status: event.type === "failed" ? "failed" : "completed" })}\n\n`);
+          res.end();
+        }
+      } catch {
+        unsubscribe();
+      }
+    });
+
+    const heartbeat = setInterval(() => {
+      try {
+        if (res.writableEnded) {
+          clearInterval(heartbeat);
+          unsubscribe();
+          return;
+        }
+        res.write(`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`);
+      } catch {
+        clearInterval(heartbeat);
+        unsubscribe();
+      }
+    }, 15000);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+  });
 }

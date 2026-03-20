@@ -1,18 +1,21 @@
 import type { Express, Request, Response } from "express";
-import { getLLM, getCodeLLM } from "./lib/llm";
+import { getLLM } from "./lib/llm";
 import { documentStorage } from "./document-storage";
 import { processMapStorage } from "./process-map-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
-import { getPlatformCapabilities, QualityGateError } from "./uipath-integration";
-import { generateUiPathPackage, generateDhg, findUiPathMessage, parseUiPathPackage, computeVersion, getCachedPipelineResult, runBuildPipeline, type IdeaContext, type PipelineProgressEvent } from "./uipath-pipeline";
+import { getPlatformCapabilities } from "./uipath-integration";
+import { generateUiPathPackage, generateDhg, findUiPathMessage, parseUiPathPackage, computeVersion, getCachedPipelineResult } from "./uipath-pipeline";
+import { startUiPathGenerationRun, type TriggerSource, type RunCallbacks, type RunResult } from "./uipath-run-manager";
+import { UIPATH_PROMPT, repairTruncatedPackageJson } from "./uipath-prompts";
+export { UIPATH_PROMPT, repairTruncatedPackageJson };
 import type { MetaValidationMode } from "./meta-validation";
 import { evaluateTransition } from "./stage-transition";
 import { approveDocument } from "./document-service";
 import { escapeXml } from "./lib/xml-utils";
-import { sanitizeAndParseJson, trySanitizeAndParseJson, stripCodeFences, sanitizeJsonString } from "./lib/json-utils";
+import { trySanitizeAndParseJson, stripCodeFences, sanitizeJsonString } from "./lib/json-utils";
 import { z } from "zod";
-import { uipathPackageSchema, type UiPathPackage } from "./types/uipath-package";
+import type { UiPathPackage } from "./types/uipath-package";
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel,
   Table, TableRow, TableCell, WidthType, BorderStyle,
@@ -28,138 +31,6 @@ const PDD_PROMPT = `The SME has approved the As-Is process map. Now generate a P
 Format your response as sections separated by "## " headings. Each section should start with "## 1. Executive Summary", "## 2. Process Scope", etc.`;
 
 const SDD_PROMPT = `(Legacy fallback — see SDD_PROSE_PROMPT and SDD_ARTIFACTS_PROMPT for active prompts)`;
-
-const UIPATH_PROMPT = `Based on the approved SDD, generate a detailed UiPath automation package specification. Output a JSON object with this exact shape:
-
-{
-  "projectName": "string (PascalCase, no spaces)",
-  "description": "string",
-  "dependencies": [
-    "UiPath.System.Activities",
-    "UiPath.UIAutomation.Activities",
-    "... other specific UiPath package names needed"
-  ],
-  "workflows": [
-    {
-      "name": "string (PascalCase filename without .xaml)",
-      "description": "string",
-      "variables": [
-        {
-          "name": "string (camelCase variable name)",
-          "type": "String|Int32|Boolean|DataTable|Object|DateTime|Array<String>|Dictionary<String,Object>",
-          "defaultValue": "optional default value or empty string",
-          "scope": "workflow|sequence (where this variable is declared)"
-        }
-      ],
-      "steps": [
-        {
-          "activity": "string (human-readable step description)",
-          "activityType": "string (exact UiPath activity name, e.g. ui:TypeInto, ui:Click, ui:GetText, ui:OpenBrowser, ui:ExcelApplicationScope, ui:ReadRange, ui:WriteRange, ui:SendSmtpMailMessage, ui:GetImapMailMessage, ui:HttpClient, ui:ExecuteQuery, ui:ReadTextFile, ui:WriteTextFile, ui:AddQueueItem, ui:GetTransactionItem, ui:SetTransactionStatus, ui:LogMessage, ui:Assign, ui:Delay, ui:MessageBox, If, ForEach, While, Switch, TryCatch, RetryScope, InvokeWorkflowFile)",
-          "activityPackage": "string (UiPath package namespace, e.g. UiPath.UIAutomation.Activities, UiPath.Excel.Activities, UiPath.Mail.Activities, UiPath.WebAPI.Activities, UiPath.Database.Activities, UiPath.System.Activities)",
-          "properties": {
-            "key": "value (activity-specific properties like Selector, Input, Output, FileName, SheetName, URL, Method, Headers, Body, Query, Timeout, etc.)"
-          },
-          "selectorHint": "string or null (placeholder UI selector pattern for UI activities, e.g. '<html app=\"chrome\" /><webctrl tag=\"input\" id=\"username\" />' with TODO comments for elements needing real selectors)",
-          "errorHandling": "retry|catch|escalate|none (retry = wrap in RetryScope, catch = wrap in TryCatch, escalate = catch + Action Center escalation, none = no special handling)",
-          "notes": "string (implementation notes, business rules, or TODO items for the developer)"
-        }
-      ]
-    }
-  ]
-}
-
-IMPORTANT RULES:
-- Use SPECIFIC UiPath activity names in activityType (e.g. "ui:TypeInto" not just "Type Into")
-- For UI automation steps, always include a selectorHint with a realistic placeholder selector pattern and TODO comment
-- For system interaction steps (UI, API, DB, email), set errorHandling to "retry" or "catch"
-- For human-in-the-loop steps, set errorHandling to "escalate"
-- Include ALL variables needed by the workflow in the variables array
-- Include specific properties for each activity (e.g. Selector, Input, Output, FileName, URL, Method, etc.)
-- Map decision points to If/Switch activities with Condition properties
-- Map loops to ForEach/While activities
-- Include initialization steps (config read, variable setup) at the start of Main workflow
-- Include cleanup/logging steps at the end
-- List ALL required UiPath package dependencies
-- Be as specific and production-ready as possible
-
-Return ONLY the JSON object, no other text.`;
-
-
-function repairTruncatedPackageJson(rawText: string): any | null {
-  try {
-    let text = rawText.trim();
-    const fenceStart = text.match(/```(?:json)?\s*\n/);
-    if (fenceStart) {
-      text = text.slice(fenceStart.index! + fenceStart[0].length);
-      const fenceEnd = text.lastIndexOf("```");
-      if (fenceEnd > 0) text = text.slice(0, fenceEnd);
-    }
-
-    const firstBrace = text.indexOf("{");
-    if (firstBrace === -1) return null;
-    text = text.slice(firstBrace);
-
-    let inString = false;
-    let escaped = false;
-    let lastSafePos = 0;
-    const stack: string[] = [];
-
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      if (escaped) { escaped = false; continue; }
-      if (ch === "\\") { escaped = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
-      if (inString) continue;
-      if (ch === "{" || ch === "[") {
-        stack.push(ch === "{" ? "}" : "]");
-      } else if (ch === "}" || ch === "]") {
-        if (stack.length > 0) stack.pop();
-      }
-      if (ch === "," || ch === "}" || ch === "]") {
-        lastSafePos = i;
-      }
-    }
-
-    if (inString) {
-      text = text.slice(0, text.lastIndexOf('"'));
-    }
-
-    for (let attempts = 0; attempts < 30; attempts++) {
-      text = text.replace(/,\s*$/, "");
-
-      let s = false, esc = false;
-      const st: string[] = [];
-      for (let i = 0; i < text.length; i++) {
-        const c = text[i];
-        if (esc) { esc = false; continue; }
-        if (c === "\\") { esc = true; continue; }
-        if (c === '"') { s = !s; continue; }
-        if (s) continue;
-        if (c === "{") st.push("}");
-        else if (c === "[") st.push("]");
-        else if (c === "}" || c === "]") { if (st.length > 0) st.pop(); }
-      }
-
-      if (s) {
-        text = text.slice(0, text.lastIndexOf('"'));
-        continue;
-      }
-
-      const closing = st.reverse().join("");
-      try {
-        return JSON.parse(text + closing);
-      } catch {
-        const cutPoints = [text.lastIndexOf(","), text.lastIndexOf("}")].filter(p => p > 0);
-        const cutAt = Math.max(...cutPoints, -1);
-        if (cutAt <= 0) return null;
-        text = text.slice(0, cutAt);
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 async function verifyIdeaAccess(req: Request, res: Response): Promise<string | null> {
   if (!req.session.userId) {
@@ -923,306 +794,138 @@ ${content}`
     const ideaId = await verifyIdeaAccess(req, res);
     if (!ideaId) return;
 
-    try {
-      const sddApproval = await documentStorage.getApproval(ideaId, "SDD");
-      if (!sddApproval) {
-        return res.status(400).json({ message: "SDD must be approved first" });
-      }
-      const sdd = await documentStorage.getDocument(sddApproval.documentId);
-      if (!sdd) {
-        return res.status(400).json({ message: "Approved SDD document not found" });
-      }
+    const triggerSource: TriggerSource = (req.query.trigger as TriggerSource) || "manual";
+    const forceRegenerate = !!req.query.force;
 
-      const existingMessages = await chatStorage.getMessagesByIdeaId(ideaId);
-      const existingUiPath = [...existingMessages].reverse().find((m) => m.content.startsWith("[UIPATH:"));
-      if (existingUiPath && !req.query.force) {
-        try {
-          const existingData = JSON.parse(existingUiPath.content.slice(8, -1));
-          if ((existingData.workflows || []).length > 0) {
-            res.setHeader("Content-Type", "text/event-stream");
-            res.setHeader("Cache-Control", "no-cache, no-transform");
-            res.setHeader("Connection", "keep-alive");
-            res.setHeader("X-Accel-Buffering", "no");
-            res.flushHeaders();
-            res.write(`data: ${JSON.stringify({ heartbeat: true })}\n\n`);
-            if (typeof (res as any).flush === "function") (res as any).flush();
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+    res.write(`data: ${JSON.stringify({ heartbeat: true })}\n\n`);
+    if (typeof (res as any).flush === "function") (res as any).flush();
 
-            const cachedResult = getCachedPipelineResult(ideaId as string);
-            let cachedStatus = "READY";
-            let cachedWarnings: any[] = [];
-            let cachedComplianceScore: number | undefined;
-            let cachedOutcomeSummary: any;
+    const heartbeatInterval = setInterval(() => {
+      try {
+        if (res.writableEnded) { clearInterval(heartbeatInterval); return; }
+        res.write(`data: ${JSON.stringify({ heartbeat: true })}\n\n`);
+        if (typeof (res as any).flush === "function") (res as any).flush();
+      } catch {}
+    }, 15000);
+    req.on("close", () => clearInterval(heartbeatInterval));
 
-            if (cachedResult) {
-              cachedStatus = cachedResult.status || "READY";
-              cachedWarnings = cachedResult.warnings || [];
-              cachedComplianceScore = cachedResult.templateComplianceScore;
-              if (cachedResult.outcomeReport) {
-                cachedOutcomeSummary = {
-                  stubbedActivities: cachedResult.outcomeReport.remediations.filter((r: any) => r.level === "activity").length,
-                  stubbedSequences: cachedResult.outcomeReport.remediations.filter((r: any) => r.level === "sequence").length,
-                  stubbedWorkflows: cachedResult.outcomeReport.remediations.filter((r: any) => r.level === "workflow").length,
-                  autoRepairs: cachedResult.outcomeReport.autoRepairs.length,
-                  fullyGenerated: cachedResult.outcomeReport.fullyGeneratedFiles.length,
-                  totalEstimatedMinutes: cachedResult.outcomeReport.totalEstimatedEffortMinutes,
-                };
-              }
-            }
-
-            res.write(`data: ${JSON.stringify({
-              done: true,
-              package: existingData,
-              status: cachedStatus,
-              warnings: cachedWarnings,
-              templateComplianceScore: cachedComplianceScore,
-              outcomeSummary: cachedOutcomeSummary,
-            })}\n\n`);
-            return res.end();
-          }
-          console.log(`[UiPath] Cached package for ${ideaId} has 0 workflows — regenerating`);
-        } catch { /* fall through to regeneration */ }
-      }
-
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache, no-transform");
-      res.setHeader("Connection", "keep-alive");
-      res.setHeader("X-Accel-Buffering", "no");
-      res.flushHeaders();
-      res.write(`data: ${JSON.stringify({ heartbeat: true })}\n\n`);
-      if (typeof (res as any).flush === "function") (res as any).flush();
-
-      const sendProgress = (message: string) => {
+    const sendProgress = (message: string) => {
+      try {
+        if (res.writableEnded) return;
         res.write(`data: ${JSON.stringify({ progress: message })}\n\n`);
         if (typeof (res as any).flush === "function") (res as any).flush();
+      } catch {}
+    };
+
+    let requestedMode: "baseline_openable" | "full_implementation" | undefined;
+    if (req.body?.generationMode === "baseline_openable") {
+      requestedMode = "baseline_openable";
+    }
+
+    let userMetaValidationMode: MetaValidationMode = "Auto";
+    try {
+      const storedMode = await storage.getAppSetting(`meta_validation_mode_${req.session.userId}`);
+      if (storedMode === "Always" || storedMode === "Off" || storedMode === "Auto") {
+        userMetaValidationMode = storedMode;
+      }
+    } catch {}
+
+    function buildOutcomeSummary(outcomeReport: any) {
+      if (!outcomeReport) return undefined;
+      return {
+        stubbedActivities: outcomeReport.remediations.filter((r: any) => r.level === "activity").length,
+        stubbedSequences: outcomeReport.remediations.filter((r: any) => r.level === "sequence").length,
+        stubbedWorkflows: outcomeReport.remediations.filter((r: any) => r.level === "workflow").length,
+        autoRepairs: outcomeReport.autoRepairs.length,
+        fullyGenerated: outcomeReport.fullyGeneratedFiles.length,
+        totalEstimatedMinutes: outcomeReport.totalEstimatedEffortMinutes,
       };
+    }
 
-      sendProgress("Loading idea and documents...");
-
-      const idea = await storage.getIdea(ideaId);
-      if (!idea) {
-        res.write(`data: ${JSON.stringify({ done: false, status: "FAILED", error: "Idea not found" })}\n\n`);
-        return res.end();
-      }
-
-      const pdd = await documentStorage.getLatestDocument(ideaId, "PDD");
-      const toBeNodes = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
-      const asIsNodes = await processMapStorage.getNodesByIdeaId(ideaId, "as-is");
-      const mapNodes = toBeNodes.length > 0 ? toBeNodes : asIsNodes;
-      const mapSummary = mapNodes.map((n) => ({ name: n.name, type: n.nodeType, role: n.role, system: n.system, description: n.description }));
-
-      let systemCtx = `You are a UiPath automation architect generating a production-ready package structure for "${idea.title}".\n\nApproved SDD:\n${sdd.content}`;
-      if (pdd) {
-        systemCtx += `\n\nApproved PDD:\n${pdd.content}`;
-      }
-      if (mapSummary.length > 0) {
-        systemCtx += `\n\nProcess Map Steps:\n${JSON.stringify(mapSummary)}`;
-      }
-
-      sendProgress("Calling LLM to generate package specification...");
-
-      const keepAliveMessages = [
-        "Analysing your process specification...",
-        "Planning workflow structure...",
-        "Determining activity requirements...",
-        "Mapping data flows and variables...",
-        "Almost ready to build...",
-      ];
-      let keepAliveIdx = 0;
-      const keepAliveInterval = setInterval(() => {
-        sendProgress(keepAliveMessages[keepAliveIdx % keepAliveMessages.length]);
-        keepAliveIdx++;
-      }, 5000);
-
-      let response;
-      try {
-        response = await getCodeLLM().create({
-          maxTokens: 16384,
-          system: systemCtx,
-          messages: [{ role: "user", content: UIPATH_PROMPT }],
-        });
-      } finally {
-        clearInterval(keepAliveInterval);
-      }
-
-      sendProgress("LLM response received, parsing JSON...");
-
-      const rawText = response.text || "{}";
-
-      if (response.stopReason === "max_tokens") {
-        console.warn(`[UiPath] LLM response truncated at max_tokens for ${ideaId} — attempting repair`);
-        sendProgress("Response truncated, attempting JSON repair...");
-      }
-
-      let packageJson;
-      try {
-        const parsed = sanitizeAndParseJson(rawText);
-        packageJson = uipathPackageSchema.parse(parsed);
-        sendProgress("Package JSON parsed successfully");
-      } catch (parseErr: any) {
-        sendProgress("Initial parse failed, attempting repair...");
-        const repaired = repairTruncatedPackageJson(rawText);
-        if (repaired) {
-          try {
-            packageJson = uipathPackageSchema.parse(repaired);
-            console.log(`[UiPath] Repaired truncated JSON for ${ideaId}: ${(repaired.workflows || []).length} workflows recovered`);
-            sendProgress(`Repaired JSON: ${(repaired.workflows || []).length} workflows recovered`);
-          } catch (repairErr: any) {
-            console.error(`[UiPath] Repair also failed for ${ideaId}:`, repairErr?.message);
-          }
-        }
-        if (!packageJson) {
-          console.error(`[UiPath] Package parse/validation failed for ${ideaId}:`, parseErr?.message || parseErr);
-          console.error(`[UiPath] Raw LLM response (first 500 chars):`, rawText.slice(0, 500));
-          res.write(`data: ${JSON.stringify({ done: false, status: "FAILED", error: "Failed to parse AI-generated package. Please try again." })}\n\n`);
-          return res.end();
-        }
-      }
-
-      if (!packageJson.workflows || packageJson.workflows.length === 0) {
-        console.error(`[UiPath] Generated package for ${ideaId} has 0 workflows — not storing`);
-        res.write(`data: ${JSON.stringify({ done: false, status: "FAILED", error: "AI generated a package with no workflows. Please try again." })}\n\n`);
-        return res.end();
-      }
-
-      sendProgress(`Validating ${packageJson.workflows.length} workflow(s)...`);
-
-      sendProgress("Pre-building .nupkg with AI enrichment...");
-
-      const sddDoc = await documentStorage.getLatestDocument(ideaId, "SDD");
-      const pddDoc = await documentStorage.getLatestDocument(ideaId, "PDD");
-      const toBeN = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
-      const asIsN = await processMapStorage.getNodesByIdeaId(ideaId, "as-is");
-      const mNodes = toBeN.length > 0 ? toBeN : asIsN;
-      const mVariant = toBeN.length > 0 ? "to-be" : "as-is";
-      let pEdges: any[] = [];
-      if (mNodes.length > 0) {
-        pEdges = await processMapStorage.getEdgesByIdeaId(ideaId, mVariant as "to-be" | "as-is");
-      }
-      const preloadedContext: IdeaContext = { idea, sdd: sddDoc, pdd: pddDoc, mapNodes: mNodes, processEdges: pEdges };
-
-      const sendPipelineEvent = (event: PipelineProgressEvent) => {
-        res.write(`data: ${JSON.stringify({ pipelineEvent: event })}\n\n`);
-        if (typeof (res as any).flush === "function") (res as any).flush();
-        if (event.type === "completed" || event.type === "started") {
-          sendProgress(event.message);
-        }
-      };
-
-      const heartbeatInterval = setInterval(() => {
+    const callbacks: RunCallbacks = {
+      onProgress: sendProgress,
+      onPipelineEvent: (event) => {
         try {
-          res.write(`data: ${JSON.stringify({ heartbeat: true })}\n\n`);
+          if (res.writableEnded) return;
+          res.write(`data: ${JSON.stringify({ pipelineEvent: event })}\n\n`);
           if (typeof (res as any).flush === "function") (res as any).flush();
-        } catch {}
-      }, 15000);
-      req.on("close", () => clearInterval(heartbeatInterval));
-
-      let completedTemplateComplianceScore: number | undefined;
-      let completedPipelineStatus: string = "READY";
-      let pipelineResult: any = null;
-      try {
-        const requestedMode = (req.body.generationMode === "baseline_openable") ? "baseline_openable" as const : undefined;
-        let userMetaValidationMode: MetaValidationMode = "Auto";
-        try {
-          const storedMode = await storage.getAppSetting(`meta_validation_mode_${req.session.userId}`);
-          if (storedMode === "Always" || storedMode === "Off" || storedMode === "Auto") {
-            userMetaValidationMode = storedMode;
+          if (event.type === "completed" || event.type === "started") {
+            sendProgress(event.message);
           }
-        } catch { /* default to Auto */ }
-        pipelineResult = await runBuildPipeline(ideaId, packageJson, {
-          onProgress: sendProgress,
-          onPipelineProgress: sendPipelineEvent,
-          onMetaValidation: (event) => {
-            res.write(`data: ${JSON.stringify({ metaValidation: event })}\n\n`);
-          },
-          generationMode: requestedMode,
-          metaValidationMode: userMetaValidationMode,
-          preloadedContext,
-        });
-        console.log(`[UiPath] Pre-built .nupkg for "${idea.title}" — ${pipelineResult.packageBuffer.length} bytes, ${pipelineResult.gaps.length} gaps`);
-        completedTemplateComplianceScore = pipelineResult.templateComplianceScore;
-        completedPipelineStatus = pipelineResult.status;
-
-        if (pipelineResult.status === "FAILED") {
-          sendProgress("Package build failed");
-          res.write(`data: ${JSON.stringify({
-            done: false,
-            status: "FAILED",
-            stage: "pre-build",
-            error: "Package build produced no output",
-            package: packageJson,
-          })}\n\n`);
-          return res.end();
-        }
-
-        if (pipelineResult.warnings.length > 0 || pipelineResult.status === "FALLBACK_READY") {
-          await chatStorage.createMessage(ideaId, "assistant", `[UIPATH:${JSON.stringify(packageJson)}]`);
-          sendProgress(`Pre-build complete with ${pipelineResult.warnings.length} warning(s)`);
-          const outcomeSummary = pipelineResult.outcomeReport ? {
-            stubbedActivities: pipelineResult.outcomeReport.remediations.filter((r: any) => r.level === "activity").length,
-            stubbedSequences: pipelineResult.outcomeReport.remediations.filter((r: any) => r.level === "sequence").length,
-            stubbedWorkflows: pipelineResult.outcomeReport.remediations.filter((r: any) => r.level === "workflow").length,
-            autoRepairs: pipelineResult.outcomeReport.autoRepairs.length,
-            fullyGenerated: pipelineResult.outcomeReport.fullyGeneratedFiles.length,
-            totalEstimatedMinutes: pipelineResult.outcomeReport.totalEstimatedEffortMinutes,
-          } : undefined;
+        } catch {}
+      },
+      onMetaValidation: (event) => {
+        try {
+          if (res.writableEnded) return;
+          res.write(`data: ${JSON.stringify({ metaValidation: event })}\n\n`);
+        } catch {}
+      },
+      onComplete: (result: RunResult) => {
+        try {
+          if (res.writableEnded) return;
+          clearInterval(heartbeatInterval);
+          const outcomeSummary = result.pipelineResult?.outcomeReport
+            ? buildOutcomeSummary(result.pipelineResult.outcomeReport)
+            : undefined;
           res.write(`data: ${JSON.stringify({
             done: true,
-            package: packageJson,
-            status: pipelineResult.status,
-            warnings: pipelineResult.warnings,
-            templateComplianceScore: pipelineResult.templateComplianceScore,
+            package: result.packageJson,
+            status: result.status,
+            warnings: result.pipelineResult?.warnings || [],
+            templateComplianceScore: result.pipelineResult?.templateComplianceScore,
             outcomeSummary,
           })}\n\n`);
-          return res.end();
-        }
-
-        sendProgress(`Pre-build complete: ${packageJson.workflows.length} workflow(s) enriched`);
-      } catch (prebuildErr: any) {
-        if (prebuildErr instanceof QualityGateError) {
-          console.error(`[UiPath] Quality gate failed during pre-build:`, prebuildErr.message);
-          const qgResult = prebuildErr.qualityGateResult;
-          res.write(`data: ${JSON.stringify({
+          res.end();
+        } catch {}
+      },
+      onFail: (error: string, context?: Record<string, any>) => {
+        try {
+          if (res.writableEnded) return;
+          clearInterval(heartbeatInterval);
+          const payload: Record<string, any> = {
             done: false,
             status: "FAILED",
-            stage: "quality-gate",
-            error: qgResult.summary || "Package failed quality gate validation",
-            package: packageJson,
-            qualityGateWarning: true,
-            qualityGateViolations: qgResult.violations,
-            qualityGateSummary: qgResult.summary,
-          })}\n\n`);
-          return res.end();
-        }
-        console.error(`[UiPath] Pre-build failed:`, prebuildErr?.message);
-        sendProgress("Package build failed");
-        res.write(`data: ${JSON.stringify({
-          done: false,
-          status: "FAILED",
-          stage: "pre-build",
-          error: prebuildErr?.message || "Pre-build failed",
-          package: packageJson,
-        })}\n\n`);
-        return res.end();
-      }
+            error,
+          };
+          if (context?.stage) payload.stage = context.stage;
+          if (context?.packageJson) payload.package = context.packageJson;
+          if (context?.qualityGateWarning) {
+            payload.qualityGateWarning = true;
+            payload.qualityGateViolations = context.qualityGateViolations;
+            payload.qualityGateSummary = context.qualityGateSummary;
+          }
+          res.write(`data: ${JSON.stringify(payload)}\n\n`);
+          res.end();
+        } catch {}
+      },
+    };
 
-      await chatStorage.createMessage(ideaId, "assistant", `[UIPATH:${JSON.stringify(packageJson)}]`);
-      const readyOutcomeSummary = pipelineResult?.outcomeReport ? {
-        stubbedActivities: pipelineResult.outcomeReport.remediations.filter((r: any) => r.level === "activity").length,
-        stubbedSequences: pipelineResult.outcomeReport.remediations.filter((r: any) => r.level === "sequence").length,
-        stubbedWorkflows: pipelineResult.outcomeReport.remediations.filter((r: any) => r.level === "workflow").length,
-        autoRepairs: pipelineResult.outcomeReport.autoRepairs.length,
-        fullyGenerated: pipelineResult.outcomeReport.fullyGeneratedFiles.length,
-        totalEstimatedMinutes: pipelineResult.outcomeReport.totalEstimatedEffortMinutes,
-      } : undefined;
-      res.write(`data: ${JSON.stringify({ done: true, package: packageJson, status: completedPipelineStatus, templateComplianceScore: completedTemplateComplianceScore, outcomeSummary: readyOutcomeSummary })}\n\n`);
-      return res.end();
-    } catch (error) {
-      console.error("Error generating UiPath package:", error);
-      if (!res.headersSent) {
-        return res.status(500).json({ message: "Failed to generate UiPath package" });
+    try {
+      await startUiPathGenerationRun(ideaId, triggerSource, {
+        generationMode: requestedMode,
+        metaValidationMode: userMetaValidationMode,
+        forceRegenerate,
+        callbacks,
+      });
+    } catch (err: any) {
+      clearInterval(heartbeatInterval);
+      if (err.message.includes("already in progress")) {
+        if (!res.writableEnded) {
+          res.write(`data: ${JSON.stringify({ done: false, status: "FAILED", error: err.message })}\n\n`);
+          res.end();
+        }
+        return;
       }
-      res.write(`data: ${JSON.stringify({ done: false, status: "FAILED", error: "Failed to generate UiPath package" })}\n\n`);
-      return res.end();
+      console.error("Error starting UiPath generation run:", err);
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ done: false, status: "FAILED", error: err.message || "Failed to start generation" })}\n\n`);
+        res.end();
+      }
     }
   });
 

@@ -1671,7 +1671,7 @@ CRITICAL RULES:
           if (!hasPackage) {
             res.write(`data: ${JSON.stringify({ deployStatus: "Generating UiPath package first..." })}\n\n`);
             try {
-              const genRes = await fetch(`http://localhost:${process.env.PORT || 5000}/api/ideas/${ideaId}/generate-uipath`, {
+              const genRes = await fetch(`http://localhost:${process.env.PORT || 5000}/api/ideas/${ideaId}/generate-uipath?trigger=chat`, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",

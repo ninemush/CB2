@@ -98,3 +98,29 @@ export const insertDeploymentManifestSchema = createInsertSchema(deploymentManif
 });
 export type DeploymentManifest = typeof deploymentManifests.$inferSelect;
 export type InsertDeploymentManifest = z.infer<typeof insertDeploymentManifestSchema>;
+
+export const uipathGenerationRuns = pgTable("uipath_generation_runs", {
+  id: serial("id").primaryKey(),
+  ideaId: text("idea_id").notNull(),
+  runId: text("run_id").notNull().unique(),
+  status: text("status").notNull().default("pending"),
+  generationMode: text("generation_mode"),
+  currentPhase: text("current_phase"),
+  phaseProgress: text("phase_progress"),
+  outcomeReport: text("outcome_report"),
+  dhgContent: text("dhg_content"),
+  errorMessage: text("error_message"),
+  triggeredBy: text("triggered_by").notNull().default("manual"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  completedAt: timestamp("completed_at"),
+});
+
+export const insertUipathGenerationRunSchema = createInsertSchema(uipathGenerationRuns).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  completedAt: true,
+});
+export type UipathGenerationRun = typeof uipathGenerationRuns.$inferSelect;
+export type InsertUipathGenerationRun = z.infer<typeof insertUipathGenerationRunSchema>;
