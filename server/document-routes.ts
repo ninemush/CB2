@@ -939,7 +939,42 @@ ${content}`
         try {
           const existingData = JSON.parse(existingUiPath.content.slice(8, -1));
           if ((existingData.workflows || []).length > 0) {
-            return res.json({ package: existingData });
+            res.setHeader("Content-Type", "text/event-stream");
+            res.setHeader("Cache-Control", "no-cache");
+            res.setHeader("Connection", "keep-alive");
+            res.flushHeaders();
+
+            const cachedResult = getCachedPipelineResult(ideaId as string);
+            let cachedStatus = "READY";
+            let cachedWarnings: any[] = [];
+            let cachedComplianceScore: number | undefined;
+            let cachedOutcomeSummary: any;
+
+            if (cachedResult) {
+              cachedStatus = cachedResult.status || "READY";
+              cachedWarnings = cachedResult.warnings || [];
+              cachedComplianceScore = cachedResult.templateComplianceScore;
+              if (cachedResult.outcomeReport) {
+                cachedOutcomeSummary = {
+                  stubbedActivities: cachedResult.outcomeReport.remediations.filter((r: any) => r.level === "activity").length,
+                  stubbedSequences: cachedResult.outcomeReport.remediations.filter((r: any) => r.level === "sequence").length,
+                  stubbedWorkflows: cachedResult.outcomeReport.remediations.filter((r: any) => r.level === "workflow").length,
+                  autoRepairs: cachedResult.outcomeReport.autoRepairs.length,
+                  fullyGenerated: cachedResult.outcomeReport.fullyGeneratedFiles.length,
+                  totalEstimatedMinutes: cachedResult.outcomeReport.totalEstimatedEffortMinutes,
+                };
+              }
+            }
+
+            res.write(`data: ${JSON.stringify({
+              done: true,
+              package: existingData,
+              status: cachedStatus,
+              warnings: cachedWarnings,
+              templateComplianceScore: cachedComplianceScore,
+              outcomeSummary: cachedOutcomeSummary,
+            })}\n\n`);
+            return res.end();
           }
           console.log(`[UiPath] Cached package for ${ideaId} has 0 workflows — regenerating`);
         } catch { /* fall through to regeneration */ }

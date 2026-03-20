@@ -792,6 +792,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const uipathGenRequestIdRef = useRef(0);
   const uipathGenConsumedIdRef = useRef(0);
   const uipathGenInFlightRef = useRef(false);
+  const uipathBuildStatusRef = useRef<string | undefined>();
   const generateDocRef = useRef<((type: "PDD" | "SDD") => void) | null>(null);
   const generateUiPathRef = useRef<((force?: boolean) => void) | null>(null);
   const generateToBeRef = useRef<(() => void) | null>(null);
@@ -1552,6 +1553,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     setLiveStatus("Generating UiPath package...");
     setClassifiedIntent("UIPATH_GEN");
     setUipathBuildStatus("BUILDING");
+    uipathBuildStatusRef.current = "BUILDING";
     setUipathBuildWarnings(undefined);
     setUipathTemplateComplianceScore(undefined);
     setPipelineLogEntries([]);
@@ -1571,6 +1573,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           isGeneratingDocRef.current = false;
           generatingDocTypeRef.current = "";
           setUipathBuildStatus("FAILED");
+          uipathBuildStatusRef.current = "FAILED";
         }
       }, 30000);
     };
@@ -1592,6 +1595,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
         const err = await res.json().catch(() => ({}));
         console.error("Failed to generate UiPath package:", err);
         setUipathBuildStatus("FAILED");
+        uipathBuildStatusRef.current = "FAILED";
         toast({
           title: "Package generation failed",
           description: err.message || "Could not generate UiPath package. Please try again.",
@@ -1643,6 +1647,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                     }
                     if (data.status) {
                       setUipathBuildStatus(data.status);
+                      uipathBuildStatusRef.current = data.status;
                     }
                     if (data.warnings) {
                       setUipathBuildWarnings(data.warnings);
@@ -1673,8 +1678,10 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
               }
             }
             if (success) {
-              if (!uipathBuildStatus || uipathBuildStatus === "BUILDING") {
+              const currentStatus = uipathBuildStatusRef.current;
+              if (!currentStatus || currentStatus === "BUILDING") {
                 setUipathBuildStatus("READY");
+                uipathBuildStatusRef.current = "READY";
               }
               toast({
                 title: "UiPath Package Ready",
@@ -1683,7 +1690,11 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             }
           }
         } else {
-          setUipathBuildStatus("READY");
+          const currentStatus = uipathBuildStatusRef.current;
+          if (!currentStatus || currentStatus === "BUILDING") {
+            setUipathBuildStatus("READY");
+            uipathBuildStatusRef.current = "READY";
+          }
           toast({
             title: "UiPath Package Ready",
             description: "Package generated successfully. You can now deploy to UiPath.",
@@ -1692,6 +1703,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       }
     } catch (err: any) {
       setUipathBuildStatus("FAILED");
+      uipathBuildStatusRef.current = "FAILED";
       if (err?.name === "AbortError") {
         toast({
           title: "Timed out",
