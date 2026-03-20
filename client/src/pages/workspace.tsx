@@ -683,10 +683,32 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const [deployStep, setDeployStep] = useState<string>("");
   const [classifiedIntent, setClassifiedIntent] = useState<string>("");
   const [liveStatus, setLiveStatus] = useState<string>("");
-  const [uipathBuildStatus, setUipathBuildStatus] = useState<string | undefined>();
-  const [uipathBuildWarnings, setUipathBuildWarnings] = useState<Array<{ code: string; message: string; stage: string; recoverable: boolean }> | undefined>();
-  const [uipathTemplateComplianceScore, setUipathTemplateComplianceScore] = useState<number | undefined>();
-  const [uipathOutcomeSummary, setUipathOutcomeSummary] = useState<{ stubbedActivities: number; stubbedSequences: number; stubbedWorkflows: number; autoRepairs: number; fullyGenerated: number; totalEstimatedMinutes: number } | undefined>();
+  type UiPathRunStatus = "BUILDING" | "READY" | "READY_WITH_WARNINGS" | "FALLBACK_READY" | "FAILED";
+  type UiPathRunWarning = { code: string; message: string; stage: string; recoverable: boolean };
+  type UiPathOutcomeSummary = { stubbedActivities: number; stubbedSequences: number; stubbedWorkflows: number; autoRepairs: number; fullyGenerated: number; totalEstimatedMinutes: number };
+  interface UiPathRunState {
+    runId: string;
+    source: "chat" | "retry" | "approval" | "auto";
+    startedAt: number;
+    status: UiPathRunStatus;
+    warnings?: UiPathRunWarning[];
+    complianceScore?: number;
+    outcomeSummary?: UiPathOutcomeSummary;
+    linkedMessageId?: string;
+    preExistingMessageIds: Set<string>;
+  }
+  interface CompletedRunResult {
+    runId: string;
+    status: UiPathRunStatus;
+    warnings?: UiPathRunWarning[];
+    complianceScore?: number;
+    outcomeSummary?: UiPathOutcomeSummary;
+    preExistingMessageIds: Set<string>;
+  }
+  const [currentUiPathRun, setCurrentUiPathRun] = useState<UiPathRunState | null>(null);
+  const currentUiPathRunRef = useRef<UiPathRunState | null>(null);
+  const [completedUiPathRuns, setCompletedUiPathRuns] = useState<Map<string, CompletedRunResult>>(new Map());
+  const [messageToRunId, setMessageToRunId] = useState<Map<string, string>>(new Map());
   const [metaValidationChipStatus, setMetaValidationChipStatus] = useState<"ready" | "assessing" | "will-validate" | "not-needed" | "active" | "validating" | "fixed" | "clean" | "warning">("ready");
   const [metaValidationFixCount, setMetaValidationFixCount] = useState(0);
   const [pipelineLogEntries, setPipelineLogEntries] = useState<PipelineLogEntry[]>([]);
@@ -701,9 +723,10 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
 
   useEffect(() => {
     initialScrollDoneRef.current = false;
-    setUipathBuildStatus(undefined);
-    setUipathBuildWarnings(undefined);
-    setUipathTemplateComplianceScore(undefined);
+    setCurrentUiPathRun(null);
+    currentUiPathRunRef.current = null;
+    setCompletedUiPathRuns(new Map());
+    setMessageToRunId(new Map());
     setUipathGenRequestId(0);
     uipathGenRequestIdRef.current = 0;
     uipathGenConsumedIdRef.current = 0;
@@ -792,9 +815,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const uipathGenRequestIdRef = useRef(0);
   const uipathGenConsumedIdRef = useRef(0);
   const uipathGenInFlightRef = useRef(false);
-  const uipathBuildStatusRef = useRef<string | undefined>();
   const generateDocRef = useRef<((type: "PDD" | "SDD") => void) | null>(null);
-  const generateUiPathRef = useRef<((force?: boolean) => void) | null>(null);
+  const generateUiPathRef = useRef<((force?: boolean, source?: "chat" | "retry" | "approval" | "auto") => void) | null>(null);
   const generateToBeRef = useRef<(() => void) | null>(null);
 
   const guidance = STAGE_GUIDANCE[idea.stage];
@@ -810,6 +832,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     staleTime: 0,
     refetchOnMount: "always",
   });
+
+  const savedMessagesRef = useRef(savedMessages);
+  savedMessagesRef.current = savedMessages;
 
   const isSystemTriggerMsg = (content: string) =>
     /^Generate the (Process Design Document|Solution Design Document).*\[DOC:(PDD|SDD):/.test(content) ||
@@ -908,9 +933,41 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     );
     if (hasSddApproval && !hasUiPath && !uipathTriggeredRef.current && !isGeneratingDoc && !isStreaming) {
       uipathTriggeredRef.current = true;
-      setTimeout(() => generateUiPathRef.current?.(), 500);
+      setTimeout(() => generateUiPathRef.current?.(false, "auto"), 500);
     }
-  }, [savedMessages, isGeneratingDoc, isStreaming]);
+
+    if (savedMessages && completedUiPathRuns.size > 0) {
+      const uipathMessages = savedMessages.filter(m => m.content.startsWith("[UIPATH:"));
+      let needsUpdate = false;
+      const newMap = new Map(messageToRunId);
+      const assignedRunIds = new Set(newMap.values());
+      for (const [runId, run] of Array.from(completedUiPathRuns.entries())) {
+        if (assignedRunIds.has(runId)) continue;
+        if (run.status === "FAILED") continue;
+        const newMsg = uipathMessages.find(m => {
+          const msgId = String(m.id);
+          return !newMap.has(msgId) && !run.preExistingMessageIds.has(msgId);
+        });
+        if (newMsg) {
+          const msgId = String(newMsg.id);
+          newMap.set(msgId, runId);
+          assignedRunIds.add(runId);
+          needsUpdate = true;
+          setCurrentUiPathRun(prev => {
+            if (prev && prev.runId === runId && !prev.linkedMessageId) {
+              const updated = { ...prev, linkedMessageId: msgId };
+              currentUiPathRunRef.current = updated;
+              return updated;
+            }
+            return prev;
+          });
+        }
+      }
+      if (needsUpdate) {
+        setMessageToRunId(newMap);
+      }
+    }
+  }, [savedMessages, isGeneratingDoc, isStreaming, completedUiPathRuns]);
 
   useEffect(() => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
@@ -1153,13 +1210,28 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           }
         }
         if (data.warnings) {
-          setUipathBuildWarnings(data.warnings);
+          setCurrentUiPathRun(prev => {
+            if (!prev) return prev;
+            const updated = { ...prev, warnings: data.warnings };
+            currentUiPathRunRef.current = updated;
+            return updated;
+          });
         }
         if (data.templateComplianceScore !== undefined) {
-          setUipathTemplateComplianceScore(data.templateComplianceScore);
+          setCurrentUiPathRun(prev => {
+            if (!prev) return prev;
+            const updated = { ...prev, complianceScore: data.templateComplianceScore };
+            currentUiPathRunRef.current = updated;
+            return updated;
+          });
         }
         if (data.outcomeSummary) {
-          setUipathOutcomeSummary(data.outcomeSummary);
+          setCurrentUiPathRun(prev => {
+            if (!prev) return prev;
+            const updated = { ...prev, outcomeSummary: data.outcomeSummary };
+            currentUiPathRunRef.current = updated;
+            return updated;
+          });
         }
         if (data.error) {
           streamingMsgRef.current = "";
@@ -1532,17 +1604,22 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     onMapApprovalReady?.(handleMapApprovalFromPanel);
   }, [onMapApprovalReady, handleMapApprovalFromPanel]);
 
-  const generateUiPath = useCallback(async (force?: boolean) => {
+  // NOTE: force=true bypasses the chat-message cache check in document-routes.ts but does NOT bypass
+  // the fingerprint-based pipeline cache in uipath-pipeline.ts. If the user regenerates with identical
+  // inputs (same SDD, same map, same spec), the pipeline returns the cached build artifact. This is a
+  // known follow-up — if users expect force=true to produce a fresh build, pipeline cache eviction
+  // logic will need a separate change.
+  const startUiPathRun = useCallback(async (source: "chat" | "retry" | "approval" | "auto" = "auto", force?: boolean) => {
     if (uipathGenInFlightRef.current) {
       console.log("[UiPath Trigger] generation already in flight — bail");
       return;
     }
     if (isGeneratingDoc || isStreaming) {
       console.log("[UiPath Trigger] blocked by isGeneratingDoc=%s isStreaming=%s — keeping pending", isGeneratingDoc, isStreaming);
-      uipathTriggeredRef.current = false;
       return;
     }
-    console.log("[UiPath Trigger] executing generation (force=%s) — POST /api/ideas/%s/generate-uipath being initiated", force, idea.id);
+    const runId = crypto.randomUUID();
+    console.log("[UiPath Trigger] starting run %s (source=%s, force=%s) — POST /api/ideas/%s/generate-uipath", runId, source, force, idea.id);
     uipathGenInFlightRef.current = true;
     uipathGenConsumedIdRef.current = uipathGenRequestIdRef.current;
     console.log("[UiPath Trigger] trigger consumed (consumedId=%d)", uipathGenConsumedIdRef.current);
@@ -1552,19 +1629,36 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     setStreamingDocContent("");
     setLiveStatus("Generating UiPath package...");
     setClassifiedIntent("UIPATH_GEN");
-    setUipathBuildStatus("BUILDING");
-    uipathBuildStatusRef.current = "BUILDING";
-    setUipathBuildWarnings(undefined);
-    setUipathTemplateComplianceScore(undefined);
+    const preExistingIds = new Set<string>();
+    const currentMessages = savedMessagesRef.current;
+    if (currentMessages) {
+      for (const m of currentMessages) {
+        if (m.content.startsWith("[UIPATH:")) {
+          preExistingIds.add(String(m.id));
+        }
+      }
+    }
+    const newRun: UiPathRunState = { runId, source, startedAt: Date.now(), status: "BUILDING", preExistingMessageIds: preExistingIds };
+    setCurrentUiPathRun(newRun);
+    currentUiPathRunRef.current = newRun;
     setPipelineLogEntries([]);
     setPipelineComplete(false);
     pipelineEntryCounter.current = 0;
     let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+    const activeRunId = runId;
+    const updateRun = (patch: Partial<UiPathRunState>) => {
+      setCurrentUiPathRun(prev => {
+        if (!prev || prev.runId !== activeRunId) return prev;
+        const updated = { ...prev, ...patch };
+        currentUiPathRunRef.current = updated;
+        return updated;
+      });
+    };
     const resetSafetyTimer = () => {
       if (safetyTimer) clearTimeout(safetyTimer);
       safetyTimer = setTimeout(() => {
-        if (uipathGenInFlightRef.current) {
-          console.warn("[UiPath Trigger] safety timeout — no progress in 30s, resetting stuck state");
+        if (uipathGenInFlightRef.current && currentUiPathRunRef.current?.runId === activeRunId) {
+          console.warn("[UiPath Trigger] safety timeout — no progress in 90s, resetting stuck state (run=%s)", activeRunId);
           uipathGenInFlightRef.current = false;
           setIsGeneratingDoc(false);
           setGeneratingDocType("");
@@ -1572,10 +1666,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           setClassifiedIntent("");
           isGeneratingDocRef.current = false;
           generatingDocTypeRef.current = "";
-          setUipathBuildStatus("FAILED");
-          uipathBuildStatusRef.current = "FAILED";
+          updateRun({ status: "FAILED" });
         }
-      }, 30000);
+      }, 90000);
     };
     resetSafetyTimer();
     try {
@@ -1589,13 +1682,12 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
         signal: controller.signal,
       });
       clearTimeout(timeout);
-      console.log("[UiPath Trigger] fetch response received — POST /api/ideas/%s/generate-uipath", idea.id);
+      console.log("[UiPath Trigger] fetch response received — POST /api/ideas/%s/generate-uipath (run=%s)", idea.id, activeRunId);
       resetSafetyTimer();
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         console.error("Failed to generate UiPath package:", err);
-        setUipathBuildStatus("FAILED");
-        uipathBuildStatusRef.current = "FAILED";
+        updateRun({ status: "FAILED" });
         toast({
           title: "Package generation failed",
           description: err.message || "Could not generate UiPath package. Please try again.",
@@ -1646,27 +1738,26 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                       setPipelineComplete(true);
                     }
                     if (data.status) {
-                      setUipathBuildStatus(data.status);
-                      uipathBuildStatusRef.current = data.status;
+                      updateRun({ status: data.status as UiPathRunStatus });
                     }
                     if (data.warnings) {
-                      setUipathBuildWarnings(data.warnings);
+                      updateRun({ warnings: data.warnings });
                     }
                     if (data.templateComplianceScore !== undefined) {
-                      setUipathTemplateComplianceScore(data.templateComplianceScore);
+                      updateRun({ complianceScore: data.templateComplianceScore });
                     }
                     if (data.outcomeSummary) {
-                      setUipathOutcomeSummary(data.outcomeSummary);
+                      updateRun({ outcomeSummary: data.outcomeSummary });
                     }
                     if (data.status === "FAILED") {
-                      setUipathBuildStatus("FAILED");
+                      updateRun({ status: "FAILED" });
                       toast({
                         title: "Package build failed",
                         description: data.error || "Package build produced no output",
                         variant: "destructive",
                       });
                     } else if (data.error) {
-                      setUipathBuildStatus("FAILED");
+                      updateRun({ status: "FAILED" });
                       toast({
                         title: "Package generation failed",
                         description: data.error,
@@ -1678,10 +1769,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
               }
             }
             if (success) {
-              const currentStatus = uipathBuildStatusRef.current;
+              const currentStatus = currentUiPathRunRef.current?.status;
               if (!currentStatus || currentStatus === "BUILDING") {
-                setUipathBuildStatus("READY");
-                uipathBuildStatusRef.current = "READY";
+                updateRun({ status: "READY" });
               }
               toast({
                 title: "UiPath Package Ready",
@@ -1690,10 +1780,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             }
           }
         } else {
-          const currentStatus = uipathBuildStatusRef.current;
+          const currentStatus = currentUiPathRunRef.current?.status;
           if (!currentStatus || currentStatus === "BUILDING") {
-            setUipathBuildStatus("READY");
-            uipathBuildStatusRef.current = "READY";
+            updateRun({ status: "READY" });
           }
           toast({
             title: "UiPath Package Ready",
@@ -1702,8 +1791,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
         }
       }
     } catch (err: any) {
-      setUipathBuildStatus("FAILED");
-      uipathBuildStatusRef.current = "FAILED";
+      updateRun({ status: "FAILED" });
       if (err?.name === "AbortError") {
         toast({
           title: "Timed out",
@@ -1720,6 +1808,21 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       }
     } finally {
       if (safetyTimer) clearTimeout(safetyTimer);
+      const finalRun = currentUiPathRunRef.current;
+      if (finalRun && finalRun.runId === activeRunId) {
+        setCompletedUiPathRuns(prev => {
+          const next = new Map(prev);
+          next.set(activeRunId, {
+            runId: activeRunId,
+            status: finalRun.status,
+            warnings: finalRun.warnings,
+            complianceScore: finalRun.complianceScore,
+            outcomeSummary: finalRun.outcomeSummary,
+            preExistingMessageIds: finalRun.preExistingMessageIds,
+          });
+          return next;
+        });
+      }
       uipathGenInFlightRef.current = false;
       setIsGeneratingDoc(false);
       setGeneratingDocType("");
@@ -1735,18 +1838,18 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       isGeneratingDocRef.current = false;
       generatingDocTypeRef.current = "";
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
-      console.log("[UiPath Trigger] generation complete, state reset");
+      console.log("[UiPath Trigger] generation complete, state reset (run=%s)", activeRunId);
     }
   }, [idea.id, isGeneratingDoc, isStreaming]);
 
-  generateUiPathRef.current = generateUiPath;
+  generateUiPathRef.current = (force?: boolean, source?: "chat" | "retry" | "approval" | "auto") => startUiPathRun(source || "auto", force);
 
   useEffect(() => {
     const hasPending = uipathGenRequestId > uipathGenConsumedIdRef.current;
     if (!hasPending) return;
     if (!isStreaming && !isGeneratingDoc && !uipathGenInFlightRef.current) {
       console.log("[UiPath Trigger] effect eligible and firing — dispatching generation (requestId=%d, consumedId=%d, isStreaming=%s, isGeneratingDoc=%s, inFlight=%s)", uipathGenRequestId, uipathGenConsumedIdRef.current, isStreaming, isGeneratingDoc, uipathGenInFlightRef.current);
-      generateUiPathRef.current?.(true);
+      generateUiPathRef.current?.(true, "chat");
     } else {
       console.log("[UiPath Trigger] effect deferred — isStreaming=%s, isGeneratingDoc=%s, inFlight=%s (requestId=%d)", isStreaming, isGeneratingDoc, uipathGenInFlightRef.current, uipathGenRequestId);
     }
@@ -1766,7 +1869,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     }
     if (docType === "SDD" && !uipathTriggeredRef.current) {
       uipathTriggeredRef.current = true;
-      setTimeout(() => generateUiPathRef.current?.(), 500);
+      setTimeout(() => generateUiPathRef.current?.(false, "approval"), 500);
     }
   }, [idea.id]);
 
@@ -2040,34 +2143,13 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           }
 
           if (msg.uipathData) {
-            if (uipathBuildStatus === "BUILDING") {
-              return null;
-            }
-            if (uipathBuildStatus === "FAILED") {
-              return (
-                <div key={msg.id} className="flex justify-start" data-testid={`chat-message-${msg.id}`}>
-                  <div className="max-w-[95%] w-full">
-                    <div className="rounded-lg border-l-4 border-l-red-500 bg-card shadow-lg overflow-hidden p-4" data-testid="card-uipath-failed">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/15 text-red-500 text-xs font-medium" data-testid="badge-status-failed">
-                          Build Failed
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mb-3">
-                        Package build failed. You can retry the generation.
-                      </p>
-                      <button
-                        onClick={() => generateUiPath(true)}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium transition-colors w-full justify-center"
-                        data-testid="button-retry-build"
-                      >
-                        Retry Build
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            }
+            const linkedRunId = messageToRunId.get(msg.id);
+            const completedRun = linkedRunId ? completedUiPathRuns.get(linkedRunId) : undefined;
+            const cardStatus = completedRun?.status;
+            const cardWarnings = completedRun?.warnings;
+            const cardComplianceScore = completedRun?.complianceScore;
+            const cardOutcomeSummary = completedRun?.outcomeSummary;
+            const isLatestUiPathMsg = displayMessages.filter(m => m.uipathData).pop()?.id === msg.id;
             return (
               <div key={msg.id} className="flex justify-start" data-testid={`chat-message-${msg.id}`}>
                 <div className="max-w-[95%] w-full">
@@ -2076,11 +2158,11 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                     ideaId={idea.id}
                     onDeployProgress={(step) => setDeployStep(step)}
                     onDeployComplete={() => setDeployStep("")}
-                    onRetry={() => generateUiPath(true)}
-                    status={uipathBuildStatus as any}
-                    warnings={uipathBuildWarnings}
-                    templateComplianceScore={uipathTemplateComplianceScore}
-                    outcomeSummary={uipathOutcomeSummary}
+                    onRetry={isLatestUiPathMsg ? () => startUiPathRun("retry", true) : undefined}
+                    status={cardStatus}
+                    warnings={cardWarnings}
+                    templateComplianceScore={cardComplianceScore}
+                    outcomeSummary={cardOutcomeSummary}
                   />
                 </div>
               </div>
@@ -2234,29 +2316,42 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           <StreamingProgressIndicator mode="deploy" deployStep={deployStep} />
         )}
 
+        {currentUiPathRun?.status === "BUILDING" && (
+          <div className="flex justify-center py-2" data-testid="uipath-building-indicator">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Package className="h-3.5 w-3.5 animate-pulse" />
+              <span>Generating UiPath package...</span>
+            </div>
+          </div>
+        )}
+
+        {currentUiPathRun?.status === "FAILED" && !isGeneratingDoc && (
+          <div className="flex justify-center py-2" data-testid="uipath-failed-section">
+            <div className="flex flex-col items-center gap-2">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/15 text-red-500 text-xs font-medium" data-testid="badge-status-failed">
+                Build Failed
+              </span>
+              <Button
+                className="bg-amber-500 hover:bg-amber-600 text-white text-xs"
+                onClick={() => startUiPathRun("retry", true)}
+                data-testid="button-retry-build"
+              >
+                <Package className="h-3.5 w-3.5 mr-1.5" />
+                Retry UiPath Package
+              </Button>
+            </div>
+          </div>
+        )}
+
         {(() => {
           const hasUiPath = displayMessages.some((m) => m.uipathData);
           const hasSddApproval = !!(sddApprovalData?.approval);
-          if (hasSddApproval && !hasUiPath && !isGeneratingDoc) {
-            if (uipathBuildStatus === "FAILED") {
-              return (
-                <div className="flex justify-center py-2" data-testid="uipath-generate-section">
-                  <Button
-                    className="bg-amber-500 hover:bg-amber-600 text-white text-xs"
-                    onClick={() => generateUiPath(true)}
-                    data-testid="button-retry-build"
-                  >
-                    <Package className="h-3.5 w-3.5 mr-1.5" />
-                    Retry UiPath Package
-                  </Button>
-                </div>
-              );
-            }
+          if (hasSddApproval && !hasUiPath && !isGeneratingDoc && (!currentUiPathRun || (currentUiPathRun.status !== "BUILDING" && currentUiPathRun.status !== "FAILED"))) {
             return (
               <div className="flex justify-center py-2" data-testid="uipath-generate-section">
                 <Button
                   className="bg-primary hover:bg-primary/90 text-primary-foreground text-xs"
-                  onClick={() => generateUiPath()}
+                  onClick={() => startUiPathRun("retry")}
                   data-testid="button-generate-uipath"
                 >
                   <Package className="h-3.5 w-3.5 mr-1.5" />
