@@ -1069,6 +1069,7 @@ ${content}`
 
       let completedTemplateComplianceScore: number | undefined;
       let completedPipelineStatus: string = "READY";
+      let pipelineResult: any = null;
       try {
         const requestedMode = (req.body.generationMode === "baseline_openable") ? "baseline_openable" as const : undefined;
         let userMetaValidationMode: MetaValidationMode = "Auto";
@@ -1078,7 +1079,7 @@ ${content}`
             userMetaValidationMode = storedMode;
           }
         } catch { /* default to Auto */ }
-        const pipelineResult = await runBuildPipeline(ideaId, packageJson, {
+        pipelineResult = await runBuildPipeline(ideaId, packageJson, {
           onProgress: sendProgress,
           onPipelineProgress: sendPipelineEvent,
           onMetaValidation: (event) => {
@@ -1107,12 +1108,21 @@ ${content}`
         if (pipelineResult.warnings.length > 0 || pipelineResult.status === "FALLBACK_READY") {
           await chatStorage.createMessage(ideaId, "assistant", `[UIPATH:${JSON.stringify(packageJson)}]`);
           sendProgress(`Pre-build complete with ${pipelineResult.warnings.length} warning(s)`);
+          const outcomeSummary = pipelineResult.outcomeReport ? {
+            stubbedActivities: pipelineResult.outcomeReport.remediations.filter((r: any) => r.level === "activity").length,
+            stubbedSequences: pipelineResult.outcomeReport.remediations.filter((r: any) => r.level === "sequence").length,
+            stubbedWorkflows: pipelineResult.outcomeReport.remediations.filter((r: any) => r.level === "workflow").length,
+            autoRepairs: pipelineResult.outcomeReport.autoRepairs.length,
+            fullyGenerated: pipelineResult.outcomeReport.fullyGeneratedFiles.length,
+            totalEstimatedMinutes: pipelineResult.outcomeReport.totalEstimatedEffortMinutes,
+          } : undefined;
           res.write(`data: ${JSON.stringify({
             done: true,
             package: packageJson,
             status: pipelineResult.status,
             warnings: pipelineResult.warnings,
             templateComplianceScore: pipelineResult.templateComplianceScore,
+            outcomeSummary,
           })}\n\n`);
           return res.end();
         }
@@ -1147,7 +1157,15 @@ ${content}`
       }
 
       await chatStorage.createMessage(ideaId, "assistant", `[UIPATH:${JSON.stringify(packageJson)}]`);
-      res.write(`data: ${JSON.stringify({ done: true, package: packageJson, status: completedPipelineStatus, templateComplianceScore: completedTemplateComplianceScore })}\n\n`);
+      const readyOutcomeSummary = pipelineResult?.outcomeReport ? {
+        stubbedActivities: pipelineResult.outcomeReport.remediations.filter((r: any) => r.level === "activity").length,
+        stubbedSequences: pipelineResult.outcomeReport.remediations.filter((r: any) => r.level === "sequence").length,
+        stubbedWorkflows: pipelineResult.outcomeReport.remediations.filter((r: any) => r.level === "workflow").length,
+        autoRepairs: pipelineResult.outcomeReport.autoRepairs.length,
+        fullyGenerated: pipelineResult.outcomeReport.fullyGeneratedFiles.length,
+        totalEstimatedMinutes: pipelineResult.outcomeReport.totalEstimatedEffortMinutes,
+      } : undefined;
+      res.write(`data: ${JSON.stringify({ done: true, package: packageJson, status: completedPipelineStatus, templateComplianceScore: completedTemplateComplianceScore, outcomeSummary: readyOutcomeSummary })}\n\n`);
       return res.end();
     } catch (error) {
       console.error("Error generating UiPath package:", error);

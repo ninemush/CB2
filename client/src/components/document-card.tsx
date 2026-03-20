@@ -454,6 +454,15 @@ export function DocumentCard({ docType, docId, content, ideaId, isApproved, vers
   );
 }
 
+interface OutcomeSummary {
+  stubbedActivities: number;
+  stubbedSequences: number;
+  stubbedWorkflows: number;
+  autoRepairs: number;
+  fullyGenerated: number;
+  totalEstimatedMinutes: number;
+}
+
 interface UiPathPackageCardProps {
   packageData: any;
   ideaId: string;
@@ -463,9 +472,10 @@ interface UiPathPackageCardProps {
   warnings?: Array<{ code: string; message: string; stage: string; recoverable: boolean }>;
   onRetry?: () => void;
   templateComplianceScore?: number;
+  outcomeSummary?: OutcomeSummary;
 }
 
-export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDeployComplete, status, warnings, onRetry, templateComplianceScore }: UiPathPackageCardProps) {
+export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDeployComplete, status, warnings, onRetry, templateComplianceScore, outcomeSummary }: UiPathPackageCardProps) {
   const [expanded, setExpanded] = useState(true);
   const [pushResult, setPushResult] = useState<{ success: boolean; details?: any } | null>(null);
   const [jobState, setJobState] = useState<{ id?: number; state?: string; polling?: boolean } | null>(null);
@@ -656,6 +666,17 @@ export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDep
             data-testid="badge-template-compliance"
           >
             {Math.round(templateComplianceScore * 100)}% compliant
+          </span>
+        )}
+        {outcomeSummary && (outcomeSummary.stubbedActivities > 0 || outcomeSummary.stubbedSequences > 0 || outcomeSummary.stubbedWorkflows > 0 || outcomeSummary.autoRepairs > 0) && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-500 text-[10px] font-medium" data-testid="badge-outcome-summary">
+            {(() => {
+              const parts: string[] = [];
+              const totalStubbed = outcomeSummary.stubbedActivities + outcomeSummary.stubbedSequences + outcomeSummary.stubbedWorkflows;
+              if (totalStubbed > 0) parts.push(`${totalStubbed} stubbed`);
+              if (outcomeSummary.autoRepairs > 0) parts.push(`${outcomeSummary.autoRepairs} auto-repaired`);
+              return parts.join(", ") + " — see DHG";
+            })()}
           </span>
         )}
       </div>

@@ -24,6 +24,8 @@ import {
   selectGenerationMode,
   applyActivityPolicy,
   isReFrameworkFile,
+  replaceActivityWithStub,
+  replaceSequenceChildrenWithStub,
   type GenerationMode,
   type GenerationModeConfig,
   type XamlGeneratorResult,
@@ -461,6 +463,14 @@ function generateConfigXlsx(projectName: string, sddContent?: string, orchestrat
   return `Settings\n${csvSettings}\n\nConstants\n${csvConstants}`;
 }
 
+import type {
+  PipelineOutcomeReport,
+  RemediationEntry,
+  AutoRepairEntry,
+  RemediationCode,
+  RepairCode,
+} from "./uipath-pipeline";
+
 export type BuildResult = {
   buffer: Buffer;
   gaps: XamlGap[];
@@ -475,6 +485,7 @@ export type BuildResult = {
   referencedMLSkillNames: string[];
   dependencyWarnings?: Array<{ code: string; message: string; stage: string; recoverable: boolean }>;
   usedAIFallback: boolean;
+  outcomeReport?: PipelineOutcomeReport;
 };
 
 export function removeDuplicateAttributes(content: string): { content: string; changed: boolean; fixedTags: string[] } {
@@ -1348,6 +1359,57 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     ];
 
     const autoFixSummary: string[] = [];
+    const outcomeRemediations: RemediationEntry[] = [];
+    const outcomeAutoRepairs: AutoRepairEntry[] = [];
+
+    function mapCheckToRemediationCode(check: string): RemediationCode {
+      const codeMap: Record<string, RemediationCode> = {
+        "CATALOG_VIOLATION": "STUB_ACTIVITY_CATALOG_VIOLATION",
+        "ENUM_VIOLATION": "STUB_ACTIVITY_CATALOG_VIOLATION",
+        "catalog-violation": "STUB_ACTIVITY_CATALOG_VIOLATION",
+        "policy-blocked-activity": "STUB_ACTIVITY_BLOCKED_PATTERN",
+        "object-object": "STUB_ACTIVITY_OBJECT_OBJECT",
+        "pseudo-xaml": "STUB_ACTIVITY_PSEUDO_XAML",
+        "fake-trycatch": "STUB_ACTIVITY_PSEUDO_XAML",
+        "xml-wellformedness": "STUB_ACTIVITY_WELLFORMEDNESS",
+        "unknown-activity": "STUB_ACTIVITY_UNKNOWN",
+        "invalid-takescreenshot-result": "STUB_ACTIVITY_BLOCKED_PATTERN",
+        "invalid-takescreenshot-outputpath": "STUB_ACTIVITY_BLOCKED_PATTERN",
+        "invalid-takescreenshot-outputpath-attr": "STUB_ACTIVITY_BLOCKED_PATTERN",
+      };
+      return codeMap[check] || "STUB_ACTIVITY_UNKNOWN";
+    }
+
+    function estimateEffortForCheck(check: string): number {
+      const effortMap: Record<string, number> = {
+        "CATALOG_VIOLATION": 10,
+        "ENUM_VIOLATION": 5,
+        "catalog-violation": 10,
+        "policy-blocked-activity": 15,
+        "object-object": 20,
+        "pseudo-xaml": 30,
+        "fake-trycatch": 20,
+        "xml-wellformedness": 30,
+        "unknown-activity": 15,
+      };
+      return effortMap[check] || 15;
+    }
+
+    function developerActionForCheck(check: string, file: string, displayName?: string): string {
+      const actLabel = displayName ? `"${displayName}" activity` : "activity";
+      const actions: Record<string, string> = {
+        "catalog-violation": `Review ${actLabel} in ${file} — validate property values against UiPath catalog`,
+        "CATALOG_VIOLATION": `Review ${actLabel} in ${file} — validate property values against UiPath catalog`,
+        "ENUM_VIOLATION": `Fix enum value for ${actLabel} in ${file} — use valid enum from UiPath documentation`,
+        "policy-blocked-activity": `Replace blocked ${actLabel} in ${file} with an allowed alternative`,
+        "object-object": `Fix serialization failure for ${actLabel} in ${file} — replace [object Object] with actual values`,
+        "pseudo-xaml": `Convert pseudo-XAML string attributes to proper nested XAML elements in ${file}`,
+        "fake-trycatch": `Restructure TryCatch in ${file} to use nested elements instead of string attributes`,
+        "xml-wellformedness": `Fix XML structure in ${file} — ensure proper nesting and closing tags`,
+        "unknown-activity": `Replace unknown ${actLabel} in ${file} with a valid UiPath activity`,
+      };
+      return actions[check] || `Manually implement ${actLabel} in ${file} — estimated ${estimateEffortForCheck(check)} min`;
+    }
 
     const catalogViolations: Array<{ file: string; detail: string }> = [];
     if (catalogService.isLoaded()) {
@@ -1767,73 +1829,207 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           console.log(`[UiPath Quality Gate] Only warning-level issues remain (${qualityGateResult.summary.totalWarnings}) — shipping package with warnings documented in DHG`);
           qualityGateResult = { ...qualityGateResult, passed: true };
         } else if (blockingFiles.size > 0) {
-          console.log(`[UiPath Quality Gate] Per-workflow stub fallback for ${blockingFiles.size} file(s): ${Array.from(blockingFiles).join(", ")}`);
-          usedFallback = true;
+          console.log(`[UiPath Escalation] Level 1: Attempting per-activity stub replacement for ${blockingFiles.size} file(s)`);
+          let perActivityFixed = false;
 
           for (let i = 0; i < xamlEntries.length; i++) {
             const entryName = xamlEntries[i].name;
             const shortName = entryName.split("/").pop() || entryName;
             if (!blockingFiles.has(shortName)) continue;
 
-            const className = shortName.replace(".xaml", "");
-            const blockingDetails = reClassified.filter(ci => ci.file === shortName && ci.severity === "blocking");
-            const stubXaml = generateStubWorkflow(className, {
-              reason: `Blocking quality gate issues: ${blockingDetails.map(d => d.check).join(", ")}`,
-              isBlockingFallback: true,
+            const fileIssues = reClassified.filter(ci => ci.file === shortName && ci.severity === "blocking");
+            let content = xamlEntries[i].content;
+            let anyReplaced = false;
+
+            for (const issue of fileIssues) {
+              const stubResult = replaceActivityWithStub(content, issue);
+              if (stubResult.replaced) {
+                content = stubResult.content;
+                anyReplaced = true;
+                perActivityFixed = true;
+                autoFixSummary.push(`Per-activity stub: replaced ${stubResult.originalTag || "activity"}${stubResult.originalDisplayName ? ` (${stubResult.originalDisplayName})` : ""} in ${shortName} [${issue.check}]`);
+                outcomeRemediations.push({
+                  level: "activity",
+                  file: shortName,
+                  remediationCode: mapCheckToRemediationCode(issue.check),
+                  originalTag: stubResult.originalTag,
+                  originalDisplayName: stubResult.originalDisplayName,
+                  reason: issue.detail,
+                  classifiedCheck: issue.check,
+                  developerAction: developerActionForCheck(issue.check, shortName, stubResult.originalDisplayName),
+                  estimatedEffortMinutes: estimateEffortForCheck(issue.check),
+                });
+              }
+            }
+
+            if (anyReplaced) {
+              xamlEntries[i] = { name: entryName, content };
+              const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === shortName);
+              if (archivePath) {
+                deferredWrites.set(archivePath, content);
+              }
+            }
+          }
+
+          if (perActivityFixed) {
+            const perActivityProjectJsonStr = JSON.stringify(projectJson, null, 2);
+            qualityGateResult = runQualityGate({
+              xamlEntries,
+              projectJsonContent: perActivityProjectJsonStr,
+              configData: configCsv,
+              orchestratorArtifacts,
+              targetFramework: tf,
+              archiveManifest: allArchivePaths,
+              archiveContentHashes: buildContentHashRecord(),
+              automationPattern,
             });
-            const stubCompliant = makeUiPathCompliant(stubXaml, tf);
-            xamlEntries[i] = { name: entryName, content: stubCompliant };
+            applyCatalogViolations(qualityGateResult);
 
-            const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === shortName);
-            if (archivePath) {
-              deferredWrites.set(archivePath, stubCompliant);
-            }
-            earlyStubFallbacks.push(shortName);
-            autoFixSummary.push(`Replaced ${entryName} with per-workflow Studio-openable stub (blocking issues: ${blockingDetails.map(d => d.check).join(", ")})`);
-          }
-
-          const stubPackages = new Set<string>();
-          for (const stubEntry of xamlEntries) {
-            const scanned = scanXamlForRequiredPackages(stubEntry.content);
-            for (const pkg of scanned) stubPackages.add(pkg);
-          }
-          for (const key of Object.keys(deps)) {
-            if (!stubPackages.has(key)) {
-              delete deps[key];
+            if (qualityGateResult.passed || hasOnlyWarnings(classifyQualityIssues(qualityGateResult))) {
+              console.log(`[UiPath Escalation] Per-activity stubs resolved all blocking issues`);
+              if (!qualityGateResult.passed) qualityGateResult = { ...qualityGateResult, passed: true };
+              usedFallback = true;
             }
           }
-          for (const pkg of stubPackages) {
-            if (!deps[pkg]) {
-              deps[pkg] = confirmedVersionMap[pkg] || (tf === "Windows" ? "23.10.0" : "25.10.0");
+
+          if (!qualityGateResult.passed && !hasOnlyWarnings(classifyQualityIssues(qualityGateResult))) {
+            console.log(`[UiPath Escalation] Level 2: Attempting per-sequence stub replacement`);
+            const seqClassified = classifyQualityIssues(qualityGateResult);
+            const seqBlockingFiles = getBlockingFiles(seqClassified);
+
+            let perSequenceFixed = false;
+            for (let i = 0; i < xamlEntries.length; i++) {
+              const entryName = xamlEntries[i].name;
+              const shortName = entryName.split("/").pop() || entryName;
+              if (!seqBlockingFiles.has(shortName)) continue;
+
+              const fileIssues = seqClassified.filter(ci => ci.file === shortName && ci.severity === "blocking");
+              const seqResult = replaceSequenceChildrenWithStub(xamlEntries[i].content, fileIssues);
+              if (seqResult.replaced) {
+                xamlEntries[i] = { name: entryName, content: seqResult.content };
+                const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === shortName);
+                if (archivePath) {
+                  deferredWrites.set(archivePath, seqResult.content);
+                }
+                perSequenceFixed = true;
+                autoFixSummary.push(`Per-sequence stub: replaced ${seqResult.replacedActivityCount} activities in sequence "${seqResult.sequenceDisplayName}" in ${shortName}`);
+                outcomeRemediations.push({
+                  level: "sequence",
+                  file: shortName,
+                  remediationCode: "STUB_SEQUENCE_MULTIPLE_FAILURES",
+                  originalDisplayName: seqResult.sequenceDisplayName,
+                  reason: `${seqResult.replacedActivityCount} activities in sequence failed validation`,
+                  classifiedCheck: fileIssues.map(i => i.check).filter((v, idx, arr) => arr.indexOf(v) === idx).join(", "),
+                  developerAction: `Re-implement ${seqResult.replacedActivityCount} activities in sequence "${seqResult.sequenceDisplayName}" in ${shortName}`,
+                  estimatedEffortMinutes: seqResult.replacedActivityCount * 15,
+                });
+              }
+            }
+
+            if (perSequenceFixed) {
+              const seqProjectJsonStr = JSON.stringify(projectJson, null, 2);
+              qualityGateResult = runQualityGate({
+                xamlEntries,
+                projectJsonContent: seqProjectJsonStr,
+                configData: configCsv,
+                orchestratorArtifacts,
+                targetFramework: tf,
+                archiveManifest: allArchivePaths,
+                archiveContentHashes: buildContentHashRecord(),
+                automationPattern,
+              });
+              applyCatalogViolations(qualityGateResult);
+
+              if (qualityGateResult.passed || hasOnlyWarnings(classifyQualityIssues(qualityGateResult))) {
+                console.log(`[UiPath Escalation] Per-sequence stubs resolved all blocking issues`);
+                if (!qualityGateResult.passed) qualityGateResult = { ...qualityGateResult, passed: true };
+                usedFallback = true;
+              }
             }
           }
-          if (!deps["UiPath.System.Activities"]) {
-            deps["UiPath.System.Activities"] = confirmedVersionMap["UiPath.System.Activities"];
-          }
-          projectJson.dependencies = { ...deps };
-          const stubProjectJsonStr = JSON.stringify(projectJson, null, 2);
 
-          qualityGateResult = runQualityGate({
-            xamlEntries,
-            projectJsonContent: stubProjectJsonStr,
-            configData: configCsv,
-            orchestratorArtifacts,
-            targetFramework: tf,
-            archiveManifest: allArchivePaths,
-            archiveContentHashes: buildContentHashRecord(),
-            automationPattern,
-          });
-          applyCatalogViolations(qualityGateResult);
+          if (!qualityGateResult.passed && !hasOnlyWarnings(classifyQualityIssues(qualityGateResult))) {
+            console.log(`[UiPath Escalation] Level 3: Per-workflow stub fallback for remaining blocking files`);
+            const wfClassified = classifyQualityIssues(qualityGateResult);
+            const wfBlockingFiles = getBlockingFiles(wfClassified);
+            usedFallback = true;
 
-          if (!qualityGateResult.passed) {
-            const finalClassified = classifyQualityIssues(qualityGateResult);
-            if (hasOnlyWarnings(finalClassified)) {
-              console.log(`[UiPath Quality Gate] After per-workflow stub fallback, only warnings remain — passing`);
-              qualityGateResult = { ...qualityGateResult, passed: true };
-            } else {
-              console.log(`[UiPath Quality Gate] After per-workflow stub fallback, some blocking issues remain — passing with warnings (per-workflow stubs already scoped to affected files)`);
-              qualityGateResult = { ...qualityGateResult, passed: true };
-              autoFixSummary.push(`Skipped full-package stub escalation — per-workflow stubs already cover affected files`);
+            for (let i = 0; i < xamlEntries.length; i++) {
+              const entryName = xamlEntries[i].name;
+              const shortName = entryName.split("/").pop() || entryName;
+              if (!wfBlockingFiles.has(shortName)) continue;
+
+              const className = shortName.replace(".xaml", "");
+              const blockingDetails = wfClassified.filter(ci => ci.file === shortName && ci.severity === "blocking");
+              const stubXaml = generateStubWorkflow(className, {
+                reason: `Blocking quality gate issues: ${blockingDetails.map(d => d.check).join(", ")}`,
+                isBlockingFallback: true,
+              });
+              const stubCompliant = makeUiPathCompliant(stubXaml, tf);
+              xamlEntries[i] = { name: entryName, content: stubCompliant };
+
+              const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === shortName);
+              if (archivePath) {
+                deferredWrites.set(archivePath, stubCompliant);
+              }
+              earlyStubFallbacks.push(shortName);
+              autoFixSummary.push(`Replaced ${entryName} with per-workflow Studio-openable stub (blocking issues: ${blockingDetails.map(d => d.check).join(", ")})`);
+              for (const bd of blockingDetails) {
+                outcomeRemediations.push({
+                  level: "workflow",
+                  file: shortName,
+                  remediationCode: "STUB_WORKFLOW_BLOCKING",
+                  reason: bd.detail,
+                  classifiedCheck: bd.check,
+                  developerAction: `Re-implement entire workflow ${shortName} — per-activity and per-sequence repair could not produce valid XAML`,
+                  estimatedEffortMinutes: 60,
+                });
+              }
+            }
+
+            const stubPackages = new Set<string>();
+            for (const stubEntry of xamlEntries) {
+              const scanned = scanXamlForRequiredPackages(stubEntry.content);
+              for (const pkg of scanned) stubPackages.add(pkg);
+            }
+            for (const key of Object.keys(deps)) {
+              if (!stubPackages.has(key)) {
+                delete deps[key];
+              }
+            }
+            for (const pkg of stubPackages) {
+              if (!deps[pkg]) {
+                deps[pkg] = confirmedVersionMap[pkg] || (tf === "Windows" ? "23.10.0" : "25.10.0");
+              }
+            }
+            if (!deps["UiPath.System.Activities"]) {
+              deps["UiPath.System.Activities"] = confirmedVersionMap["UiPath.System.Activities"];
+            }
+            projectJson.dependencies = { ...deps };
+            const stubProjectJsonStr = JSON.stringify(projectJson, null, 2);
+
+            qualityGateResult = runQualityGate({
+              xamlEntries,
+              projectJsonContent: stubProjectJsonStr,
+              configData: configCsv,
+              orchestratorArtifacts,
+              targetFramework: tf,
+              archiveManifest: allArchivePaths,
+              archiveContentHashes: buildContentHashRecord(),
+              automationPattern,
+            });
+            applyCatalogViolations(qualityGateResult);
+
+            if (!qualityGateResult.passed) {
+              const finalClassified = classifyQualityIssues(qualityGateResult);
+              if (hasOnlyWarnings(finalClassified)) {
+                console.log(`[UiPath Quality Gate] After per-workflow stub fallback, only warnings remain — passing`);
+                qualityGateResult = { ...qualityGateResult, passed: true };
+              } else {
+                console.log(`[UiPath Quality Gate] After per-workflow stub fallback, some blocking issues remain — passing with warnings`);
+                qualityGateResult = { ...qualityGateResult, passed: true };
+                autoFixSummary.push(`Skipped full-package stub escalation — per-workflow stubs already cover affected files`);
+              }
             }
           }
         } else {
@@ -2028,12 +2224,54 @@ ${depEntries}
   const finalDependencyMap = { ...deps };
   const finalArchiveManifest = allArchivePaths;
 
+  for (const fix of autoFixSummary) {
+    let repairCode: RepairCode = "REPAIR_GENERIC";
+    if (fix.includes("Catalog: Moved")) repairCode = "REPAIR_CATALOG_PROPERTY_SYNTAX";
+    else if (fix.includes("Catalog: Corrected")) repairCode = "REPAIR_CATALOG_PROPERTY_VALUE";
+    else if (fix.includes("Catalog: Wrapped")) repairCode = "REPAIR_CATALOG_WRAPPER";
+    else if (fix.includes("Normalised LogMessage")) repairCode = "REPAIR_LOG_LEVEL_NORMALIZE";
+    else if (fix.includes("Escaped raw ampersand")) repairCode = "REPAIR_AMPERSAND_ESCAPE";
+    else if (fix.includes("Escaped bare <")) repairCode = "REPAIR_BARE_ANGLE_ESCAPE";
+    else if (fix.includes("Removed duplicate attr")) repairCode = "REPAIR_DUPLICATE_ATTRIBUTE";
+    else if (fix.includes("TakeScreenshot OutputPath")) repairCode = "REPAIR_TAKESCREENSHOT_STRIP";
+    else if (fix.includes("Per-activity stub") || fix.includes("Per-sequence stub") || fix.includes("per-workflow")) continue;
+
+    const fileMatch = fix.match(/in\s+([\w/.-]+\.xaml)/);
+    outcomeAutoRepairs.push({
+      repairCode,
+      file: fileMatch ? fileMatch[1] : "unknown",
+      description: fix,
+    });
+  }
+
+  const allFiles = new Set(xamlEntries.map(e => (e.name.split("/").pop() || e.name)));
+  const remediatedFiles = new Set(outcomeRemediations.map(r => r.file));
+  const fullyGenerated = Array.from(allFiles).filter(f => !remediatedFiles.has(f) && !earlyStubFallbacks.includes(f));
+
+  const qualityWarnings = qualityGateResult.violations
+    .filter(v => v.severity === "warning")
+    .map(v => ({
+      check: v.check,
+      file: v.file || "unknown",
+      detail: v.detail,
+      severity: v.severity as "warning",
+    }));
+
+  const outcomeReport: PipelineOutcomeReport = {
+    fullyGeneratedFiles: fullyGenerated,
+    autoRepairs: outcomeAutoRepairs,
+    remediations: outcomeRemediations,
+    downgradeEvents: [],
+    qualityWarnings,
+    totalEstimatedEffortMinutes: outcomeRemediations.reduce((s, r) => s + (r.estimatedEffortMinutes || 0), 0),
+  };
+
   if (buildCacheKey && fingerprint) {
     evictOldestCacheEntry();
     packageBuildCache.set(buildCacheKey, { fingerprint, version, buffer, gaps: allGaps, usedPackages: allUsedPkgs, enrichment, qualityGatePassed: qualityGateResult.passed, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, referencedMLSkillNames: [...genCtx.referencedMLSkillNames], usedAIFallback: _usedAIFallback });
     console.log(`[UiPath Cache] Stored build for ${buildCacheKey} (${buffer.length} bytes, v${version})`);
   }
-  return { buffer, gaps: allGaps, usedPackages: allUsedPkgs, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, usedFallbackStubs: usedFallback, generationMode, referencedMLSkillNames: [...genCtx.referencedMLSkillNames], dependencyWarnings: dependencyWarnings.length > 0 ? dependencyWarnings : undefined, usedAIFallback: _usedAIFallback };
+  return { buffer, gaps: allGaps, usedPackages: allUsedPkgs, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, usedFallbackStubs: usedFallback, generationMode, referencedMLSkillNames: [...genCtx.referencedMLSkillNames], dependencyWarnings: dependencyWarnings.length > 0 ? dependencyWarnings : undefined, usedAIFallback: _usedAIFallback, outcomeReport };
 }
 
 async function uploadNupkgBuffer(

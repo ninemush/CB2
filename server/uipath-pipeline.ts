@@ -143,6 +143,78 @@ export interface DowngradeEvent {
   timestamp: Date;
 }
 
+export type RemediationLevel = "activity" | "sequence" | "workflow";
+
+export type RemediationCode =
+  | "STUB_ACTIVITY_CATALOG_VIOLATION"
+  | "STUB_ACTIVITY_BLOCKED_PATTERN"
+  | "STUB_ACTIVITY_OBJECT_OBJECT"
+  | "STUB_ACTIVITY_PSEUDO_XAML"
+  | "STUB_ACTIVITY_WELLFORMEDNESS"
+  | "STUB_ACTIVITY_UNKNOWN"
+  | "STUB_SEQUENCE_MULTIPLE_FAILURES"
+  | "STUB_SEQUENCE_WELLFORMEDNESS"
+  | "STUB_WORKFLOW_BLOCKING"
+  | "STUB_WORKFLOW_GENERATOR_FAILURE";
+
+export type RepairCode =
+  | "REPAIR_ALIAS_NORMALIZE"
+  | "REPAIR_ENUM_CORRECTION"
+  | "REPAIR_CATALOG_PROPERTY_SYNTAX"
+  | "REPAIR_CATALOG_PROPERTY_VALUE"
+  | "REPAIR_CATALOG_WRAPPER"
+  | "REPAIR_LOG_LEVEL_NORMALIZE"
+  | "REPAIR_AMPERSAND_ESCAPE"
+  | "REPAIR_BARE_ANGLE_ESCAPE"
+  | "REPAIR_DUPLICATE_ATTRIBUTE"
+  | "REPAIR_TAKESCREENSHOT_STRIP"
+  | "REPAIR_XAML_SANITIZE"
+  | "REPAIR_UNKNOWN_ACTIVITY_REMOVE"
+  | "REPAIR_INVOKE_PATH_FIX"
+  | "REPAIR_DEPENDENCY_ADD"
+  | "REPAIR_GENERIC";
+
+export interface RemediationEntry {
+  level: RemediationLevel;
+  file: string;
+  remediationCode: RemediationCode;
+  originalTag?: string;
+  originalDisplayName?: string;
+  reason: string;
+  classifiedCheck: string;
+  developerAction: string;
+  estimatedEffortMinutes: number;
+}
+
+export interface AutoRepairEntry {
+  repairCode: RepairCode;
+  file: string;
+  description: string;
+}
+
+export interface DowngradeEventEntry {
+  file?: string;
+  fromMode: string;
+  toMode: string;
+  triggerReason: string;
+}
+
+export interface QualityWarningEntry {
+  file: string;
+  check: string;
+  detail: string;
+  severity: "warning" | "blocking";
+}
+
+export interface PipelineOutcomeReport {
+  remediations: RemediationEntry[];
+  autoRepairs: AutoRepairEntry[];
+  downgradeEvents: DowngradeEventEntry[];
+  qualityWarnings: QualityWarningEntry[];
+  fullyGeneratedFiles: string[];
+  totalEstimatedEffortMinutes: number;
+}
+
 export interface PipelineResult {
   packageBuffer: Buffer;
   gaps: XamlGap[];
@@ -165,6 +237,7 @@ export interface PipelineResult {
   status: PackageStatus;
   templateComplianceScore?: number;
   metaValidationResult?: MetaValidationResult;
+  outcomeReport?: PipelineOutcomeReport;
 }
 
 export interface DhgResult {
@@ -359,6 +432,7 @@ function buildDhgFromBuildResult(
     extractedArtifacts,
     automationType: ctx.idea.automationType as "rpa" | "agent" | "hybrid" || undefined,
     analysisReports,
+    outcomeReport: buildResult.outcomeReport,
   });
 
   return {
@@ -874,6 +948,7 @@ export async function generateUiPathPackage(
       status: finalStatus,
       templateComplianceScore,
       metaValidationResult,
+      outcomeReport: buildResult.outcomeReport,
     };
 
     evictOldestPipelineCacheEntry();

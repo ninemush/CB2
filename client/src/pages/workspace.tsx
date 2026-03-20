@@ -686,6 +686,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const [uipathBuildStatus, setUipathBuildStatus] = useState<string | undefined>();
   const [uipathBuildWarnings, setUipathBuildWarnings] = useState<Array<{ code: string; message: string; stage: string; recoverable: boolean }> | undefined>();
   const [uipathTemplateComplianceScore, setUipathTemplateComplianceScore] = useState<number | undefined>();
+  const [uipathOutcomeSummary, setUipathOutcomeSummary] = useState<{ stubbedActivities: number; stubbedSequences: number; stubbedWorkflows: number; autoRepairs: number; fullyGenerated: number; totalEstimatedMinutes: number } | undefined>();
   const [metaValidationChipStatus, setMetaValidationChipStatus] = useState<"ready" | "assessing" | "will-validate" | "not-needed" | "active" | "validating" | "fixed" | "clean" | "warning">("ready");
   const [metaValidationFixCount, setMetaValidationFixCount] = useState(0);
   const [pipelineLogEntries, setPipelineLogEntries] = useState<PipelineLogEntry[]>([]);
@@ -1125,6 +1126,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
         }
         if (data.templateComplianceScore !== undefined) {
           setUipathTemplateComplianceScore(data.templateComplianceScore);
+        }
+        if (data.outcomeSummary) {
+          setUipathOutcomeSummary(data.outcomeSummary);
         }
         if (data.error) {
           streamingMsgRef.current = "";
@@ -1578,6 +1582,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                     if (data.templateComplianceScore !== undefined) {
                       setUipathTemplateComplianceScore(data.templateComplianceScore);
                     }
+                    if (data.outcomeSummary) {
+                      setUipathOutcomeSummary(data.outcomeSummary);
+                    }
                     if (data.status === "FAILED") {
                       setUipathBuildStatus("FAILED");
                       toast({
@@ -1979,6 +1986,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                     status={uipathBuildStatus as any}
                     warnings={uipathBuildWarnings}
                     templateComplianceScore={uipathTemplateComplianceScore}
+                    outcomeSummary={uipathOutcomeSummary}
                   />
                 </div>
               </div>

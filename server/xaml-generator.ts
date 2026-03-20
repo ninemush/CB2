@@ -14,6 +14,7 @@ import { isActivityAllowed } from "./uipath-activity-policy";
 import type { AutomationPattern } from "./uipath-activity-registry";
 import { ACTIVITY_NAME_ALIAS_MAP } from "./uipath-activity-registry";
 import type { XamlGenerationContext } from "./types/uipath-package";
+import type { PipelineOutcomeReport } from "./uipath-pipeline";
 import { XMLValidator } from "fast-xml-parser";
 import { catalogService } from "./catalog/catalog-service";
 
@@ -3507,6 +3508,7 @@ export type DhgOptions = {
   generationModeReason?: string;
   qualityIssues?: DhgQualityIssue[];
   stubbedWorkflows?: string[];
+  outcomeReport?: PipelineOutcomeReport;
 };
 
 export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
@@ -3636,6 +3638,90 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
       });
       md += `\n`;
     }
+    md += `---\n\n`;
+  }
+
+  if (opts.outcomeReport) {
+    const report = opts.outcomeReport;
+    sectionNum++;
+    md += `## ${sectionNum}. Pipeline Outcome Report\n\n`;
+
+    if (report.fullyGeneratedFiles.length > 0) {
+      md += `### Fully Generated (${report.fullyGeneratedFiles.length} file(s))\n\n`;
+      md += `These workflows were generated without any stub replacements or escalation.\n\n`;
+      for (const f of report.fullyGeneratedFiles) {
+        md += `- \`${f}\`\n`;
+      }
+      md += `\n`;
+    }
+
+    if (report.autoRepairs.length > 0) {
+      md += `### Auto-Repaired (${report.autoRepairs.length} fix(es))\n\n`;
+      md += `These issues were automatically corrected during the build pipeline. No developer action required.\n\n`;
+      md += `| # | Code | File | Description |\n`;
+      md += `|---|------|------|-------------|\n`;
+      report.autoRepairs.forEach((r, i) => {
+        const desc = r.description.length > 100 ? r.description.slice(0, 97) + "..." : r.description;
+        md += `| ${i + 1} | \`${r.repairCode}\` | \`${r.file}\` | ${desc.replace(/\|/g, "\\|")} |\n`;
+      });
+      md += `\n`;
+    }
+
+    const activityRemediations = report.remediations.filter(r => r.level === "activity");
+    const sequenceRemediations = report.remediations.filter(r => r.level === "sequence");
+    const workflowRemediations = report.remediations.filter(r => r.level === "workflow");
+
+    if (activityRemediations.length > 0) {
+      md += `### Stubbed — Per-Activity (${activityRemediations.length})\n\n`;
+      md += `Individual activities were replaced with TODO stubs. The surrounding workflow structure is preserved.\n\n`;
+      md += `| # | File | Activity | Code | Developer Action | Est. Minutes |\n`;
+      md += `|---|------|----------|------|-----------------|-------------|\n`;
+      activityRemediations.forEach((r, i) => {
+        const actName = r.originalDisplayName || r.originalTag || "—";
+        const action = (r.developerAction || "").length > 80 ? (r.developerAction || "").slice(0, 77) + "..." : (r.developerAction || "—");
+        md += `| ${i + 1} | \`${r.file}\` | ${actName} | \`${r.remediationCode}\` | ${action.replace(/\|/g, "\\|")} | ${r.estimatedEffortMinutes || "—"} |\n`;
+      });
+      md += `\n`;
+    }
+
+    if (sequenceRemediations.length > 0) {
+      md += `### Stubbed — Per-Sequence (${sequenceRemediations.length})\n\n`;
+      md += `Sequence children were replaced with a single TODO stub because multiple activities in the sequence had issues.\n\n`;
+      md += `| # | File | Sequence | Code | Developer Action | Est. Minutes |\n`;
+      md += `|---|------|----------|------|-----------------|-------------|\n`;
+      sequenceRemediations.forEach((r, i) => {
+        const seqName = r.originalDisplayName || "—";
+        const action = (r.developerAction || "").length > 80 ? (r.developerAction || "").slice(0, 77) + "..." : (r.developerAction || "—");
+        md += `| ${i + 1} | \`${r.file}\` | ${seqName} | \`${r.remediationCode}\` | ${action.replace(/\|/g, "\\|")} | ${r.estimatedEffortMinutes || "—"} |\n`;
+      });
+      md += `\n`;
+    }
+
+    if (workflowRemediations.length > 0) {
+      md += `### Stubbed — Per-Workflow (${workflowRemediations.length})\n\n`;
+      md += `Entire workflows were replaced with Studio-openable stubs because per-activity and per-sequence remediation could not resolve the issues.\n\n`;
+      md += `| # | File | Code | Developer Action | Est. Minutes |\n`;
+      md += `|---|------|------|-----------------|-------------|\n`;
+      workflowRemediations.forEach((r, i) => {
+        const action = (r.developerAction || "").length > 80 ? (r.developerAction || "").slice(0, 77) + "..." : (r.developerAction || "—");
+        md += `| ${i + 1} | \`${r.file}\` | \`${r.remediationCode}\` | ${action.replace(/\|/g, "\\|")} | ${r.estimatedEffortMinutes || "—"} |\n`;
+      });
+      md += `\n`;
+    }
+
+    if (report.downgradeEvents.length > 0) {
+      md += `### Downgraded Components (${report.downgradeEvents.length})\n\n`;
+      md += `These components were simplified during generation due to complexity or compatibility constraints.\n\n`;
+      for (const d of report.downgradeEvents) {
+        md += `- ${d.file ? `**${d.file}**: ` : ""}${d.triggerReason} (from \`${d.fromMode}\` to \`${d.toMode}\`)\n`;
+      }
+      md += `\n`;
+    }
+
+    if (report.totalEstimatedEffortMinutes > 0) {
+      md += `**Total estimated developer effort for stubbed items: ~${report.totalEstimatedEffortMinutes} minutes (${(report.totalEstimatedEffortMinutes / 60).toFixed(1)} hours)**\n\n`;
+    }
+
     md += `---\n\n`;
   }
 
@@ -4771,6 +4857,220 @@ export function validateXamlContent(xamlEntries: { name: string; content: string
   });
 
   return violations;
+}
+
+export interface ActivityStubResult {
+  content: string;
+  replaced: boolean;
+  originalTag?: string;
+  originalDisplayName?: string;
+}
+
+export function replaceActivityWithStub(
+  xamlContent: string,
+  classifiedIssue: { file: string; check: string; detail: string },
+): ActivityStubResult {
+  const lineMatch = classifiedIssue.detail.match(/Line (\d+)/);
+  if (!lineMatch) {
+    return { content: xamlContent, replaced: false };
+  }
+
+  const targetLineNum = parseInt(lineMatch[1], 10);
+  const lines = xamlContent.split("\n");
+  if (targetLineNum < 1 || targetLineNum > lines.length) {
+    return { content: xamlContent, replaced: false };
+  }
+
+  const targetLine = lines[targetLineNum - 1];
+
+  const activityTagMatch = targetLine.match(/<((?:ui:)?[A-Z][A-Za-z]*)\s/);
+  if (!activityTagMatch) {
+    const contextWindow = 5;
+    for (let offset = 1; offset <= contextWindow; offset++) {
+      for (const dir of [-1, 1]) {
+        const checkIdx = targetLineNum - 1 + (dir * offset);
+        if (checkIdx >= 0 && checkIdx < lines.length) {
+          const checkLine = lines[checkIdx];
+          const match = checkLine.match(/<((?:ui:)?[A-Z][A-Za-z]*)\s/);
+          if (match) {
+            return replaceActivityAtLine(xamlContent, lines, checkIdx, match[1], classifiedIssue);
+          }
+        }
+      }
+    }
+    return { content: xamlContent, replaced: false };
+  }
+
+  return replaceActivityAtLine(xamlContent, lines, targetLineNum - 1, activityTagMatch[1], classifiedIssue);
+}
+
+function replaceActivityAtLine(
+  xamlContent: string,
+  lines: string[],
+  lineIdx: number,
+  tagName: string,
+  classifiedIssue: { check: string; detail: string },
+): ActivityStubResult {
+  const displayNameMatch = lines[lineIdx].match(/DisplayName="([^"]*)"/);
+  const originalDisplayName = displayNameMatch ? displayNameMatch[1] : undefined;
+  const escapedTag = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const isSelfClosing = /\/>\s*$/.test(lines[lineIdx]);
+  let startLine = lineIdx;
+  let endLine = lineIdx;
+
+  if (isSelfClosing) {
+    if (lineIdx > 0 && !lines[lineIdx - 1].match(/</) && lines[lineIdx - 1].trim()) {
+      let tmpLine = lineIdx;
+      while (tmpLine > 0 && !lines[tmpLine].match(new RegExp(`<${escapedTag}\\s`))) {
+        tmpLine--;
+      }
+      if (lines[tmpLine].match(new RegExp(`<${escapedTag}\\s`))) {
+        startLine = tmpLine;
+      }
+    }
+  } else {
+    const closingTag = `</${tagName}>`;
+    let depth = 0;
+    let foundOpen = false;
+
+    let tmpLine = lineIdx;
+    while (tmpLine >= 0 && !lines[tmpLine].match(new RegExp(`<${escapedTag}[\\s>]`))) {
+      tmpLine--;
+    }
+    if (tmpLine >= 0) startLine = tmpLine;
+
+    for (let i = startLine; i < lines.length; i++) {
+      const line = lines[i];
+      const opens = (line.match(new RegExp(`<${escapedTag}[\\s>]`, 'g')) || []).length;
+      const closes = (line.match(new RegExp(`</${escapedTag}>`, 'g')) || []).length;
+      const selfCloses = (line.match(new RegExp(`<${escapedTag}[^>]*/\\s*>`, 'g')) || []).length;
+
+      depth += opens - selfCloses;
+      if (opens > 0) foundOpen = true;
+      depth -= closes;
+
+      if (foundOpen && depth <= 0) {
+        endLine = i;
+        break;
+      }
+
+      if (i - startLine > 200) {
+        return { content: xamlContent, replaced: false };
+      }
+    }
+  }
+
+  const indent = lines[startLine].match(/^(\s*)/)?.[1] || "    ";
+  const reason = classifiedIssue.detail.replace(/"/g, "'").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const stubComment = `${indent}<ui:Comment Text="[STUB_ACTIVITY] Original: ${escapeXml(tagName)}${originalDisplayName ? ` (${escapeXml(originalDisplayName)})` : ''}. Reason: ${escapeXml(classifiedIssue.check)} — ${reason}" DisplayName="Stub: ${escapeXml(originalDisplayName || tagName)}" />`;
+
+  const newLines = [
+    ...lines.slice(0, startLine),
+    stubComment,
+    ...lines.slice(endLine + 1),
+  ];
+
+  return {
+    content: newLines.join("\n"),
+    replaced: true,
+    originalTag: tagName,
+    originalDisplayName,
+  };
+}
+
+export interface SequenceStubResult {
+  content: string;
+  replaced: boolean;
+  sequenceDisplayName?: string;
+  replacedActivityCount: number;
+}
+
+export function replaceSequenceChildrenWithStub(
+  xamlContent: string,
+  failingIssues: Array<{ file: string; check: string; detail: string }>,
+): SequenceStubResult {
+  const failingLines = new Set<number>();
+  for (const issue of failingIssues) {
+    const lineMatch = issue.detail.match(/Line (\d+)/);
+    if (lineMatch) failingLines.add(parseInt(lineMatch[1], 10));
+  }
+
+  if (failingLines.size === 0) {
+    return { content: xamlContent, replaced: false, replacedActivityCount: 0 };
+  }
+
+  const lines = xamlContent.split("\n");
+
+  const sequenceRanges: Array<{
+    seqStart: number;
+    seqEnd: number;
+    displayName: string;
+    childStart: number;
+    childEnd: number;
+  }> = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const seqMatch = lines[i].match(/<Sequence\s[^>]*DisplayName="([^"]*)"[^>]*>/);
+    if (!seqMatch) continue;
+    if (/\/>\s*$/.test(lines[i])) continue;
+
+    const seqStart = i;
+    const displayName = seqMatch[1];
+    let depth = 1;
+    let seqEnd = i;
+
+    for (let j = i + 1; j < lines.length; j++) {
+      if (/<Sequence[\s>]/.test(lines[j]) && !/\/>\s*$/.test(lines[j])) depth++;
+      if (/<\/Sequence>/.test(lines[j])) depth--;
+      if (depth === 0) {
+        seqEnd = j;
+        break;
+      }
+    }
+
+    let childStart = seqStart + 1;
+    while (childStart < seqEnd && (
+      lines[childStart].includes("<Sequence.Variables") ||
+      lines[childStart].includes("</Sequence.Variables") ||
+      lines[childStart].includes("<Variable ") ||
+      lines[childStart].trim() === ""
+    )) {
+      childStart++;
+    }
+
+    sequenceRanges.push({ seqStart, seqEnd, displayName, childStart, childEnd: seqEnd });
+  }
+
+  for (const range of sequenceRanges) {
+    let failingCount = 0;
+    for (const lineNum of failingLines) {
+      if (lineNum > range.childStart && lineNum < range.childEnd) {
+        failingCount++;
+      }
+    }
+
+    if (failingCount >= 2) {
+      const indent = lines[range.childStart].match(/^(\s*)/)?.[1] || "      ";
+      const checks = failingIssues.map(i => i.check).filter((v, idx, arr) => arr.indexOf(v) === idx).join(", ");
+      const stubLine = `${indent}<ui:Comment Text="[STUB_SEQUENCE] Replaced ${failingCount} invalid activities in sequence '${escapeXml(range.displayName)}'. Checks: ${escapeXml(checks)}. Manual implementation required." DisplayName="Stub: ${escapeXml(range.displayName)} children" />`;
+
+      const newLines = [
+        ...lines.slice(0, range.childStart),
+        stubLine,
+        ...lines.slice(range.childEnd),
+      ];
+
+      return {
+        content: newLines.join("\n"),
+        replaced: true,
+        sequenceDisplayName: range.displayName,
+        replacedActivityCount: failingCount,
+      };
+    }
+  }
+
+  return { content: xamlContent, replaced: false, replacedActivityCount: 0 };
 }
 
 export interface StubWorkflowOptions {
