@@ -6,6 +6,7 @@ import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
 import { getPlatformCapabilities } from "./uipath-integration";
 import { generateUiPathPackage, generateDhg, findUiPathMessage, parseUiPathPackage, computeVersion, getCachedPipelineResult } from "./uipath-pipeline";
+import { generateConfigXlsx } from "./package-assembler";
 import { startUiPathGenerationRun, type TriggerSource, type RunCallbacks, type RunResult } from "./uipath-run-manager";
 import { UIPATH_PROMPT, repairTruncatedPackageJson } from "./uipath-prompts";
 export { UIPATH_PROMPT, repairTruncatedPackageJson };
@@ -967,58 +968,142 @@ ${content}`
         return res.status(500).json({ message: "Invalid package data" });
       }
 
-      if (!pipelineResult.packageBuffer || pipelineResult.packageBuffer.length === 0) {
-        return res.status(500).json({
-          error: "PACKAGE_EMPTY",
-          message: "Package buffer is empty. Please regenerate the package.",
-        });
-      }
-
-      let effectiveBuffer = pipelineResult.packageBuffer;
-      if (pipelineResult.xamlEntries && pipelineResult.xamlEntries.length > 0 && pipelineResult.archiveManifest) {
-        const { rebuildNupkgWithEntries } = await import("./uipath-pipeline");
-        const rebuilt = rebuildNupkgWithEntries(pipelineResult.packageBuffer, pipelineResult.xamlEntries, pipelineResult.archiveManifest);
-        if (rebuilt) {
-          effectiveBuffer = rebuilt;
-          console.log(`[Download] Rebuilt nupkg from cached XAML entries (${rebuilt.length} bytes)`);
-        } else {
-          console.warn(`[Download] Nupkg rebuild failed — serving original cached buffer`);
-        }
-      }
-
       const approvedSdd = await documentStorage.getDocument(sddApprovalCheck.documentId);
       const sddContent = approvedSdd?.content || "";
 
       const isServerless = pkg.internal?.targetFramework === "Portable" || pkg.internal?.isServerless;
       const libPrefix = isServerless ? "lib/net6.0/" : "lib/net45/";
 
-      let nupkgZip: AdmZip;
-      try {
-        nupkgZip = new AdmZip(effectiveBuffer);
-      } catch (zipErr: unknown) {
-        const msg = zipErr instanceof Error ? zipErr.message : String(zipErr);
-        console.error(`[Download] Failed to open nupkg buffer: ${msg}`);
-        return res.status(500).json({
-          error: "PACKAGE_CORRUPT",
-          message: "Package file is corrupted. Please regenerate the package.",
-        });
+      type ZipEntry = { name: string; content: string | Buffer };
+      let zipEntries: ZipEntry[] | null = null;
+
+      if (pipelineResult.xamlEntries && pipelineResult.xamlEntries.length > 0 && pipelineResult.archiveManifest) {
+        try {
+          const entries: ZipEntry[] = [];
+          const xamlByBasename = new Map<string, string>();
+          const xamlByFullPath = new Map<string, string>();
+          for (const entry of pipelineResult.xamlEntries) {
+            xamlByBasename.set(entry.name, entry.content);
+            xamlByFullPath.set(entry.name, entry.content);
+          }
+
+          const nugetMetaPrefixes = ["_rels/", "package/", "[Content_Types].xml"];
+          for (const archivePath of pipelineResult.archiveManifest) {
+            if (nugetMetaPrefixes.some(p => archivePath.startsWith(p)) || archivePath.endsWith(".nuspec")) {
+              continue;
+            }
+            const flatName = archivePath.startsWith(libPrefix) ? archivePath.slice(libPrefix.length) : archivePath;
+            const basename = archivePath.split("/").pop() || archivePath;
+
+            if (archivePath.endsWith(".xaml")) {
+              const xamlContent = xamlByFullPath.get(archivePath) || xamlByFullPath.get(flatName) || xamlByBasename.get(basename);
+              if (xamlContent) {
+                entries.push({ name: flatName, content: xamlContent });
+              } else {
+                console.warn(`[Download] XAML entry not found in cached entries: ${archivePath}`);
+              }
+            } else if (archivePath.endsWith("project.json")) {
+              const projectJson: Record<string, any> = {
+                name: pipelineResult.projectName,
+                description: pkg.description || "",
+                main: "Main.xaml",
+                dependencies: pipelineResult.dependencyMap || {},
+                webServices: [],
+                entitiesStores: [],
+                schemaVersion: "4.0",
+                studioVersion: isServerless ? "23.10.6" : "22.10.11",
+                projectVersion: "1.0.0",
+                runtimeOptions: {
+                  autoDispose: false,
+                  netFrameworkLazyLoading: false,
+                  isPausable: true,
+                  isAttended: false,
+                  requiresUserInteraction: false,
+                  supportsPersistence: false,
+                  executionType: "Workflow",
+                  readyForPiP: false,
+                  startsInPiP: false,
+                  mustRestoreAllDependencies: true,
+                },
+                designOptions: {
+                  projectProfile: "Development",
+                  outputType: "Process",
+                  libraryOptions: { includeOriginalXaml: false, privateWorkflows: [] },
+                  processOptions: { ignoredFiles: [] },
+                  fileInfoCollection: [],
+                  modernBehavior: true,
+                },
+                expressionLanguage: isServerless ? "CSharp" : "VisualBasic",
+                entryPoints: [{ filePath: "Main.xaml", uniqueId: "00000000-0000-0000-0000-000000000000", input: [], output: [] }],
+                isTemplate: false,
+                templateProjectData: {},
+                publishData: {},
+                targetFramework: isServerless ? "Portable" : "Windows",
+                sourceLanguage: isServerless ? "CSharp" : "VisualBasic",
+              };
+              entries.push({ name: flatName, content: JSON.stringify(projectJson, null, 2) });
+            } else if (archivePath.endsWith("DeveloperHandoffGuide.md") && pipelineResult.dhgContent) {
+              entries.push({ name: flatName, content: pipelineResult.dhgContent });
+            } else if (archivePath.endsWith("Config.xlsx") || archivePath.endsWith("Data/Config.xlsx")) {
+              const configContent = generateConfigXlsx(pipelineResult.projectName, sddContent);
+              entries.push({ name: flatName, content: configContent });
+            } else {
+              console.warn(`[Download] Skipping non-reconstructable entry: ${archivePath}`);
+            }
+          }
+          if (entries.length > 0 && entries.some(e => e.name === "Main.xaml" || e.name.endsWith("/Main.xaml"))) {
+            zipEntries = entries;
+            console.log(`[Download] Prepared ${entries.length} entries from ${pipelineResult.xamlEntries.length} cached XAML entries`);
+          } else {
+            console.warn(`[Download] Cache-based build produced ${entries.length} entries (missing Main.xaml) — falling back`);
+          }
+        } catch (entryErr: unknown) {
+          const msg = entryErr instanceof Error ? entryErr.message : String(entryErr);
+          console.warn(`[Download] Failed to build entries from cache: ${msg} — falling back`);
+          zipEntries = null;
+        }
       }
-      const nupkgEntries = nupkgZip.getEntries();
+
+      if (!zipEntries) {
+        if (!pipelineResult.packageBuffer || pipelineResult.packageBuffer.length === 0) {
+          return res.status(500).json({
+            error: "PACKAGE_EMPTY",
+            message: "Package buffer is empty. Please regenerate the package.",
+          });
+        }
+
+        try {
+          const nupkgZip = new AdmZip(pipelineResult.packageBuffer);
+          const nupkgEntries = nupkgZip.getEntries();
+          const entries: ZipEntry[] = [];
+          for (const entry of nupkgEntries) {
+            if (entry.isDirectory) continue;
+            const entryName: string = entry.entryName;
+            if (entryName.startsWith("_rels/") || entryName.startsWith("package/") || entryName === "[Content_Types].xml" || entryName.endsWith(".nuspec")) {
+              continue;
+            }
+            const flatName = entryName.startsWith(libPrefix) ? entryName.slice(libPrefix.length) : entryName;
+            entries.push({ name: flatName, content: entry.getData() });
+          }
+          zipEntries = entries;
+          console.log(`[Download] Built entries from nupkg buffer via adm-zip fallback`);
+        } catch (zipErr: unknown) {
+          const msg = zipErr instanceof Error ? zipErr.message : String(zipErr);
+          console.error(`[Download] adm-zip fallback also failed: ${msg} — serving raw nupkg`);
+          res.setHeader("Content-Type", "application/octet-stream");
+          res.setHeader("Content-Disposition", `attachment; filename="${pkg.projectName || "UiPathPackage"}.nupkg"`);
+          res.end(pipelineResult.packageBuffer);
+          return;
+        }
+      }
 
       const archive = archiver("zip", { zlib: { level: 9 } });
-
       res.setHeader("Content-Type", "application/zip");
       res.setHeader("Content-Disposition", `attachment; filename="${pkg.projectName || "UiPathPackage"}.zip"`);
       archive.pipe(res);
 
-      for (const entry of nupkgEntries) {
-        if (entry.isDirectory) continue;
-        const entryName: string = entry.entryName;
-        if (entryName.startsWith("_rels/") || entryName.startsWith("package/") || entryName === "[Content_Types].xml" || entryName.endsWith(".nuspec")) {
-          continue;
-        }
-        const flatName = entryName.startsWith(libPrefix) ? entryName.slice(libPrefix.length) : entryName;
-        archive.append(entry.getData(), { name: flatName });
+      for (const entry of zipEntries) {
+        archive.append(entry.content, { name: entry.name });
       }
 
       const autoType = idea.automationType as string || "";

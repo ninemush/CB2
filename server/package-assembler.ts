@@ -162,7 +162,7 @@ function generateUuid(): string {
   return uuid;
 }
 
-function generateConfigXlsx(projectName: string, sddContent?: string, orchestratorArtifacts?: any): string {
+export function generateConfigXlsx(projectName: string, sddContent?: string, orchestratorArtifacts?: any): string {
   const settingsRows: string[][] = [["Name", "Value", "Description"]];
   const constantsRows: string[][] = [["Name", "Value", "Description"]];
 
