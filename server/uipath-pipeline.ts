@@ -45,7 +45,7 @@ export interface MetaValidationEvent {
   durationMs?: number;
 }
 
-export type PackageStatus = "BUILDING" | "READY" | "READY_WITH_WARNINGS" | "FAILED";
+export type PackageStatus = "BUILDING" | "READY" | "READY_WITH_WARNINGS" | "FALLBACK_READY" | "FAILED";
 
 export type PipelineEventType = "started" | "heartbeat" | "completed" | "warning" | "failed";
 
@@ -135,6 +135,14 @@ export interface PipelineWarning {
   recoverable: boolean;
 }
 
+export interface DowngradeEvent {
+  fromMode: GenerationMode;
+  toMode: GenerationMode;
+  reason: string;
+  triggerStage: string;
+  timestamp: Date;
+}
+
 export interface PipelineResult {
   packageBuffer: Buffer;
   gaps: XamlGap[];
@@ -152,6 +160,8 @@ export interface PipelineResult {
   usedFallbackStubs: boolean;
   referencedMLSkillNames: string[];
   warnings: PipelineWarning[];
+  downgrades: DowngradeEvent[];
+  usedAIFallback: boolean;
   status: PackageStatus;
   templateComplianceScore?: number;
   metaValidationResult?: MetaValidationResult;
@@ -193,6 +203,41 @@ function computeFingerprint(pkg: UiPathPackageSpec, sddContent: string, nodes: a
   hash.update(JSON.stringify(nodes.map((n: any) => ({ id: n.id, name: n.name, type: n.nodeType, description: n.description, system: n.system }))));
   hash.update(JSON.stringify(edges.map((e: any) => ({ source: e.sourceNodeId, target: e.targetNodeId, label: e.label }))));
   return hash.digest("hex").slice(0, 16);
+}
+
+function validateArchiveStructure(buffer: Buffer): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  if (!buffer || buffer.length === 0) {
+    errors.push("Package buffer is empty");
+    return { valid: false, errors };
+  }
+
+  try {
+    const zip = new AdmZip(buffer);
+    const entries = zip.getEntries();
+    const entryNames = entries.map(e => e.entryName);
+
+    const hasMainXaml = entryNames.some(n => {
+      const basename = n.split("/").pop() || n;
+      return basename === "Main.xaml";
+    });
+    if (!hasMainXaml) {
+      errors.push("Archive is missing Main.xaml");
+    }
+
+    const hasProjectJson = entryNames.some(n => {
+      const basename = n.split("/").pop() || n;
+      return basename === "project.json";
+    });
+    if (!hasProjectJson) {
+      errors.push("Archive is missing project.json");
+    }
+  } catch (err: any) {
+    errors.push(`Archive is not a valid ZIP: ${err.message}`);
+  }
+
+  return { valid: errors.length === 0, errors };
 }
 
 async function loadIdeaContext(ideaId: string): Promise<IdeaContext> {
@@ -334,11 +379,20 @@ export async function generateUiPathPackage(
     onPipelineProgress?: PipelineProgressCallback;
     preloadedContext?: IdeaContext;
     metaValidationMode?: MetaValidationMode;
+    maxDowngradeAttempts?: number;
+    _downgradeAttempt?: number;
+    _accumulatedDowngrades?: DowngradeEvent[];
+    _accumulatedWarnings?: PipelineWarning[];
+    _usedAIFallback?: boolean;
   },
 ): Promise<PipelineResult> {
   const ver = options?.version || computeVersion();
   const mode: GenerationMode = options?.generationMode || "full_implementation";
-  const pipelineWarnings: PipelineWarning[] = [];
+  const pipelineWarnings: PipelineWarning[] = options?._accumulatedWarnings ? [...options._accumulatedWarnings] : [];
+  const downgrades: DowngradeEvent[] = options?._accumulatedDowngrades ? [...options._accumulatedDowngrades] : [];
+  let usedAIFallback = options?._usedAIFallback || false;
+  const maxDowngradeAttempts = options?.maxDowngradeAttempts ?? 1;
+  const currentDowngradeAttempt = options?._downgradeAttempt ?? 0;
 
   const emitLegacy = options?.onProgress;
   const noop: PipelineProgressCallback = () => {};
@@ -360,7 +414,8 @@ export async function generateUiPathPackage(
 
     tracker.start("decomposition", "Computing fingerprint and checking cache");
     const fp = computeFingerprint(pkg, ctx.sdd?.content || "", ctx.mapNodes, ctx.processEdges);
-    const cacheKey = `${ideaId}:${mode}:${mvMode}`;
+    const degradationKey = (downgrades.length > 0 || usedAIFallback) ? "degraded" : "clean";
+    const cacheKey = `${ideaId}:${mode}:${mvMode}:${degradationKey}`;
     const cached = pipelineCache.get(cacheKey);
     if (cached && cached.fingerprint === fp) {
       tracker.complete("decomposition", "Cache hit — serving cached result");
@@ -410,9 +465,48 @@ export async function generateUiPathPackage(
     tracker.heartbeat("xaml_assembly", () => {
       return `Building workflow ${currentWorkflowIdx + 1} of ${workflowCount || "?"}`;
     });
-    const buildResult = await buildNuGetPackage(enriched, ver, ideaId, mode, options?.onPipelineProgress ? (event) => {
-      options.onPipelineProgress!(event);
-    } : undefined);
+    let buildResult: BuildResult;
+    try {
+      buildResult = await buildNuGetPackage(enriched, ver, ideaId, mode, options?.onPipelineProgress ? (event) => {
+        options.onPipelineProgress!(event);
+      } : undefined);
+    } catch (err) {
+      if (err instanceof QualityGateError && mode === "full_implementation" && currentDowngradeAttempt < maxDowngradeAttempts) {
+        const downgradeEvent: DowngradeEvent = {
+          fromMode: "full_implementation",
+          toMode: "baseline_openable",
+          reason: `Quality gate failed after auto-remediation: ${err.message.slice(0, 200)}`,
+          triggerStage: "xaml_assembly",
+          timestamp: new Date(),
+        };
+        downgrades.push(downgradeEvent);
+        pipelineWarnings.push({
+          code: "AUTO_DOWNGRADE_QUALITY_GATE",
+          message: `Auto-downgraded from full_implementation to baseline_openable: quality gate failed after remediation`,
+          stage: "xaml_assembly",
+          recoverable: true,
+        });
+        tracker.warn("xaml_assembly", `Quality gate failed — auto-downgrading to baseline_openable (attempt ${currentDowngradeAttempt + 1}/${maxDowngradeAttempts})`);
+        tracker.cleanup();
+        console.log(`[Pipeline] Auto-downgrade: full_implementation → baseline_openable due to QualityGateError (attempt ${currentDowngradeAttempt + 1}/${maxDowngradeAttempts})`);
+        return generateUiPathPackage(ideaId, pkg, {
+          ...options,
+          generationMode: "baseline_openable",
+          preloadedContext: ctx,
+          _downgradeAttempt: currentDowngradeAttempt + 1,
+          _accumulatedDowngrades: downgrades,
+          _accumulatedWarnings: pipelineWarnings,
+          _usedAIFallback: usedAIFallback,
+          maxDowngradeAttempts,
+        });
+      }
+      throw err;
+    }
+
+    if (buildResult.usedAIFallback) {
+      usedAIFallback = true;
+    }
+
     currentWorkflowIdx = workflowCount > 0 ? workflowCount - 1 : 0;
     tracker.complete("xaml_assembly", `${buildResult.xamlEntries.length} XAML file(s) assembled`, {
       xamlCount: buildResult.xamlEntries.length,
@@ -424,6 +518,46 @@ export async function generateUiPathPackage(
       for (const w of buildResult.dependencyWarnings) {
         tracker.warn("xaml_assembly", w.message);
       }
+    }
+
+    tracker.start("archive_validation", "Validating archive structure");
+    const archiveValidation = validateArchiveStructure(buildResult.buffer);
+    if (!archiveValidation.valid) {
+      tracker.warn("archive_validation", `Archive validation failed: ${archiveValidation.errors.join("; ")}`);
+      if (mode !== "baseline_openable" && currentDowngradeAttempt < maxDowngradeAttempts) {
+        const downgradeEvent: DowngradeEvent = {
+          fromMode: mode,
+          toMode: "baseline_openable",
+          reason: `Archive validation failed: ${archiveValidation.errors.join("; ")}`,
+          triggerStage: "archive_validation",
+          timestamp: new Date(),
+        };
+        downgrades.push(downgradeEvent);
+        pipelineWarnings.push({
+          code: "AUTO_DOWNGRADE_ARCHIVE_INVALID",
+          message: `Auto-downgraded to baseline_openable: archive validation failed (${archiveValidation.errors.join("; ")})`,
+          stage: "archive_validation",
+          recoverable: true,
+        });
+        tracker.cleanup();
+        console.log(`[Pipeline] Auto-downgrade: ${mode} → baseline_openable due to archive validation failure`);
+        return generateUiPathPackage(ideaId, pkg, {
+          ...options,
+          generationMode: "baseline_openable",
+          preloadedContext: ctx,
+          _downgradeAttempt: currentDowngradeAttempt + 1,
+          _accumulatedDowngrades: downgrades,
+          _accumulatedWarnings: pipelineWarnings,
+          _usedAIFallback: usedAIFallback,
+          maxDowngradeAttempts,
+        });
+      }
+      const archiveError = `Archive validation failed and no downgrade available: ${archiveValidation.errors.join("; ")}`;
+      tracker.fail("archive_validation", archiveError);
+      tracker.cleanup();
+      throw new Error(archiveError);
+    } else {
+      tracker.complete("archive_validation", "Archive structure valid");
     }
 
     tracker.start("catalog_validation", "Validating against activity catalog");
@@ -699,17 +833,22 @@ export async function generateUiPathPackage(
       }
     }
 
+    const hasDegradation = downgrades.length > 0 || usedAIFallback;
     const finalStatus: PackageStatus = !hasNupkg
       ? "FAILED"
-      : (pipelineWarnings.length > 0 || metaValidationResult?.flatStructureWarnings)
-        ? "READY_WITH_WARNINGS"
-        : "READY";
+      : hasDegradation
+        ? "FALLBACK_READY"
+        : (pipelineWarnings.length > 0 || metaValidationResult?.flatStructureWarnings)
+          ? "READY_WITH_WARNINGS"
+          : "READY";
 
     tracker.start("complete", "Finalizing pipeline");
     tracker.complete("complete", `Pipeline complete — ${finalStatus}`, {
       status: finalStatus,
       workflowCount: buildResult.xamlEntries.length,
       warningCount: pipelineWarnings.length,
+      downgradeCount: downgrades.length,
+      usedAIFallback,
       templateComplianceScore,
     });
 
@@ -730,13 +869,17 @@ export async function generateUiPathPackage(
       usedFallbackStubs: buildResult.usedFallbackStubs,
       referencedMLSkillNames: buildResult.referencedMLSkillNames || [],
       warnings: pipelineWarnings,
+      downgrades,
+      usedAIFallback,
       status: finalStatus,
       templateComplianceScore,
       metaValidationResult,
     };
 
     evictOldestPipelineCacheEntry();
-    pipelineCache.set(cacheKey, { ...result, fingerprint: fp });
+    const finalDegradationKey = (downgrades.length > 0 || usedAIFallback) ? "degraded" : "clean";
+    const finalCacheKey = `${ideaId}:${mode}:${mvMode}:${finalDegradationKey}`;
+    pipelineCache.set(finalCacheKey, { ...result, fingerprint: fp });
     try {
       const mvTokens = { input: mvInputTokens, output: mvOutputTokens };
       const totalXamlLength = finalXamlEntries.reduce((sum, e) => sum + e.content.length, 0);
@@ -780,14 +923,17 @@ export async function generateUiPathPackage(
 }
 
 export function getCachedPipelineResult(ideaId: string, mode?: GenerationMode): PipelineResult | null {
+  let bestMatch: PipelineResult | null = null;
   for (const [key, value] of pipelineCache.entries()) {
-    if (mode) {
-      if (key.startsWith(`${ideaId}:${mode}:`)) return value;
-    } else {
-      if (key.startsWith(`${ideaId}:`)) return value;
+    const matchesId = mode
+      ? key.startsWith(`${ideaId}:${mode}:`)
+      : key.startsWith(`${ideaId}:`);
+    if (matchesId) {
+      if (key.endsWith(":clean")) return value;
+      if (!bestMatch) bestMatch = value;
     }
   }
-  return null;
+  return bestMatch;
 }
 
 export async function generateDhg(

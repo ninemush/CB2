@@ -1068,6 +1068,7 @@ ${content}`
       };
 
       let completedTemplateComplianceScore: number | undefined;
+      let completedPipelineStatus: string = "READY";
       try {
         const requestedMode = (req.body.generationMode === "baseline_openable") ? "baseline_openable" as const : undefined;
         let userMetaValidationMode: MetaValidationMode = "Auto";
@@ -1089,6 +1090,7 @@ ${content}`
         });
         console.log(`[UiPath] Pre-built .nupkg for "${idea.title}" — ${pipelineResult.packageBuffer.length} bytes, ${pipelineResult.gaps.length} gaps`);
         completedTemplateComplianceScore = pipelineResult.templateComplianceScore;
+        completedPipelineStatus = pipelineResult.status;
 
         if (pipelineResult.status === "FAILED") {
           sendProgress("Package build failed");
@@ -1102,7 +1104,7 @@ ${content}`
           return res.end();
         }
 
-        if (pipelineResult.warnings.length > 0) {
+        if (pipelineResult.warnings.length > 0 || pipelineResult.status === "FALLBACK_READY") {
           await chatStorage.createMessage(ideaId, "assistant", `[UIPATH:${JSON.stringify(packageJson)}]`);
           sendProgress(`Pre-build complete with ${pipelineResult.warnings.length} warning(s)`);
           res.write(`data: ${JSON.stringify({
@@ -1145,7 +1147,7 @@ ${content}`
       }
 
       await chatStorage.createMessage(ideaId, "assistant", `[UIPATH:${JSON.stringify(packageJson)}]`);
-      res.write(`data: ${JSON.stringify({ done: true, package: packageJson, status: "READY", templateComplianceScore: completedTemplateComplianceScore })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, package: packageJson, status: completedPipelineStatus, templateComplianceScore: completedTemplateComplianceScore })}\n\n`);
       return res.end();
     } catch (error) {
       console.error("Error generating UiPath package:", error);

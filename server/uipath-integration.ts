@@ -43,7 +43,7 @@ import { escapeXml } from "./lib/xml-utils";
 import { computePackageFingerprint } from "./lib/utils";
 import { scanXamlForRequiredPackages, classifyAutomationPattern, shouldUseReFramework, type AutomationPattern, ACTIVITY_NAME_ALIAS_MAP, normalizeActivityName } from "./uipath-activity-registry";
 import { filterBlockedActivitiesFromXaml } from "./uipath-activity-policy";
-import { catalogService } from "./catalog/catalog-service";
+import { catalogService, type ProcessType } from "./catalog/catalog-service";
 
 function clrToXamlType(clrType: string): string {
   const map: Record<string, string> = {
@@ -138,6 +138,7 @@ type CachedBuild = {
   dependencyMap: Record<string, string>;
   archiveManifest: string[];
   referencedMLSkillNames?: string[];
+  usedAIFallback?: boolean;
 };
 
 const packageBuildCache = new Map<string, CachedBuild>();
@@ -473,6 +474,7 @@ export type BuildResult = {
   generationMode: GenerationMode;
   referencedMLSkillNames: string[];
   dependencyWarnings?: Array<{ code: string; message: string; stage: string; recoverable: boolean }>;
+  usedAIFallback: boolean;
 };
 
 export function removeDuplicateAttributes(content: string): { content: string; changed: boolean; fixedTags: string[] } {
@@ -497,6 +499,159 @@ export function removeDuplicateAttributes(content: string): { content: string; c
   return { content: result, changed: fixedTags.length > 0, fixedTags };
 }
 
+function buildDeterministicScaffold(
+  processNodes: any[],
+  projectName: string,
+  sddContent?: string,
+): { treeEnrichment: TreeEnrichmentResult; usedAIFallback: boolean } {
+  const actionNodes = processNodes.filter((n: any) => n.nodeType !== "start" && n.nodeType !== "end");
+  const children: TreeWorkflowSpec["rootSequence"]["children"] = [];
+
+  children.push({
+    kind: "activity" as const,
+    template: "LogMessage",
+    displayName: "Log Process Start",
+    properties: { Level: "Info", Message: `"Starting ${projectName} process"` },
+    outputVar: null,
+    outputType: null,
+    errorHandling: "none" as const,
+  });
+
+  for (const node of actionNodes) {
+    const stepDesc = `TODO: Implement ${node.name}${node.description ? " - " + node.description : ""}${node.system ? " (System: " + node.system + ")" : ""}`;
+    children.push({
+      kind: "activity" as const,
+      template: "Comment",
+      displayName: `Step: ${node.name}`,
+      properties: { Text: stepDesc },
+      outputVar: null,
+      outputType: null,
+      errorHandling: "none" as const,
+    });
+    children.push({
+      kind: "activity" as const,
+      template: "LogMessage",
+      displayName: `Log: ${node.name}`,
+      properties: { Level: "Info", Message: `"Executing step: ${node.name}"` },
+      outputVar: null,
+      outputType: null,
+      errorHandling: "none" as const,
+    });
+  }
+
+  children.push({
+    kind: "activity" as const,
+    template: "LogMessage",
+    displayName: "Log Process Complete",
+    properties: { Level: "Info", Message: `"${projectName} process completed"` },
+    outputVar: null,
+    outputType: null,
+    errorHandling: "none" as const,
+  });
+
+  const dhgNotes = ["This workflow was generated as a deterministic scaffold because AI enrichment was unavailable"];
+  if (sddContent) {
+    dhgNotes.push("SDD context was available but could not be processed by AI — review SDD for implementation details");
+  }
+
+  const spec: TreeWorkflowSpec = {
+    name: projectName,
+    description: `Deterministic scaffold for ${projectName}`,
+    variables: [],
+    arguments: [],
+    rootSequence: {
+      kind: "sequence" as const,
+      displayName: `${projectName} - Main Sequence`,
+      children,
+    },
+    useReFramework: false,
+    dhgNotes,
+    decomposition: [],
+  };
+
+  console.log(`[UiPath] Built deterministic scaffold for "${projectName}": ${actionNodes.length} action nodes → ${children.length} activities`);
+
+  return {
+    treeEnrichment: { status: "success", workflowSpec: spec, processType: "general" as ProcessType },
+    usedAIFallback: true,
+  };
+}
+
+function filterWorkflowSpecCatalogProperties(
+  spec: TreeWorkflowSpec,
+  warnings: Array<{ code: string; message: string; stage: string; recoverable: boolean }>,
+): TreeWorkflowSpec {
+  if (!catalogService.isLoaded()) return spec;
+
+  let strippedCount = 0;
+
+  function filterNode(node: any): any {
+    if (node.kind === "activity") {
+      const schema = catalogService.getActivitySchema(node.template);
+      if (!schema) return node;
+
+      const knownProps = new Set(schema.activity.properties.map((p: any) => p.name));
+      const filteredProps: Record<string, any> = {};
+      const stripped: string[] = [];
+
+      for (const [key, value] of Object.entries(node.properties || {})) {
+        if (knownProps.has(key)) {
+          filteredProps[key] = value;
+        } else {
+          stripped.push(key);
+        }
+      }
+
+      if (stripped.length > 0) {
+        strippedCount += stripped.length;
+        warnings.push({
+          code: "CATALOG_PROPERTY_STRIPPED",
+          message: `Stripped ${stripped.length} non-catalog property(ies) from ${node.template} "${node.displayName}": ${stripped.join(", ")}`,
+          stage: "catalog-property-filter",
+          recoverable: true,
+        });
+        console.log(`[Pipeline CatalogFilter] Stripped properties from ${node.template} "${node.displayName}": ${stripped.join(", ")}`);
+      }
+
+      return { ...node, properties: filteredProps };
+    }
+
+    if (node.kind === "sequence" && node.children) {
+      return { ...node, children: node.children.map(filterNode) };
+    }
+    if (node.kind === "tryCatch") {
+      return {
+        ...node,
+        tryChildren: (node.tryChildren || []).map(filterNode),
+        catchChildren: (node.catchChildren || []).map(filterNode),
+        finallyChildren: (node.finallyChildren || []).map(filterNode),
+      };
+    }
+    if (node.kind === "if") {
+      return {
+        ...node,
+        thenChildren: (node.thenChildren || []).map(filterNode),
+        elseChildren: (node.elseChildren || []).map(filterNode),
+      };
+    }
+    if (node.kind === "while" || node.kind === "forEach" || node.kind === "retryScope") {
+      return { ...node, bodyChildren: (node.bodyChildren || []).map(filterNode) };
+    }
+    return node;
+  }
+
+  const filteredRoot = {
+    ...spec.rootSequence,
+    children: spec.rootSequence.children.map(filterNode),
+  };
+
+  if (strippedCount > 0) {
+    console.log(`[Pipeline CatalogFilter] Total stripped: ${strippedCount} non-catalog properties`);
+  }
+
+  return { ...spec, rootSequence: filteredRoot };
+}
+
 export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1.0.0", ideaId?: string, generationMode: GenerationMode = "full_implementation", onProgress?: (event: { type: "started" | "heartbeat" | "completed" | "warning" | "failed"; stage: string; message: string }) => void): Promise<BuildResult> {
   const projectName = (pkg.projectName || "Automation").replace(/\s+/g, "_");
   const sddContent = pkg.internal?.sddContent || "";
@@ -515,7 +670,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         packageBuildCache.delete(buildCacheKey);
       } else {
         console.log(`[UiPath Cache] HIT for ${buildCacheKey} — skipping AI enrichment and XAML generation`);
-        return { buffer: cached.buffer, gaps: cached.gaps, usedPackages: cached.usedPackages, cacheHit: true, qualityGateResult: cached.qualityGateResult, xamlEntries: cached.xamlEntries, dependencyMap: cached.dependencyMap, archiveManifest: cached.archiveManifest, usedFallbackStubs: false, generationMode, referencedMLSkillNames: cached.referencedMLSkillNames || [] };
+        return { buffer: cached.buffer, gaps: cached.gaps, usedPackages: cached.usedPackages, cacheHit: true, qualityGateResult: cached.qualityGateResult, xamlEntries: cached.xamlEntries, dependencyMap: cached.dependencyMap, archiveManifest: cached.archiveManifest, usedFallbackStubs: false, generationMode, referencedMLSkillNames: cached.referencedMLSkillNames || [], usedAIFallback: cached.usedAIFallback || false };
       }
     }
     if (cached && cached.fingerprint === fingerprint && cached.version !== version) {
@@ -535,6 +690,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
   let enrichment: EnrichmentResult | null = null;
   let treeEnrichment: TreeEnrichmentResult | null = null;
+  let _usedAIFallback = false;
   if (generationMode === "baseline_openable") {
     console.log(`[UiPath] baseline_openable mode — skipping AI enrichment, using flat scaffold`);
   } else {
@@ -568,17 +724,13 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
             console.log(`[UiPath] Tree enrichment successful: "${treeResult.workflowSpec.name}", ${treeResult.workflowSpec.variables.length} variables`);
           } else if (treeResult && treeResult.status === "validation_failed") {
             const errorSummary = treeResult.validationErrors.join("; ");
-            console.log(`[UiPath] Tree enrichment validation failed after retry: ${errorSummary}`);
-            throw new Error(`WorkflowSpec validation failed after retry: ${errorSummary}`);
+            console.log(`[UiPath] Tree enrichment validation failed after retry: ${errorSummary} — falling through to legacy/scaffold`);
           }
         } finally {
           if (treeHeartbeat) clearInterval(treeHeartbeat);
         }
       } catch (err: any) {
-        if (err.message?.startsWith("WorkflowSpec validation failed")) {
-          throw err;
-        }
-        console.log(`[UiPath] Tree enrichment error: ${err.message} — falling back to legacy`);
+        console.log(`[UiPath] Tree enrichment error: ${err.message} — falling back to legacy/scaffold`);
       }
 
       if (!treeEnrichment) {
@@ -607,6 +759,18 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           console.log(`[UiPath] AI enrichment failed (falling back to keyword classification): ${err.message}`);
         }
       }
+
+      if (!treeEnrichment && !enrichment && processNodes.length > 0) {
+        console.log(`[UiPath] All AI enrichment paths failed — generating deterministic scaffold from ${processNodes.length} process nodes`);
+        const scaffold = buildDeterministicScaffold(processNodes, projectName, sddContent || undefined);
+        treeEnrichment = scaffold.treeEnrichment;
+        _usedAIFallback = scaffold.usedAIFallback;
+      }
+    } else if (processNodes.length > 0 && !sddContent) {
+      console.log(`[UiPath] No SDD content available — generating map-only deterministic scaffold from ${processNodes.length} process nodes`);
+      const scaffold = buildDeterministicScaffold(processNodes, projectName, undefined);
+      treeEnrichment = scaffold.treeEnrichment;
+      _usedAIFallback = scaffold.usedAIFallback;
     }
   }
 
@@ -789,7 +953,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     const generatedWorkflowNames = new Set<string>();
 
     if (treeEnrichment && treeEnrichment.status === "success") {
-      const spec = treeEnrichment.workflowSpec;
+      let spec = treeEnrichment.workflowSpec;
+      spec = filterWorkflowSpecCatalogProperties(spec, dependencyWarnings);
       const specJson = JSON.stringify(spec, null, 2);
       const truncatedSpec = specJson.length > 5000 ? specJson.slice(0, 5000) + "\n... [truncated]" : specJson;
       console.log(`[UiPath] WorkflowSpec tree (validated) before assembly:\n${truncatedSpec}`);
@@ -1865,10 +2030,10 @@ ${depEntries}
 
   if (buildCacheKey && fingerprint) {
     evictOldestCacheEntry();
-    packageBuildCache.set(buildCacheKey, { fingerprint, version, buffer, gaps: allGaps, usedPackages: allUsedPkgs, enrichment, qualityGatePassed: qualityGateResult.passed, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, referencedMLSkillNames: [...genCtx.referencedMLSkillNames] });
+    packageBuildCache.set(buildCacheKey, { fingerprint, version, buffer, gaps: allGaps, usedPackages: allUsedPkgs, enrichment, qualityGatePassed: qualityGateResult.passed, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, referencedMLSkillNames: [...genCtx.referencedMLSkillNames], usedAIFallback: _usedAIFallback });
     console.log(`[UiPath Cache] Stored build for ${buildCacheKey} (${buffer.length} bytes, v${version})`);
   }
-  return { buffer, gaps: allGaps, usedPackages: allUsedPkgs, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, usedFallbackStubs: usedFallback, generationMode, referencedMLSkillNames: [...genCtx.referencedMLSkillNames], dependencyWarnings: dependencyWarnings.length > 0 ? dependencyWarnings : undefined };
+  return { buffer, gaps: allGaps, usedPackages: allUsedPkgs, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, usedFallbackStubs: usedFallback, generationMode, referencedMLSkillNames: [...genCtx.referencedMLSkillNames], dependencyWarnings: dependencyWarnings.length > 0 ? dependencyWarnings : undefined, usedAIFallback: _usedAIFallback };
 }
 
 async function uploadNupkgBuffer(

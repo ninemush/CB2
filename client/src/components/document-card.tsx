@@ -459,7 +459,7 @@ interface UiPathPackageCardProps {
   ideaId: string;
   onDeployProgress?: (step: string) => void;
   onDeployComplete?: () => void;
-  status?: "BUILDING" | "READY" | "READY_WITH_WARNINGS" | "FAILED";
+  status?: "BUILDING" | "READY" | "READY_WITH_WARNINGS" | "FALLBACK_READY" | "FAILED";
   warnings?: Array<{ code: string; message: string; stage: string; recoverable: boolean }>;
   onRetry?: () => void;
   templateComplianceScore?: number;
@@ -475,7 +475,8 @@ export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDep
   const [warningsExpanded, setWarningsExpanded] = useState(false);
   const { toast } = useToast();
   const isFailed = status === "FAILED";
-  const hasWarnings = status === "READY_WITH_WARNINGS" && warnings && warnings.length > 0;
+  const isFallbackReady = status === "FALLBACK_READY";
+  const hasWarnings = (status === "READY_WITH_WARNINGS" || status === "FALLBACK_READY") && warnings && warnings.length > 0;
 
   const { data: orchestratorStatus } = useQuery<{ configured: boolean }>({
     queryKey: ["/api/settings/uipath/status"],
@@ -633,7 +634,12 @@ export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDep
             <XCircle className="h-3 w-3" /> Failed
           </span>
         )}
-        {hasWarnings && (
+        {isFallbackReady && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 text-[10px] font-medium" data-testid="badge-status-fallback-ready">
+            <AlertTriangle className="h-3 w-3" /> Reduced Scope
+          </span>
+        )}
+        {hasWarnings && !isFallbackReady && (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-500 text-[10px] font-medium" data-testid="badge-status-warnings">
             <AlertTriangle className="h-3 w-3" /> {warnings.length} warning{warnings.length !== 1 ? "s" : ""}
           </span>
@@ -701,6 +707,17 @@ export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDep
           </div>
         )}
       </div>
+
+      {isFallbackReady && (
+        <div className="px-4 py-2 border-t border-amber-500/30 bg-amber-500/10" data-testid="banner-fallback-ready">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+              Package generated with reduced scope — see Developer Handoff Guide for details
+            </p>
+          </div>
+        </div>
+      )}
 
       {hasWarnings && (
         <div className="px-4 py-2 border-t border-amber-500/20 bg-amber-500/5">
