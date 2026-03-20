@@ -704,8 +704,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     setUipathBuildStatus(undefined);
     setUipathBuildWarnings(undefined);
     setUipathTemplateComplianceScore(undefined);
-    pendingUiPathGenRef.current = false;
-    setPendingUiPathGen(false);
+    setUipathGenRequestId(0);
+    uipathGenRequestIdRef.current = 0;
+    uipathGenConsumedIdRef.current = 0;
     uipathGenInFlightRef.current = false;
     uipathTriggeredRef.current = false;
   }, [idea.id]);
@@ -787,8 +788,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const pddTriggeredRef = useRef(false);
   const sddTriggeredRef = useRef(false);
   const uipathTriggeredRef = useRef(false);
-  const [pendingUiPathGen, setPendingUiPathGen] = useState(false);
-  const pendingUiPathGenRef = useRef(false);
+  const [uipathGenRequestId, setUipathGenRequestId] = useState(0);
+  const uipathGenRequestIdRef = useRef(0);
+  const uipathGenConsumedIdRef = useRef(0);
   const uipathGenInFlightRef = useRef(false);
   const generateDocRef = useRef<((type: "PDD" | "SDD") => void) | null>(null);
   const generateUiPathRef = useRef<((force?: boolean) => void) | null>(null);
@@ -1038,9 +1040,10 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           if (uipathGenInFlightRef.current) {
             console.log("[UiPath Trigger] triggerUiPathGen received but generation already in flight — ignoring");
           } else {
-            console.log("[UiPath Trigger] triggerUiPathGen received from server");
-            pendingUiPathGenRef.current = true;
-            setPendingUiPathGen(true);
+            const nextId = uipathGenRequestIdRef.current + 1;
+            uipathGenRequestIdRef.current = nextId;
+            console.log("[UiPath Trigger] triggerUiPathGen received from server — request ID created: %d", nextId);
+            setUipathGenRequestId(nextId);
           }
         }
         if (data.intentClassified) {
@@ -1054,8 +1057,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             prev ? { ...prev, isStreaming: false } : prev
           );
           setDocProgressSection("");
-          if (pendingUiPathGenRef.current) {
-            console.log("[UiPath Trigger] done received — preserving intent/status for pending UiPath gen");
+          if (uipathGenRequestIdRef.current > uipathGenConsumedIdRef.current) {
+            console.log("[UiPath Trigger] done received — preserving intent/status for pending UiPath gen (requestId=%d, consumedId=%d)", uipathGenRequestIdRef.current, uipathGenConsumedIdRef.current);
             setClassifiedIntent("UIPATH_GEN");
             setLiveStatus("Generating UiPath package...");
           } else {
@@ -1285,8 +1288,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
         stopDocStreaming({ force: true });
       }
 
-      if (pendingUiPathGenRef.current) {
-        console.log("[UiPath Trigger] finally block — pending trigger detected, will fire via effect");
+      if (uipathGenRequestIdRef.current > uipathGenConsumedIdRef.current) {
+        console.log("[UiPath Trigger] finally block — pending trigger detected (requestId=%d, consumedId=%d), will fire via effect", uipathGenRequestIdRef.current, uipathGenConsumedIdRef.current);
       }
 
       const isToBeRun = toBeGeneratingRef.current;
@@ -1521,10 +1524,10 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       uipathTriggeredRef.current = false;
       return;
     }
-    console.log("[UiPath Trigger] executing generation (force=%s)", force);
+    console.log("[UiPath Trigger] executing generation (force=%s) — fetch started", force);
     uipathGenInFlightRef.current = true;
-    pendingUiPathGenRef.current = false;
-    setPendingUiPathGen(false);
+    uipathGenConsumedIdRef.current = uipathGenRequestIdRef.current;
+    console.log("[UiPath Trigger] trigger consumed (consumedId=%d)", uipathGenConsumedIdRef.current);
     setIsGeneratingDoc(true);
     setGeneratingDocType("UiPath");
     setDocProgressSection("");
@@ -1710,13 +1713,15 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   generateUiPathRef.current = generateUiPath;
 
   useEffect(() => {
-    if (pendingUiPathGen && !isStreaming && !isGeneratingDoc && !uipathGenInFlightRef.current) {
-      console.log("[UiPath Trigger] effect firing — pending=%s, isStreaming=%s, isGeneratingDoc=%s", pendingUiPathGen, isStreaming, isGeneratingDoc);
+    const hasPending = uipathGenRequestId > uipathGenConsumedIdRef.current;
+    if (!hasPending) return;
+    if (!isStreaming && !isGeneratingDoc && !uipathGenInFlightRef.current) {
+      console.log("[UiPath Trigger] effect re-evaluated after blocking clears — dispatching generation (requestId=%d, consumedId=%d)", uipathGenRequestId, uipathGenConsumedIdRef.current);
       generateUiPathRef.current?.(true);
-    } else if (pendingUiPathGen) {
-      console.log("[UiPath Trigger] effect deferred — isStreaming=%s, isGeneratingDoc=%s, inFlight=%s", isStreaming, isGeneratingDoc, uipathGenInFlightRef.current);
+    } else {
+      console.log("[UiPath Trigger] effect deferred — isStreaming=%s, isGeneratingDoc=%s, inFlight=%s (requestId=%d)", isStreaming, isGeneratingDoc, uipathGenInFlightRef.current, uipathGenRequestId);
     }
-  }, [pendingUiPathGen, isStreaming, isGeneratingDoc]);
+  }, [uipathGenRequestId, isStreaming, isGeneratingDoc]);
 
   const [approvedDocIds, setApprovedDocIds] = useState<Set<number>>(new Set());
 
