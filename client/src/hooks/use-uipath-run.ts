@@ -19,6 +19,7 @@ export interface UiPathRunState {
   source: "chat" | "retry" | "approval" | "auto";
   warnings?: UiPathRunWarning[];
   complianceScore?: number;
+  completenessLevel?: "structural" | "functional" | "incomplete";
   outcomeSummary?: UiPathOutcomeSummary;
   createdAt: number;
 }
@@ -38,6 +39,7 @@ interface CompletedRunResult {
   status: UiPathRunStatus;
   warnings?: UiPathRunWarning[];
   complianceScore?: number;
+  completenessLevel?: "structural" | "functional" | "incomplete";
   outcomeSummary?: UiPathOutcomeSummary;
 }
 
@@ -111,6 +113,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
             status: run.status,
             warnings: run.warnings,
             complianceScore: run.complianceScore,
+            completenessLevel: run.completenessLevel,
             outcomeSummary: run.outcomeSummary,
           }]]));
         }
@@ -252,6 +255,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
             status: cur?.status || finalStatus,
             warnings: data.warnings || cur?.warnings,
             complianceScore: data.templateComplianceScore ?? cur?.complianceScore,
+            completenessLevel: data.completenessLevel,
             outcomeSummary: data.outcomeSummary || cur?.outcomeSummary,
           });
           return next;
@@ -319,7 +323,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
           setCompletedRuns(prev => {
             const next = new Map(prev);
             const cur = currentRunRef.current;
-            next.set(runId, { runId, status: cur?.status || "READY", warnings: cur?.warnings, complianceScore: cur?.complianceScore, outcomeSummary: cur?.outcomeSummary });
+            next.set(runId, { runId, status: cur?.status || "READY", warnings: cur?.warnings, complianceScore: cur?.complianceScore, completenessLevel: cur?.completenessLevel, outcomeSummary: cur?.outcomeSummary });
             return next;
           });
         }

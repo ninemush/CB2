@@ -1167,6 +1167,10 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     for (const rawPkgName of scannedPackages) {
       const pkgName = normalizePackageName(rawPkgName);
       if (deps[pkgName]) continue;
+      if (isFrameworkAssembly(pkgName)) {
+        console.log(`[Dependency CrossCheck] Rejected framework assembly from XAML scan: ${pkgName}`);
+        continue;
+      }
       let resolved = false;
       if (catalogService.isLoaded()) {
         const catalogVersion = catalogService.getConfirmedVersion(pkgName);
@@ -1854,6 +1858,10 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       for (const rawPkgName of depsAfterScan) {
         const pkgName = normalizePackageName(rawPkgName);
         if (deps[pkgName]) continue;
+        if (isFrameworkAssembly(pkgName)) {
+          console.log(`[Dependency CrossCheck] Rejected framework assembly from post-meta-validation scan: ${pkgName}`);
+          continue;
+        }
         if (catalogService.isLoaded()) {
           const catalogVersion = catalogService.getConfirmedVersion(pkgName);
           if (catalogVersion) {
@@ -2257,6 +2265,26 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     for (const [path, content] of deferredWrites.entries()) {
       archive.append(content, { name: path });
     }
+
+    sanitizeDeps(deps);
+    for (const [key, val] of Object.entries(deps)) {
+      if (isFrameworkAssembly(key)) {
+        console.log(`[Dependency FinalGuard] Rejected late-surviving framework assembly before emit: ${key}`);
+        delete deps[key];
+      } else if (!isValidNuGetVersion(val)) {
+        console.log(`[Dependency FinalGuard] Rejected invalid version before emit: ${key}=${val}`);
+        delete deps[key];
+      } else {
+        const knownByCatalog = catalogService.isLoaded() && catalogService.getConfirmedVersion(key) !== null;
+        const knownByMetadata = _metadataService.getPreferredVersion(key) !== null;
+        const knownByBaseline = getBaselineFallbackVersion(key, tf as "Windows" | "Portable") !== null;
+        if (!knownByCatalog && !knownByMetadata && !knownByBaseline) {
+          console.log(`[Dependency FinalGuard] Rejected unrecognized package before emit: ${key}=${val}`);
+          delete deps[key];
+        }
+      }
+    }
+    projectJson.dependencies = { ...deps };
 
     const finalProjectJsonStr = JSON.stringify(projectJson, null, 2);
     archive.append(finalProjectJsonStr, { name: `${libPath}/project.json` });

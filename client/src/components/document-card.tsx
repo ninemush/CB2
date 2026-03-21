@@ -473,6 +473,7 @@ interface UiPathPackageCardProps {
   onRetry?: () => void;
   templateComplianceScore?: number;
   outcomeSummary?: OutcomeSummary;
+  completenessLevel?: "structural" | "functional" | "incomplete";
 }
 
 const MAX_DESC_LENGTH = 300;
@@ -548,7 +549,7 @@ function WorkflowSection({ workflows, expanded, onToggle }: { workflows: any[]; 
   );
 }
 
-export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDeployComplete, status, warnings, onRetry, templateComplianceScore, outcomeSummary }: UiPathPackageCardProps) {
+export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDeployComplete, status, warnings, onRetry, templateComplianceScore, outcomeSummary, completenessLevel }: UiPathPackageCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
   const [descClamped, setDescClamped] = useState(false);
@@ -747,6 +748,20 @@ export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDep
             data-testid="badge-template-compliance"
           >
             {Math.round(templateComplianceScore * 100)}% compliant
+          </span>
+        )}
+        {completenessLevel && (
+          <span
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+              completenessLevel === "functional"
+                ? "bg-emerald-500/15 text-emerald-500"
+                : completenessLevel === "structural"
+                  ? "bg-amber-500/15 text-amber-500"
+                  : "bg-red-500/15 text-red-500"
+            }`}
+            data-testid="badge-completeness-level"
+          >
+            {completenessLevel === "functional" ? "Functional" : completenessLevel === "structural" ? "Structural" : "Incomplete"}
           </span>
         )}
         {outcomeSummary && (outcomeSummary.stubbedActivities > 0 || outcomeSummary.stubbedSequences > 0 || outcomeSummary.stubbedWorkflows > 0 || outcomeSummary.autoRepairs > 0) && (

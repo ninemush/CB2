@@ -1856,6 +1856,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             const cardStatus = completedRun?.status as "BUILDING" | "READY" | "READY_WITH_WARNINGS" | "FALLBACK_READY" | "FAILED" | undefined;
             const cardWarnings = completedRun?.warnings;
             const cardComplianceScore = completedRun?.complianceScore;
+            const cardCompletenessLevel = completedRun?.completenessLevel;
             const cardOutcomeSummary = completedRun?.outcomeSummary;
             const isLatestUiPathMsg = displayMessages.filter(m => m.uipathData).pop()?.id === msg.id;
             return (
@@ -1870,6 +1871,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                     status={cardStatus}
                     warnings={cardWarnings}
                     templateComplianceScore={cardComplianceScore}
+                    completenessLevel={cardCompletenessLevel}
                     outcomeSummary={cardOutcomeSummary}
                   />
                 </div>

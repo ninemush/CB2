@@ -158,16 +158,39 @@ export function parseInvokeArgs(rawValue: string, direction: "In" | "Out" | "InO
 
 function collapseDoubledArgumentsXmlParser(xml: string): string {
   const argTags = ["InArgument", "OutArgument"];
+  const MAX_PASSES = 10;
   for (const tag of argTags) {
     const outerOpenPattern = new RegExp(
       `<${tag}(\\s[^>]*)?>\\s*<${tag}(\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>\\s*<\\/${tag}>`,
       "g"
     );
-    xml = xml.replace(outerOpenPattern, (_match, outerAttrs, innerAttrs, content) => {
-      const attrs = ((innerAttrs || outerAttrs) || "").trim();
-      const trimmedContent = content.trim();
-      return `<${tag}${attrs ? " " + attrs : ""}>${trimmedContent}</${tag}>`;
-    });
+    let pass = 0;
+    while (pass < MAX_PASSES) {
+      const before = xml;
+      xml = xml.replace(outerOpenPattern, (_match, outerAttrs, innerAttrs, content) => {
+        const attrs = ((innerAttrs || outerAttrs) || "").trim();
+        const trimmedContent = content.trim();
+        return `<${tag}${attrs ? " " + attrs : ""}>${trimmedContent}</${tag}>`;
+      });
+      if (xml === before) break;
+      pass++;
+      if (pass > 1) {
+        console.log(`[XAML Compliance] collapseDoubledArguments: pass ${pass} for <${tag}> — still collapsing nested wrappers`);
+      }
+    }
+  }
+  for (const tag of argTags) {
+    const nestedPattern = new RegExp(`<${tag}[^>]*>[\\s\\S]*?<${tag}[\\s\\S]*?<\\/${tag}>[\\s\\S]*?<\\/${tag}>`);
+    if (nestedPattern.test(xml)) {
+      console.warn(`[XAML Compliance] Post-collapse assertion: nested <${tag}> still detected — attempting brute-force strip of inner wrappers`);
+      const innerStripPattern = new RegExp(`(<${tag}[^>]*>)\\s*<${tag}[^>]*>`, "g");
+      const closingStripPattern = new RegExp(`<\\/${tag}>\\s*(<\\/${tag}>)`, "g");
+      xml = xml.replace(innerStripPattern, "$1");
+      xml = xml.replace(closingStripPattern, "$1");
+      if (nestedPattern.test(xml)) {
+        console.error(`[XAML Compliance] Post-collapse assertion FAILED: nested <${tag}> persists after brute-force strip — manual review required`);
+      }
+    }
   }
   return xml;
 }

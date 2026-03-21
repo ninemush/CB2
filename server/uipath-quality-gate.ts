@@ -38,10 +38,13 @@ export type PositiveEvidence = {
   detail: string;
 };
 
+export type CompletenessLevel = "structural" | "functional" | "incomplete";
+
 export type QualityGateResult = {
   passed: boolean;
   violations: QualityGateViolation[];
   positiveEvidence: PositiveEvidence[];
+  completenessLevel: CompletenessLevel;
   summary: {
     blockedPatterns: number;
     completenessErrors: number;
@@ -436,6 +439,113 @@ function checkCompleteness(input: QualityGateInput): QualityGateViolation[] {
           detail: `Contains ${matches.length} placeholder value(s) matching "${pattern.source}"`,
         });
       }
+    }
+  }
+
+  for (const entry of input.xamlEntries) {
+    const shortName = entry.name.split("/").pop() || entry.name;
+    const content = entry.content;
+
+    const httpEndpointPattern = /<ui:HttpClient\s[^>]*(?:Endpoint|Url)\s*=\s*""/g;
+    const openBrowserPattern = /<ui:OpenBrowser\s[^>]*(?:Url|InputUrl)\s*=\s*""/g;
+    const httpPropPattern = /<ui:HttpClient\.(?:Endpoint|Url)>\s*<InArgument[^>]*>\s*<\/InArgument>\s*<\/ui:HttpClient\.(?:Endpoint|Url)>/g;
+    const openBrowserPropPattern = /<ui:OpenBrowser\.(?:Url|InputUrl)>\s*<InArgument[^>]*>\s*<\/InArgument>\s*<\/ui:OpenBrowser\.(?:Url|InputUrl)>/g;
+
+    let emMatch;
+    while ((emMatch = httpEndpointPattern.exec(content)) !== null) {
+      const lineNum = content.substring(0, emMatch.index).split("\n").length;
+      violations.push({
+        category: "completeness",
+        severity: "warning",
+        check: "empty-http-endpoint",
+        file: shortName,
+        detail: `Line ${lineNum}: ui:HttpClient has an empty Endpoint/Url — HTTP request will fail at runtime`,
+      });
+    }
+    while ((emMatch = openBrowserPattern.exec(content)) !== null) {
+      const lineNum = content.substring(0, emMatch.index).split("\n").length;
+      violations.push({
+        category: "completeness",
+        severity: "warning",
+        check: "empty-http-endpoint",
+        file: shortName,
+        detail: `Line ${lineNum}: ui:OpenBrowser has an empty Url — browser will not navigate`,
+      });
+    }
+    while ((emMatch = httpPropPattern.exec(content)) !== null) {
+      const lineNum = content.substring(0, emMatch.index).split("\n").length;
+      violations.push({
+        category: "completeness",
+        severity: "warning",
+        check: "empty-http-endpoint",
+        file: shortName,
+        detail: `Line ${lineNum}: ui:HttpClient has an empty Endpoint/Url property element — HTTP request will fail at runtime`,
+      });
+    }
+    while ((emMatch = openBrowserPropPattern.exec(content)) !== null) {
+      const lineNum = content.substring(0, emMatch.index).split("\n").length;
+      violations.push({
+        category: "completeness",
+        severity: "warning",
+        check: "empty-http-endpoint",
+        file: shortName,
+        detail: `Line ${lineNum}: ui:OpenBrowser has an empty Url property element — browser will not navigate`,
+      });
+    }
+  }
+
+  for (const entry of input.xamlEntries) {
+    const shortName = entry.name.split("/").pop() || entry.name;
+    const content = entry.content;
+    const flaggedVars = new Set<string>();
+
+    const checkStatusVarAssignment = (expr: string, contextIndex: number, source: string) => {
+      const statusVarPattern = /\b(int_\w*StatusCode\w*|\w*StatusCode\w*)\b/g;
+      let varMatch;
+      while ((varMatch = statusVarPattern.exec(expr)) !== null) {
+        const varName = varMatch[1];
+        if (!varName.startsWith("int_") && !varName.includes("StatusCode")) continue;
+        if (flaggedVars.has(varName)) continue;
+
+        const beforeContext = content.substring(0, contextIndex);
+        const assignPattern = new RegExp(
+          `<Assign\\.To>\\s*<OutArgument[^>]*>\\s*\\[${varName}\\]\\s*</OutArgument>|` +
+          `<ui:HttpClient[^>]*ResponseStatusCode[^>]*\\[${varName}\\]|` +
+          `To="\\[${varName}\\]"`,
+          "s"
+        );
+        if (!assignPattern.test(beforeContext)) {
+          const lineNum = content.substring(0, contextIndex).split("\n").length;
+          violations.push({
+            category: "completeness",
+            severity: "warning",
+            check: "unassigned-decision-variable",
+            file: shortName,
+            detail: `Line ${lineNum}: variable "${varName}" is used in ${source} condition but is never assigned earlier in this workflow — decision gate may always take the same branch`,
+          });
+          flaggedVars.add(varName);
+        }
+      }
+    };
+
+    const conditionPattern = /Condition="\[([^\]]+)\]"/g;
+    let condMatch;
+    while ((condMatch = conditionPattern.exec(content)) !== null) {
+      checkStatusVarAssignment(condMatch[1], condMatch.index, "If");
+    }
+
+    const switchExprPattern = /Expression="\[([^\]]+)\]"/g;
+    let switchMatch;
+    while ((switchMatch = switchExprPattern.exec(content)) !== null) {
+      const contextBefore = content.substring(Math.max(0, switchMatch.index - 200), switchMatch.index);
+      if (contextBefore.includes("<Switch") || contextBefore.includes("<Switch.")) {
+        checkStatusVarAssignment(switchMatch[1], switchMatch.index, "Switch");
+      }
+    }
+
+    const switchTypeArgPattern = /<Switch\s[^>]*x:TypeArguments="x:Int32"[^>]*>\s*<Switch\.Expression>\s*<InArgument[^>]*>\s*\[([^\]]+)\]/g;
+    while ((switchMatch = switchTypeArgPattern.exec(content)) !== null) {
+      checkStatusVarAssignment(switchMatch[1], switchMatch.index, "Switch");
     }
   }
 
@@ -1673,6 +1783,20 @@ function collectPositiveEvidence(input: QualityGateInput): PositiveEvidence[] {
   return evidence;
 }
 
+function computeCompletenessLevel(violations: QualityGateViolation[]): CompletenessLevel {
+  const hasEmptyEndpoint = violations.some(v => v.check === "empty-http-endpoint");
+  const hasUnassignedDecision = violations.some(v => v.check === "unassigned-decision-variable");
+  const hasPlaceholder = violations.some(v => v.check === "placeholder-value");
+
+  if (hasEmptyEndpoint || hasUnassignedDecision) {
+    return "incomplete";
+  }
+  if (hasPlaceholder) {
+    return "structural";
+  }
+  return "functional";
+}
+
 export function runQualityGate(input: QualityGateInput): QualityGateResult {
   const blockedViolations = scanBlockedPatterns(input);
   const completenessViolations = checkCompleteness(input);
@@ -1693,11 +1817,13 @@ export function runQualityGate(input: QualityGateInput): QualityGateResult {
 
   const hasErrors = allViolations.some(v => v.severity === "error");
   const summary = buildSummary(allViolations);
+  const completenessLevel = computeCompletenessLevel(allViolations);
 
   return {
     passed: !hasErrors,
     violations: allViolations,
     positiveEvidence,
+    completenessLevel,
     summary,
   };
 }
@@ -1776,6 +1902,8 @@ const WARNING_CHECKS = new Set([
   "dependency-version",
   "invoke-arg-type-mismatch",
   "duplicate-file",
+  "empty-http-endpoint",
+  "unassigned-decision-variable",
 ]);
 
 export function classifyQualityIssues(result: QualityGateResult): ClassifiedIssue[] {
@@ -1821,6 +1949,13 @@ export function formatQualityGateViolations(result: QualityGateResult): string {
   } else {
     lines.push(`Quality gate passed with ${result.summary.totalWarnings} warning(s)`);
   }
+
+  const levelLabels: Record<CompletenessLevel, string> = {
+    functional: "Functional (all endpoints filled, all decision variables assigned, no dead logic gates)",
+    structural: "Structural (opens in Studio, may have placeholders)",
+    incomplete: "Incomplete (has empty required values or unassigned decision variables)",
+  };
+  lines.push(`Completeness level: ${levelLabels[result.completenessLevel]}`);
 
   if (result.violations.length > 0) {
     const grouped: Record<string, QualityGateViolation[]> = {};

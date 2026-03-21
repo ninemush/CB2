@@ -1919,6 +1919,7 @@ export function registerUiPathRoutes(app: Express): void {
                 status: result.status,
                 warnings: pr?.warnings || [],
                 templateComplianceScore: pr?.templateComplianceScore,
+                completenessLevel: pr?.qualityGateResult?.completenessLevel,
                 outcomeSummary: buildOutcomeSummary,
               });
             },
@@ -1967,6 +1968,7 @@ export function registerUiPathRoutes(app: Express): void {
           source: observerRun.source,
           warnings: observerRun.warnings,
           complianceScore: observerRun.complianceScore,
+          completenessLevel: observerRun.completenessLevel,
           outcomeSummary: observerRun.outcomeSummary,
           createdAt: observerRun.createdAt,
         },
@@ -1985,6 +1987,7 @@ export function registerUiPathRoutes(app: Express): void {
             source: observerRun.source,
             warnings: observerRun.warnings,
             complianceScore: observerRun.complianceScore,
+            completenessLevel: observerRun.completenessLevel,
             outcomeSummary: observerRun.outcomeSummary,
             createdAt: observerRun.createdAt,
           },
@@ -2133,7 +2136,7 @@ export function registerUiPathRoutes(app: Express): void {
       }, replay);
 
       if (isObserverTerminalStatus(observerRun.status) && !replay) {
-        res.write(`data: ${JSON.stringify({ done: true, status: observerRun.status, warnings: observerRun.warnings, templateComplianceScore: observerRun.complianceScore, outcomeSummary: observerRun.outcomeSummary })}\n\n`);
+        res.write(`data: ${JSON.stringify({ done: true, status: observerRun.status, warnings: observerRun.warnings, templateComplianceScore: observerRun.complianceScore, completenessLevel: observerRun.completenessLevel, outcomeSummary: observerRun.outcomeSummary })}\n\n`);
         res.end();
         unsubscribe();
         return;

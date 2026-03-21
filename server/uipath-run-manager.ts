@@ -564,6 +564,7 @@ export interface ObserverRunState {
   phaseProgress?: string;
   warnings?: Array<{ code: string; message: string; stage: string; recoverable: boolean }>;
   complianceScore?: number;
+  completenessLevel?: "structural" | "functional" | "incomplete";
   outcomeSummary?: {
     stubbedActivities: number;
     stubbedSequences: number;
@@ -642,6 +643,7 @@ export function emitObserverDone(runId: string, payload: any): void {
   if (payload.status) entry.state.status = payload.status as ObserverRunStatus;
   if (payload.warnings) entry.state.warnings = payload.warnings;
   if (payload.templateComplianceScore !== undefined) entry.state.complianceScore = payload.templateComplianceScore;
+  if (payload.completenessLevel) entry.state.completenessLevel = payload.completenessLevel;
   if (payload.outcomeSummary) entry.state.outcomeSummary = payload.outcomeSummary;
   entry.state.updatedAt = Date.now();
   emitObserverEvent(runId, { type: "done", data: { done: true, ...payload }, timestamp: Date.now() });
