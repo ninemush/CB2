@@ -13,6 +13,8 @@ import { registerFileUploadRoutes } from "./file-upload";
 import { evaluateTransition } from "./stage-transition";
 import { SUPPORTED_MODELS, CHAT_SUPPORTED_MODELS, setDbModel, getActiveModel, getProviderName, setDbCodeModel, getActiveCodeModel, getCodeProviderName, setDbMetaValidationModel, getActiveMetaValidationModel, getMetaValidationProviderName } from "./lib/llm";
 import { getMetricsSummary, getAllMetrics, type MetaValidationMode } from "./meta-validation";
+import { metadataService } from "./catalog/metadata-service";
+import { refreshAll, refreshGeneration, refreshIntegration, startRefreshScheduler } from "./catalog/metadata-refresher";
 
 declare module "express-session" {
   interface SessionData {
@@ -577,6 +579,50 @@ export async function registerRoutes(
     const metrics = await getAllMetrics();
     return res.json(metrics.slice(-50));
   });
+
+  app.get("/api/admin/metadata/status", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const dbUser = await storage.getUser(req.session.userId);
+    if (!dbUser || (req.session.activeRole || dbUser.role) !== "Admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const status = metadataService.getStatus();
+    return res.json(status);
+  });
+
+  app.post("/api/admin/metadata/refresh", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const dbUser = await storage.getUser(req.session.userId);
+    if (!dbUser || (req.session.activeRole || dbUser.role) !== "Admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const family = req.body?.family as string | undefined;
+    try {
+      if (family === "generation") {
+        const result = await refreshGeneration();
+        const httpStatus = result.success ? 200 : 207;
+        return res.status(httpStatus).json({ results: { generation: result } });
+      } else if (family === "integration") {
+        const result = await refreshIntegration();
+        const httpStatus = result.success ? 200 : 207;
+        return res.status(httpStatus).json({ results: { integration: result } });
+      } else {
+        const results = await refreshAll();
+        const anyFailed = !results.generation.success || !results.integration.success;
+        const httpStatus = anyFailed ? 207 : 200;
+        return res.status(httpStatus).json({ results });
+      }
+    } catch (err: any) {
+      return res.status(500).json({ message: `Refresh failed: ${err.message}` });
+    }
+  });
+
+  const schedulerIntervalMs = parseInt(process.env.METADATA_REFRESH_INTERVAL_MS || "", 10) || 24 * 60 * 60 * 1000;
+  startRefreshScheduler(schedulerIntervalMs);
 
   return httpServer;
 }

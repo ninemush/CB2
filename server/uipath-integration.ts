@@ -2,6 +2,7 @@ import { db } from "./db";
 import { appSettings } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import archiver from "archiver";
+import { metadataService as _mdsStatic } from "./catalog/metadata-service";
 import AdmZip from "adm-zip";
 import { createHash } from "crypto";
 import { PassThrough } from "stream";
@@ -162,7 +163,9 @@ export async function fetchUiPathFolders(): Promise<{ success: boolean; folders?
 
   try {
     const token = await getAccessToken(config);
-    const url = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_/odata/Folders?$orderby=DisplayName&$top=100`;
+    const { metadataService } = await import("./catalog/metadata-service");
+    const orchUrl = metadataService.getServiceUrl("OR", config);
+    const url = `${orchUrl}/odata/Folders?$orderby=DisplayName&$top=100`;
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -199,7 +202,9 @@ export async function getAccessToken(config: UiPathConfig): Promise<string> {
     scope: config.scopes,
   });
 
-  const res = await fetch("https://cloud.uipath.com/identity_/connect/token", {
+  const { metadataService } = await import("./catalog/metadata-service");
+  const tokenUrl = metadataService.getTokenEndpoint();
+  const res = await fetch(tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params.toString(),
@@ -288,7 +293,7 @@ export async function pushToUiPath(pkg: UiPathPackage, ideaId?: string, prebuilt
       console.log(`[UiPath] Could not parse response — using defaults. Raw: ${result.responseText.slice(0, 500)}`);
     }
 
-    const orchUrl = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_`;
+    const orchUrl = orchBaseUrl(config);
     const folderInfo = config.folderName ? ` into folder "${config.folderName}"` : " to the tenant feed";
 
     const locationSteps = config.folderName
@@ -355,7 +360,7 @@ export async function pushToUiPath(pkg: UiPathPackage, ideaId?: string, prebuilt
 }
 
 function orchBaseUrl(config: UiPathConfig): string {
-  return `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_`;
+  return _mdsStatic.getServiceUrl("OR", config);
 }
 
 function folderHeaders(config: UiPathConfig, token: string): Record<string, string> {
@@ -660,7 +665,8 @@ export async function discoverGovernancePolicies(): Promise<AutomationOpsResult>
 
   try {
     const token = await getAccessToken(config);
-    const base = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
+    const { metadataService } = await import("./catalog/metadata-service");
+    const base = metadataService.getCloudBaseUrl(config);
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
@@ -1393,8 +1399,9 @@ async function probeAllServices(): Promise<UnifiedProbeResult> {
     const { getHeaders: getOrHeaders, tryAcquireResourceToken, getDuToken } = await import("./uipath-auth");
     const token = await getAccessToken(config);
     const hdrs = await getOrHeaders();
-    const base = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
-    const orchBase = `${base}/orchestrator_`;
+    const { metadataService } = await import("./catalog/metadata-service");
+    const base = metadataService.getCloudBaseUrl(config);
+    const orchBase = metadataService.getServiceUrl("OR", config);
 
     let grantedScopes: string[] = [];
     try {
@@ -2159,7 +2166,9 @@ export async function autoDetectUiPathScopes(): Promise<{
       client_secret: config.clientSecret,
       scope: ALL_KNOWN_SCOPES.join(" "),
     });
-    const res = await fetch("https://cloud.uipath.com/identity_/connect/token", {
+    const { metadataService: mdsSvc } = await import("./catalog/metadata-service");
+    const tokenUrl = mdsSvc.getTokenEndpoint();
+    const res = await fetch(tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),
@@ -2179,7 +2188,9 @@ export async function autoDetectUiPathScopes(): Promise<{
           client_secret: config.clientSecret,
           scope: tryScope,
         });
-        const res = await fetch("https://cloud.uipath.com/identity_/connect/token", {
+        const { metadataService: mdsSvc2 } = await import("./catalog/metadata-service");
+        const tokenUrl2 = mdsSvc2.getTokenEndpoint();
+        const res = await fetch(tokenUrl2, {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: params.toString(),
@@ -2514,7 +2525,8 @@ export async function discoverIntegrationService(): Promise<IntegrationServiceDi
 
   try {
     const token = await getAccessToken(config);
-    const base = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
+    const { metadataService: mdsSvc3 } = await import("./catalog/metadata-service");
+    const base = mdsSvc3.getCloudBaseUrl(config);
     const hdrs: Record<string, string> = {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
@@ -2622,7 +2634,9 @@ export async function testUiPathConnection(): Promise<{ success: boolean; messag
 
   try {
     const token = await getAccessToken(config);
-    const foldersUrl = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_/odata/Folders?$top=1`;
+    const { metadataService: mdsSvc4 } = await import("./catalog/metadata-service");
+    const orchUrl2 = mdsSvc4.getServiceUrl("OR", config);
+    const foldersUrl = `${orchUrl2}/odata/Folders?$top=1`;
     const res = await fetch(foldersUrl, {
       headers: { Authorization: `Bearer ${token}` },
     });

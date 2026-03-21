@@ -1,0 +1,174 @@
+{
+  "endpoints": {
+    "OR": {
+      "urlTemplate": "https://cloud.uipath.com/{orgName}/{tenantName}/orchestrator_",
+      "apiBasePath": "/odata",
+      "scopes": [
+        "OR.Default",
+        "OR.Administration",
+        "OR.Execution",
+        "OR.Queues",
+        "OR.Queues.Read",
+        "OR.Queues.Write",
+        "OR.Processes",
+        "OR.Folders",
+        "OR.Folders.Read",
+        "OR.Jobs",
+        "OR.Jobs.Read",
+        "OR.Jobs.Write",
+        "OR.Triggers",
+        "OR.Triggers.Read",
+        "OR.Triggers.Write",
+        "OR.Robots",
+        "OR.Robots.Read",
+        "OR.Machines",
+        "OR.Assets",
+        "OR.Assets.Read",
+        "OR.Assets.Write",
+        "OR.TestSets",
+        "OR.TestSets.Read",
+        "OR.TestSets.Write",
+        "OR.TestSetExecutions",
+        "OR.TestSetExecutions.Read",
+        "OR.TestSetExecutions.Write",
+        "OR.TestDataQueues",
+        "OR.TestDataQueues.Read",
+        "OR.Tasks",
+        "OR.Tasks.Read",
+        "OR.Tasks.Write"
+      ],
+      "confidence": "official",
+      "reachabilityStatus": "unknown",
+      "lastVerifiedAt": "2026-03-21T06:19:01.851Z",
+      "verificationSource": "manual-seed"
+    },
+    "TM": {
+      "urlTemplate": "https://cloud.uipath.com/{orgName}/{tenantName}/testmanager_",
+      "apiBasePath": "/api",
+      "scopes": [
+        "TM.TestCases",
+        "TM.TestCases.Read",
+        "TM.TestCases.Write",
+        "TM.TestSets",
+        "TM.TestSets.Read",
+        "TM.TestSets.Write",
+        "TM.TestExecutions",
+        "TM.TestExecutions.Read",
+        "TM.TestExecutions.Write",
+        "TM.Requirements",
+        "TM.Requirements.Read",
+        "TM.Requirements.Write",
+        "TM.Projects",
+        "TM.Projects.Read",
+        "TM.Projects.Write",
+        "TM.Users.Read"
+      ],
+      "confidence": "official",
+      "reachabilityStatus": "unknown",
+      "lastVerifiedAt": "2026-03-21T06:19:01.851Z",
+      "verificationSource": "manual-seed"
+    },
+    "DU": {
+      "urlTemplate": "https://cloud.uipath.com/{orgName}/{tenantName}/du_",
+      "apiBasePath": "/api",
+      "scopes": [
+        "Du.Classification.Api",
+        "Du.DataDeletion.Api",
+        "Du.Digitization.Api",
+        "Du.DocumentManager.Document",
+        "Du.Extraction.Api",
+        "Du.Validation.Api"
+      ],
+      "confidence": "official",
+      "reachabilityStatus": "unknown",
+      "lastVerifiedAt": "2026-03-21T06:19:01.851Z",
+      "verificationSource": "manual-seed"
+    },
+    "DF": {
+      "urlTemplate": "https://cloud.uipath.com/{orgName}/{tenantName}/dataservice_",
+      "apiBasePath": "/api",
+      "scopes": [
+        "DataFabric.Schema.Read",
+        "DataFabric.Data.Read",
+        "DataFabric.Data.Write"
+      ],
+      "confidence": "official",
+      "reachabilityStatus": "unknown",
+      "lastVerifiedAt": "2026-03-21T06:19:01.851Z",
+      "verificationSource": "manual-seed"
+    },
+    "PIMS": {
+      "urlTemplate": "https://cloud.uipath.com/{orgName}/{tenantName}/maestro_",
+      "apiBasePath": "/api",
+      "scopes": [
+        "PIMS.Default",
+        "PIMS.Read",
+        "PIMS.Write",
+        "PIMS.Process",
+        "PIMS.Process.Read",
+        "PIMS.Process.Write",
+        "PIMS.Execution",
+        "PIMS.Execution.Read"
+      ],
+      "confidence": "official",
+      "reachabilityStatus": "unknown",
+      "lastVerifiedAt": "2026-03-21T06:19:01.851Z",
+      "verificationSource": "manual-seed"
+    },
+    "IXP": {
+      "urlTemplate": "https://cloud.uipath.com/{orgName}/{tenantName}/ixp_",
+      "apiBasePath": "/api",
+      "scopes": [
+        "Ixp.ApiAccess"
+      ],
+      "confidence": "inferred",
+      "reachabilityStatus": "unknown",
+      "lastVerifiedAt": "2026-03-21T06:19:01.851Z",
+      "verificationSource": "manual-seed"
+    },
+    "AI": {
+      "urlTemplate": "https://cloud.uipath.com/{orgName}/{tenantName}/aifabric_",
+      "apiBasePath": "/api",
+      "scopes": [
+        "AI.Deployer.Read",
+        "AI.Deployer.Write",
+        "AI.Trainer.Read",
+        "AI.Trainer.Write",
+        "AI.Helper.Read"
+      ],
+      "confidence": "inferred",
+      "reachabilityStatus": "unknown",
+      "lastVerifiedAt": "2026-03-21T06:19:01.851Z",
+      "verificationSource": "manual-seed"
+    },
+    "HUB": {
+      "urlTemplate": "https://cloud.uipath.com/{orgName}/{tenantName}/automationhub_",
+      "apiBasePath": "/api/v1",
+      "scopes": [],
+      "confidence": "official",
+      "reachabilityStatus": "unknown",
+      "lastVerifiedAt": "2026-03-21T06:19:01.851Z",
+      "verificationSource": "manual-seed"
+    },
+    "IDENTITY": {
+      "urlTemplate": "https://cloud.uipath.com/identity_",
+      "apiBasePath": "/connect",
+      "scopes": [
+        "PM.Security",
+        "PM.AuthSetting",
+        "PM.OAuthApp",
+        "PM.RobotAccount",
+        "PM.RobotAccount.Read",
+        "PM.RobotAccount.Write"
+      ],
+      "confidence": "official",
+      "reachabilityStatus": "unknown",
+      "lastVerifiedAt": "2026-03-21T06:19:01.851Z",
+      "verificationSource": "manual-seed"
+    }
+  },
+  "tokenEndpoint": "https://cloud.uipath.com/identity_/connect/token",
+  "lastRefreshedAt": "2026-03-21T06:27:36.376Z",
+  "lastVerifiedAt": "2026-03-21T06:27:36.376Z",
+  "snapshotVersion": "1.0.0"
+}

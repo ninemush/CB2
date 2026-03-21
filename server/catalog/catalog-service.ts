@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { validateCatalog } from "./catalog-validator";
 import { loadStudioProfile, type StudioProfile } from "./studio-profile";
+import { metadataService } from "./metadata-service";
 export type { StudioProfile } from "./studio-profile";
 
 export type ProcessType = "api-integration" | "document-processing" | "attended-ui" | "unattended-ui" | "orchestration" | "general";
@@ -83,20 +84,33 @@ class CatalogService {
   private loadGeneration = 0;
 
   load(catalogPath?: string): void {
-    this.studioProfile = loadStudioProfile();
+    metadataService.load();
+    this.studioProfile = metadataService.getStudioProfile();
 
-    const path = catalogPath || join(process.cwd(), "catalog", "activity-catalog.json");
+    let parsed: any = null;
 
-    if (!existsSync(path)) {
-      console.warn(`[Activity Catalog] Catalog file not found at ${path} — catalog constraints disabled`);
-      this.loaded = false;
-      return;
+    if (!catalogPath && metadataService.isActivityCatalogAvailable()) {
+      parsed = metadataService.getActivityCatalogData();
+    }
+
+    if (!parsed) {
+      const path = catalogPath || metadataService.getActivityCatalogPath() || join(process.cwd(), "catalog", "activity-catalog.json");
+      if (!existsSync(path)) {
+        console.warn(`[Activity Catalog] Catalog file not found at ${path} — catalog constraints disabled`);
+        this.loaded = false;
+        return;
+      }
+      try {
+        const raw = readFileSync(path, "utf-8");
+        parsed = JSON.parse(raw);
+      } catch (err: any) {
+        console.warn(`[Activity Catalog] Failed to load catalog: ${err.message} — catalog constraints disabled`);
+        this.loaded = false;
+        return;
+      }
     }
 
     try {
-      const raw = readFileSync(path, "utf-8");
-      const parsed = JSON.parse(raw);
-
       const validation = validateCatalog(parsed);
       if (!validation.valid) {
         console.warn(`[Activity Catalog] Catalog validation failed: ${validation.errors.join("; ")} — catalog constraints disabled`);
@@ -128,7 +142,7 @@ class CatalogService {
   }
 
   getStudioProfile(): StudioProfile | null {
-    return this.studioProfile;
+    return metadataService.getStudioProfile() || this.studioProfile;
   }
 
   isLoaded(): boolean {
@@ -315,6 +329,9 @@ class CatalogService {
   }
 
   getPreferredVersion(packageName: string): string | null {
+    const metaVersion = metadataService.getPreferredVersion(packageName);
+    if (metaVersion) return metaVersion;
+
     if (!this.loaded || !this.catalog) return null;
     const pkg = this.packageIndex.get(packageName);
     return pkg?.preferredVersion || pkg?.version || null;

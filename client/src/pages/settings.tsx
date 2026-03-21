@@ -3039,6 +3039,305 @@ function IntegrationsTab() {
   );
 }
 
+function MetadataFreshnessTab() {
+  const { toast } = useToast();
+
+  const { data: status, isLoading } = useQuery<{
+    generation: {
+      loaded: boolean;
+      source: string;
+      studioTarget: { line: string; version: string; targetFramework: string; expressionLanguage: string } | null;
+      packageCount: number;
+      lastRefreshedAt: string | null;
+      lastVerifiedAt: string | null;
+      stalenessLevel: string;
+      lastRefreshSuccessAt: string | null;
+      lastRefreshFailureAt: string | null;
+      packages: Record<string, { preferred: string; min: string; max: string; lastVerifiedAt: string; verificationSource: string }>;
+    };
+    integration: {
+      loaded: boolean;
+      endpointCount: number;
+      lastRefreshedAt: string | null;
+      lastVerifiedAt: string | null;
+      stalenessLevel: string;
+      lastRefreshSuccessAt: string | null;
+      lastRefreshFailureAt: string | null;
+      endpoints: Record<string, { confidence: string; reachabilityStatus: string; lastVerifiedAt: string }>;
+    };
+  }>({ queryKey: ["/api/admin/metadata/status"] });
+
+  const refreshMutation = useMutation({
+    mutationFn: async (family?: string) => {
+      const res = await apiRequest("POST", "/api/admin/metadata/refresh", family ? { family } : {});
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/metadata/status"] });
+      const results = data?.results || {};
+      const genSuccess = results.generation?.success !== false;
+      const intSuccess = results.integration?.success !== false;
+      if (genSuccess && intSuccess) {
+        toast({ title: "Metadata refreshed", description: "Snapshots updated successfully." });
+      } else {
+        const failedFamilies = [
+          !genSuccess ? "generation" : null,
+          !intSuccess ? "integration" : null,
+        ].filter(Boolean).join(", ");
+        toast({
+          title: "Partial refresh",
+          description: `Some families had issues: ${failedFamilies}. Check status for details.`,
+          variant: "destructive",
+        });
+      }
+    },
+    onError: (err: Error) => {
+      toast({ title: "Refresh failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  function stalenessColor(level: string) {
+    switch (level) {
+      case "fresh": return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
+      case "stale": return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
+      case "critical": return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
+      default: return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200";
+    }
+  }
+
+  function confidenceBadge(confidence: string) {
+    switch (confidence) {
+      case "official": return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
+      case "inferred": return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
+      case "deprecated": return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
+      default: return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200";
+    }
+  }
+
+  function reachabilityBadge(status: string) {
+    switch (status) {
+      case "reachable": return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
+      case "limited": return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
+      case "unreachable": return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
+      default: return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200";
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <Card className="p-6" data-testid="card-metadata-loading">
+        <div className="space-y-4">
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-3/4" />
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4" data-testid="panel-metadata-freshness">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold" data-testid="text-metadata-title">Metadata Freshness</h3>
+        <Button
+          onClick={() => refreshMutation.mutate(undefined)}
+          disabled={refreshMutation.isPending}
+          size="sm"
+          data-testid="button-refresh-metadata"
+        >
+          {refreshMutation.isPending ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="mr-2 h-4 w-4" />
+          )}
+          Refresh Now
+        </Button>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card className="p-4" data-testid="card-generation-metadata">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="font-medium flex items-center gap-2">
+                <Code className="h-4 w-4" />
+                Generation Metadata
+              </h4>
+              {status?.generation.stalenessLevel && (
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${stalenessColor(status.generation.stalenessLevel)}`} data-testid="badge-generation-staleness">
+                  {status.generation.stalenessLevel}
+                </span>
+              )}
+            </div>
+
+            {status?.generation.studioTarget && (
+              <div className="text-sm space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Studio Target</span>
+                  <span className="font-mono" data-testid="text-studio-version">{status.generation.studioTarget.version}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Framework</span>
+                  <span data-testid="text-target-framework">{status.generation.studioTarget.targetFramework}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Language</span>
+                  <span data-testid="text-expression-language">{status.generation.studioTarget.expressionLanguage}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Package Count</span>
+                  <span data-testid="text-package-count">{status.generation.packageCount}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Source</span>
+                  <span data-testid="text-generation-source">{status.generation.source}</span>
+                </div>
+              </div>
+            )}
+
+            {status?.generation.lastRefreshedAt && (
+              <div className="text-xs text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                Last refreshed: {new Date(status.generation.lastRefreshedAt).toLocaleString()}
+              </div>
+            )}
+
+            {(status?.generation.lastRefreshSuccessAt || status?.generation.lastRefreshFailureAt) && (
+              <div className="text-xs space-y-0.5" data-testid="gen-refresh-timestamps">
+                {status.generation.lastRefreshSuccessAt && (
+                  <div className="text-green-600 dark:text-green-400">
+                    Last success: {new Date(status.generation.lastRefreshSuccessAt).toLocaleString()}
+                  </div>
+                )}
+                {status.generation.lastRefreshFailureAt && (
+                  <div className="text-red-600 dark:text-red-400">
+                    Last failure: {new Date(status.generation.lastRefreshFailureAt).toLocaleString()}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {status?.generation.packages && Object.keys(status.generation.packages).length > 0 && (
+              <div className="space-y-1" data-testid="gen-package-details">
+                <p className="text-xs font-medium text-muted-foreground">Packages:</p>
+                <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                  {Object.entries(status.generation.packages).map(([pkg, info]) => (
+                    <div key={pkg} className="text-xs" data-testid={`package-row-${pkg}`}>
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono truncate mr-2">{pkg.replace("UiPath.", "")}</span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="font-mono">{info.preferred}</span>
+                          <span className="text-muted-foreground">({info.min}–{info.max})</span>
+                        </div>
+                      </div>
+                      <div className="text-muted-foreground text-[10px] flex justify-between">
+                        <span>{info.verificationSource}</span>
+                        <span data-testid={`verified-at-${pkg}`}>Verified: {new Date(info.lastVerifiedAt).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refreshMutation.mutate("generation")}
+              disabled={refreshMutation.isPending}
+              data-testid="button-refresh-generation"
+            >
+              <RefreshCw className="mr-1 h-3 w-3" />
+              Refresh Generation
+            </Button>
+          </div>
+        </Card>
+
+        <Card className="p-4" data-testid="card-integration-metadata">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="font-medium flex items-center gap-2">
+                <Server className="h-4 w-4" />
+                Integration Endpoints
+              </h4>
+              {status?.integration.stalenessLevel && (
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${stalenessColor(status.integration.stalenessLevel)}`} data-testid="badge-integration-staleness">
+                  {status.integration.stalenessLevel}
+                </span>
+              )}
+            </div>
+
+            <div className="text-sm space-y-1">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Endpoint Count</span>
+                <span data-testid="text-endpoint-count">{status?.integration.endpointCount || 0}</span>
+              </div>
+            </div>
+
+            {status?.integration.lastRefreshedAt && (
+              <div className="text-xs text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                Last refreshed: {new Date(status.integration.lastRefreshedAt).toLocaleString()}
+              </div>
+            )}
+
+            {(status?.integration.lastRefreshSuccessAt || status?.integration.lastRefreshFailureAt) && (
+              <div className="text-xs space-y-0.5" data-testid="int-refresh-timestamps">
+                {status.integration.lastRefreshSuccessAt && (
+                  <div className="text-green-600 dark:text-green-400">
+                    Last success: {new Date(status.integration.lastRefreshSuccessAt).toLocaleString()}
+                  </div>
+                )}
+                {status.integration.lastRefreshFailureAt && (
+                  <div className="text-red-600 dark:text-red-400">
+                    Last failure: {new Date(status.integration.lastRefreshFailureAt).toLocaleString()}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {status?.integration.endpoints && Object.keys(status.integration.endpoints).length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Endpoints:</p>
+                <div className="space-y-1">
+                  {Object.entries(status.integration.endpoints).map(([key, ep]) => (
+                    <div key={key} className="text-xs" data-testid={`endpoint-row-${key}`}>
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono">{key}</span>
+                        <div className="flex gap-1">
+                          <span className={`px-1.5 py-0.5 rounded text-xs ${confidenceBadge(ep.confidence)}`}>
+                            {ep.confidence}
+                          </span>
+                          <span className={`px-1.5 py-0.5 rounded text-xs ${reachabilityBadge(ep.reachabilityStatus)}`}>
+                            {ep.reachabilityStatus}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-muted-foreground text-[10px] text-right" data-testid={`endpoint-verified-at-${key}`}>
+                        Verified: {new Date(ep.lastVerifiedAt).toLocaleDateString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refreshMutation.mutate("integration")}
+              disabled={refreshMutation.isPending}
+              data-testid="button-refresh-integration"
+            >
+              <RefreshCw className="mr-1 h-3 w-3" />
+              Refresh Integration
+            </Button>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { activeRole } = useAuth();
 
@@ -3093,6 +3392,10 @@ export default function SettingsPage() {
               <Shield className="mr-1.5 sm:mr-2 h-4 w-4" />
               <span className="text-xs sm:text-sm">Quality</span>
             </TabsTrigger>
+            <TabsTrigger value="metadata" data-testid="tab-metadata">
+              <Database className="mr-1.5 sm:mr-2 h-4 w-4" />
+              <span className="text-xs sm:text-sm">Metadata</span>
+            </TabsTrigger>
           </TabsList>
         </div>
 
@@ -3112,6 +3415,9 @@ export default function SettingsPage() {
           <Card data-testid="card-quality-metrics">
             <MetaValidationDashboard />
           </Card>
+        </TabsContent>
+        <TabsContent value="metadata" className="mt-4">
+          <MetadataFreshnessTab />
         </TabsContent>
       </Tabs>
     </div>

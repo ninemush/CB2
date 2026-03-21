@@ -2,6 +2,7 @@ import { db } from "./db";
 import { uipathConnections } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { getUiPathConfig } from "./uipath-integration";
+import { metadataService } from "./catalog/metadata-service";
 
 export type AutomationHubIdea = {
   id: number;
@@ -64,7 +65,8 @@ export async function clearAutomationHubToken(): Promise<void> {
 }
 
 function getHubBaseUrl(orgName: string, tenantName: string): string {
-  return `https://cloud.uipath.com/${orgName}/${tenantName}/automationhub_/api/v1`;
+  const baseUrl = metadataService.getServiceUrl("HUB", { orgName, tenantName });
+  return `${baseUrl}/api/v1`;
 }
 
 function hubHeaders(token: string): Record<string, string> {

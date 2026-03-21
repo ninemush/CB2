@@ -46,12 +46,24 @@ import archiver from "archiver";
   import { getPreferredVersion, isVersionInRange, type StudioProfile } from "./catalog/studio-profile";
   import { validateWorkflowSpec as validateSpec, type SpecValidationReport } from "./catalog/spec-validator";
   import { UIPATH_PACKAGE_ALIAS_MAP, QualityGateError, type UiPathConfig } from "./uipath-shared";
+  import { metadataService as _metadataService } from "./catalog/metadata-service";
 
 async function getProbeCache() {
   const { getProbeCache: _getProbeCache } = await import("./uipath-integration");
   return _getProbeCache();
 }
   
+function resolveExpressionLanguage(
+  profile: StudioProfile | null | undefined,
+  metaTarget: { expressionLanguage: string } | null | undefined,
+): string {
+  const lang = profile?.expressionLanguage || metaTarget?.expressionLanguage;
+  if (!lang) {
+    throw new Error("Cannot assemble package: expression language is unavailable from MetadataService");
+  }
+  return lang;
+}
+
 function clrToXamlType(clrType: string): string {
   const map: Record<string, string> = {
     "System.Object": "x:Object",
@@ -146,20 +158,10 @@ function collectActivityTypesFromWorkflows(workflows: Array<{ steps?: Array<{ ac
   return packages;
 }
 
-const BASELINE_FALLBACK_VERSIONS: Record<string, { windows: string; portable: string }> = {
-  "UiPath.System.Activities": { windows: "23.10.3", portable: "25.10.0" },
-  "UiPath.UIAutomation.Activities": { windows: "23.10.8", portable: "25.10.0" },
-  "UiPath.Mail.Activities": { windows: "1.20.0", portable: "2.5.0" },
-  "UiPath.Database.Activities": { windows: "1.8.0", portable: "2.2.0" },
-  "UiPath.Persistence.Activities": { windows: "23.10.0", portable: "25.10.0" },
-  "UiPath.MLActivities": { windows: "23.10.0", portable: "25.10.0" },
-  "UiPath.IntelligentOCR.Activities": { windows: "8.20.0", portable: "8.20.0" },
-};
-
-function getBaselineFallbackVersion(pkgName: string, targetFramework: "Windows" | "Portable"): string | null {
-  const entry = BASELINE_FALLBACK_VERSIONS[pkgName];
-  if (!entry) return null;
-  return targetFramework === "Portable" ? entry.portable : entry.windows;
+function getMetadataFallbackVersion(pkgName: string): string | null {
+  const range = _metadataService.getPackageVersionRange(pkgName);
+  if (range) return range.preferred;
+  return null;
 }
 
 export function resolveDependencies(
@@ -228,17 +230,17 @@ export function resolveDependencies(
     }
 
     if (!version) {
-      const fallback = getBaselineFallbackVersion(pkgName, tf);
-      if (fallback) {
-        version = fallback;
-        source = "baseline-fallback";
+      const metaFallback = getMetadataFallbackVersion(pkgName);
+      if (metaFallback) {
+        version = metaFallback;
+        source = "metadata-service";
         warnings.push({
-          code: "DEPENDENCY_USING_BASELINE_FALLBACK",
-          message: `Package ${pkgName} not found in catalog or studio profile — using baseline fallback version ${fallback}`,
+          code: "DEPENDENCY_USING_METADATA_FALLBACK",
+          message: `Package ${pkgName} not found in catalog or studio profile — using MetadataService preferred version ${metaFallback}`,
           stage: "dependency-resolution",
           recoverable: true,
         });
-        console.warn(`[Dependency Resolution] Using baseline fallback for ${pkgName}: ${fallback} (${tf})`);
+        console.warn(`[Dependency Resolution] Using MetadataService fallback for ${pkgName}: ${metaFallback}`);
       }
     }
 
@@ -751,7 +753,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 </coreProperties>`;
     archive.append(coreProps, { name: `package/services/metadata/core-properties/${corePropsId}.psmdcp` });
 
-    const tf: TargetFramework = _studioProfile ? _studioProfile.targetFramework : (isServerless ? "Portable" : "Windows");
+    const _metaTarget2 = _metadataService.getStudioTarget();
+    const tf: TargetFramework = _studioProfile ? _studioProfile.targetFramework : (_metaTarget2?.targetFramework || (isServerless ? "Portable" : "Windows"));
     const treeSpecForDeps = treeEnrichment?.status === "success" ? treeEnrichment.workflowSpec : null;
     const depResolution = resolveDependencies(pkg, _studioProfile, treeSpecForDeps, tf as "Windows" | "Portable");
     const deps = depResolution.deps;
@@ -1050,7 +1053,14 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     const allGaps = aggregateGaps(xamlResults);
 
     const entryPointId = generateUuid();
-    const studioVer = _studioProfile ? _studioProfile.studioVersion : (isServerless ? "24.10.0" : "23.10.6");
+    const _metaTarget = _metadataService.getStudioTarget();
+    if (!_studioProfile && !_metaTarget) {
+      console.error("[PackageAssembler] DEGRADED MODE: No StudioProfile or MetadataService target available. Package metadata will be incomplete — this indicates a startup failure in MetadataService.");
+    }
+    const studioVer = _studioProfile?.studioVersion || _metaTarget?.version;
+    if (!studioVer) {
+      throw new Error("Cannot assemble package: Studio version is unavailable. MetadataService and StudioProfile both failed to load.");
+    }
     const projectJson: Record<string, any> = {
       name: projectName,
       description: pkg.description || "",
@@ -1081,7 +1091,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         fileInfoCollection: [],
         modernBehavior: true,
       },
-      expressionLanguage: _studioProfile ? _studioProfile.expressionLanguage : (isServerless ? "CSharp" : "VisualBasic"),
+      expressionLanguage: resolveExpressionLanguage(_studioProfile, _metaTarget),
       entryPoints: [
         {
           filePath: "Main.xaml",
@@ -1097,12 +1107,12 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     if (_studioProfile) {
       projectJson.targetFramework = _studioProfile.targetFramework;
       projectJson.sourceLanguage = _studioProfile.expressionLanguage;
+    } else if (_metaTarget) {
+      projectJson.targetFramework = _metaTarget.targetFramework;
+      projectJson.sourceLanguage = _metaTarget.expressionLanguage;
     } else if (isServerless) {
       projectJson.targetFramework = "Portable";
       projectJson.sourceLanguage = "CSharp";
-    } else {
-      projectJson.targetFramework = "Windows";
-      projectJson.sourceLanguage = "VisualBasic";
     }
     if (apEnabled) {
       projectJson.designOptions.autopilotEnabled = true;
@@ -1972,14 +1982,23 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
               if (!deps[pkg]) {
                 const profileVersion = _studioProfile ? getPreferredVersion(_studioProfile, pkg) : null;
                 const catalogVersion = catalogService.isLoaded() ? catalogService.getConfirmedVersion(pkg) : null;
-                const fallbackVersion = profileVersion || catalogVersion || (tf === "Windows" ? "23.10.0" : "25.10.0");
+                const metaVersion = getMetadataFallbackVersion(pkg);
+                const fallbackVersion = profileVersion || catalogVersion || metaVersion;
+                if (!fallbackVersion) {
+                  throw new Error(`Cannot resolve version for package ${pkg}: no metadata, catalog, or profile source available`);
+                }
                 deps[pkg] = fallbackVersion;
               }
             }
             if (!deps["UiPath.System.Activities"]) {
               const sysVersion = _studioProfile ? getPreferredVersion(_studioProfile, "UiPath.System.Activities") : null;
               const sysCatalogVersion = catalogService.isLoaded() ? catalogService.getConfirmedVersion("UiPath.System.Activities") : null;
-              deps["UiPath.System.Activities"] = sysVersion || sysCatalogVersion || (tf === "Windows" ? "23.10.0" : "25.10.0");
+              const sysMetaVersion = getMetadataFallbackVersion("UiPath.System.Activities");
+              const resolvedSysVersion = sysVersion || sysCatalogVersion || sysMetaVersion;
+              if (!resolvedSysVersion) {
+                throw new Error("Cannot resolve version for UiPath.System.Activities: no metadata, catalog, or profile source available");
+              }
+              deps["UiPath.System.Activities"] = resolvedSysVersion;
             }
             projectJson.dependencies = { ...deps };
             const stubProjectJsonStr = JSON.stringify(projectJson, null, 2);
@@ -2410,7 +2429,8 @@ export async function uploadNupkgBuffer(
   const footerBuf = Buffer.from(footer, "utf-8");
   const body = Buffer.concat([headerBuf, nupkgBuffer, footerBuf]);
 
-  const uploadUrl = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_/odata/Processes/UiPath.Server.Configuration.OData.UploadPackage`;
+  const orchUrl = _metadataService.getServiceUrl("OR", config);
+  const uploadUrl = `${orchUrl}/odata/Processes/UiPath.Server.Configuration.OData.UploadPackage`;
 
   console.log(`[UiPath] Uploading to: ${uploadUrl}`);
   console.log(`[UiPath] Package size: ${body.length} bytes, filename: ${fileName}`);

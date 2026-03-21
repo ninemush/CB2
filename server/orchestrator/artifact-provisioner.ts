@@ -1,6 +1,7 @@
 import { getUiPathConfig, probeServiceAvailability, type UiPathConfig, type ServiceAvailabilityMap, type AICenterSkill } from "../uipath-integration";
 import { uipathFetch, isGenuineApiResponse, isValidCreation } from "../uipath-fetch";
 import { getToken as getSharedToken, getTmToken, getTestManagerBaseUrl, type UiPathAuthConfig } from "../uipath-auth";
+import { metadataService } from "../catalog/metadata-service";
 import type { DeploymentResult } from "@shared/models/deployment";
 import type { OrchestratorArtifacts, AgentDef, AgentToolDef, AgentEscalationRule, AgentContextGrounding, KnowledgeBaseDef, PromptTemplateDef, MaestroProcessDef } from "./manifest-manager";
 
@@ -69,7 +70,8 @@ function generateUuid(): string {
     client_secret: config.clientSecret,
     scope: config.scopes,
   });
-  const res = await fetch("https://cloud.uipath.com/identity_/connect/token", {
+  const tokenUrl = metadataService.getTokenEndpoint();
+  const res = await fetch(tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params.toString(),
@@ -80,7 +82,7 @@ function generateUuid(): string {
 }
 
 function orchBase(config: UiPathConfig): string {
-  return `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_`;
+  return metadataService.getServiceUrl("OR", config);
 }
 
 function headers(config: UiPathConfig, token: string): Record<string, string> {
@@ -1557,7 +1559,7 @@ async function provisionActionCenter(
   }
 
   const catalogUrl = `${base}/odata/TaskCatalogs`;
-  const cloudBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
+  const cloudBase = metadataService.getCloudBaseUrl(config);
   const acServiceUrl = `${cloudBase}/actions_/api/v1/task-catalogs`;
 
   console.log(`[UiPath Deploy] AC provisioning: folderId=${config.folderId || "none"}, X-UIPATH-OrganizationUnitId=${acHdrs["X-UIPATH-OrganizationUnitId"] || "not set"}`);
@@ -1808,7 +1810,7 @@ async function provisionDataFabricEntities(
   if (!entities?.length) return [];
   const results: DeploymentResult[] = [];
 
-  const cloudBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
+  const cloudBase = metadataService.getCloudBaseUrl(config);
   const entityServiceBase = `${cloudBase}/dataservice_/api/EntityService`;
   const hdrs: Record<string, string> = {
     Authorization: `Bearer ${token}`,
@@ -1929,7 +1931,7 @@ async function discoverAndReferenceApps(
   if (!apps?.length) return [];
   const results: DeploymentResult[] = [];
 
-  const cloudBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
+  const cloudBase = metadataService.getCloudBaseUrl(config);
   const hdrs: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
@@ -2008,7 +2010,7 @@ async function provisionDocUnderstanding(
   if (!du?.length) return [];
   const results: DeploymentResult[] = [];
 
-  const cloudBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
+  const cloudBase = metadataService.getCloudBaseUrl(config);
   const duConsoleUrl = `${cloudBase}/du_`;
   const PREDEFINED_DU_PROJECT_ID = "00000000-0000-0000-0000-000000000000";
   const PREDEFINED_DU_PROJECT_NAME = "Predefined";
@@ -2152,7 +2154,7 @@ async function provisionCommunicationsMining(
   if (!streams?.length) return [];
   const results: DeploymentResult[] = [];
 
-  const cloudBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
+  const cloudBase = metadataService.getCloudBaseUrl(config);
   const cmConsoleUrl = `${cloudBase}/communicationsmining_`;
 
   const hdrs: Record<string, string> = {
@@ -2264,7 +2266,7 @@ async function provisionTestCases(
   const primaryTmBase = getTestManagerBaseUrl(config as UiPathAuthConfig);
   const tmBases = [
     primaryTmBase,
-    `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/tmapi_`,
+    `${metadataService.getCloudBaseUrl(config)}/tmapi_`,
   ];
   const tmHdrs: Record<string, string> = {
     "Authorization": `Bearer ${tmToken}`,
@@ -2813,7 +2815,7 @@ async function provisionTestCases(
   }
 
   if (testDataQueues?.length && folderId) {
-    const orchBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_`;
+    const orchBase = metadataService.getServiceUrl("OR", config);
     const orchHdrs: Record<string, string> = {
       "Authorization": `Bearer ${mainToken}`,
       "Content-Type": "application/json",
@@ -3415,9 +3417,11 @@ async function provisionRobotAccounts(
 
     const pmToken = await getPMToken(config);
     if (pmToken) {
+      const cloudBase = metadataService.getCloudBaseUrl(config);
+      const identityBase = metadataService.getServiceUrl("IDENTITY", config);
       const identityBases = [
-        `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/identity_/api/RobotAccount`,
-        `https://cloud.uipath.com/${config.orgName}/identity_/api/RobotAccount`,
+        `${identityBase}/api/RobotAccount`,
+        `${cloudBase}/identity_/api/RobotAccount`,
       ];
 
       for (const identityUrl of identityBases) {
@@ -3941,7 +3945,7 @@ async function provisionMaestroProcesses(
     return results;
   }
 
-  const maestroBase = `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/maestro_`;
+  const maestroBase = metadataService.getServiceUrl("PIMS", config);
   const maestroHdrs: Record<string, string> = {
     Authorization: `Bearer ${maestroToken}`,
     "Content-Type": "application/json",

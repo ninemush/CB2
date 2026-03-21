@@ -1,6 +1,8 @@
 import { db } from "./db";
 import { appSettings, uipathConnections } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { metadataService } from "./catalog/metadata-service";
+import type { ServiceResourceType } from "./catalog/metadata-schemas";
 
 export class UiPathAuthError extends Error {
   constructor(message: string, public statusCode?: number) {
@@ -27,9 +29,30 @@ type CachedToken = {
 export type ResourceType = "OR" | "TM" | "DU" | "PM" | "DF" | "PIMS" | "IXP" | "AI";
 
 const TOKEN_REFRESH_BUFFER_MS = 60_000;
-const TOKEN_ENDPOINT = "https://cloud.uipath.com/identity_/connect/token";
 
-const RESOURCE_SCOPES: Record<ResourceType, string> = {
+function getTokenEndpoint(): string {
+  return metadataService.getTokenEndpoint();
+}
+
+const RESOURCE_TO_SERVICE_MAP: Record<ResourceType, ServiceResourceType> = {
+  OR: "OR",
+  TM: "TM",
+  DU: "DU",
+  PM: "IDENTITY",
+  DF: "DF",
+  PIMS: "PIMS",
+  IXP: "IXP",
+  AI: "AI",
+};
+
+function getResourceScopesFromMetadata(resource: ResourceType): string {
+  const serviceType = RESOURCE_TO_SERVICE_MAP[resource];
+  const scopes = metadataService.getServiceScopesString(serviceType);
+  if (scopes) return scopes;
+  return FALLBACK_RESOURCE_SCOPES[resource] || "";
+}
+
+const FALLBACK_RESOURCE_SCOPES: Record<ResourceType, string> = {
   OR: [
     "OR.Default", "OR.Administration", "OR.Execution",
     "OR.Queues", "OR.Queues.Read", "OR.Queues.Write",
@@ -74,7 +97,7 @@ const RESOURCE_SCOPES: Record<ResourceType, string> = {
   ].join(" "),
 };
 
-export const DEFAULT_SCOPES = RESOURCE_SCOPES.OR;
+export const DEFAULT_SCOPES = getResourceScopesFromMetadata("OR") || FALLBACK_RESOURCE_SCOPES.OR;
 
 function resolveOrScopes(stored: string | undefined, defaults: string): string {
   if (!stored) return defaults;
@@ -101,7 +124,7 @@ async function loadConfig(): Promise<UiPathAuthConfig | null> {
   const activeRows = await db.select().from(uipathConnections).where(eq(uipathConnections.isActive, true));
   if (activeRows.length > 0) {
     const row = activeRows[0];
-    const scopes = resolveOrScopes(row.scopes, RESOURCE_SCOPES.OR);
+    const scopes = resolveOrScopes(row.scopes, getResourceScopesFromMetadata("OR"));
     cachedConfig = {
       orgName: row.orgName,
       tenantName: row.tenantName,
@@ -123,7 +146,7 @@ async function loadConfig(): Promise<UiPathAuthConfig | null> {
   const clientId = map.get("uipath_client_id");
   const clientSecret = map.get("uipath_client_secret");
   const storedScopes = map.get("uipath_scopes");
-  const scopes = resolveOrScopes(storedScopes, RESOURCE_SCOPES.OR);
+  const scopes = resolveOrScopes(storedScopes, getResourceScopesFromMetadata("OR"));
   const folderId = map.get("uipath_folder_id") || undefined;
   const folderName = map.get("uipath_folder_name") || undefined;
 
@@ -140,7 +163,7 @@ async function loadConfig(): Promise<UiPathAuthConfig | null> {
         tenantName: envTenantName,
         clientId: envClientId,
         clientSecret: envClientSecret,
-        scopes: resolveOrScopes(process.env.UIPATH_SCOPES, RESOURCE_SCOPES.OR),
+        scopes: resolveOrScopes(process.env.UIPATH_SCOPES, getResourceScopesFromMetadata("OR")),
         folderId: envFolderId,
       };
       configLoadedAt = now;
@@ -156,7 +179,7 @@ async function loadConfig(): Promise<UiPathAuthConfig | null> {
 }
 
 async function fetchNewToken(config: UiPathAuthConfig, resource: ResourceType): Promise<CachedToken> {
-  const requestedScopes = resource === "OR" ? config.scopes : RESOURCE_SCOPES[resource];
+  const requestedScopes = resource === "OR" ? config.scopes : getResourceScopesFromMetadata(resource);
   const params = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: config.clientId,
@@ -169,7 +192,7 @@ async function fetchNewToken(config: UiPathAuthConfig, resource: ResourceType): 
 
   let res: Response;
   try {
-    res = await fetch(TOKEN_ENDPOINT, {
+    res = await fetch(getTokenEndpoint(), {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),
@@ -264,23 +287,27 @@ async function getResourceHeaders(resource: ResourceType, extraHeaders?: Record<
 }
 
 export function getBaseUrl(config: UiPathAuthConfig): string {
-  return `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/orchestrator_`;
+  return metadataService.getServiceUrl("OR", config);
 }
 
 export function getTestManagerBaseUrl(config: UiPathAuthConfig): string {
-  return `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/testmanager_`;
+  return metadataService.getServiceUrl("TM", config);
 }
 
 export function getDuBaseUrl(config: UiPathAuthConfig): string {
-  return `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/du_`;
+  return metadataService.getServiceUrl("DU", config);
 }
 
 export function getDataServiceBaseUrl(config: UiPathAuthConfig): string {
-  return `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/dataservice_`;
+  return metadataService.getServiceUrl("DF", config);
 }
 
 export function getCloudBaseUrl(config: UiPathAuthConfig): string {
-  return `https://cloud.uipath.com/${config.orgName}/${config.tenantName}`;
+  return metadataService.getCloudBaseUrl(config);
+}
+
+export function getServiceUrl(resourceType: ServiceResourceType, config: UiPathAuthConfig): string {
+  return metadataService.getServiceUrl(resourceType, config);
 }
 
 export function invalidateToken(): void {
@@ -375,11 +402,15 @@ export async function getMaestroHeaders(extraHeaders?: Record<string, string>): 
 }
 
 export function getMaestroBaseUrl(config: UiPathAuthConfig): string {
-  return `https://cloud.uipath.com/${config.orgName}/${config.tenantName}/maestro_`;
+  return metadataService.getServiceUrl("PIMS", config);
 }
 
 export function getResourceScopes(): Record<ResourceType, string> {
-  return { ...RESOURCE_SCOPES };
+  const resourceTypes: ResourceType[] = ["OR", "TM", "DU", "PM", "DF", "PIMS", "IXP", "AI"];
+  const result = Object.fromEntries(
+    resourceTypes.map(rt => [rt, getResourceScopesFromMetadata(rt)])
+  ) as Record<ResourceType, string>;
+  return result;
 }
 
 export async function tryAcquireResourceToken(resource: ResourceType): Promise<{ ok: boolean; scopes: string[]; error?: string }> {

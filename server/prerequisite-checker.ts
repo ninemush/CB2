@@ -1,5 +1,7 @@
 import * as orch from "./orchestrator-client";
 import { getConfig, getHeaders, getBaseUrl, UiPathAuthError } from "./uipath-auth";
+import { metadataService } from "./catalog/metadata-service";
+import type { ServiceResourceType } from "./catalog/metadata-schemas";
 
 export type CheckStatus = "pass" | "warning" | "blocking";
 
@@ -201,25 +203,46 @@ export async function checkActionCenterLicense(): Promise<CheckResult> {
 }
 
 export async function checkTestManagerLicense(): Promise<CheckResult> {
+  const confidence = metadataService.getServiceConfidence("TM");
+  const reachability = metadataService.getServiceReachability("TM");
+
+  if (confidence === "deprecated") {
+    return {
+      name: "Test Manager",
+      status: "warning",
+      detail: `Test Manager endpoint is marked as deprecated (confidence: ${confidence})`,
+      remediation: "Test Manager may be unavailable. Test gate (Stage 9) will be skipped.",
+    };
+  }
+
+  if (reachability === "unreachable") {
+    return {
+      name: "Test Manager",
+      status: "warning",
+      detail: `Test Manager endpoint marked unreachable by metadata (reachability: ${reachability})`,
+      remediation: "Test Manager requires a specific license. Test gate (Stage 9) will be skipped.",
+    };
+  }
+
   try {
     const testSets = await orch.getTestSets();
     return {
       name: "Test Manager",
       status: "pass",
-      detail: `Test Manager reachable (${testSets.length} test set(s))`,
+      detail: `Test Manager reachable (${testSets.length} test set(s), confidence: ${confidence})`,
     };
   } catch {
     try {
       const config = await getConfig();
       if (config) {
         const headers = await getHeaders();
-        const base = getBaseUrl(config as any);
+        const base = getBaseUrl(config);
         const res = await fetch(`${base}/odata/TestSets?$top=1`, { headers });
         if (res.ok) {
           return {
             name: "Test Manager",
             status: "pass",
-            detail: "Test Manager reachable (via Orchestrator OData)",
+            detail: `Test Manager reachable (via Orchestrator OData, confidence: ${confidence})`,
           };
         }
       }
@@ -227,13 +250,25 @@ export async function checkTestManagerLicense(): Promise<CheckResult> {
     return {
       name: "Test Manager",
       status: "warning",
-      detail: "Test Manager not available on this tenant",
+      detail: `Test Manager not available on this tenant (confidence: ${confidence})`,
       remediation: "Test Manager requires a specific license. Test gate (Stage 9) will be skipped.",
     };
   }
 }
 
 export async function checkDataFabricAvailability(): Promise<CheckResult> {
+  const confidence = metadataService.getServiceConfidence("DF");
+  const reachability = metadataService.getServiceReachability("DF");
+
+  if (confidence === "deprecated" || reachability === "unreachable") {
+    return {
+      name: "Data Fabric",
+      status: "warning",
+      detail: `Data Fabric endpoint metadata: confidence=${confidence}, reachability=${reachability}`,
+      remediation: "Data Fabric entity provisioning will fall back to manual steps.",
+    };
+  }
+
   try {
     const config = await getConfig();
     if (!config) {
@@ -244,19 +279,19 @@ export async function checkDataFabricAvailability(): Promise<CheckResult> {
       };
     }
     const headers = await getHeaders();
-    const base = getBaseUrl(config as any);
-    const res = await fetch(`${base}/dataservice_/api/EntityService/Entity`, { headers });
+    const dfUrl = metadataService.getServiceUrl("DF", config);
+    const res = await fetch(`${dfUrl}/api/EntityService/Entity`, { headers });
     if (res.ok) {
       return {
         name: "Data Fabric",
         status: "pass",
-        detail: "Data Fabric Entity API is reachable",
+        detail: `Data Fabric Entity API is reachable (confidence: ${confidence})`,
       };
     }
     return {
       name: "Data Fabric",
       status: "warning",
-      detail: `Data Fabric returned ${res.status}`,
+      detail: `Data Fabric returned ${res.status} (confidence: ${confidence})`,
       remediation: "Data Fabric may not be enabled on this tenant. Entity provisioning will use manual steps.",
     };
   } catch (err: any) {
@@ -280,8 +315,8 @@ export async function checkAppsAvailability(): Promise<CheckResult> {
       };
     }
     const headers = await getHeaders();
-    const base = getBaseUrl(config as any);
-    const res = await fetch(`${base}/apps_/api/v2/apps?$top=1`, { headers });
+    const cloudBase = metadataService.getCloudBaseUrl(config);
+    const res = await fetch(`${cloudBase}/apps_/api/v2/apps?$top=1`, { headers });
     if (res.ok) {
       return {
         name: "Apps",
@@ -289,7 +324,7 @@ export async function checkAppsAvailability(): Promise<CheckResult> {
         detail: "UiPath Apps service is reachable",
       };
     }
-    const altRes = await fetch(`${base}/apps_/api/v1/apps?pageSize=1`, { headers });
+    const altRes = await fetch(`${cloudBase}/apps_/api/v1/apps?pageSize=1`, { headers });
     if (altRes.ok) {
       return {
         name: "Apps",
