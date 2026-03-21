@@ -56,7 +56,10 @@ function buildActivityTemplate(activity: CatalogActivity, packageId: string): Te
 
   for (const prop of activity.properties) {
     const phKey = prop.name.charAt(0).toLowerCase() + prop.name.slice(1);
-    const phType = clrTypeToPlaceholderType(prop.clrType);
+    const baseType = clrTypeToPlaceholderType(prop.clrType);
+    const isEnum = prop.validValues && prop.validValues.length > 0;
+    const phType = isEnum ? "enum" : baseType;
+    const enumSuffix = isEnum ? `:${prop.validValues!.join("|")}` : "";
 
     const ph: TemplatePlaceholder = {
       key: phKey,
@@ -72,13 +75,13 @@ function buildActivityTemplate(activity: CatalogActivity, packageId: string): Te
     }
 
     if (prop.xamlSyntax === "attribute") {
-      attrParts.push(`${prop.name}="{{${phKey}:${phType}}}"`);
+      attrParts.push(`${prop.name}="{{${phKey}:${phType}${enumSuffix}}}"`);
     } else if (prop.xamlSyntax === "child-element") {
       const wrapper = prop.argumentWrapper || "InArgument";
       const typeArg = prop.typeArguments ? ` x:TypeArguments="${prop.typeArguments}"` : "";
       childParts.push(
         `  <${tag}.${prop.name}>\n` +
-        `    <${wrapper}${typeArg}>{{${phKey}:${phType}}}</${wrapper}>\n` +
+        `    <${wrapper}${typeArg}>{{${phKey}:${phType}${enumSuffix}}}</${wrapper}>\n` +
         `  </${tag}.${prop.name}>`
       );
     }
@@ -131,7 +134,7 @@ function buildLogMessageTemplate(): TemplateEntry {
   return {
     name: "LogMessage",
     category: "activity",
-    template: `<ui:LogMessage Level="{{level:enum}}" Message="{{message:expression}}" DisplayName="{{displayName:string}}" />`,
+    template: `<ui:LogMessage Level="{{level:enum:Info|Warn|Error|Fatal|Trace}}" Message="{{message:expression}}" DisplayName="{{displayName:string}}" />`,
     placeholders: [
       { key: "displayName", type: "string", required: true },
       { key: "level", type: "enum", required: true, validValues: ["Info", "Warn", "Error", "Fatal", "Trace"], defaultValue: "Info" },
@@ -322,7 +325,7 @@ const HARDCODED_TEMPLATE_NAMES = new Set([
   "RetryScope", "TryCatch", "IfThenElse", "VariableDeclaration", "WorkflowHeader",
 ]);
 
-export function buildTemplateBlock(processType: ProcessType): TemplateBlock {
+export function buildTemplateBlock(processType: ProcessType, wideMode: boolean = true): TemplateBlock {
   const activityTemplates: TemplateEntry[] = [];
 
   activityTemplates.push(buildAssignTemplate());
@@ -333,7 +336,9 @@ export function buildTemplateBlock(processType: ProcessType): TemplateBlock {
   activityTemplates.push(buildRetryScopeTemplate());
 
   if (catalogService.isLoaded()) {
-    const palette = catalogService.buildActivityPalette(processType);
+    const palette = wideMode
+      ? catalogService.buildWidePalette()
+      : catalogService.buildActivityPalette(processType);
     for (const entry of palette) {
       if (HARDCODED_TEMPLATE_NAMES.has(entry.className)) continue;
 
@@ -431,6 +436,39 @@ export function formatTemplateBlockForPrompt(block: TemplateBlock): string {
   lines.push(`Available template names: ${block.templateNames.join(", ")}`);
 
   return lines.join("\n");
+}
+
+const COMPACT_TOKEN_THRESHOLD = 60;
+
+export function formatCompactTemplateBlockForPrompt(block: TemplateBlock): string {
+  const lines: string[] = [
+    `=== ACTIVITY CATALOG (processType: ${block.processType}, compact) ===`,
+    "",
+    "Use ONLY these activities. Enum values MUST match exactly.",
+    "",
+  ];
+
+  for (const t of block.activityTemplates) {
+    const reqStr = t.requiredProperties.length > 0 ? ` [required: ${t.requiredProperties.join(", ")}]` : "";
+    const enumPhs = t.placeholders.filter(p => p.validValues && p.validValues.length > 0);
+    const enumStr = enumPhs.length > 0
+      ? " | " + enumPhs.map(p => `${p.key}: ${p.validValues!.join("|")}`).join("; ")
+      : "";
+    lines.push(`- ${t.name}${reqStr}${enumStr}`);
+  }
+
+  lines.push("");
+  lines.push("--- Structural ---");
+  for (const t of block.structuralTemplates) {
+    const reqStr = t.requiredProperties.length > 0 ? ` [required: ${t.requiredProperties.join(", ")}]` : "";
+    lines.push(`- ${t.name}${reqStr}`);
+  }
+
+  return lines.join("\n");
+}
+
+export function shouldUseCompactFormat(block: TemplateBlock): boolean {
+  return block.activityTemplates.length > COMPACT_TOKEN_THRESHOLD;
 }
 
 export interface TemplateComplianceResult {

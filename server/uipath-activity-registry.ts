@@ -1,3 +1,5 @@
+import { catalogService } from "./catalog/catalog-service";
+
 export type ActivityPropertyInfo = {
   required?: string[];
   optional?: string[];
@@ -45,7 +47,7 @@ export function normalizeActivityName(name: string): string {
   return ACTIVITY_NAME_ALIAS_MAP[name] || name;
 }
 
-export const ACTIVITY_REGISTRY: Record<string, ActivityRegistryEntry> = {
+const FALLBACK_REGISTRY: Record<string, ActivityRegistryEntry> = {
   "ui:Click": {
     package: "UiPath.UIAutomation.Activities",
     properties: {
@@ -447,6 +449,103 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityRegistryEntry> = {
   },
 };
 
+function buildRegistryFromCatalog(): Record<string, ActivityRegistryEntry> {
+  if (!catalogService.isLoaded()) return {};
+
+  const registry: Record<string, ActivityRegistryEntry> = {};
+  const allActivities = catalogService.getAllActivities();
+
+  for (const schema of allActivities) {
+    const { activity, packageId } = schema;
+    const needsUiPrefix = packageId !== "System.Activities" && packageId !== "";
+    const tag = needsUiPrefix ? `ui:${activity.className}` : activity.className;
+
+    const required = activity.properties.filter(p => p.required).map(p => p.name);
+    const optional = activity.properties.filter(p => !p.required).map(p => p.name);
+
+    const entry: ActivityRegistryEntry = {
+      package: packageId,
+      properties: {
+        ...(required.length > 0 ? { required } : {}),
+        optional,
+      },
+    };
+
+    const versionedProps = activity.properties
+      .filter(p => p.addedInVersion || p.removedInVersion)
+      .map(p => {
+        const vp: VersionedProperty = { name: p.name };
+        if (p.addedInVersion) {
+          const major = parseInt(p.addedInVersion.split(".")[0], 10);
+          if (!isNaN(major)) vp.addedInMajor = major;
+        }
+        if (p.removedInVersion) {
+          const major = parseInt(p.removedInVersion.split(".")[0], 10);
+          if (!isNaN(major)) vp.removedInMajor = major;
+        }
+        return vp;
+      });
+
+    if (versionedProps.length > 0) {
+      entry.versionedProperties = versionedProps;
+    }
+
+    registry[tag] = entry;
+  }
+
+  return registry;
+}
+
+let _cachedCatalogRegistry: Record<string, ActivityRegistryEntry> | null = null;
+let _cachedGeneration = -1;
+
+function getCatalogRegistry(): Record<string, ActivityRegistryEntry> {
+  const currentGeneration = catalogService.getLoadGeneration();
+  if (_cachedCatalogRegistry && _cachedGeneration === currentGeneration) {
+    return _cachedCatalogRegistry;
+  }
+  _cachedCatalogRegistry = buildRegistryFromCatalog();
+  _cachedGeneration = currentGeneration;
+  return _cachedCatalogRegistry;
+}
+
+export const ACTIVITY_REGISTRY: Record<string, ActivityRegistryEntry> = new Proxy(FALLBACK_REGISTRY, {
+  get(target, prop, receiver) {
+    if (typeof prop !== "string") return Reflect.get(target, prop, receiver);
+    if (catalogService.isLoaded()) {
+      const catalogRegistry = getCatalogRegistry();
+      if (prop in catalogRegistry) return catalogRegistry[prop];
+    }
+    return target[prop];
+  },
+  has(target, prop) {
+    if (typeof prop !== "string") return Reflect.has(target, prop);
+    if (catalogService.isLoaded()) {
+      const catalogRegistry = getCatalogRegistry();
+      if (prop in catalogRegistry) return true;
+    }
+    return prop in target;
+  },
+  ownKeys(target) {
+    if (catalogService.isLoaded()) {
+      const catalogRegistry = getCatalogRegistry();
+      const allKeys = Array.from(new Set(Object.keys(catalogRegistry).concat(Object.keys(target))));
+      return allKeys;
+    }
+    return Object.keys(target);
+  },
+  getOwnPropertyDescriptor(target, prop) {
+    if (typeof prop !== "string") return Object.getOwnPropertyDescriptor(target, prop);
+    if (catalogService.isLoaded()) {
+      const catalogRegistry = getCatalogRegistry();
+      if (prop in catalogRegistry) {
+        return { configurable: true, enumerable: true, value: catalogRegistry[prop], writable: true };
+      }
+    }
+    return Object.getOwnPropertyDescriptor(target, prop);
+  },
+});
+
 export type AutomationPattern = "simple-linear" | "api-data-driven" | "ui-automation" | "transactional-queue" | "hybrid";
 
 export function classifyAutomationPattern(
@@ -484,12 +583,29 @@ export function shouldUseReFramework(pattern: AutomationPattern): boolean {
 }
 
 export function getActivityPackage(activityName: string): string | undefined {
-  const entry = ACTIVITY_REGISTRY[activityName];
+  if (catalogService.isLoaded()) {
+    const schema = catalogService.getActivitySchema(activityName);
+    if (schema?.packageId) return schema.packageId;
+
+    const className = activityName.includes(":") ? activityName.split(":").pop()! : activityName;
+    const schemaByClass = catalogService.getActivitySchema(className);
+    if (schemaByClass?.packageId) return schemaByClass.packageId;
+  }
+
+  const entry = FALLBACK_REGISTRY[activityName];
   return entry?.package || undefined;
 }
 
 export function isKnownActivity(activityName: string): boolean {
-  return activityName in ACTIVITY_REGISTRY;
+  if (catalogService.isLoaded()) {
+    const schema = catalogService.getActivitySchema(activityName);
+    if (schema) return true;
+
+    const className = activityName.includes(":") ? activityName.split(":").pop()! : activityName;
+    if (catalogService.getActivitySchema(className)) return true;
+  }
+
+  return activityName in FALLBACK_REGISTRY;
 }
 
 export { getBlockedActivities, isActivityAllowed } from "./uipath-activity-policy";
@@ -501,7 +617,17 @@ export function scanXamlForRequiredPackages(xamlContent: string): Set<string> {
   const activityPattern = /<(ui:[A-Za-z]+)\s/g;
   let match;
   while ((match = activityPattern.exec(xamlContent)) !== null) {
-    const entry = ACTIVITY_REGISTRY[match[1]];
+    const actTag = match[1];
+
+    if (catalogService.isLoaded()) {
+      const pkg = catalogService.getPackageForActivity(actTag);
+      if (pkg) {
+        packages.add(pkg);
+        continue;
+      }
+    }
+
+    const entry = FALLBACK_REGISTRY[actTag];
     if (entry?.package) {
       packages.add(entry.package);
     }

@@ -1,5 +1,5 @@
 {
-  "catalogVersion": "bootstrap",
+  "catalogVersion": "1.0.0",
   "generatedAt": "2026-03-18T00:00:00Z",
   "studioVersion": "23.10.6",
   "packages": [
@@ -23,7 +23,13 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "CLICK_SINGLE",
+                "CLICK_DOUBLE",
+                "CLICK_DOWN",
+                "CLICK_UP"
+              ]
             },
             {
               "name": "MouseButton",
@@ -32,7 +38,12 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "BTN_LEFT",
+                "BTN_RIGHT",
+                "BTN_MIDDLE"
+              ]
             },
             {
               "name": "KeyModifiers",
@@ -41,7 +52,14 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "None",
+                "Alt",
+                "Ctrl",
+                "Shift",
+                "Win"
+              ]
             },
             {
               "name": "CursorPosition",
@@ -50,7 +68,14 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "Center",
+                "TopLeft",
+                "TopRight",
+                "BottomLeft",
+                "BottomRight"
+              ]
             },
             {
               "name": "DelayAfter",
@@ -95,7 +120,8 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "addedInVersion": "23.4.0"
             }
           ]
         },
@@ -187,7 +213,8 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "addedInVersion": "23.4.0"
             }
           ]
         },
@@ -252,7 +279,8 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "addedInVersion": "23.4.0"
             }
           ]
         },
@@ -281,7 +309,13 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "Chrome",
+                "Firefox",
+                "Edge",
+                "IE"
+              ]
             },
             {
               "name": "NewSession",
@@ -346,7 +380,13 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "Chrome",
+                "Firefox",
+                "Edge",
+                "IE"
+              ]
             },
             {
               "name": "InformativeScreenshot",
@@ -355,7 +395,8 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "addedInVersion": "23.4.0"
             }
           ]
         },
@@ -404,7 +445,13 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "Chrome",
+                "Firefox",
+                "Edge",
+                "IE"
+              ]
             },
             {
               "name": "Title",
@@ -480,7 +527,13 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "Chrome",
+                "Firefox",
+                "Edge",
+                "IE"
+              ]
             },
             {
               "name": "InformativeScreenshot",
@@ -489,7 +542,8 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "addedInVersion": "23.4.0"
             }
           ]
         },
@@ -609,7 +663,9 @@
             }
           ]
         }
-      ]
+      ],
+      "feedStatus": "verified",
+      "preferredVersion": "23.10.8"
     },
     {
       "packageId": "UiPath.Excel.Activities",
@@ -686,7 +742,8 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": "x:String"
+              "typeArguments": "x:String",
+              "addedInVersion": "2.0.0"
             }
           ]
         },
@@ -978,7 +1035,9 @@
             }
           ]
         }
-      ]
+      ],
+      "feedStatus": "unverified",
+      "preferredVersion": "23.10.1"
     },
     {
       "packageId": "UiPath.Mail.Activities",
@@ -1073,7 +1132,14 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "None",
+                "Auto",
+                "SslOnConnect",
+                "StartTls",
+                "StartTlsWhenAvailable"
+              ]
             },
             {
               "name": "Email",
@@ -1230,7 +1296,14 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "None",
+                "Auto",
+                "SslOnConnect",
+                "StartTls",
+                "StartTlsWhenAvailable"
+              ]
             },
             {
               "name": "Top",
@@ -1430,7 +1503,9 @@
             }
           ]
         }
-      ]
+      ],
+      "feedStatus": "verified",
+      "preferredVersion": "1.20.0"
     },
     {
       "packageId": "UiPath.Web.Activities",
@@ -1480,7 +1555,16 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": true,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "GET",
+                "POST",
+                "PUT",
+                "DELETE",
+                "PATCH",
+                "HEAD",
+                "OPTIONS"
+              ]
             },
             {
               "name": "AcceptFormat",
@@ -1489,7 +1573,12 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "ANY",
+                "JSON",
+                "XML"
+              ]
             },
             {
               "name": "Body",
@@ -1507,7 +1596,13 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "application/json",
+                "application/xml",
+                "text/plain",
+                "application/x-www-form-urlencoded"
+              ]
             },
             {
               "name": "Headers",
@@ -1652,7 +1747,9 @@
             }
           ]
         }
-      ]
+      ],
+      "feedStatus": "unverified",
+      "preferredVersion": "23.10.1"
     },
     {
       "packageId": "UiPath.Database.Activities",
@@ -1819,7 +1916,9 @@
             }
           ]
         }
-      ]
+      ],
+      "feedStatus": "verified",
+      "preferredVersion": "1.8.0"
     },
     {
       "packageId": "UiPath.System.Activities",
@@ -1859,7 +1958,12 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "Low",
+                "Normal",
+                "High"
+              ]
             },
             {
               "name": "DeferDate",
@@ -1942,7 +2046,11 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "Success",
+                "Failed"
+              ]
             },
             {
               "name": "ErrorType",
@@ -1951,7 +2059,11 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "Application",
+                "Business"
+              ]
             },
             {
               "name": "Reason",
@@ -2064,7 +2176,13 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "UTF8",
+                "Unicode",
+                "ASCII",
+                "Default"
+              ]
             }
           ]
         },
@@ -2110,7 +2228,13 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "UTF8",
+                "Unicode",
+                "ASCII",
+                "Default"
+              ]
             }
           ]
         },
@@ -2138,7 +2262,12 @@
               "xamlSyntax": "attribute",
               "argumentWrapper": null,
               "required": false,
-              "typeArguments": null
+              "typeArguments": null,
+              "validValues": [
+                "File",
+                "Folder",
+                "Any"
+              ]
             },
             {
               "name": "Result",
@@ -2168,7 +2297,13 @@
               "argumentWrapper": null,
               "required": false,
               "typeArguments": null,
-              "validValues": ["Trace", "Info", "Warn", "Error", "Fatal"],
+              "validValues": [
+                "Info",
+                "Warn",
+                "Error",
+                "Fatal",
+                "Trace"
+              ],
               "default": "Info"
             },
             {
@@ -2365,7 +2500,9 @@
             }
           ]
         }
-      ]
+      ],
+      "feedStatus": "verified",
+      "preferredVersion": "23.10.3"
     },
     {
       "packageId": "UiPath.Persistence.Activities",
@@ -2463,7 +2600,9 @@
             }
           ]
         }
-      ]
+      ],
+      "feedStatus": "verified",
+      "preferredVersion": "23.10.0"
     },
     {
       "packageId": "UiPath.MLActivities",
@@ -2554,7 +2693,9 @@
             }
           ]
         }
-      ]
+      ],
+      "feedStatus": "verified",
+      "preferredVersion": "23.10.0"
     },
     {
       "packageId": "UiPath.IntelligentOCR.Activities",
@@ -2708,7 +2849,9 @@
             }
           ]
         }
-      ]
+      ],
+      "feedStatus": "verified",
+      "preferredVersion": "8.20.0"
     },
     {
       "packageId": "System.Activities",
@@ -2983,7 +3126,10 @@
           "displayName": "Delay",
           "browsable": true
         }
-      ]
+      ],
+      "feedStatus": "verified",
+      "preferredVersion": "4.0.0"
     }
-  ]
+  ],
+  "lastVerifiedAt": "2026-03-21T00:00:00Z"
 }

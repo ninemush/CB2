@@ -4,7 +4,7 @@ import { sanitizeJsonString, stripCodeFences } from "./lib/json-utils";
 import { isActivityAllowed } from "./uipath-activity-policy";
 import type { AutomationPattern } from "./uipath-activity-registry";
 import { catalogService, type ProcessType, type PaletteEntry } from "./catalog/catalog-service";
-import { buildTemplateBlock, formatTemplateBlockForPrompt } from "./catalog/xaml-template-builder";
+import { buildTemplateBlock, formatTemplateBlockForPrompt, formatCompactTemplateBlockForPrompt, shouldUseCompactFormat } from "./catalog/xaml-template-builder";
 import { validateWorkflowSpec, type WorkflowSpec as TreeWorkflowSpec, type WorkflowNode, type PropertyValue } from "./workflow-spec-types";
 import { isValueIntent, type ValueIntent } from "./xaml/expression-builder";
 
@@ -241,16 +241,21 @@ Generate the enriched workflow specification. For each node, provide the specifi
 
     if (catalogService.isLoaded()) {
       try {
-        const templateBlock = buildTemplateBlock(processType);
-        section2Block = "\n\n" + formatTemplateBlockForPrompt(templateBlock);
-        console.log(`[AI XAML Enricher] Injected ACTIVITY TEMPLATES block for processType="${processType}" (${templateBlock.activityTemplates.length} activity templates, ${templateBlock.templateNames.length} total templates)`);
+        const templateBlock = buildTemplateBlock(processType, true);
+        if (shouldUseCompactFormat(templateBlock)) {
+          section2Block = "\n\n" + formatCompactTemplateBlockForPrompt(templateBlock);
+          console.log(`[AI XAML Enricher] Injected COMPACT ACTIVITY CATALOG for processType="${processType}" (${templateBlock.activityTemplates.length} activities, wide mode)`);
+        } else {
+          section2Block = "\n\n" + formatTemplateBlockForPrompt(templateBlock);
+          console.log(`[AI XAML Enricher] Injected ACTIVITY TEMPLATES block for processType="${processType}" (${templateBlock.activityTemplates.length} activity templates, ${templateBlock.templateNames.length} total templates, wide mode)`);
+        }
       } catch (err: any) {
         console.warn(`[AI XAML Enricher] Failed to build template block: ${err.message}`);
         try {
-          const palette = catalogService.buildActivityPalette(processType);
+          const palette = catalogService.buildWidePalette();
           if (palette.length > 0) {
             section2Block = "\n\n" + formatActivityConstraints(palette, processType);
-            console.log(`[AI XAML Enricher] Fell back to ACTIVITY CONSTRAINTS block for processType="${processType}" (${palette.length} activities)`);
+            console.log(`[AI XAML Enricher] Fell back to ACTIVITY CONSTRAINTS block for processType="${processType}" (${palette.length} activities, wide mode)`);
           }
         } catch (err2: any) {
           console.warn(`[AI XAML Enricher] Fallback also failed: ${err2.message}`);
@@ -538,9 +543,14 @@ Generate the hierarchical WorkflowSpec JSON tree. Use tryCatch nodes to wrap act
 
     if (catalogService.isLoaded()) {
       try {
-        const templateBlock = buildTemplateBlock(processType);
-        section2Block = "\n\n" + formatTemplateBlockForPrompt(templateBlock);
-        console.log(`[AI XAML Enricher Tree] Injected ACTIVITY TEMPLATES for processType="${processType}"`);
+        const templateBlock = buildTemplateBlock(processType, true);
+        if (shouldUseCompactFormat(templateBlock)) {
+          section2Block = "\n\n" + formatCompactTemplateBlockForPrompt(templateBlock);
+          console.log(`[AI XAML Enricher Tree] Injected COMPACT ACTIVITY CATALOG for processType="${processType}" (wide mode)`);
+        } else {
+          section2Block = "\n\n" + formatTemplateBlockForPrompt(templateBlock);
+          console.log(`[AI XAML Enricher Tree] Injected ACTIVITY TEMPLATES for processType="${processType}" (wide mode)`);
+        }
       } catch (err: any) {
         console.warn(`[AI XAML Enricher Tree] Failed to build template block: ${err.message}`);
       }

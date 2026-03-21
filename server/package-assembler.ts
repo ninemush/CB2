@@ -679,7 +679,6 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
             "UiPath.MLActivities": "23.10.0",
             "UiPath.IntelligentOCR.Activities": "8.20.0",
           };
-    const UNVERIFIED_PACKAGES = new Set(["UiPath.Web.Activities", "UiPath.Excel.Activities"]);
     const deps: Record<string, string> = {
       "UiPath.System.Activities": confirmedVersionMap["UiPath.System.Activities"],
     };
@@ -930,8 +929,19 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     const scannedPackages = scanXamlForRequiredPackages(allXamlContent);
     for (const pkgName of scannedPackages) {
       if (deps[pkgName]) continue;
-      if (UNVERIFIED_PACKAGES.has(pkgName)) {
-        console.warn(`[UiPath] XAML uses activities from ${pkgName} but no confirmed version exists — omitting from project.json`);
+      if (catalogService.isLoaded() && !catalogService.isPackageVerified(pkgName)) {
+        const preferredVer = catalogService.getPreferredVersion(pkgName);
+        if (preferredVer) {
+          deps[pkgName] = preferredVer;
+          dependencyWarnings.push({
+            code: "DEPENDENCY_FEED_UNVERIFIED",
+            message: `Package ${pkgName} has unverified feed status — using preferred version ${preferredVer} from catalog.`,
+            stage: "dependency-resolution",
+            recoverable: true,
+          });
+          continue;
+        }
+        console.warn(`[UiPath] XAML uses activities from ${pkgName} but feed is unverified and no preferred version — omitting from project.json`);
         dependencyWarnings.push({
           code: "DEPENDENCY_VERSION_UNKNOWN",
           message: `Activities from ${pkgName} are used in XAML but no confirmed-resolvable version is available. This dependency is omitted from project.json.`,
@@ -1593,7 +1603,14 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       const depsAfterScan = scanXamlForRequiredPackages(xamlEntries.map(e => e.content).join("\n"));
       for (const pkg of depsAfterScan) {
         if (deps[pkg]) continue;
-        if (UNVERIFIED_PACKAGES.has(pkg)) continue;
+        if (catalogService.isLoaded() && !catalogService.isPackageVerified(pkg)) {
+          const preferredVer = catalogService.getPreferredVersion(pkg);
+          if (preferredVer) {
+            deps[pkg] = preferredVer;
+            autoFixSummary.push(`Added unverified dependency with preferred version: ${pkg}@${preferredVer}`);
+          }
+          continue;
+        }
         if (confirmedVersionMap[pkg]) {
           deps[pkg] = confirmedVersionMap[pkg];
           autoFixSummary.push(`Added missing dependency: ${pkg}`);

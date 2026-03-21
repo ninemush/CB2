@@ -6,6 +6,8 @@ export type { StudioProfile } from "./studio-profile";
 
 export type ProcessType = "api-integration" | "document-processing" | "attended-ui" | "unattended-ui" | "orchestration" | "general";
 
+export type FeedStatus = "verified" | "unverified";
+
 export interface CatalogProperty {
   name: string;
   direction: "In" | "Out" | "InOut" | "None";
@@ -16,6 +18,8 @@ export interface CatalogProperty {
   required: boolean;
   validValues?: string[];
   default?: string;
+  addedInVersion?: string;
+  removedInVersion?: string;
 }
 
 export interface CatalogActivity {
@@ -29,12 +33,15 @@ export interface CatalogActivity {
 export interface CatalogPackage {
   packageId: string;
   version: string;
+  feedStatus: FeedStatus;
+  preferredVersion: string;
   activities: CatalogActivity[];
 }
 
 export interface ActivityCatalog {
   catalogVersion: string;
   generatedAt: string;
+  lastVerifiedAt: string;
   studioVersion: string;
   packages: CatalogPackage[];
 }
@@ -64,7 +71,7 @@ export interface PaletteEntry {
   className: string;
   displayName: string;
   packageId: string;
-  properties: { name: string; direction: string; required: boolean; xamlSyntax: string }[];
+  properties: { name: string; direction: string; required: boolean; xamlSyntax: string; validValues?: string[] }[];
 }
 
 class CatalogService {
@@ -73,6 +80,7 @@ class CatalogService {
   private packageIndex = new Map<string, CatalogPackage>();
   private loaded = false;
   private studioProfile: StudioProfile | null = null;
+  private loadGeneration = 0;
 
   load(catalogPath?: string): void {
     this.studioProfile = loadStudioProfile();
@@ -103,13 +111,16 @@ class CatalogService {
       this.catalog = parsed as ActivityCatalog;
       this.buildIndices();
       this.loaded = true;
+      this.loadGeneration++;
 
       let totalActivities = 0;
       for (const pkg of this.catalog.packages) {
         totalActivities += pkg.activities.length;
       }
 
-      console.log(`Activity catalog loaded: ${this.catalog.packages.length} packages, ${totalActivities} activities, Studio ${this.catalog.studioVersion}`);
+      console.log(`Activity catalog loaded: v${this.catalog.catalogVersion}, ${this.catalog.packages.length} packages, ${totalActivities} activities, Studio ${this.catalog.studioVersion}`);
+
+      this.checkCatalogFreshness();
     } catch (err: any) {
       console.warn(`[Activity Catalog] Failed to load catalog: ${err.message} — catalog constraints disabled`);
       this.loaded = false;
@@ -122,6 +133,25 @@ class CatalogService {
 
   isLoaded(): boolean {
     return this.loaded;
+  }
+
+  getLoadGeneration(): number {
+    return this.loadGeneration;
+  }
+
+  private checkCatalogFreshness(): void {
+    if (!this.catalog?.lastVerifiedAt) return;
+
+    const lastVerified = new Date(this.catalog.lastVerifiedAt).getTime();
+    if (isNaN(lastVerified)) return;
+
+    const ageMs = Date.now() - lastVerified;
+    const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+
+    if (ageMs > NINETY_DAYS_MS) {
+      const ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+      console.warn(`[Activity Catalog] WARNING: Catalog lastVerifiedAt is ${ageDays} days old (>${90} days). Consider re-verifying the catalog against NuGet feeds.`);
+    }
   }
 
   private buildIndices(): void {
@@ -177,6 +207,22 @@ class CatalogService {
     return pkg?.activities || [];
   }
 
+  getAllActivities(): ActivitySchema[] {
+    if (!this.loaded || !this.catalog) return [];
+
+    const schemas: ActivitySchema[] = [];
+    for (const pkg of this.catalog.packages) {
+      for (const act of pkg.activities) {
+        schemas.push({
+          activity: act,
+          packageId: pkg.packageId,
+          packageVersion: pkg.version,
+        });
+      }
+    }
+    return schemas;
+  }
+
   buildActivityPalette(processType: ProcessType): PaletteEntry[] {
     if (!this.loaded || !this.catalog) return [];
 
@@ -199,6 +245,33 @@ class CatalogService {
             direction: p.direction,
             required: p.required,
             xamlSyntax: p.xamlSyntax,
+            validValues: p.validValues,
+          })),
+        });
+      }
+    }
+
+    return entries;
+  }
+
+  buildWidePalette(): PaletteEntry[] {
+    if (!this.loaded || !this.catalog) return [];
+
+    const entries: PaletteEntry[] = [];
+    for (const pkg of this.catalog.packages) {
+      for (const act of pkg.activities) {
+        if (!act.browsable) continue;
+
+        entries.push({
+          className: act.className,
+          displayName: act.displayName,
+          packageId: pkg.packageId,
+          properties: act.properties.map(p => ({
+            name: p.name,
+            direction: p.direction,
+            required: p.required,
+            xamlSyntax: p.xamlSyntax,
+            validValues: p.validValues,
           })),
         });
       }
@@ -211,6 +284,64 @@ class CatalogService {
     if (!this.loaded || !this.catalog) return null;
     const pkg = this.packageIndex.get(packageName);
     return pkg?.version || null;
+  }
+
+  getEnumValues(activityClassName: string, propertyName: string): string[] | null {
+    const schema = this.getActivitySchema(activityClassName);
+    if (!schema) return null;
+
+    const prop = schema.activity.properties.find(p => p.name === propertyName);
+    if (!prop || !prop.validValues || prop.validValues.length === 0) return null;
+
+    return prop.validValues;
+  }
+
+  isPropertyAvailableForVersion(activityClassName: string, propertyName: string, packageVersion: string): boolean {
+    const schema = this.getActivitySchema(activityClassName);
+    if (!schema) return true;
+
+    const prop = schema.activity.properties.find(p => p.name === propertyName);
+    if (!prop) return false;
+
+    if (prop.addedInVersion && this.compareVersions(packageVersion, prop.addedInVersion) < 0) {
+      return false;
+    }
+
+    if (prop.removedInVersion && this.compareVersions(packageVersion, prop.removedInVersion) >= 0) {
+      return false;
+    }
+
+    return true;
+  }
+
+  getPreferredVersion(packageName: string): string | null {
+    if (!this.loaded || !this.catalog) return null;
+    const pkg = this.packageIndex.get(packageName);
+    return pkg?.preferredVersion || pkg?.version || null;
+  }
+
+  getFeedStatus(packageName: string): FeedStatus | null {
+    if (!this.loaded || !this.catalog) return null;
+    const pkg = this.packageIndex.get(packageName);
+    return pkg?.feedStatus || null;
+  }
+
+  isPackageVerified(packageName: string): boolean {
+    const status = this.getFeedStatus(packageName);
+    return status === "verified";
+  }
+
+  private compareVersions(a: string, b: string): number {
+    const pa = a.split(".").map(Number);
+    const pb = b.split(".").map(Number);
+    const len = Math.max(pa.length, pb.length);
+    for (let i = 0; i < len; i++) {
+      const na = pa[i] || 0;
+      const nb = pb[i] || 0;
+      if (na > nb) return 1;
+      if (na < nb) return -1;
+    }
+    return 0;
   }
 
   validateEmittedActivity(

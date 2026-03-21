@@ -7,6 +7,7 @@ export interface CatalogValidationResult {
 const VALID_DIRECTIONS = new Set(["In", "Out", "InOut", "None"]);
 const VALID_XAML_SYNTAX = new Set(["child-element", "attribute"]);
 const VALID_ARGUMENT_WRAPPERS = new Set(["InArgument", "OutArgument", "InOutArgument"]);
+const VALID_FEED_STATUSES = new Set(["verified", "unverified"]);
 
 function isIso8601(s: string): boolean {
   const d = new Date(s);
@@ -27,6 +28,8 @@ export function validateCatalog(catalog: any): CatalogValidationResult {
 
   if (!catalog.catalogVersion || typeof catalog.catalogVersion !== "string") {
     errors.push("Missing or invalid catalogVersion");
+  } else if (!isSemver(catalog.catalogVersion)) {
+    errors.push(`catalogVersion "${catalog.catalogVersion}" is not valid semver`);
   }
 
   if (!catalog.generatedAt || typeof catalog.generatedAt !== "string") {
@@ -38,6 +41,14 @@ export function validateCatalog(catalog: any): CatalogValidationResult {
     const fortyEightHours = 48 * 60 * 60 * 1000;
     if (age > fortyEightHours) {
       warnings.push(`Catalog generatedAt is older than 48 hours — consider regenerating`);
+    }
+  }
+
+  if (catalog.lastVerifiedAt) {
+    if (typeof catalog.lastVerifiedAt !== "string") {
+      errors.push("lastVerifiedAt must be a string");
+    } else if (!isIso8601(catalog.lastVerifiedAt)) {
+      errors.push(`lastVerifiedAt "${catalog.lastVerifiedAt}" is not a valid ISO 8601 timestamp`);
     }
   }
 
@@ -78,6 +89,16 @@ export function validateCatalog(catalog: any): CatalogValidationResult {
       errors.push(`${pkgLabel}: missing or empty version`);
     } else if (!isSemver(pkg.version)) {
       errors.push(`${pkgLabel}: invalid version format "${pkg.version}"`);
+    }
+
+    if (!pkg.feedStatus || !VALID_FEED_STATUSES.has(pkg.feedStatus)) {
+      errors.push(`${pkgLabel}: feedStatus must be "verified" or "unverified", got "${pkg.feedStatus}"`);
+    }
+
+    if (!pkg.preferredVersion || typeof pkg.preferredVersion !== "string" || pkg.preferredVersion === "") {
+      errors.push(`${pkgLabel}: preferredVersion is required and must be a non-empty string`);
+    } else if (!isSemver(pkg.preferredVersion)) {
+      errors.push(`${pkgLabel}: preferredVersion "${pkg.preferredVersion}" is not valid semver`);
     }
 
     if (!Array.isArray(pkg.activities) || pkg.activities.length === 0) {
@@ -174,6 +195,35 @@ export function validateCatalog(catalog: any): CatalogValidationResult {
 
         if (!prop.clrType || typeof prop.clrType !== "string") {
           errors.push(`${propLabel}: missing clrType`);
+        }
+
+        if (prop.validValues !== undefined) {
+          if (!Array.isArray(prop.validValues)) {
+            errors.push(`${propLabel}: validValues must be an array`);
+          } else {
+            for (const v of prop.validValues) {
+              if (typeof v !== "string") {
+                errors.push(`${propLabel}: validValues entries must be strings`);
+                break;
+              }
+            }
+          }
+        }
+
+        if (prop.addedInVersion !== undefined) {
+          if (typeof prop.addedInVersion !== "string") {
+            errors.push(`${propLabel}: addedInVersion must be a string`);
+          } else if (!isSemver(prop.addedInVersion)) {
+            errors.push(`${propLabel}: addedInVersion "${prop.addedInVersion}" is not valid semver`);
+          }
+        }
+
+        if (prop.removedInVersion !== undefined) {
+          if (typeof prop.removedInVersion !== "string") {
+            errors.push(`${propLabel}: removedInVersion must be a string`);
+          } else if (!isSemver(prop.removedInVersion)) {
+            errors.push(`${propLabel}: removedInVersion "${prop.removedInVersion}" is not valid semver`);
+          }
         }
       }
     }
