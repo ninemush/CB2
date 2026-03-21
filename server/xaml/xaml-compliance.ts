@@ -232,14 +232,15 @@ function inferVariableType(varName: string): string {
   if (lower.startsWith("str_")) return "x:String";
   if (lower.startsWith("int_") || lower.startsWith("i_") || lower.startsWith("int32_")) return "x:Int32";
   if (lower.startsWith("bool_") || lower.startsWith("b_") || lower.startsWith("is_") || lower.startsWith("has_")) return "x:Boolean";
-  if (lower.startsWith("dt_") || lower.startsWith("datatable_")) return "s:DataTable";
+  if (lower.startsWith("dt_") || lower.startsWith("datatable_")) return "scg2:DataTable";
   if (lower.startsWith("qi_")) return "ui:QueueItem";
   if (lower.startsWith("dic_") || lower.startsWith("dict_")) return "scg:Dictionary(x:String, x:Object)";
   if (lower.startsWith("arr_")) return "s:String[]";
   if (lower.startsWith("img_")) return "ui:Image";
   if (lower.startsWith("dbl_") || lower.startsWith("dec_")) return "x:Double";
   if (lower.startsWith("obj_")) return "x:Object";
-  if (lower.startsWith("row_")) return "scg2:DataRow";
+  if (lower.startsWith("sec_")) return "s:Security.SecureString";
+  if (lower.startsWith("row_") || lower.startsWith("drow_")) return "scg2:DataRow";
   if (lower.startsWith("lst_")) return "scg:List(x:String)";
   if (lower.startsWith("out_")) return "x:String";
   if (lower.startsWith("in_")) return "x:String";
@@ -379,6 +380,43 @@ function ensureVariableDeclarations(xml: string): string {
         `\n    <Sequence.Variables>\n${varsXml}\n    </Sequence.Variables>` +
         xml.slice(seqTagEndIdx + 1);
     }
+  }
+
+  return xml;
+}
+
+const VARIABLE_PREFIX_PATTERN = /^(str_|int_|dbl_|bool_|sec_|dt_|drow_|obj_|dec_|ts_|lst_|dic_|arr_|row_|qi_)/i;
+
+const QUOTED_EXPRESSION_PATTERNS = [
+  /^"Exception\.Message"$/,
+  /^"exception\.Message"$/,
+  /^"Exception\.ToString\(\)"$/,
+  /^"exception\.ToString\(\)"$/,
+];
+
+function fixBareVariableRefsInExpressionAttributes(xml: string): string {
+  const expressionAttrs = ["Message", "Condition", "To", "Value"];
+
+  for (const attr of expressionAttrs) {
+    const pattern = new RegExp(`${attr}="([^"]*)"`, "g");
+    xml = xml.replace(pattern, (match, val) => {
+      if (!val || val.startsWith("[") || val.startsWith("&quot;") || val.startsWith("<")) return match;
+      if (val === "True" || val === "False" || val === "Nothing" || val === "null") return match;
+      if (/^[0-9]+$/.test(val)) return match;
+
+      if (VARIABLE_PREFIX_PATTERN.test(val) && /^[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*$/.test(val)) {
+        return `${attr}="[${val}]"`;
+      }
+
+      for (const qp of QUOTED_EXPRESSION_PATTERNS) {
+        if (qp.test(val)) {
+          const inner = val.slice(1, -1);
+          return `${attr}="[${inner}]"`;
+        }
+      }
+
+      return match;
+    });
   }
 
   return xml;
@@ -661,6 +699,8 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
   });
 
   xml = collapseDoubledArgumentsXmlParser(xml);
+
+  xml = fixBareVariableRefsInExpressionAttributes(xml);
 
   xml = ensureVariableDeclarations(xml);
 

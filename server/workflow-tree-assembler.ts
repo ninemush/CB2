@@ -158,6 +158,7 @@ function inferAssignType(varName: string, variables: VariableDeclaration[]): str
   if (varName.startsWith("dec_")) return "x:Decimal";
   if (varName.startsWith("dt_")) return "scg2:DataTable";
   if (varName.startsWith("drow_")) return "scg2:DataRow";
+  if (varName.startsWith("sec_")) return "s:Security.SecureString";
   if (varName.startsWith("ts_")) return "s:TimeSpan";
   if (varName.startsWith("obj_")) return "x:Object";
   return "x:Object";
@@ -242,7 +243,8 @@ export function resolveActivityTemplate(
   if (templateName === "LogMessage") {
     const level = getPropString(props, "Level", "level") || "Info";
     const message = getPropString(props, "Message", "message") || `"${displayName}"`;
-    return `<ui:LogMessage Level="${escapeXml(level)}" Message="${escapeXml(message)}" DisplayName="${displayName}" />`;
+    const wrappedMessage = smartBracketWrap(message);
+    return `<ui:LogMessage Level="${escapeXml(level)}" Message="${escapeXml(wrappedMessage)}" DisplayName="${displayName}" />`;
   }
 
   if (templateName === "Delay") {
@@ -755,6 +757,15 @@ function assembleWhileNode(
     `</While>`;
 }
 
+function inferForEachItemType(itemType: string, valuesExpression: string): string {
+  if (itemType && itemType !== "x:Object" && itemType !== "x:String") return itemType;
+  const expr = valuesExpression.trim().replace(/^\[|\]$/g, "");
+  if (/\bdt_\w*\.Rows\b/i.test(expr) || /\.AsEnumerable\(\)/i.test(expr) || /\bDataTable\b.*\.Rows\b/i.test(expr)) {
+    return "scg2:DataRow";
+  }
+  return itemType || "x:Object";
+}
+
 function assembleForEachNode(
   node: ForEachNode,
   allVariables: VariableDeclaration[],
@@ -762,13 +773,14 @@ function assembleForEachNode(
   depthLevel: number,
 ): string {
   const displayName = escapeXml(node.displayName);
-  const itemType = node.itemType || "x:Object";
+  const itemType = inferForEachItemType(node.itemType || "x:Object", node.valuesExpression);
+  const wrappedValues = ensureBracketWrapped(node.valuesExpression);
 
   const bodyXml = node.bodyChildren
     .map(child => assembleNode(child, allVariables, processType, depthLevel + 1))
     .join("\n");
 
-  return `<ForEach x:TypeArguments="${itemType}" Values="${escapeXml(node.valuesExpression)}" DisplayName="${displayName}">\n` +
+  return `<ForEach x:TypeArguments="${itemType}" Values="${escapeXml(wrappedValues)}" DisplayName="${displayName}">\n` +
     `  <ActivityAction x:TypeArguments="${itemType}">\n` +
     `    <ActivityAction.Argument>\n` +
     `      <DelegateInArgument x:TypeArguments="${itemType}" Name="${escapeXml(node.iteratorName)}" />\n` +
@@ -837,6 +849,56 @@ function buildXMembersBlock(
   return lines.join("\n") + "\n";
 }
 
+function collectGetCredentialNodes(node: WorkflowNode): ActivityNode[] {
+  const results: ActivityNode[] = [];
+  if (node.kind === "activity" && node.template === "GetCredential") {
+    results.push(node);
+  } else if (node.kind === "sequence") {
+    for (const child of node.children) results.push(...collectGetCredentialNodes(child));
+  } else if (node.kind === "tryCatch") {
+    for (const child of [...node.tryChildren, ...node.catchChildren, ...node.finallyChildren]) results.push(...collectGetCredentialNodes(child));
+  } else if (node.kind === "if") {
+    for (const child of [...node.thenChildren, ...node.elseChildren]) results.push(...collectGetCredentialNodes(child));
+  } else if (node.kind === "while" || node.kind === "forEach" || node.kind === "retryScope") {
+    for (const child of node.bodyChildren) results.push(...collectGetCredentialNodes(child));
+  }
+  return results;
+}
+
+function crossCheckGetCredentialVariableTypes(
+  rootSequence: { children: WorkflowNode[]; variables?: VariableDeclaration[] },
+  allVariables: VariableDeclaration[],
+): void {
+  const credNodes: ActivityNode[] = [];
+  for (const child of rootSequence.children) {
+    credNodes.push(...collectGetCredentialNodes(child));
+  }
+
+  for (const node of credNodes) {
+    const props = node.properties || {};
+    const passwordVar = (props.Password as string) || (props.password as string) || "sec_Password";
+    const usernameVar = (props.Username as string) || (props.username as string) || "str_Username";
+
+    const pwDecl = allVariables.find(v => v.name === passwordVar);
+    if (pwDecl) {
+      const mapped = mapClrType(pwDecl.type);
+      if (mapped !== "s:Security.SecureString") {
+        console.log(`[CrossCheck] Fixing variable ${passwordVar} type from ${pwDecl.type} to SecureString for GetCredential.Password`);
+        pwDecl.type = "SecureString";
+      }
+    } else {
+      allVariables.push({ name: passwordVar, type: "SecureString" });
+      console.log(`[CrossCheck] Added missing variable ${passwordVar} as SecureString for GetCredential.Password`);
+    }
+
+    const unDecl = allVariables.find(v => v.name === usernameVar);
+    if (!unDecl) {
+      allVariables.push({ name: usernameVar, type: "String" });
+      console.log(`[CrossCheck] Added missing variable ${usernameVar} as String for GetCredential.Username`);
+    }
+  }
+}
+
 export function assembleWorkflowFromSpec(
   spec: WorkflowSpec,
   processType: ProcessType = "general",
@@ -859,6 +921,8 @@ export function assembleWorkflowFromSpec(
       default: '"screenshots/error_" & DateTime.Now.ToString("yyyyMMdd_HHmmss") & ".png"',
     });
   }
+
+  crossCheckGetCredentialVariableTypes(spec.rootSequence, allVariables);
 
   const activitiesXml = spec.rootSequence.children
     .map(child => assembleNode(child, allVariables, processType))

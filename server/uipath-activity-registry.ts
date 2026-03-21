@@ -1,4 +1,5 @@
 import { catalogService } from "./catalog/catalog-service";
+import { isFrameworkAssembly } from "./uipath-shared";
 
 export type ActivityPropertyInfo = {
   required?: string[];
@@ -621,14 +622,14 @@ export function scanXamlForRequiredPackages(xamlContent: string): Set<string> {
 
     if (catalogService.isLoaded()) {
       const pkg = catalogService.getPackageForActivity(actTag);
-      if (pkg) {
+      if (pkg && !isFrameworkAssembly(pkg)) {
         packages.add(pkg);
         continue;
       }
     }
 
     const entry = FALLBACK_REGISTRY[actTag];
-    if (entry?.package) {
+    if (entry?.package && !isFrameworkAssembly(entry.package)) {
       packages.add(entry.package);
     }
   }

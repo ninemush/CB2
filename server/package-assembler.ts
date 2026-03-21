@@ -45,7 +45,7 @@ import archiver from "archiver";
   import { catalogService, type ProcessType } from "./catalog/catalog-service";
   import { getPreferredVersion, isVersionInRange, type StudioProfile } from "./catalog/studio-profile";
   import { validateWorkflowSpec as validateSpec, type SpecValidationReport } from "./catalog/spec-validator";
-  import { UIPATH_PACKAGE_ALIAS_MAP, QualityGateError, type UiPathConfig } from "./uipath-shared";
+  import { UIPATH_PACKAGE_ALIAS_MAP, QualityGateError, isFrameworkAssembly, type UiPathConfig } from "./uipath-shared";
   import { metadataService as _metadataService } from "./catalog/metadata-service";
 
 async function getProbeCache() {
@@ -93,9 +93,141 @@ export function isValidNuGetVersion(version: string): boolean {
   return /^\[?\d+\.\d+(\.\d+){0,2}(,\s*\))?\]?$/.test(version);
 }
 
+const STUDIO_25_10_VERIFIED_VERSIONS: Record<string, string> = {
+  "UiPath.System.Activities": "[25.10.7, 25.10.99)",
+  "UiPath.UIAutomation.Activities": "[25.10.7, 25.10.99)",
+  "UiPath.Mail.Activities": "[1.23.1, 1.99.0)",
+  "UiPath.Excel.Activities": "[2.24.3, 2.99.0)",
+  "UiPath.Web.Activities": "[1.20.1, 1.99.0)",
+  "UiPath.Database.Activities": "[1.9.0, 1.99.0)",
+  "UiPath.Persistence.Activities": "[25.10.7, 25.10.99)",
+  "UiPath.IntelligentOCR.Activities": "[8.22.0, 8.99.0)",
+  "UiPath.MLActivities": "[25.10.7, 25.10.99)",
+};
+
+const KNOWN_TRANSITIVE_COLLISION_PAIRS: Array<{
+  packages: [string, string];
+  conflictingTransitive: string;
+  resolution: string;
+}> = [
+  {
+    packages: ["UiPath.Mail.Activities", "UiPath.System.Activities"],
+    conflictingTransitive: "Microsoft.Office.Interop.Outlook",
+    resolution: "align-system-version",
+  },
+];
+
+const STUDIO_25_10_PREFERRED_VERSIONS: Record<string, string> = {
+  "UiPath.System.Activities": "25.10.7",
+  "UiPath.UIAutomation.Activities": "25.10.7",
+  "UiPath.Mail.Activities": "1.23.1",
+  "UiPath.Excel.Activities": "2.24.3",
+  "UiPath.Web.Activities": "1.20.1",
+  "UiPath.Database.Activities": "1.9.0",
+  "UiPath.Persistence.Activities": "25.10.7",
+  "UiPath.IntelligentOCR.Activities": "8.22.0",
+  "UiPath.MLActivities": "25.10.7",
+};
+
+function extractExactVersion(versionStr: string): string {
+  let v = versionStr.trim();
+  v = v.replace(/^\[/, "").replace(/[,)\]]/g, "").trim();
+  const match = v.match(/^(\d+\.\d+(\.\d+){0,2})/);
+  return match ? match[1] : v;
+}
+
+function validateAndEnforceDependencyCompatibility(
+  deps: Record<string, string>,
+  warnings: DependencyResolutionResult["warnings"],
+): void {
+  for (const [pkgName, version] of Object.entries(deps)) {
+    const range = STUDIO_25_10_VERIFIED_VERSIONS[pkgName];
+    if (!range) continue;
+
+    const rangeMatch = range.match(/^\[(\d+\.\d+\.\d+),\s*(\d+\.\d+\.\d+)\)$/);
+    if (!rangeMatch) continue;
+
+    const [, minVer, maxVer] = rangeMatch;
+    const cleanVersion = extractExactVersion(version);
+
+    if (compareVersions(cleanVersion, minVer) < 0 || compareVersions(cleanVersion, maxVer) >= 0) {
+      const preferredVersion = STUDIO_25_10_PREFERRED_VERSIONS[pkgName];
+      if (preferredVersion) {
+        const oldVersion = deps[pkgName];
+        deps[pkgName] = `[${preferredVersion}]`;
+        warnings.push({
+          code: "DEPENDENCY_VERSION_PINNED_TO_VERIFIED",
+          message: `Package ${pkgName} version ${oldVersion} was outside Studio 25.10 verified range ${range} — pinned to verified version [${preferredVersion}]`,
+          stage: "dependency-compatibility",
+          recoverable: true,
+        });
+        console.log(`[Dependency Compatibility] Pinned ${pkgName} from ${oldVersion} to [${preferredVersion}] (verified for Studio 25.10)`);
+      } else {
+        warnings.push({
+          code: "DEPENDENCY_VERSION_OUTSIDE_VERIFIED_RANGE",
+          message: `Package ${pkgName} version ${version} is outside Studio 25.10 verified range ${range} — no verified fallback available`,
+          stage: "dependency-compatibility",
+          recoverable: true,
+        });
+        console.warn(`[Dependency Compatibility] ${pkgName} ${version} outside verified range, no preferred version to pin`);
+      }
+    }
+  }
+
+  const depKeys = Object.keys(deps);
+  for (const collision of KNOWN_TRANSITIVE_COLLISION_PAIRS) {
+    const [pkg1, pkg2] = collision.packages;
+    if (depKeys.includes(pkg1) && depKeys.includes(pkg2)) {
+      if (collision.resolution === "align-system-version") {
+        const systemPkg = collision.packages.find(p => p === "UiPath.System.Activities") || pkg2;
+        const otherPkg = systemPkg === pkg1 ? pkg2 : pkg1;
+
+        const systemPreferred = STUDIO_25_10_PREFERRED_VERSIONS[systemPkg];
+        const otherPreferred = STUDIO_25_10_PREFERRED_VERSIONS[otherPkg];
+
+        if (systemPreferred && deps[systemPkg]) {
+          const currentSysVer = extractExactVersion(deps[systemPkg]);
+          if (currentSysVer !== systemPreferred) {
+            deps[systemPkg] = `[${systemPreferred}]`;
+            console.log(`[Dependency Compatibility] Aligned ${systemPkg} to [${systemPreferred}] to prevent transitive collision with ${otherPkg} via ${collision.conflictingTransitive}`);
+          }
+        }
+        if (otherPreferred && deps[otherPkg]) {
+          const currentOtherVer = extractExactVersion(deps[otherPkg]);
+          if (currentOtherVer !== otherPreferred) {
+            deps[otherPkg] = `[${otherPreferred}]`;
+            console.log(`[Dependency Compatibility] Aligned ${otherPkg} to [${otherPreferred}] to prevent transitive collision with ${systemPkg} via ${collision.conflictingTransitive}`);
+          }
+        }
+
+        warnings.push({
+          code: "TRANSITIVE_COLLISION_RESOLVED",
+          message: `${pkg1} and ${pkg2} aligned to verified versions to prevent transitive collision via ${collision.conflictingTransitive}`,
+          stage: "dependency-compatibility",
+          recoverable: true,
+        });
+      }
+    }
+  }
+}
+
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const va = pa[i] || 0;
+    const vb = pb[i] || 0;
+    if (va !== vb) return va - vb;
+  }
+  return 0;
+}
+
 function sanitizeDeps(deps: Record<string, string>): void {
   for (const [key, val] of Object.entries(deps)) {
-    if (val === "*" || val === "[*]") {
+    if (isFrameworkAssembly(key)) {
+      console.log(`[UiPath Sanitize] Removing framework assembly from dependencies: ${key}`);
+      delete deps[key];
+    } else if (val === "*" || val === "[*]") {
       console.log(`[UiPath Sanitize] Removing wildcard dependency version: ${key}=${val}`);
       delete deps[key];
     } else if (!isValidNuGetVersion(val)) {
@@ -210,8 +342,19 @@ export function resolveDependencies(
     }
   }
 
+  Array.from(referencedPackages).forEach(fwAsm => {
+    if (isFrameworkAssembly(fwAsm)) {
+      referencedPackages.delete(fwAsm);
+      console.log(`[Dependency Resolution] Excluded framework assembly from dependencies: ${fwAsm}`);
+    }
+  });
+
   for (const rawPkgName of referencedPackages) {
     const pkgName = normalizePackageName(rawPkgName);
+    if (isFrameworkAssembly(pkgName)) {
+      console.log(`[Dependency Resolution] Excluded framework assembly (post-normalize) from dependencies: ${pkgName}`);
+      continue;
+    }
     let version: string | null = null;
     let source: string = "";
 
@@ -267,6 +410,8 @@ export function resolveDependencies(
 
     deps[pkgName] = version;
   }
+
+  validateAndEnforceDependencyCompatibility(deps, warnings);
 
   console.log(`[Dependency Resolution] Resolved ${Object.keys(deps).length} dependencies proactively from ${referencedPackages.size} referenced packages`);
   return { deps, warnings };
@@ -1989,6 +2134,9 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
               }
             }
             for (const pkg of stubPackages) {
+              if (isFrameworkAssembly(pkg)) {
+                continue;
+              }
               if (!deps[pkg]) {
                 const profileVersion = _studioProfile ? getPreferredVersion(_studioProfile, pkg) : null;
                 const catalogVersion = catalogService.isLoaded() ? catalogService.getConfirmedVersion(pkg) : null;

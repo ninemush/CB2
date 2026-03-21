@@ -41,6 +41,24 @@ export const UIPATH_PACKAGE_ALIAS_MAP: Record<string, string> = {
   "UiPath.SQL.Activities": "UiPath.Database.Activities",
 };
 
+export const FRAMEWORK_ASSEMBLIES = new Set<string>([
+  "System.Activities",
+  "System.ServiceModel",
+  "System.Xaml",
+  "System.Runtime",
+  "System.Core",
+  "Microsoft.CSharp",
+  "Microsoft.VisualBasic",
+  "Microsoft.VisualBasic.Activities",
+  "PresentationFramework",
+  "PresentationCore",
+  "WindowsBase",
+]);
+
+export function isFrameworkAssembly(pkgName: string): boolean {
+  return FRAMEWORK_ASSEMBLIES.has(pkgName);
+}
+
 export type UiPathConfig = {
   orgName: string;
   tenantName: string;

@@ -1278,10 +1278,16 @@ function renderControlFlowActivity(
   }
 
   if (baseType === "ForEach") {
-    const itemType = properties["TypeArgument"] || rawProperties["TypeArgument"] || "x:Object";
+    let itemType = properties["TypeArgument"] || rawProperties["TypeArgument"] || "x:Object";
     const rawValues = properties["Values"] || rawProperties["Values"] || "";
     const needsValuesReview = !rawValues || rawValues === "TODO_Collection" || rawValues.startsWith("TODO_") || rawValues.startsWith("PLACEHOLDER_");
     const values = needsValuesReview ? "New List(Of Object)" : rawValues;
+    if (itemType === "x:Object" || itemType === "x:String") {
+      const valExpr = String(values).replace(/^\[|\]$/g, "");
+      if (/\bdt_\w*\.Rows\b/i.test(valExpr) || /\.AsEnumerable\(\)/i.test(valExpr) || /\bDataTable\b.*\.Rows\b/i.test(valExpr)) {
+        itemType = "scg2:DataRow";
+      }
+    }
 
     let bodyContent = "";
     const bodyProp = rawProperties["Body"];
