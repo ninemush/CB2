@@ -140,6 +140,9 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
         context: evt.context,
         timestamp: Date.now(),
       }]);
+      if (evt.message) {
+        setLiveStatus(evt.message);
+      }
       if (evt.stage === "complete" && evt.type === "completed") {
         setPipelineComplete(true);
       }
@@ -373,7 +376,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
       currentRunRef.current = newRun;
       activeRunIdRef.current = runId;
 
-      subscribeToStream(ideaId, runId, false);
+      subscribeToStream(ideaId, runId, true);
     } catch (err: any) {
       console.error("[useUiPathRun] startRun error:", err);
       toast({

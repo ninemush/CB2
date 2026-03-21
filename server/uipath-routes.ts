@@ -1902,9 +1902,7 @@ export function registerUiPathRoutes(app: Express): void {
             onProgress: (message: string) => emitObserverProgress(observerRunId, message),
             onPipelineEvent: (evt) => {
               emitObserverPipelineEvent(observerRunId, evt);
-              if (evt.type === "completed" || evt.type === "started") {
-                emitObserverProgress(observerRunId, evt.message);
-              }
+              emitObserverProgress(observerRunId, evt.message);
             },
             onMetaValidation: (event: Record<string, unknown>) => emitObserverMetaValidation(observerRunId, event),
             onComplete: (result) => {
