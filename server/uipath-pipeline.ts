@@ -243,6 +243,16 @@ export interface PipelineOutcomeReport {
   fullyGeneratedFiles: string[];
   totalEstimatedEffortMinutes: number;
   structuralPreservationMetrics?: StructuralPreservationMetrics[];
+  preEmissionValidation?: {
+    totalActivities: number;
+    validActivities: number;
+    unknownActivities: number;
+    strippedProperties: number;
+    enumCorrections: number;
+    missingRequiredFilled: number;
+    commentConversions: number;
+    issueCount: number;
+  };
 }
 
 export interface PipelineResult {

@@ -224,6 +224,29 @@ export function generateDhgFromOutcomeReport(
     md += `**Total manual remediation effort: ~${totalEffort} minutes (${(totalEffort / 60).toFixed(1)} hours)**\n\n`;
   }
 
+  if (report.preEmissionValidation) {
+    const pev = report.preEmissionValidation;
+    sectionNum++;
+    md += `## ${sectionNum}. Pre-emission Spec Validation\n\n`;
+    md += `Validation was performed on the WorkflowSpec tree before XAML assembly. `;
+    md += `Issues caught at this stage are cheaper to fix than post-emission quality gate findings.\n\n`;
+    md += `| Metric | Count |\n|---|---|\n`;
+    md += `| Total activities checked | ${pev.totalActivities} |\n`;
+    md += `| Valid activities | ${pev.validActivities} |\n`;
+    md += `| Unknown → Comment stubs | ${pev.unknownActivities} |\n`;
+    md += `| Non-catalog properties stripped | ${pev.strippedProperties} |\n`;
+    md += `| Enum values auto-corrected | ${pev.enumCorrections} |\n`;
+    md += `| Missing required props filled | ${pev.missingRequiredFilled} |\n`;
+    md += `| Total issues | ${pev.issueCount} |\n\n`;
+
+    const preEmissionFixCount = pev.enumCorrections + pev.strippedProperties + pev.missingRequiredFilled + pev.commentConversions;
+    const postEmissionIssueCount = report.qualityWarnings.length + report.remediations.length;
+    md += `### Pre-emission vs Post-emission\n\n`;
+    md += `| Stage | Issues Caught/Fixed |\n|---|---|\n`;
+    md += `| Pre-emission (spec validation) | ${preEmissionFixCount} auto-fixed, ${pev.issueCount} total issues |\n`;
+    md += `| Post-emission (quality gate) | ${postEmissionIssueCount} warnings/remediations |\n\n`;
+  }
+
   md += `---\n\n`;
 
   sectionNum++;

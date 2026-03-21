@@ -44,6 +44,7 @@ import archiver from "archiver";
   import { filterBlockedActivitiesFromXaml } from "./uipath-activity-policy";
   import { catalogService, type ProcessType } from "./catalog/catalog-service";
   import { getPreferredVersion, isVersionInRange, type StudioProfile } from "./catalog/studio-profile";
+  import { validateWorkflowSpec as validateSpec, type SpecValidationReport } from "./catalog/spec-validator";
   import { UIPATH_PACKAGE_ALIAS_MAP, QualityGateError, type UiPathConfig } from "./uipath-shared";
 
 async function getProbeCache() {
@@ -561,80 +562,6 @@ function buildDeterministicScaffold(
   };
 }
 
-function filterWorkflowSpecCatalogProperties(
-  spec: TreeWorkflowSpec,
-  warnings: Array<{ code: string; message: string; stage: string; recoverable: boolean }>,
-): TreeWorkflowSpec {
-  if (!catalogService.isLoaded()) return spec;
-
-  let strippedCount = 0;
-
-  function filterNode(node: any): any {
-    if (node.kind === "activity") {
-      const schema = catalogService.getActivitySchema(node.template);
-      if (!schema) return node;
-
-      const knownProps = new Set(schema.activity.properties.map((p: any) => p.name));
-      const filteredProps: Record<string, any> = {};
-      const stripped: string[] = [];
-
-      for (const [key, value] of Object.entries(node.properties || {})) {
-        if (knownProps.has(key)) {
-          filteredProps[key] = value;
-        } else {
-          stripped.push(key);
-        }
-      }
-
-      if (stripped.length > 0) {
-        strippedCount += stripped.length;
-        warnings.push({
-          code: "CATALOG_PROPERTY_STRIPPED",
-          message: `Stripped ${stripped.length} non-catalog property(ies) from ${node.template} "${node.displayName}": ${stripped.join(", ")}`,
-          stage: "catalog-property-filter",
-          recoverable: true,
-        });
-        console.log(`[Pipeline CatalogFilter] Stripped properties from ${node.template} "${node.displayName}": ${stripped.join(", ")}`);
-      }
-
-      return { ...node, properties: filteredProps };
-    }
-
-    if (node.kind === "sequence" && node.children) {
-      return { ...node, children: node.children.map(filterNode) };
-    }
-    if (node.kind === "tryCatch") {
-      return {
-        ...node,
-        tryChildren: (node.tryChildren || []).map(filterNode),
-        catchChildren: (node.catchChildren || []).map(filterNode),
-        finallyChildren: (node.finallyChildren || []).map(filterNode),
-      };
-    }
-    if (node.kind === "if") {
-      return {
-        ...node,
-        thenChildren: (node.thenChildren || []).map(filterNode),
-        elseChildren: (node.elseChildren || []).map(filterNode),
-      };
-    }
-    if (node.kind === "while" || node.kind === "forEach" || node.kind === "retryScope") {
-      return { ...node, bodyChildren: (node.bodyChildren || []).map(filterNode) };
-    }
-    return node;
-  }
-
-  const filteredRoot = {
-    ...spec.rootSequence,
-    children: spec.rootSequence.children.map(filterNode),
-  };
-
-  if (strippedCount > 0) {
-    console.log(`[Pipeline CatalogFilter] Total stripped: ${strippedCount} non-catalog properties`);
-  }
-
-  return { ...spec, rootSequence: filteredRoot };
-}
 
 
 export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1.0.0", ideaId?: string, generationMode: GenerationMode = "full_implementation", onProgress?: (event: { type: "started" | "heartbeat" | "completed" | "warning" | "failed"; stage: string; message: string }) => void, studioProfile?: StudioProfile | null): Promise<BuildResult> {
@@ -897,9 +824,23 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     let hasMain = false;
     const generatedWorkflowNames = new Set<string>();
 
+    let specValidationReport: SpecValidationReport | null = null;
     if (treeEnrichment && treeEnrichment.status === "success") {
       let spec = treeEnrichment.workflowSpec;
-      spec = filterWorkflowSpecCatalogProperties(spec, dependencyWarnings);
+      const validationResult = validateSpec(spec, _studioProfile);
+      spec = validationResult.spec;
+      specValidationReport = validationResult.report;
+      treeEnrichment = { ...treeEnrichment, workflowSpec: spec };
+
+      if (specValidationReport.strippedProperties > 0) {
+        dependencyWarnings.push({
+          code: "CATALOG_PROPERTY_STRIPPED",
+          message: `Pre-emission validation stripped ${specValidationReport.strippedProperties} non-catalog properties`,
+          stage: "spec-validation",
+          recoverable: true,
+        });
+      }
+
       const specJson = JSON.stringify(spec, null, 2);
       const truncatedSpec = specJson.length > 5000 ? specJson.slice(0, 5000) + "\n... [truncated]" : specJson;
       console.log(`[UiPath] WorkflowSpec tree (validated) before assembly:\n${truncatedSpec}`);
@@ -2243,6 +2184,16 @@ ${depEntries}
     qualityWarnings,
     totalEstimatedEffortMinutes: outcomeRemediations.reduce((s, r) => s + (r.estimatedEffortMinutes || 0), 0),
     structuralPreservationMetrics: structuralPreservationMetrics.length > 0 ? structuralPreservationMetrics : undefined,
+    preEmissionValidation: specValidationReport ? {
+      totalActivities: specValidationReport.totalActivities,
+      validActivities: specValidationReport.validActivities,
+      unknownActivities: specValidationReport.unknownActivities,
+      strippedProperties: specValidationReport.strippedProperties,
+      enumCorrections: specValidationReport.enumCorrections,
+      missingRequiredFilled: specValidationReport.missingRequiredFilled,
+      commentConversions: specValidationReport.commentConversions,
+      issueCount: specValidationReport.issues.length,
+    } : undefined,
   };
 
   if (buildCacheKey && fingerprint) {
