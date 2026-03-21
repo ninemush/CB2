@@ -85,6 +85,7 @@ const INTENT_THINKING_MESSAGES: Record<string, string> = {
   "SDD": "Generating Solution Design Document...",
   "PDD_SDD": "Generating documents...",
   "DHG": "Generating Developer Handoff Guide...",
+  "FEASIBILITY": "Running feasibility assessment...",
 };
 
 interface StreamingProgressProps {
@@ -969,9 +970,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     return false;
   }, [idea.stage]);
 
-  const sendMessageDirect = useCallback(async (text: string, imageData?: { base64: string; mediaType: string }) => {
+  const sendMessageDirect = useCallback(async (text: string, imageData?: { base64: string; mediaType: string }, intentOverride?: string) => {
     lastUserMessageRef.current = text;
-    setClassifiedIntent(guessIntentFromMessage(text));
+    setClassifiedIntent(intentOverride || guessIntentFromMessage(text));
     setDeployStep("");
     if (isToBeRelatedMessage(text)) {
       toBeGeneratingRef.current = true;
@@ -1480,14 +1481,33 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     }
   }, [idea.id, idea.stage, isToBeRelatedMessage]);
 
-  const generateDocument = useCallback((type: "PDD" | "SDD") => {
+  const generateDocument = useCallback(async (type: "PDD" | "SDD") => {
     if (isGeneratingDoc || isStreaming) return;
     startDocStreaming(type);
-    const prompt = type === "PDD"
-      ? "Generate the Process Design Document (PDD) now. Start your response with [DOC:PDD:0] followed by the full document. Include all sections: 1) Executive Summary, 2) Process Scope, 3) As-Is Process Description, 4) To-Be Process Description, 5) Pain Points and Inefficiencies, 6) Automation Opportunity Assessment, 7) Assumptions and Exceptions, 8) Data and System Requirements. Write as a professional document using ## headings."
-      : "Generate the Solution Design Document (SDD) now. Start your response with [DOC:SDD:0] followed by the full document. Include the orchestrator_artifacts JSON block in Section 9 with all artifact definitions (queues, assets, machines, triggers, storageBuckets, environments, actionCenter, testCases). Write as a professional technical specification using ## headings.";
-    sendMessageDirect(prompt);
-  }, [isGeneratingDoc, isStreaming, startDocStreaming, sendMessageDirect]);
+    try {
+      const res = await fetch(`/api/ideas/${idea.id}/documents/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ type }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ message: "Generation failed" }));
+        throw new Error(data.message || "Generation failed");
+      }
+      await queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "messages"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "documents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
+    } catch (err: any) {
+      toast({
+        title: `${type} generation failed`,
+        description: err?.message || "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      stopDocStreaming({ force: true });
+    }
+  }, [isGeneratingDoc, isStreaming, startDocStreaming, stopDocStreaming, idea.id, toast]);
 
   generateDocRef.current = generateDocument;
 
@@ -1497,7 +1517,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     sendMessageDirect(
       "First, perform the feasibility assessment: evaluate the automation type (RPA vs Agent vs Hybrid) for this process and output the [AUTOMATION_TYPE:] tag. " +
       "Then generate the To-Be process map based on the approved As-Is map and the available UiPath services. " +
-      "Show the automated future state. Use the section header 'TO-BE Process Map' followed by [STEP:] tags."
+      "Show the automated future state. Use the section header 'TO-BE Process Map' followed by [STEP:] tags.",
+      undefined,
+      "FEASIBILITY"
     );
   }, [isStreaming, isGeneratingDoc, sendMessageDirect]);
   generateToBeRef.current = generateToBeMap;

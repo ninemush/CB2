@@ -1322,7 +1322,18 @@ CRITICAL RULES:
 
       if (clientDisconnected) {
         if (fullResponse.length > 0) {
-          await chatStorage.createMessage(ideaId, "assistant", fullResponse.trim());
+          let disconnectResponse = fullResponse
+            .replace(/\[DEPLOY_UIPATH\]/g, "")
+            .replace(/\[STAGE_BACK:\s*[^\]]+\]/g, "")
+            .replace(/\[AUTOMATION_TYPE:\s*[^\]]+\]/gi, "")
+            .trim();
+          const disconnectDocTag = disconnectResponse.match(/^\[DOC:(PDD|SDD):\d+\]/);
+          if (disconnectDocTag) {
+            disconnectResponse = disconnectResponse.slice(disconnectDocTag[0].length).trim();
+          }
+          if (disconnectResponse.length > 0) {
+            await chatStorage.createMessage(ideaId, "assistant", disconnectResponse);
+          }
         }
         return;
       }
@@ -1447,163 +1458,9 @@ CRITICAL RULES:
         .trim();
 
       const docTagMatch = cleanedResponse.match(/^\[DOC:(PDD|SDD):\d+\]/);
-      let detectedDocType: "PDD" | "SDD" | null = null;
-      let docContent = "";
-
-      if (mapApprovalDone || chatApprovalDone) {
-        console.log(`[Chat] Skipping inline doc detection — approval confirmation response (mapApproval=${mapApprovalDone}, chatApproval=${chatApprovalDone})`);
-      } else if (docTagMatch) {
-        const tagDocType = docTagMatch[1] as "PDD" | "SDD";
-        const existingApproval = await documentStorage.getApproval(ideaId, tagDocType);
-        const hasExplicitRegenRequest = /\b(re-?generat\w*|redo|rewrite|re-?create|re-?draft|re-?produce|re-?build|update|generate|create|draft|produce|build)\b/i.test(content) &&
-          new RegExp(`\\b${tagDocType}\\b`, "i").test(content);
-        if (existingApproval && !hasExplicitRegenRequest) {
-          console.log(`[Chat] Skipping inline doc creation — ${tagDocType} already approved (approval id ${existingApproval.id}), no explicit regen request`);
-          cleanedResponse = cleanedResponse.slice(docTagMatch[0].length).trim();
-        } else {
-          if (existingApproval && hasExplicitRegenRequest) {
-            console.log(`[Chat] Regen request detected for ${tagDocType} — overriding existing approval (id ${existingApproval.id})`);
-          }
-          detectedDocType = tagDocType;
-          docContent = cleanedResponse.slice(docTagMatch[0].length).trim();
-        }
-      } else if (cleanedResponse.length > 2000) {
-        const hasSddSections = /## \d+\.\s/.test(cleanedResponse) && 
-          (/orchestrator_artifacts/.test(cleanedResponse) || /Orchestrator Deployment/.test(cleanedResponse));
-        const hasPddSections = /## \d+\.\s/.test(cleanedResponse) && 
-          /Executive Summary/.test(cleanedResponse) && /Automation Opportunity/.test(cleanedResponse);
-        let patternDocType: "PDD" | "SDD" | null = null;
-        if (hasSddSections) {
-          patternDocType = "SDD";
-        } else if (hasPddSections) {
-          patternDocType = "PDD";
-        }
-        if (patternDocType) {
-          const patternApproval = await documentStorage.getApproval(ideaId, patternDocType);
-          const hasExplicitRegenRequest = /\b(re-?generat\w*|redo|rewrite|re-?create|re-?draft|re-?produce|re-?build|update|generate|create|draft|produce|build)\b/i.test(content) &&
-            new RegExp(`\\b${patternDocType}\\b`, "i").test(content);
-          if (patternApproval && !hasExplicitRegenRequest) {
-            console.log(`[Chat] Skipping inline doc creation — ${patternDocType} already approved (approval id ${patternApproval.id}), no explicit regen request`);
-          } else {
-            if (patternApproval && hasExplicitRegenRequest) {
-              console.log(`[Chat] Regen request detected for ${patternDocType} — overriding existing approval (id ${patternApproval.id})`);
-            }
-            detectedDocType = patternDocType;
-            docContent = cleanedResponse;
-          }
-        }
-      }
-
-      if (detectedDocType && docContent.length > 100) {
-        try {
-          docContent = docContent
-            .replace(/\[STEP:\s*[\d.]+\s+[^\]]*\]/g, "")
-            .replace(/\[AUTOMATION_TYPE:\s*[^\]]+\]/gi, "")
-            .replace(/\n{3,}/g, "\n\n")
-            .trim();
-
-          try {
-            const mapViewType = detectedDocType === "SDD" ? "to-be" : "as-is";
-            const mapNodes = await processMapStorage.getNodesByIdeaId(ideaId, mapViewType);
-            const fallbackNodes = mapNodes.length === 0 && mapViewType === "to-be"
-              ? await processMapStorage.getNodesByIdeaId(ideaId, "as-is")
-              : mapNodes;
-            
-            if (fallbackNodes.length > 0) {
-              const mapEdges = await processMapStorage.getEdgesByIdeaId(ideaId, mapNodes.length > 0 ? mapViewType : "as-is");
-              const nodeMap = new Map(fallbackNodes.map(n => [n.id, n]));
-              
-              let processMapSection = `\n\n### Process Map (${mapNodes.length > 0 ? mapViewType : "as-is"})\n\n`;
-              processMapSection += `| # | Step | Role | System | Type |\n`;
-              processMapSection += `|---|------|------|--------|------|\n`;
-              fallbackNodes.forEach((node, idx) => {
-                processMapSection += `| ${idx + 1} | ${node.name} | ${node.role || "-"} | ${node.system || "-"} | ${node.nodeType || "task"} |\n`;
-              });
-
-              if (mapEdges.length > 0) {
-                processMapSection += `\n**Process Flow:**\n`;
-                mapEdges.forEach(edge => {
-                  const src = nodeMap.get(edge.sourceNodeId);
-                  const tgt = nodeMap.get(edge.targetNodeId);
-                  if (src && tgt) {
-                    processMapSection += `- ${src.name} → ${tgt.name}${edge.label ? ` (${edge.label})` : ""}\n`;
-                  }
-                });
-              }
-
-              docContent += processMapSection;
-              console.log(`[Chat] Injected ${fallbackNodes.length}-node process map into ${detectedDocType}`);
-            }
-          } catch (mapErr: any) {
-            console.warn(`[Chat] Could not inject process map into ${detectedDocType}:`, mapErr?.message);
-          }
-
-          if (detectedDocType === "PDD") {
-            try {
-              const asIsNodes = await processMapStorage.getNodesByIdeaId(ideaId, "as-is");
-              const toBeNodes = await processMapStorage.getNodesByIdeaId(ideaId, "to-be");
-              const ts = Date.now();
-              const alreadyHasAsIs = docContent.includes(`/process-map/image?viewType=as-is`);
-              const alreadyHasToBe = docContent.includes(`/process-map/image?viewType=to-be`);
-
-              if (asIsNodes.length > 0 && !alreadyHasAsIs) {
-                const asIsImg = `\n\n![As-Is Process Map](/api/ideas/${ideaId}/process-map/image?viewType=as-is&v=${ts})`;
-                const asIsHeadingMatch = docContent.match(/#{1,3}\s.*As[- ]Is\s+Process\s+(Description|Map)/i);
-                if (asIsHeadingMatch) {
-                  const insertIdx = (asIsHeadingMatch.index || 0) + asIsHeadingMatch[0].length;
-                  docContent = docContent.slice(0, insertIdx) + asIsImg + docContent.slice(insertIdx);
-                } else {
-                  const tableMatch = docContent.match(/\n### Process Map \(/);
-                  if (tableMatch && tableMatch.index !== undefined) {
-                    docContent = docContent.slice(0, tableMatch.index) + asIsImg + docContent.slice(tableMatch.index);
-                  } else {
-                    docContent += `\n\n### As-Is Process Map${asIsImg}\n`;
-                  }
-                }
-              }
-
-              if (toBeNodes.length > 0 && !alreadyHasToBe) {
-                const toBeImg = `\n\n![To-Be Process Map](/api/ideas/${ideaId}/process-map/image?viewType=to-be&v=${ts})`;
-                const toBeHeadingMatch = docContent.match(/#{1,3}\s.*To[- ]Be\s+Process\s+(Description|Map)/i);
-                if (toBeHeadingMatch) {
-                  const insertIdx = (toBeHeadingMatch.index || 0) + toBeHeadingMatch[0].length;
-                  docContent = docContent.slice(0, insertIdx) + toBeImg + docContent.slice(insertIdx);
-                } else {
-                  const tableMatch = docContent.match(/\n### Process Map \(/);
-                  if (tableMatch && tableMatch.index !== undefined) {
-                    docContent = docContent.slice(0, tableMatch.index) + toBeImg + docContent.slice(tableMatch.index);
-                  } else {
-                    docContent += `\n\n### To-Be Process Map${toBeImg}\n`;
-                  }
-                }
-              }
-
-              if ((asIsNodes.length > 0 && !alreadyHasAsIs) || (toBeNodes.length > 0 && !alreadyHasToBe)) {
-                console.log(`[Chat] Injected process map images into PDD for idea ${ideaId}`);
-              }
-            } catch (imgErr: any) {
-              console.warn(`[Chat] Could not inject process map images into PDD:`, imgErr?.message);
-            }
-          }
-
-          const existing = await documentStorage.getLatestDocument(ideaId, detectedDocType);
-          const version = existing ? existing.version + 1 : 1;
-          if (existing && existing.status !== "approved") {
-            await documentStorage.updateDocument(existing.id, { status: "superseded" });
-          }
-          const doc = await documentStorage.createDocument({
-            ideaId,
-            type: detectedDocType,
-            version,
-            status: "draft",
-            content: docContent,
-            snapshotJson: JSON.stringify({ generatedFrom: "chat-regeneration" }),
-          });
-          cleanedResponse = `[DOC:${detectedDocType}:${doc.id}]${docContent}`;
-          console.log(`[Chat] Saved ${detectedDocType} v${version} (doc id ${doc.id}) from chat regeneration`);
-        } catch (docErr: any) {
-          console.error(`[Chat] Failed to save ${detectedDocType} from chat:`, docErr?.message);
-        }
+      if (docTagMatch) {
+        cleanedResponse = cleanedResponse.slice(docTagMatch[0].length).trim();
+        console.log(`[Chat] Stripped inline doc tag from chat response — document generation is handled by the dedicated endpoint`);
       }
 
       let savedStreamMsgId: number | null = null;

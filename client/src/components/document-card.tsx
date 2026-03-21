@@ -360,7 +360,7 @@ export function DocumentCard({ docType, docId, content, ideaId, isApproved, vers
         ))}
       </div>
 
-      {!effectivelyApproved && !streaming && (
+      {!effectivelyApproved && !streaming && docId > 0 && (
         <div className="px-4 py-3 border-t border-border/30 space-y-2">
           {showApproveConfirm ? (
             <div className="flex items-center gap-2">
