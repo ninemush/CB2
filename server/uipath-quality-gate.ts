@@ -1106,14 +1106,14 @@ function checkArchiveParity(input: QualityGateInput): QualityGateViolation[] {
 }
 
 const PACKAGE_MAJOR_VERSION_RANGES: Record<string, { windowsMajors: number[]; portableMajors: number[] }> = {
-  "UiPath.UIAutomation.Activities": { windowsMajors: [23], portableMajors: [25] },
-  "UiPath.System.Activities": { windowsMajors: [23], portableMajors: [25] },
+  "UiPath.UIAutomation.Activities": { windowsMajors: [25], portableMajors: [25] },
+  "UiPath.System.Activities": { windowsMajors: [25], portableMajors: [25] },
   "UiPath.Web.Activities": { windowsMajors: [1], portableMajors: [2] },
   "UiPath.Excel.Activities": { windowsMajors: [2], portableMajors: [3] },
   "UiPath.Mail.Activities": { windowsMajors: [1], portableMajors: [2] },
   "UiPath.Database.Activities": { windowsMajors: [1], portableMajors: [2] },
-  "UiPath.Persistence.Activities": { windowsMajors: [23], portableMajors: [25] },
-  "UiPath.MLActivities": { windowsMajors: [23], portableMajors: [25] },
+  "UiPath.Persistence.Activities": { windowsMajors: [25], portableMajors: [25] },
+  "UiPath.MLActivities": { windowsMajors: [25], portableMajors: [25] },
 };
 
 function checkVersionCompatibility(input: QualityGateInput, violations: QualityGateViolation[]): void {

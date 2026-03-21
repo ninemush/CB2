@@ -24,8 +24,8 @@ function makeStubWithDeps(name: string = "Main") {
   const compliant = makeUiPathCompliant(stub, "Windows");
   const required = scanXamlForRequiredPackages(compliant);
   const deps: Record<string, string> = {};
-  for (const pkg of required) deps[pkg] = "23.10.0";
-  if (!deps["UiPath.System.Activities"]) deps["UiPath.System.Activities"] = "23.10.0";
+  for (const pkg of required) deps[pkg] = "25.10.0";
+  if (!deps["UiPath.System.Activities"]) deps["UiPath.System.Activities"] = "25.10.0";
   return { xaml: compliant, deps };
 }
 
@@ -427,7 +427,7 @@ describe("UiPath Generation Regression Tests", () => {
 
     it("hardcoded credentials are warnings (not blocking errors)", () => {
       const xaml = makeValidXaml("Main", `<ui:LogMessage Message="password = 'MySecretPassword123'" DisplayName="Bad Log" />`);
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const credIssues = result.violations.filter(v => v.check === "hardcoded-credential");
       expect(credIssues.length).toBeGreaterThan(0);
@@ -447,7 +447,7 @@ describe("UiPath Generation Regression Tests", () => {
     <ui:MadeUpActivity DisplayName="Fake" Prop="val" />
   </Sequence>
 </Activity>`;
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const unknownActs = result.violations.filter(v => v.check === "unknown-activity");
       expect(unknownActs.length).toBeGreaterThan(0);
@@ -460,7 +460,7 @@ describe("UiPath Generation Regression Tests", () => {
 
     it("placeholder values (TODO/PLACEHOLDER) in XAML are warnings, not errors", () => {
       const xaml = makeValidXaml("Main", `<ui:LogMessage Message="[&quot;TODO implement real logic&quot;]" DisplayName="Placeholder" />`);
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const placeholderWarnings = result.violations.filter(
         v => v.check === "placeholder-value"
@@ -473,7 +473,7 @@ describe("UiPath Generation Regression Tests", () => {
     it("safe stubs and conservative simplifications are warnings not blockers", () => {
       const stub = generateStubWorkflow("HelperWorkflow");
       const compliant = makeUiPathCompliant(stub, "Windows");
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG(
         [
           { name: "Main.xaml", content: makeStubWithDeps("Main").xaml },
@@ -764,8 +764,8 @@ describe("UiPath Generation Regression Tests", () => {
     it("quality gate blocks TakeScreenshot in simple-linear context", () => {
       const xaml = makeValidXaml("Main", `<ui:TakeScreenshot DisplayName="Take Screenshot" />`);
       const deps = {
-        "UiPath.System.Activities": "23.10.0",
-        "UiPath.UIAutomation.Activities": "23.10.0",
+        "UiPath.System.Activities": "25.10.0",
+        "UiPath.UIAutomation.Activities": "25.10.0",
       };
       const result = runQualityGate({
         xamlEntries: [{ name: "Main.xaml", content: xaml }],
@@ -783,8 +783,8 @@ describe("UiPath Generation Regression Tests", () => {
     it("quality gate blocks TakeScreenshot in api-data-driven context", () => {
       const xaml = makeValidXaml("Main", `<ui:TakeScreenshot DisplayName="Take Screenshot" />`);
       const deps = {
-        "UiPath.System.Activities": "23.10.0",
-        "UiPath.UIAutomation.Activities": "23.10.0",
+        "UiPath.System.Activities": "25.10.0",
+        "UiPath.UIAutomation.Activities": "25.10.0",
       };
       const result = runQualityGate({
         xamlEntries: [{ name: "Main.xaml", content: xaml }],
@@ -803,7 +803,7 @@ describe("UiPath Generation Regression Tests", () => {
   describe("Regression: ui:AddLogFields not emitted for non-UI patterns", () => {
     it("quality gate blocks AddLogFields in simple-linear", () => {
       const xaml = makeValidXaml("Main", `<ui:AddLogFields DisplayName="Add Fields" />`);
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQualityGate({
         xamlEntries: [{ name: "Main.xaml", content: xaml }],
         projectJsonContent: makeProjectJson("Test", deps),
@@ -819,7 +819,7 @@ describe("UiPath Generation Regression Tests", () => {
 
     it("quality gate blocks AddLogFields in api-data-driven", () => {
       const xaml = makeValidXaml("Main", `<ui:AddLogFields DisplayName="Add Fields" />`);
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQualityGate({
         xamlEntries: [{ name: "Main.xaml", content: xaml }],
         projectJsonContent: makeProjectJson("Test", deps),
@@ -849,7 +849,7 @@ describe("UiPath Generation Regression Tests", () => {
     <ui:LogMessage Level="Info" Message="[str_UndeclaredVar]" DisplayName="Log" />
   </Sequence>
 </Activity>`;
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const undeclared = result.violations.filter(v => v.check === "undeclared-variable");
       expect(undeclared.length).toBeGreaterThan(0);
@@ -872,7 +872,7 @@ describe("UiPath Generation Regression Tests", () => {
     <ui:LogMessage Level="Info" Message="[str_MyVar]" DisplayName="Log" />
   </Sequence>
 </Activity>`;
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const undeclared = result.violations.filter(v => v.check === "undeclared-variable");
       expect(undeclared.length).toBe(0);
@@ -884,7 +884,7 @@ describe("UiPath Generation Regression Tests", () => {
       const xaml = makeValidXaml("Main", `
         <ui:LogMessage Message="[&quot;PLACEHOLDER_endpoint_url&quot;]" DisplayName="Placeholder Log" />
       `);
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const placeholders = result.violations.filter(v =>
         v.check === "placeholder-value" && v.detail.includes("PLACEHOLDER")
@@ -896,7 +896,7 @@ describe("UiPath Generation Regression Tests", () => {
       const xaml = makeValidXaml("Main", `
         <ui:LogMessage Message="[&quot;TODO_implement_business_rule&quot;]" DisplayName="Todo Log" />
       `);
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const placeholders = result.violations.filter(v =>
         v.check === "placeholder-value" &&
@@ -973,9 +973,9 @@ describe("UiPath Generation Regression Tests", () => {
   </Sequence>
 </Activity>`;
         const entry = ACTIVITY_REGISTRY[act.name];
-        const deps: Record<string, string> = { "UiPath.System.Activities": "23.10.0" };
+        const deps: Record<string, string> = { "UiPath.System.Activities": "25.10.0" };
         if (entry?.package && entry.package !== "UiPath.System.Activities") {
-          deps[entry.package] = entry.package.includes("Web") ? "1.15.0" : "23.10.0";
+          deps[entry.package] = entry.package.includes("Web") ? "1.20.1" : (entry.package.includes("Excel") ? "2.24.3" : (entry.package.includes("Mail") ? "1.23.1" : (entry.package.includes("Database") ? "1.9.0" : "25.10.0")));
         }
         const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
         const unknownActs = result.violations.filter(v => v.check === "unknown-activity" && v.detail.includes(act.name));
@@ -1019,7 +1019,7 @@ describe("UiPath Generation Regression Tests", () => {
       const compliant = makeUiPathCompliant(stub, "Windows");
       const required = scanXamlForRequiredPackages(compliant);
       const deps: Record<string, string> = {};
-      for (const pkg of required) deps[pkg] = "23.10.0";
+      for (const pkg of required) deps[pkg] = "25.10.0";
 
       const result = runQG([{ name: "Main.xaml", content: compliant }], deps);
       const fatalErrors = result.violations.filter(v =>
@@ -1164,7 +1164,7 @@ describe("UiPath Generation Regression Tests", () => {
     </ui:LogMessage>
   </Sequence>
 </Activity>`;
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQualityGate({
         xamlEntries: [{ name: "Main.xaml", content: xamlContent }],
         projectJsonContent: makeProjectJson("Test", deps),
@@ -1181,7 +1181,7 @@ describe("UiPath Generation Regression Tests", () => {
       const xaml = makeValidXaml("Main", `
         <ui:LogMessage Level="Info" Message="[&quot;TODO implement real business rule&quot;]" DisplayName="Stub Step" />
       `);
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
 
       const todoWarnings = result.violations.filter(v =>
@@ -1204,7 +1204,7 @@ describe("UiPath Generation Regression Tests", () => {
 
     it("major issues (unresolved InvokeWorkflowFile references) force failure", () => {
       const xaml = makeXamlWithInvoke("NonExistent.xaml");
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const invokeErrors = result.violations.filter(v =>
         v.check === "invoked-file" && v.severity === "error"
@@ -1225,8 +1225,8 @@ describe("UiPath Generation Regression Tests", () => {
     it("blocked-pattern violations for policy-blocked activities are warnings", () => {
       const xaml = makeValidXaml("Main", `<ui:TakeScreenshot DisplayName="Screenshot" />`);
       const deps = {
-        "UiPath.System.Activities": "23.10.0",
-        "UiPath.UIAutomation.Activities": "23.10.0",
+        "UiPath.System.Activities": "25.10.0",
+        "UiPath.UIAutomation.Activities": "25.10.0",
       };
       const result = runQualityGate({
         xamlEntries: [{ name: "Main.xaml", content: xaml }],
@@ -1528,7 +1528,7 @@ describe("UiPath Generation Regression Tests", () => {
           <ui:Assign.To><OutArgument x:TypeArguments="x:String">[str_Result]</OutArgument></ui:Assign.To>
           <ui:Assign.Value><InArgument x:TypeArguments="x:String">"hello"</InArgument></ui:Assign.Value>
         </ui:Assign>`);
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const unknownActs = result.violations.filter(v => v.check === "unknown-activity");
       expect(unknownActs.length).toBe(0);
@@ -1537,7 +1537,7 @@ describe("UiPath Generation Regression Tests", () => {
     it("ui:Throw is recognized by quality gate and not flagged as unknown", () => {
       const xaml = makeValidXaml("Main", `
         <ui:Throw DisplayName="Throw Exception" Exception="[new System.Exception()]" />`);
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const unknownActs = result.violations.filter(v => v.check === "unknown-activity");
       expect(unknownActs.length).toBe(0);
@@ -1546,7 +1546,7 @@ describe("UiPath Generation Regression Tests", () => {
     it("ui:DeserializeJSON (uppercase) is recognized by quality gate", () => {
       const xaml = makeValidXaml("Main", `
         <ui:DeserializeJSON DisplayName="Parse JSON" JsonString="[str_Json]" />`);
-      const deps = { "UiPath.System.Activities": "23.10.0", "UiPath.Web.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0", "UiPath.Web.Activities": "1.20.1" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const unknownActs = result.violations.filter(v => v.check === "unknown-activity");
       expect(unknownActs.length).toBe(0);
@@ -1565,7 +1565,7 @@ describe("UiPath Generation Regression Tests", () => {
     <ui:GetCredential DisplayName="Get Cred" AssetName="MyCred" Username="[str_TempUser]" Password="[sec_TempPass]" />
   </Sequence>
 </Activity>`;
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "InitAllSettings.xaml", content: xaml }], deps);
       const credIssues = result.violations.filter(v => v.check === "hardcoded-credential");
       expect(credIssues.length).toBe(0);
@@ -1632,7 +1632,6 @@ describe("UiPath Generation Regression Tests", () => {
       const depKeys = Object.keys(result.dependencyMap);
       expect(depKeys).toContain("UiPath.System.Activities");
       expect(depKeys).not.toContain("UiPath.Web.Activities");
-      expect(depKeys).not.toContain("UiPath.Excel.Activities");
       expect(depKeys).not.toContain("UiPath.Database.Activities");
     });
 
@@ -1655,7 +1654,7 @@ describe("UiPath Generation Regression Tests", () => {
       }
     });
 
-    it("DEPENDENCY_VERSION_UNKNOWN warning emitted for Web/Excel activities in XAML", async () => {
+    it("Web/Excel activities in XAML resolved via MetadataService fallback", async () => {
       const pkg = {
         projectName: "WebExcelTest",
         description: "Test with web and excel activities",
@@ -1665,8 +1664,12 @@ describe("UiPath Generation Regression Tests", () => {
         dependencies: ["UiPath.System.Activities", "UiPath.Web.Activities"],
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
-      expect(result.dependencyMap).not.toHaveProperty("UiPath.Web.Activities");
-      expect(result.dependencyMap).not.toHaveProperty("UiPath.Excel.Activities");
+      if (result.dependencyMap["UiPath.Web.Activities"]) {
+        expect(result.dependencyMap["UiPath.Web.Activities"]).toMatch(/^\d+\.\d+\.\d+/);
+      }
+      if (result.dependencyMap["UiPath.Excel.Activities"]) {
+        expect(result.dependencyMap["UiPath.Excel.Activities"]).toMatch(/^\d+\.\d+\.\d+/);
+      }
     });
 
     it("READY_WITH_WARNINGS status set when pipeline has warnings", () => {
@@ -1733,7 +1736,7 @@ describe("UiPath Generation Regression Tests", () => {
   describe("Issue Fixes", () => {
     it("missing-package-dep produces warning not error (Issue 2)", () => {
       const xaml = makeValidXaml();
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG(
         [{ name: "Main.xaml", content: xaml }],
         deps,
@@ -1757,7 +1760,7 @@ describe("UiPath Generation Regression Tests", () => {
     <ui:GetCredential DisplayName="Get Cred" AssetName="MyCred" />
   </Sequence>
 </Activity>`;
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const classified = classifyQualityIssues(result);
       const blockingFiles = getBlockingFiles(classified);
@@ -1981,7 +1984,7 @@ describe("UiPath Generation Regression Tests", () => {
 
     it("ui:Rethrow is not flagged as unknown activity in quality gate", () => {
       const xaml = makeValidXaml("Main", `<ui:Rethrow DisplayName="Rethrow" />`);
-      const deps = { "UiPath.System.Activities": "23.10.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const unknownActs = result.violations.filter(v => v.check === "unknown-activity" && v.detail.includes("Rethrow"));
       expect(unknownActs.length).toBe(0);

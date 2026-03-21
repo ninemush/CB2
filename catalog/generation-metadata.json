@@ -1,81 +1,81 @@
 {
   "studioTarget": {
-    "line": "24.10",
-    "version": "24.10.4",
+    "line": "25.10",
+    "version": "25.10.7",
     "targetFramework": "Windows",
     "projectType": "Process",
     "expressionLanguage": "VisualBasic"
   },
   "packageVersionRanges": {
     "UiPath.System.Activities": {
-      "min": "24.10.0",
-      "max": "24.10.99",
-      "preferred": "24.10.3",
+      "min": "25.10.0",
+      "max": "25.10.99",
+      "preferred": "25.10.7",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "manual-seed"
+      "verificationSource": "nuget-feed"
     },
     "UiPath.UIAutomation.Activities": {
-      "min": "24.10.0",
-      "max": "24.10.99",
-      "preferred": "24.10.6",
+      "min": "25.10.0",
+      "max": "25.10.99",
+      "preferred": "25.10.7",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "manual-seed"
+      "verificationSource": "nuget-feed"
     },
     "UiPath.Mail.Activities": {
       "min": "1.20.0",
       "max": "1.99.0",
       "preferred": "1.23.1",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "manual-seed"
+      "verificationSource": "nuget-feed"
     },
     "UiPath.Excel.Activities": {
       "min": "2.23.0",
       "max": "2.99.0",
       "preferred": "2.24.3",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "manual-seed"
+      "verificationSource": "nuget-feed"
     },
     "UiPath.Web.Activities": {
       "min": "1.17.0",
       "max": "1.99.0",
       "preferred": "1.20.1",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "manual-seed"
+      "verificationSource": "nuget-feed"
     },
     "UiPath.Database.Activities": {
       "min": "1.8.0",
       "max": "1.99.0",
       "preferred": "1.9.0",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "manual-seed"
+      "verificationSource": "nuget-feed"
     },
     "UiPath.Persistence.Activities": {
-      "min": "24.10.0",
-      "max": "24.10.99",
-      "preferred": "24.10.1",
+      "min": "25.10.0",
+      "max": "25.10.99",
+      "preferred": "25.10.7",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "manual-seed"
+      "verificationSource": "nuget-feed"
     },
     "UiPath.IntelligentOCR.Activities": {
       "min": "8.20.0",
       "max": "8.99.0",
       "preferred": "8.22.0",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "manual-seed"
+      "verificationSource": "nuget-feed"
     },
     "UiPath.MLActivities": {
-      "min": "24.10.0",
-      "max": "24.10.99",
-      "preferred": "24.10.1",
+      "min": "25.10.0",
+      "max": "25.10.99",
+      "preferred": "25.10.7",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "manual-seed"
+      "verificationSource": "nuget-feed"
     }
   },
   "minimumRequiredPackages": [
     "UiPath.System.Activities"
   ],
-  "lastRefreshedAt": "2026-03-21T06:27:36.373Z",
-  "lastVerifiedAt": "2026-03-21T06:27:36.373Z",
+  "lastRefreshedAt": "2026-03-21T09:00:00.000Z",
+  "lastVerifiedAt": "2026-03-21T09:00:00.000Z",
   "sourceVersion": "1.0.0",
   "snapshotVersion": "1.0.0"
 }

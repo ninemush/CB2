@@ -1,11 +1,11 @@
 {
   "catalogVersion": "1.0.0",
-  "generatedAt": "2026-03-18T00:00:00Z",
-  "studioVersion": "23.10.6",
+  "generatedAt": "2026-03-21T09:00:00Z",
+  "studioVersion": "25.10.7",
   "packages": [
     {
       "packageId": "UiPath.UIAutomation.Activities",
-      "version": "23.10.8",
+      "version": "25.10.7",
       "activities": [
         {
           "className": "Click",
@@ -122,6 +122,22 @@
               "required": false,
               "typeArguments": null,
               "addedInVersion": "23.4.0"
+            },
+            {
+              "name": "InteractionMode",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null,
+              "validValues": [
+                "HardwareEvents",
+                "Simulate",
+                "ChromiumAPI",
+                "WindowMessages"
+              ],
+              "addedInVersion": "24.10.0"
             }
           ]
         },
@@ -215,6 +231,16 @@
               "required": false,
               "typeArguments": null,
               "addedInVersion": "23.4.0"
+            },
+            {
+              "name": "SendWindowMessages",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null,
+              "addedInVersion": "24.4.0"
             }
           ]
         },
@@ -313,8 +339,7 @@
               "validValues": [
                 "Chrome",
                 "Firefox",
-                "Edge",
-                "IE"
+                "Edge"
               ]
             },
             {
@@ -384,8 +409,7 @@
               "validValues": [
                 "Chrome",
                 "Firefox",
-                "Edge",
-                "IE"
+                "Edge"
               ]
             },
             {
@@ -449,8 +473,7 @@
               "validValues": [
                 "Chrome",
                 "Firefox",
-                "Edge",
-                "IE"
+                "Edge"
               ]
             },
             {
@@ -665,11 +688,11 @@
         }
       ],
       "feedStatus": "verified",
-      "preferredVersion": "23.10.8"
+      "preferredVersion": "25.10.7"
     },
     {
       "packageId": "UiPath.Excel.Activities",
-      "version": "23.10.1",
+      "version": "2.24.3",
       "activities": [
         {
           "className": "ExcelApplicationScope",
@@ -1036,12 +1059,12 @@
           ]
         }
       ],
-      "feedStatus": "unverified",
-      "preferredVersion": "23.10.1"
+      "feedStatus": "verified",
+      "preferredVersion": "2.24.3"
     },
     {
       "packageId": "UiPath.Mail.Activities",
-      "version": "1.20.0",
+      "version": "1.23.1",
       "activities": [
         {
           "className": "SendSmtpMailMessage",
@@ -1505,11 +1528,11 @@
         }
       ],
       "feedStatus": "verified",
-      "preferredVersion": "1.20.0"
+      "preferredVersion": "1.23.1"
     },
     {
       "packageId": "UiPath.Web.Activities",
-      "version": "23.10.1",
+      "version": "1.20.1",
       "activities": [
         {
           "className": "HttpClient",
@@ -1748,12 +1771,12 @@
           ]
         }
       ],
-      "feedStatus": "unverified",
-      "preferredVersion": "23.10.1"
+      "feedStatus": "verified",
+      "preferredVersion": "1.20.1"
     },
     {
       "packageId": "UiPath.Database.Activities",
-      "version": "1.8.0",
+      "version": "1.9.0",
       "activities": [
         {
           "className": "ExecuteQuery",
@@ -1918,11 +1941,11 @@
         }
       ],
       "feedStatus": "verified",
-      "preferredVersion": "1.8.0"
+      "preferredVersion": "1.9.0"
     },
     {
       "packageId": "UiPath.System.Activities",
-      "version": "23.10.3",
+      "version": "25.10.7",
       "activities": [
         {
           "className": "AddQueueItem",
@@ -2502,11 +2525,11 @@
         }
       ],
       "feedStatus": "verified",
-      "preferredVersion": "23.10.3"
+      "preferredVersion": "25.10.7"
     },
     {
       "packageId": "UiPath.Persistence.Activities",
-      "version": "23.10.0",
+      "version": "25.10.7",
       "activities": [
         {
           "className": "CreateFormTask",
@@ -2602,11 +2625,11 @@
         }
       ],
       "feedStatus": "verified",
-      "preferredVersion": "23.10.0"
+      "preferredVersion": "25.10.7"
     },
     {
       "packageId": "UiPath.MLActivities",
-      "version": "23.10.0",
+      "version": "25.10.7",
       "activities": [
         {
           "className": "MLSkill",
@@ -2695,11 +2718,11 @@
         }
       ],
       "feedStatus": "verified",
-      "preferredVersion": "23.10.0"
+      "preferredVersion": "25.10.7"
     },
     {
       "packageId": "UiPath.IntelligentOCR.Activities",
-      "version": "8.20.0",
+      "version": "8.22.0",
       "activities": [
         {
           "className": "DigitizeDocument",
@@ -2851,7 +2874,7 @@
         }
       ],
       "feedStatus": "verified",
-      "preferredVersion": "8.20.0"
+      "preferredVersion": "8.22.0"
     },
     {
       "packageId": "System.Activities",

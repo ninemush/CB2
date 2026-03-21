@@ -266,11 +266,138 @@ export async function refreshIntegration(): Promise<RefreshResult> {
   }
 }
 
-export async function refreshAll(): Promise<{ generation: RefreshResult; integration: RefreshResult }> {
+export interface NewerLineDiscovery {
+  packageId: string;
+  currentLine: string;
+  newerLine: string;
+  latestVersion: string;
+}
+
+export interface NewerLineResult {
+  newerLineAvailable: string | null;
+  latestVersion: string | null;
+  packages: NewerLineDiscovery[];
+}
+
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
+
+function extractMajorMinor(version: string): string | null {
+  const parts = version.split(".");
+  if (parts.length < 2) return null;
+  return `${parts[0]}.${parts[1]}`;
+}
+
+async function fetchAllStableVersions(packageId: string): Promise<string[]> {
+  try {
+    const indexUrl = `${NUGET_V3_BASE}/${packageId.toLowerCase()}/index.json`;
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(indexUrl, { signal: controller.signal });
+    clearTimeout(tid);
+    if (!res.ok) return [];
+    const data: any = await res.json();
+    const versions: string[] = data.versions || [];
+    return versions.filter(v => !v.includes("-"));
+  } catch {
+    return [];
+  }
+}
+
+let _newerLineCache: { result: NewerLineResult; expiresAt: number } | null = null;
+const NEWER_LINE_CACHE_TTL_MS = 10 * 60 * 1000;
+
+export async function discoverNewerLines(): Promise<NewerLineResult> {
+  if (_newerLineCache && Date.now() < _newerLineCache.expiresAt) {
+    return _newerLineCache.result;
+  }
+
+  const currentTarget = metadataService.getStudioTarget();
+  if (!currentTarget) {
+    return { newerLineAvailable: null, latestVersion: null, packages: [] };
+  }
+
+  const currentLine = currentTarget.line;
+  const currentParts = parseMajorMinor(currentLine);
+  if (!currentParts) {
+    return { newerLineAvailable: null, latestVersion: null, packages: [] };
+  }
+
+  const allVersions = await Promise.all(
+    CORE_PACKAGES.map(async (pkgId) => ({ pkgId, versions: await fetchAllStableVersions(pkgId) }))
+  );
+
+  const discoveries: NewerLineDiscovery[] = [];
+
+  for (const { pkgId, versions } of allVersions) {
+    const newerLines = new Map<string, string>();
+
+    for (const ver of versions) {
+      const line = extractMajorMinor(ver);
+      if (!line) continue;
+      const lineParts = parseMajorMinor(line);
+      if (!lineParts) continue;
+
+      if (lineParts.major > currentParts.major ||
+          (lineParts.major === currentParts.major && lineParts.minor > currentParts.minor)) {
+        const existing = newerLines.get(line);
+        if (!existing || compareVersions(ver, existing) > 0) {
+          newerLines.set(line, ver);
+        }
+      }
+    }
+
+    for (const [line, latestVer] of newerLines) {
+      discoveries.push({ packageId: pkgId, currentLine, newerLine: line, latestVersion: latestVer });
+    }
+  }
+
+  let highestLine: string | null = null;
+  let highestVersion: string | null = null;
+
+  for (const d of discoveries) {
+    if (!highestLine) {
+      highestLine = d.newerLine;
+      highestVersion = d.latestVersion;
+    } else {
+      const hParts = parseMajorMinor(highestLine);
+      const cParts = parseMajorMinor(d.newerLine);
+      if (hParts && cParts &&
+          (cParts.major > hParts.major ||
+           (cParts.major === hParts.major && cParts.minor > hParts.minor))) {
+        highestLine = d.newerLine;
+        highestVersion = d.latestVersion;
+      }
+    }
+  }
+
+  const result: NewerLineResult = { newerLineAvailable: highestLine, latestVersion: highestVersion, packages: discoveries };
+  _newerLineCache = { result, expiresAt: Date.now() + NEWER_LINE_CACHE_TTL_MS };
+  return result;
+}
+
+export async function refreshAll(): Promise<{ generation: RefreshResult; integration: RefreshResult; newerLines?: NewerLineResult }> {
   const [generation, integration] = await Promise.allSettled([
     refreshGeneration(),
     refreshIntegration(),
   ]);
+
+  let newerLines: NewerLineResult | undefined;
+  try {
+    newerLines = await discoverNewerLines();
+  } catch (err: any) {
+    console.warn(`[MetadataRefresher] Newer-line discovery failed during refresh: ${err?.message || "unknown error"}`);
+  }
 
   return {
     generation: generation.status === "fulfilled"
@@ -279,6 +406,7 @@ export async function refreshAll(): Promise<{ generation: RefreshResult; integra
     integration: integration.status === "fulfilled"
       ? integration.value
       : { family: "integration", success: false, message: `Unexpected error: ${(integration as PromiseRejectedResult).reason}` },
+    newerLines,
   };
 }
 

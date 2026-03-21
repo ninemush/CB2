@@ -14,6 +14,7 @@ import type { MetaValidationMode } from "./meta-validation";
 import { evaluateTransition } from "./stage-transition";
 import { approveDocument } from "./document-service";
 import { escapeXml } from "./lib/xml-utils";
+import { metadataService } from "./catalog/metadata-service";
 import { trySanitizeAndParseJson, stripCodeFences, sanitizeJsonString } from "./lib/json-utils";
 import { z } from "zod";
 import type { UiPathPackage } from "./types/uipath-package";
@@ -1010,6 +1011,18 @@ ${content}`
                 console.warn(`[Download] XAML entry not found in cached entries: ${archivePath}`);
               }
             } else if (archivePath.endsWith("project.json")) {
+              // Fallback audit: studioVersion, expressionLanguage, targetFramework,
+              // sourceLanguage all resolve from MetadataService below. Audited files:
+              // - document-routes.ts: this site (was hardcoded 23.10.6/22.10.11, now MetadataService)
+              // - package-assembler.ts: uses _studioProfile/_metaTarget chain, no version literals
+              // - metadata-service.ts: reads from catalog JSON, no hardcoded versions
+              // - studio-profile.ts: reads from catalog JSON, no hardcoded versions
+              const _metaTarget = metadataService.getStudioTarget();
+              if (!_metaTarget) {
+                console.error("[document-routes] MetadataService has no studio target — project.json fields will use fallback defaults.");
+              }
+              const _resolvedFramework = _metaTarget ? (isServerless ? "Portable" : _metaTarget.targetFramework) : (isServerless ? "Portable" : "Windows");
+              const _resolvedLang = _resolvedFramework === "Portable" ? "CSharp" : (_metaTarget?.expressionLanguage || "VisualBasic");
               const projectJson: Record<string, any> = {
                 name: pipelineResult.projectName,
                 description: pkg.description || "",
@@ -1018,7 +1031,7 @@ ${content}`
                 webServices: [],
                 entitiesStores: [],
                 schemaVersion: "4.0",
-                studioVersion: isServerless ? "23.10.6" : "22.10.11",
+                studioVersion: _metaTarget?.version || "",
                 projectVersion: "1.0.0",
                 runtimeOptions: {
                   autoDispose: false,
@@ -1040,13 +1053,13 @@ ${content}`
                   fileInfoCollection: [],
                   modernBehavior: true,
                 },
-                expressionLanguage: isServerless ? "CSharp" : "VisualBasic",
+                expressionLanguage: _resolvedLang,
                 entryPoints: [{ filePath: "Main.xaml", uniqueId: "00000000-0000-0000-0000-000000000000", input: [], output: [] }],
                 isTemplate: false,
                 templateProjectData: {},
                 publishData: {},
-                targetFramework: isServerless ? "Portable" : "Windows",
-                sourceLanguage: isServerless ? "CSharp" : "VisualBasic",
+                targetFramework: _resolvedFramework,
+                sourceLanguage: _resolvedLang,
               };
               entries.push({ name: flatName, content: JSON.stringify(projectJson, null, 2) });
             } else if (archivePath.endsWith("DeveloperHandoffGuide.md") && pipelineResult.dhgContent) {

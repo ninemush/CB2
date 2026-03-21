@@ -173,7 +173,7 @@ describe("Activity Catalog", () => {
     it("returns valid for Click with attribute properties", () => {
       const result = catalogService.validateEmittedActivity(
         "ui:Click",
-        { ClickType: "Single", TimeoutMS: "30000" },
+        { ClickType: "CLICK_SINGLE", TimeoutMS: "30000" },
         []
       );
       expect(result.valid).toBe(true);
@@ -255,12 +255,12 @@ describe("Activity Catalog", () => {
   describe("Catalog Service - getConfirmedVersion", () => {
     it("returns version for known packages", () => {
       const version = catalogService.getConfirmedVersion("UiPath.System.Activities");
-      expect(version).toBe("23.10.3");
+      expect(version).toBe("25.10.7");
     });
 
     it("returns version for UiPath.UIAutomation.Activities", () => {
       const version = catalogService.getConfirmedVersion("UiPath.UIAutomation.Activities");
-      expect(version).toBe("23.10.8");
+      expect(version).toBe("25.10.7");
     });
 
     it("returns null for unknown packages", () => {
@@ -499,14 +499,14 @@ describe("Activity Catalog", () => {
   });
 
   describe("Catalog Service - package versions", () => {
-    it("returns version 23.10.1 for UiPath.Web.Activities", () => {
+    it("returns version 1.20.1 for UiPath.Web.Activities", () => {
       const version = catalogService.getConfirmedVersion("UiPath.Web.Activities");
-      expect(version).toBe("23.10.1");
+      expect(version).toBe("1.20.1");
     });
 
-    it("returns version 23.10.1 for UiPath.Excel.Activities", () => {
+    it("returns version 2.24.3 for UiPath.Excel.Activities", () => {
       const version = catalogService.getConfirmedVersion("UiPath.Excel.Activities");
-      expect(version).toBe("23.10.1");
+      expect(version).toBe("2.24.3");
     });
   });
 

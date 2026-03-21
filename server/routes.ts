@@ -14,7 +14,7 @@ import { evaluateTransition } from "./stage-transition";
 import { SUPPORTED_MODELS, CHAT_SUPPORTED_MODELS, setDbModel, getActiveModel, getProviderName, setDbCodeModel, getActiveCodeModel, getCodeProviderName, setDbMetaValidationModel, getActiveMetaValidationModel, getMetaValidationProviderName } from "./lib/llm";
 import { getMetricsSummary, getAllMetrics, type MetaValidationMode } from "./meta-validation";
 import { metadataService } from "./catalog/metadata-service";
-import { refreshAll, refreshGeneration, refreshIntegration, startRefreshScheduler } from "./catalog/metadata-refresher";
+import { refreshAll, refreshGeneration, refreshIntegration, startRefreshScheduler, discoverNewerLines } from "./catalog/metadata-refresher";
 
 declare module "express-session" {
   interface SessionData {
@@ -589,7 +589,13 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Admin access required" });
     }
     const status = metadataService.getStatus();
-    return res.json(status);
+    let newerLines = null;
+    try {
+      newerLines = await discoverNewerLines();
+    } catch (err: any) {
+      console.warn(`[MetadataStatus] Failed to discover newer lines: ${err?.message || "unknown error"}`);
+    }
+    return res.json({ ...status, newerLines });
   });
 
   app.post("/api/admin/metadata/refresh", async (req: Request, res: Response) => {
@@ -602,19 +608,25 @@ export async function registerRoutes(
     }
     const family = req.body?.family as string | undefined;
     try {
+      let newerLines = null;
+      try {
+        newerLines = await discoverNewerLines();
+      } catch (err: any) {
+        console.warn(`[MetadataRefresh] Newer-line discovery failed: ${err?.message || "unknown error"}`);
+      }
       if (family === "generation") {
         const result = await refreshGeneration();
         const httpStatus = result.success ? 200 : 207;
-        return res.status(httpStatus).json({ results: { generation: result } });
+        return res.status(httpStatus).json({ results: { generation: result }, newerLines });
       } else if (family === "integration") {
         const result = await refreshIntegration();
         const httpStatus = result.success ? 200 : 207;
-        return res.status(httpStatus).json({ results: { integration: result } });
+        return res.status(httpStatus).json({ results: { integration: result }, newerLines });
       } else {
         const results = await refreshAll();
         const anyFailed = !results.generation.success || !results.integration.success;
         const httpStatus = anyFailed ? 207 : 200;
-        return res.status(httpStatus).json({ results });
+        return res.status(httpStatus).json({ results, newerLines: results.newerLines || newerLines });
       }
     } catch (err: any) {
       return res.status(500).json({ message: `Refresh failed: ${err.message}` });

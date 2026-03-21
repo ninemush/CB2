@@ -134,6 +134,7 @@ class CatalogService {
 
       console.log(`Activity catalog loaded: v${this.catalog.catalogVersion}, ${this.catalog.packages.length} packages, ${totalActivities} activities, Studio ${this.catalog.studioVersion}`);
 
+      this.checkVersionAlignment();
       this.checkCatalogFreshness();
     } catch (err: any) {
       console.warn(`[Activity Catalog] Failed to load catalog: ${err.message} — catalog constraints disabled`);
@@ -151,6 +152,15 @@ class CatalogService {
 
   getLoadGeneration(): number {
     return this.loadGeneration;
+  }
+
+  private checkVersionAlignment(): void {
+    if (!this.catalog) return;
+    const metaTarget = metadataService.getStudioTarget();
+    if (!metaTarget) return;
+    if (this.catalog.studioVersion !== metaTarget.version) {
+      console.warn(`[Activity Catalog] WARNING: activity-catalog.json studioVersion (${this.catalog.studioVersion}) does not match MetadataService studio target (${metaTarget.version}). Version drift may cause dependency mismatches.`);
+    }
   }
 
   private checkCatalogFreshness(): void {
@@ -295,6 +305,9 @@ class CatalogService {
   }
 
   getConfirmedVersion(packageName: string): string | null {
+    const metaVersion = metadataService.getPreferredVersion(packageName);
+    if (metaVersion) return metaVersion;
+
     if (!this.loaded || !this.catalog) return null;
     const pkg = this.packageIndex.get(packageName);
     return pkg?.version || null;

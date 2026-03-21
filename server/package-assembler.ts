@@ -52,6 +52,16 @@ async function getProbeCache() {
   const { getProbeCache: _getProbeCache } = await import("./uipath-integration");
   return _getProbeCache();
 }
+
+function getBaselineFallbackVersion(pkgName: string, _framework: "Windows" | "Portable"): string | null {
+  const preferred = _metadataService.getPreferredVersion(pkgName);
+  if (preferred) return preferred;
+  if (!_metadataService.getStudioTarget()) {
+    _metadataService.load();
+    return _metadataService.getPreferredVersion(pkgName);
+  }
+  return null;
+}
   
 function resolveExpressionLanguage(
   profile: StudioProfile | null | undefined,

@@ -1,54 +1,54 @@
 {
-  "studioLine": "23.10",
-  "studioVersion": "23.10.6",
+  "studioLine": "25.10",
+  "studioVersion": "25.10.7",
   "targetFramework": "Windows",
   "projectType": "Process",
   "expressionLanguage": "VisualBasic",
   "allowedPackageVersionRanges": {
     "UiPath.System.Activities": {
-      "min": "23.10.0",
-      "max": "23.10.99",
-      "preferred": "23.10.3"
+      "min": "25.10.0",
+      "max": "25.10.99",
+      "preferred": "25.10.7"
     },
     "UiPath.UIAutomation.Activities": {
-      "min": "23.10.0",
-      "max": "23.10.99",
-      "preferred": "23.10.8"
+      "min": "25.10.0",
+      "max": "25.10.99",
+      "preferred": "25.10.7"
     },
     "UiPath.Mail.Activities": {
-      "min": "1.18.0",
+      "min": "1.20.0",
       "max": "1.99.0",
-      "preferred": "1.20.0"
+      "preferred": "1.23.1"
     },
     "UiPath.Database.Activities": {
-      "min": "1.7.0",
+      "min": "1.8.0",
       "max": "1.99.0",
-      "preferred": "1.8.0"
+      "preferred": "1.9.0"
     },
     "UiPath.Persistence.Activities": {
-      "min": "23.10.0",
-      "max": "23.10.99",
-      "preferred": "23.10.0"
+      "min": "25.10.0",
+      "max": "25.10.99",
+      "preferred": "25.10.7"
     },
     "UiPath.MLActivities": {
-      "min": "23.10.0",
-      "max": "23.10.99",
-      "preferred": "23.10.0"
+      "min": "25.10.0",
+      "max": "25.10.99",
+      "preferred": "25.10.7"
     },
     "UiPath.IntelligentOCR.Activities": {
-      "min": "8.18.0",
+      "min": "8.20.0",
       "max": "8.99.0",
-      "preferred": "8.20.0"
+      "preferred": "8.22.0"
     },
     "UiPath.Web.Activities": {
-      "min": "1.14.0",
+      "min": "1.17.0",
       "max": "1.99.0",
-      "preferred": "1.17.0"
+      "preferred": "1.20.1"
     },
     "UiPath.Excel.Activities": {
-      "min": "2.20.0",
+      "min": "2.23.0",
       "max": "2.99.0",
-      "preferred": "2.23.0"
+      "preferred": "2.24.3"
     }
   },
   "minimumRequiredPackages": [
