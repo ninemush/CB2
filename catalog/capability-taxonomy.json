@@ -188,7 +188,7 @@
     "customProbeHandler": "generativeExtraction",
     "probeConfig": {
       "probePath": "/api/v1/projects",
-      "tokenResource": "DU",
+      "tokenResource": "IXP",
       "useAlternates": true
     }
   },
@@ -227,7 +227,7 @@
     "probeStrategy": "own-endpoint",
     "scopeFamily": "DataFabric",
     "minimalScopes": [
-      "DataService.Default"
+      "DataFabric.Schema.Read"
     ],
     "uiSection": "primary",
     "defaultRemediationTemplate": {

@@ -1719,10 +1719,17 @@ async function probeAllServices(): Promise<UnifiedProbeResult> {
         duAvailable = duResult.available;
         duProbeStatus = duResult.httpStatus;
       }
+    }
 
-      const genEntry = taxonomyByFlag.get("generativeExtraction");
-      if (genEntry?.probeConfig) {
+    let genExProbeStatus: number | null = null;
+    const genEntry = taxonomyByFlag.get("generativeExtraction");
+    if (genEntry?.probeConfig && (isTokenOk("IXP") || isTokenOk("DU"))) {
+      const genSvcUrl = metadataService.getServiceUrl("IXP", config);
+      const genProbePath = genEntry.probeConfig.probePath;
+
+      if (isTokenOk("IXP")) {
         const genResult = await probeEndpointByTaxonomy(genEntry, config, headersByToken, metadataService);
+        genExProbeStatus = genResult.httpStatus;
         if (genResult.available && genResult.response?.ok) {
           try {
             const text = await genResult.response.text();
@@ -1733,6 +1740,29 @@ async function probeAllServices(): Promise<UnifiedProbeResult> {
             }
           } catch { genExtractionAvailable = false; }
         }
+        if (genExtractionAvailable) {
+          console.log("[UiPath Probe] Generative Extraction available via IXP token");
+        }
+      }
+
+      if (!genExtractionAvailable && isTokenOk("DU")) {
+        console.log("[UiPath Probe] Generative Extraction: trying DU token fallback");
+        const duFallbackHdrs = headersByToken["DU"] || hdrs;
+        try {
+          const duFallbackRes = await fetch(`${genSvcUrl}${genProbePath}`, { headers: duFallbackHdrs }).catch(() => null);
+          if (duFallbackRes) genExProbeStatus = duFallbackRes.status;
+          if (duFallbackRes?.ok) {
+            const fbText = await duFallbackRes.text();
+            const fbTrimmed = fbText.trim();
+            if (fbTrimmed.length > 0 && !fbTrimmed.startsWith("<")) {
+              const fbParsed = JSON.parse(fbTrimmed);
+              genExtractionAvailable = !fbParsed.errorCode && !fbParsed.ErrorCode && !fbParsed["odata.error"];
+              if (genExtractionAvailable) {
+                console.log("[UiPath Probe] Generative Extraction available via DU token fallback");
+              }
+            }
+          }
+        } catch { /* DU fallback failed */ }
       }
     }
 
@@ -1889,11 +1919,15 @@ async function probeAllServices(): Promise<UnifiedProbeResult> {
       const dfServiceUrl = metadataService.getServiceUrl("DF", config);
       const dfTaxEntry = taxonomyByFlag.get("dataService");
       const dfProbePath = dfTaxEntry!.probeConfig!.probePath;
-      const dfEntityProbe = await fetch(`${dfServiceUrl}${dfProbePath}`, { headers: hdrs }).catch(() => null);
+      const dfHdrs = headersByToken["DF"] || hdrs;
+      const usingDfToken = headersByToken["DF"] !== hdrs && !!headersByToken["DF"];
+      console.log(`[UiPath Probe] Data Service probe using ${usingDfToken ? "DF" : "OR"} token`);
+      const dfEntityProbe = await fetch(`${dfServiceUrl}${dfProbePath}`, { headers: dfHdrs }).catch(() => null);
       if (dfEntityProbe) probeHttpStatuses["dataService"] = dfEntityProbe.status;
       if (dfEntityProbe && (dfEntityProbe.ok || dfEntityProbe.status === 401)) {
         dsAvailable = true;
         metadataService.updateServiceReachability("DF", getServiceReachabilityStatus(dfEntityProbe));
+        console.log(`[UiPath Probe] Data Service available (${dfEntityProbe.status})`);
       }
       const dfSecondaryPaths = dfTaxEntry?.secondaryProbePaths || [];
       if (!dsAvailable && dfSecondaryPaths.length > 0) {
@@ -1924,6 +1958,7 @@ async function probeAllServices(): Promise<UnifiedProbeResult> {
     probeHttpStatuses["triggers"] = trigRes?.status ?? schedRes?.status ?? null;
     probeHttpStatuses["storageBuckets"] = bucketRes?.status ?? null;
     probeHttpStatuses["documentUnderstanding"] = duProbeStatus;
+    probeHttpStatuses["generativeExtraction"] = genExProbeStatus;
 
     const [govResult, attendedResult, studioResult] = await Promise.allSettled([
       discoverGovernancePolicies(),
