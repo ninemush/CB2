@@ -36,7 +36,6 @@ export const UIPATH_PACKAGE_ALIAS_MAP: Record<string, string> = {
   "UiPath.Credentials.Activities": "UiPath.System.Activities",
   "UiPath.Queue.Activities": "UiPath.System.Activities",
   "UiPath.Storage.Activities": "UiPath.Persistence.Activities",
-  "UiPath.DataService.Activities": "UiPath.Persistence.Activities",
   "UiPath.DB.Activities": "UiPath.Database.Activities",
   "UiPath.SQL.Activities": "UiPath.Database.Activities",
 };

@@ -298,25 +298,22 @@ function classifyDataFabric(ctx: ActivityContext, combined: string): ReturnType<
   const gaps: XamlGap[] = [];
   const variables: VariableDecl[] = [];
 
-  if (combined.includes("write") || combined.includes("create") || combined.includes("insert") || combined.includes("add") || combined.includes("save") || combined.includes("update") || combined.includes("upsert")) {
+  if (combined.includes("delete") || combined.includes("remove")) {
     variables.push({ name: "str_EntityName", type: "String", defaultValue: '"TODO_EntityName"' });
-    variables.push({ name: "str_RecordId", type: "String", defaultValue: '""' });
-    variables.push({ name: "str_EntityPayload", type: "String", defaultValue: '""' });
+    variables.push({ name: "str_RecordId", type: "String", defaultValue: '"TODO_RecordId"' });
     gaps.push({
       category: "config",
-      activity: "HttpClient",
-      description: `Configure Data Fabric entity name and field mappings for "${ctx.name}"`,
-      placeholder: "Entity name and JSON field-value payload",
-      estimatedMinutes: 15,
+      activity: "DeleteEntity",
+      description: `Configure Data Service entity type and record ID for "${ctx.name}"`,
+      placeholder: "Entity type name and record identifier",
+      estimatedMinutes: 10,
     });
     return {
-      activityType: "ui:HttpClient",
-      activityPackage: "UiPath.Web.Activities",
+      activityType: "ui:DeleteEntity",
+      activityPackage: "UiPath.DataService.Activities",
       properties: {
-        EndPoint: "TODO: Set Data Fabric Entity Service URL — {base}/dataservice_/api/EntityService/{EntityName}",
-        Method: combined.includes("update") || combined.includes("upsert") ? "PUT" : "POST",
-        AcceptFormat: "JSON",
-        Body: "[str_EntityPayload]",
+        EntityType: "[str_EntityName]",
+        EntityId: "[str_RecordId]",
       },
       errorHandling: "catch",
       variables,
@@ -324,22 +321,94 @@ function classifyDataFabric(ctx: ActivityContext, combined: string): ReturnType<
     };
   }
 
-  variables.push({ name: "str_EntityResponse", type: "String", defaultValue: '""' });
-  variables.push({ name: "dt_EntityData", type: "System.Data.DataTable" });
+  if (combined.includes("update") || combined.includes("upsert") || combined.includes("modify")) {
+    variables.push({ name: "str_EntityName", type: "String", defaultValue: '"TODO_EntityName"' });
+    variables.push({ name: "entityRecord", type: "UiPath.DataService.DataServiceEntity" });
+    gaps.push({
+      category: "config",
+      activity: "UpdateEntity",
+      description: `Configure Data Service entity type and field mappings for "${ctx.name}"`,
+      placeholder: "Entity type name and field-value assignments on entityRecord",
+      estimatedMinutes: 15,
+    });
+    return {
+      activityType: "ui:UpdateEntity",
+      activityPackage: "UiPath.DataService.Activities",
+      properties: {
+        EntityType: "[str_EntityName]",
+        Entity: "[entityRecord]",
+      },
+      errorHandling: "catch",
+      variables,
+      gaps,
+    };
+  }
+
+  if (combined.includes("write") || combined.includes("create") || combined.includes("insert") || combined.includes("add") || combined.includes("save")) {
+    variables.push({ name: "str_EntityName", type: "String", defaultValue: '"TODO_EntityName"' });
+    variables.push({ name: "entityRecord", type: "UiPath.DataService.DataServiceEntity" });
+    gaps.push({
+      category: "config",
+      activity: "CreateEntity",
+      description: `Configure Data Service entity type and field values for "${ctx.name}"`,
+      placeholder: "Entity type name and field-value assignments on entityRecord",
+      estimatedMinutes: 15,
+    });
+    return {
+      activityType: "ui:CreateEntity",
+      activityPackage: "UiPath.DataService.Activities",
+      properties: {
+        EntityType: "[str_EntityName]",
+        Entity: "[entityRecord]",
+      },
+      errorHandling: "catch",
+      variables,
+      gaps,
+    };
+  }
+
+  if (combined.includes("get by id") || combined.includes("lookup") || combined.includes("fetch by id") || combined.includes("single record") || combined.includes("getentitybyid")) {
+    variables.push({ name: "str_EntityName", type: "String", defaultValue: '"TODO_EntityName"' });
+    variables.push({ name: "str_RecordId", type: "String", defaultValue: '"TODO_RecordId"' });
+    variables.push({ name: "entityResult", type: "UiPath.DataService.DataServiceEntity" });
+    gaps.push({
+      category: "config",
+      activity: "GetEntityById",
+      description: `Configure Data Service entity type and record ID for "${ctx.name}"`,
+      placeholder: "Entity type name and record identifier",
+      estimatedMinutes: 10,
+    });
+    return {
+      activityType: "ui:GetEntityById",
+      activityPackage: "UiPath.DataService.Activities",
+      properties: {
+        EntityType: "[str_EntityName]",
+        EntityId: "[str_RecordId]",
+        Result: "[entityResult]",
+      },
+      errorHandling: "catch",
+      variables,
+      gaps,
+    };
+  }
+
+  variables.push({ name: "str_EntityName", type: "String", defaultValue: '"TODO_EntityName"' });
+  variables.push({ name: "str_QueryFilter", type: "String", defaultValue: '"TODO_ODataFilter"' });
+  variables.push({ name: "entityResults", type: "System.Collections.Generic.List(UiPath.DataService.DataServiceEntity)" });
   gaps.push({
     category: "config",
-    activity: "HttpClient",
-    description: `Configure Data Fabric entity name and query for "${ctx.name}"`,
-    placeholder: "Entity name and OData filter query",
+    activity: "QueryEntity",
+    description: `Configure Data Service entity type and query filter for "${ctx.name}"`,
+    placeholder: "Entity type name and OData filter expression",
     estimatedMinutes: 15,
   });
   return {
-    activityType: "ui:HttpClient",
-    activityPackage: "UiPath.Web.Activities",
+    activityType: "ui:QueryEntity",
+    activityPackage: "UiPath.DataService.Activities",
     properties: {
-      EndPoint: "TODO: Set Data Fabric Entity Service URL — {base}/dataservice_/api/EntityService/{EntityName}",
-      Method: "GET",
-      AcceptFormat: "JSON",
+      EntityType: "[str_EntityName]",
+      Filter: "[str_QueryFilter]",
+      Result: "[entityResults]",
     },
     errorHandling: "catch",
     variables,

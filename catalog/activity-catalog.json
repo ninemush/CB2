@@ -2628,6 +2628,204 @@
       "preferredVersion": "25.10.7"
     },
     {
+      "packageId": "UiPath.DataService.Activities",
+      "version": "25.10.7",
+      "activities": [
+        {
+          "className": "CreateEntity",
+          "displayName": "Create Entity",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "EntityType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Entity",
+              "direction": "InOut",
+              "clrType": "UiPath.DataService.DataServiceEntity",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "QueryEntity",
+          "displayName": "Query Entity",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "EntityType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Filter",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Top",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "Skip",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            },
+            {
+              "name": "OrderBy",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Result",
+              "direction": "Out",
+              "clrType": "System.Collections.Generic.List`1[UiPath.DataService.DataServiceEntity]",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "UpdateEntity",
+          "displayName": "Update Entity",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "EntityType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Entity",
+              "direction": "InOut",
+              "clrType": "UiPath.DataService.DataServiceEntity",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true,
+              "typeArguments": null
+            }
+          ]
+        },
+        {
+          "className": "DeleteEntity",
+          "displayName": "Delete Entity",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "EntityType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "EntityId",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true,
+              "typeArguments": "x:String"
+            }
+          ]
+        },
+        {
+          "className": "GetEntityById",
+          "displayName": "Get Entity By Id",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "EntityType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "EntityId",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": true,
+              "typeArguments": "x:String"
+            },
+            {
+              "name": "Result",
+              "direction": "Out",
+              "clrType": "UiPath.DataService.DataServiceEntity",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "required": false,
+              "typeArguments": null
+            }
+          ]
+        }
+      ],
+      "feedStatus": "verified",
+      "preferredVersion": "25.10.7"
+    },
+    {
       "packageId": "UiPath.MLActivities",
       "version": "25.10.7",
       "activities": [

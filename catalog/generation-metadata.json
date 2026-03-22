@@ -63,6 +63,13 @@
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
       "verificationSource": "nuget-feed"
     },
+    "UiPath.DataService.Activities": {
+      "min": "25.10.0",
+      "max": "25.10.99",
+      "preferred": "25.10.7",
+      "lastVerifiedAt": "2026-03-21T00:00:00Z",
+      "verificationSource": "nuget-feed"
+    },
     "UiPath.MLActivities": {
       "min": "25.10.0",
       "max": "25.10.99",
