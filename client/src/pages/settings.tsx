@@ -2028,6 +2028,7 @@ function IntegrationsTab() {
   const [testResultMsg, setTestResultMsg] = useState<{ success: boolean; message: string } | null>(null);
   const [scopeVerification, setScopeVerification] = useState<{
     success: boolean;
+    internalError?: boolean;
     requestedScopes: string[];
     grantedScopes: string[];
     message: string;
@@ -2864,45 +2865,62 @@ function IntegrationsTab() {
 
             {scopeVerification && (
               <div className="border border-border rounded-lg p-4 space-y-3 mt-4" data-testid="scope-verification-results">
-                <div className="flex items-center gap-2">
-                  {scopeVerification.success ? (
-                    <CheckCircle2 className="h-4 w-4 text-green-400" />
-                  ) : (
-                    <XCircle className="h-4 w-4 text-red-400" />
-                  )}
-                  <span className="text-sm font-medium text-foreground">{scopeVerification.message}</span>
-                </div>
-
-                {scopeVerification.services && (
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Service Availability</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {Object.entries(scopeVerification.services).map(([name, info]) => (
-                        <div
-                          key={name}
-                          className={`flex items-center gap-2 px-3 py-2 rounded-md text-xs ${
-                            info.available
-                              ? "bg-green-500/10 text-green-400"
-                              : "bg-amber-500/10 text-amber-400"
-                          }`}
-                          data-testid={`service-status-${name.toLowerCase().replace(/\s+/g, "-")}`}
-                        >
-                          {info.available ? (
-                            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                          ) : (
-                            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                          )}
-                          <div className="min-w-0">
-                            <span className="font-medium">{name}</span>
-                            <span className="ml-1 text-muted-foreground">— {info.message}</span>
-                          </div>
-                        </div>
-                      ))}
+                {scopeVerification.internalError ? (
+                  <div className="space-y-2" data-testid="internal-error-banner">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-orange-400" />
+                      <span className="text-sm font-medium text-orange-400">Internal Error</span>
                     </div>
+                    <p className="text-sm text-muted-foreground">
+                      CannonBall encountered an internal error while probing services — this is not a UiPath issue. Please report this to the development team.
+                    </p>
+                    <p className="text-xs text-muted-foreground font-mono bg-muted/50 rounded px-2 py-1">
+                      {scopeVerification.message}
+                    </p>
                   </div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-2">
+                      {scopeVerification.success ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-400" />
+                      ) : (
+                        <XCircle className="h-4 w-4 text-red-400" />
+                      )}
+                      <span className="text-sm font-medium text-foreground">{scopeVerification.message}</span>
+                    </div>
+
+                    {scopeVerification.services && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Service Availability</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {Object.entries(scopeVerification.services).map(([name, info]) => (
+                            <div
+                              key={name}
+                              className={`flex items-center gap-2 px-3 py-2 rounded-md text-xs ${
+                                info.available
+                                  ? "bg-green-500/10 text-green-400"
+                                  : "bg-amber-500/10 text-amber-400"
+                              }`}
+                              data-testid={`service-status-${name.toLowerCase().replace(/\s+/g, "-")}`}
+                            >
+                              {info.available ? (
+                                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                              ) : (
+                                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                              )}
+                              <div className="min-w-0">
+                                <span className="font-medium">{name}</span>
+                                <span className="ml-1 text-muted-foreground">— {info.message}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
 
-                {scopeVerification.grantedScopes.length > 0 && (
+                {!scopeVerification.internalError && scopeVerification.grantedScopes.length > 0 && (
                   <div className="space-y-2">
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Granted Scopes ({scopeVerification.grantedScopes.length})</p>
                     {(() => {

@@ -1332,6 +1332,7 @@ type UnifiedProbeResult = {
   cachedAt: number;
   probeFailed?: boolean;
   probeError?: string;
+  internalError?: boolean;
 };
 
 let _probeCache: UnifiedProbeResult | null = null;
@@ -1898,7 +1899,12 @@ async function probeAllServices(): Promise<UnifiedProbeResult> {
     console.log(`[UiPath Probe] Unified probe complete — ${Object.entries(result.flags).filter(([, v]) => v).map(([k]) => k).join(", ")}`);
     return result;
   } catch (err: any) {
-    console.warn(`[UiPath Probe] Unified probe failed: ${err.message}`);
+    const isInternalError = err instanceof ReferenceError || err instanceof TypeError;
+    if (isInternalError) {
+      console.error(`[UiPath Probe] Internal error during probe: ${err.stack || err.message}`);
+    } else {
+      console.warn(`[UiPath Probe] Unified probe failed: ${err.message}`);
+    }
     const result: UnifiedProbeResult = {
       ...empty,
       configured: true,
@@ -1909,6 +1915,7 @@ async function probeAllServices(): Promise<UnifiedProbeResult> {
       cachedAt: Date.now(),
       probeFailed: true,
       probeError: err.message,
+      internalError: isInternalError,
     };
     _probeCache = result;
     _probeCacheConfigAt = currentConfigAt;
@@ -2344,7 +2351,7 @@ export async function autoDetectUiPathScopes(): Promise<{
   };
 }
 
-export async function verifyUiPathScopes(): Promise<{ success: boolean; requestedScopes: string[]; grantedScopes: string[]; message: string; services?: Record<string, { available: boolean; message: string }> }> {
+export async function verifyUiPathScopes(): Promise<{ success: boolean; internalError?: boolean; requestedScopes: string[]; grantedScopes: string[]; message: string; services?: Record<string, { available: boolean; message: string }> }> {
   const config = await getUiPathConfig();
   if (!config) {
     return { success: false, requestedScopes: [], grantedScopes: [], message: "UiPath is not configured." };
@@ -2387,6 +2394,19 @@ export async function verifyUiPathScopes(): Promise<{ success: boolean; requeste
     const requestedScopes = config.scopes.split(/\s+/).filter(Boolean);
 
     const probe = await probeAllServices();
+
+    if (probe.probeFailed) {
+      const failureMessage = probe.internalError
+        ? `Internal probe error: ${probe.probeError || "unknown error"}`
+        : `Authentication failed: ${probe.probeError || "probe pipeline failed"}`;
+      return {
+        success: false,
+        internalError: probe.internalError || false,
+        requestedScopes,
+        grantedScopes: allGrantedScopes,
+        message: failureMessage,
+      };
+    }
 
     const serviceChecks: Record<string, { available: boolean; message: string }> = {};
 
@@ -2490,6 +2510,11 @@ export async function verifyUiPathScopes(): Promise<{ success: boolean; requeste
     };
   } catch (err: any) {
     const msg = err.message || String(err);
+    const isInternalError = err instanceof ReferenceError || err instanceof TypeError;
+    if (isInternalError) {
+      console.error(`[UiPath Verify] Internal error during scope verification: ${err.stack || msg}`);
+      return { success: false, internalError: true, requestedScopes: config.scopes.split(/\s+/), grantedScopes: [], message: `Internal probe error: ${msg}` };
+    }
     return { success: false, requestedScopes: config.scopes.split(/\s+/), grantedScopes: [], message: `Authentication failed: ${msg}` };
   }
 }
