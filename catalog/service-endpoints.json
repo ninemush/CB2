@@ -48,15 +48,12 @@
       "verificationSource": "manual-seed"
     },
     "IXP": {
-      "urlTemplate": "https://cloud.uipath.com/{orgName}/{tenantName}/ixp_",
-      "alternateUrlTemplates": [
-        "https://cloud.uipath.com/{orgName}/{tenantName}/intelligentprocessing_"
-      ],
+      "urlTemplate": "https://cloud.uipath.com/{orgName}/{tenantName}/reinfer_",
       "apiBasePath": "/api",
-      "confidence": "inferred",
+      "confidence": "official",
       "reachabilityStatus": "unknown",
-      "lastVerifiedAt": "2026-03-21T06:19:01.851Z",
-      "verificationSource": "manual-seed"
+      "lastVerifiedAt": "2026-03-22T04:50:00.000Z",
+      "verificationSource": "taxonomy-redesign"
     },
     "REINFER": {
       "urlTemplate": "https://cloud.uipath.com/{orgName}/{tenantName}/reinfer_",
