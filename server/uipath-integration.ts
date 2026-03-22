@@ -7,6 +7,7 @@ import type { ServiceResourceType } from "./catalog/metadata-schemas";
 import AdmZip from "adm-zip";
 import { createHash } from "crypto";
 import { PassThrough } from "stream";
+import { getAccessToken } from "./uipath-auth";
 import {
   generateRichXamlFromSpec,
   generateRichXamlFromNodes,
