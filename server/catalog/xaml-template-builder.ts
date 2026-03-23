@@ -1,4 +1,5 @@
 import { catalogService, type ProcessType, type CatalogActivity, type CatalogProperty } from "./catalog-service";
+import { getActivityPrefix } from "../xaml/xaml-compliance";
 
 export interface TemplateEntry {
   name: string;
@@ -41,10 +42,10 @@ function clrTypeToPlaceholderType(clrType: string): string {
   return map[clrType] || "string";
 }
 
-function buildActivityTemplate(activity: CatalogActivity, packageId: string): TemplateEntry {
+function buildActivityTemplate(activity: CatalogActivity, _packageId: string): TemplateEntry {
   const className = activity.className;
-  const needsUiPrefix = packageId !== "System.Activities";
-  const tag = needsUiPrefix ? `ui:${className}` : className;
+  const prefix = getActivityPrefix(className);
+  const tag = prefix ? `${prefix}:${className}` : className;
 
   const placeholders: TemplatePlaceholder[] = [];
   const requiredProperties: string[] = [];
@@ -161,7 +162,7 @@ function buildRethrowTemplate(): TemplateEntry {
   return {
     name: "Rethrow",
     category: "activity",
-    template: `<ui:Rethrow DisplayName="{{displayName:string}}" />`,
+    template: `<Rethrow DisplayName="{{displayName:string}}" />`,
     placeholders: [
       { key: "displayName", type: "string", required: true },
     ],
@@ -230,7 +231,7 @@ function buildTryCatchTemplate(): TemplateEntry {
       `        </ActivityAction.Argument>\n` +
       `        <Sequence DisplayName="Handle Exception">\n` +
       `          <ui:LogMessage Level="Error" Message="[&quot;Error: &quot; &amp; exception.Message]" DisplayName="Log Exception" />\n` +
-      `          <ui:Rethrow DisplayName="Rethrow Exception" />\n` +
+      `          <Rethrow DisplayName="Rethrow Exception" />\n` +
       `        </Sequence>\n` +
       `      </ActivityAction>\n` +
       `    </Catch>\n` +

@@ -17,6 +17,7 @@ import { buildTemplateBlock } from "./catalog/xaml-template-builder";
 import type { ProcessType } from "./catalog/catalog-service";
 import { escapeXml } from "./lib/xml-utils";
 import { buildExpression, isValueIntent, type ValueIntent } from "./xaml/expression-builder";
+import { getActivityTag, getActivityPrefixStrict } from "./xaml/xaml-compliance";
 import type { RemediationEntry, RemediationCode } from "./uipath-pipeline";
 import { PROPERTY_REMEDIATION_ESCALATION_THRESHOLD } from "./uipath-pipeline";
 
@@ -323,10 +324,13 @@ function getPropString(props: Record<string, PropertyValue>, ...keys: string[]):
   return "";
 }
 
+export type EmissionContext = "normal" | "mandatory-catch" | "mandatory-finally";
+
 export function resolveActivityTemplate(
   node: ActivityNode,
   allVariables: VariableDeclaration[],
-  processType: ProcessType = "general"
+  processType: ProcessType = "general",
+  emissionContext: EmissionContext = "normal"
 ): string {
   const templateName = node.template;
   const props = node.properties || {};
@@ -349,7 +353,7 @@ export function resolveActivityTemplate(
   }
 
   if (templateName === "Rethrow") {
-    return applyCatalogConformance(`<ui:Rethrow DisplayName="${displayName}" />`);
+    return applyCatalogConformance(`<Rethrow DisplayName="${displayName}" />`);
   }
 
   if (templateName === "InvokeWorkflowFile") {
@@ -379,11 +383,12 @@ export function resolveActivityTemplate(
   if (templateName === "DeserializeJson") {
     const input = getPropString(props, "JsonString", "jsonString", "Input") || "";
     const outputVar = node.outputVar || "obj_Result";
-    return applyCatalogConformance(`<ui:DeserializeJson DisplayName="${displayName}" JsonString="${escapeXml(input)}">\n` +
-      `  <ui:DeserializeJson.Result>\n` +
+    const djTag = getActivityTag("DeserializeJson");
+    return applyCatalogConformance(`<${djTag} DisplayName="${displayName}" JsonString="${escapeXml(input)}">\n` +
+      `  <${djTag}.Result>\n` +
       `    <OutArgument x:TypeArguments="x:Object">${ensureBracketWrapped(outputVar)}</OutArgument>\n` +
-      `  </ui:DeserializeJson.Result>\n` +
-      `</ui:DeserializeJson>`);
+      `  </${djTag}.Result>\n` +
+      `</${djTag}>`);
   }
 
   if (templateName === "Comment") {
@@ -398,15 +403,13 @@ export function resolveActivityTemplate(
     }
   }
 
-  if (catalogService.isLoaded()) {
-    const schema = catalogService.getActivitySchema(templateName);
-    if (!schema) {
-      console.warn(`[Tree Assembler] Unknown template "${templateName}" — not in catalog, emitting comment placeholder`);
-      return `<!-- UNKNOWN TEMPLATE: ${escapeXml(templateName)} — "${escapeXml(node.displayName)}" -->
-<ui:Comment Text="Unknown activity template: ${escapeXml(templateName)}. Manual implementation required." DisplayName="${escapeXml(node.displayName)} (stub)" />`;
-    }
-  } else {
-    console.error(`[Tree Assembler] Catalog not loaded — cannot resolve template "${templateName}" safely. Emitting stub.`);
+  const UNSUPPORTED_ACTIVITIES = new Set([
+    "InvokeAgent", "DownloadFile", "UploadFile",
+  ]);
+
+  if (UNSUPPORTED_ACTIVITIES.has(templateName)) {
+    const isMandatoryPath = emissionContext === "mandatory-catch" || emissionContext === "mandatory-finally";
+    console.warn(`[Tree Assembler] Unsupported activity "${templateName}" — "${node.displayName}"${isMandatoryPath ? " (in mandatory path)" : ""}. Emitting fallback.`);
     if (_activeRemediationContext) {
       _activeRemediationContext.propertyRemediations.push({
         level: "activity",
@@ -414,18 +417,78 @@ export function resolveActivityTemplate(
         remediationCode: "STUB_ACTIVITY_CATALOG_VIOLATION",
         originalTag: templateName,
         originalDisplayName: node.displayName,
-        propertyName: "(catalog-not-loaded)",
-        reason: `Catalog not loaded — cannot verify template "${templateName}" structure. Emitting stub to avoid schema-less degradation.`,
+        propertyName: isMandatoryPath ? "(unsupported-activity-mandatory-path)" : "(unsupported-activity)",
+        reason: `Activity "${templateName}" is not supported — no valid catalog entry or package mapping exists. Business step "${node.displayName}" requires manual implementation.${isMandatoryPath ? " This activity is in a mandatory execution path (catch/finally block) — the workflow is BLOCKED until resolved." : ""}`,
+        classifiedCheck: "UNSUPPORTED_ACTIVITY",
+        developerAction: `Manually implement "${node.displayName}" using supported activities — "${templateName}" has no valid package mapping`,
+        estimatedEffortMinutes: isMandatoryPath ? 45 : 30,
+      });
+    }
+    if (isMandatoryPath) {
+      return `<!-- BLOCKED: Unsupported activity "${escapeXml(templateName)}" in mandatory ${emissionContext === "mandatory-catch" ? "catch" : "finally"} path — "${escapeXml(node.displayName)}" requires manual implementation -->
+<ui:LogMessage Level="Error" Message="[&quot;BLOCKED: Unsupported activity '${escapeXml(templateName)}' in mandatory path — business step '${escapeXml(node.displayName)}' requires manual implementation&quot;]" DisplayName="Log Blocked Activity (${escapeXml(node.displayName)})" />
+<Rethrow DisplayName="Rethrow — blocked activity '${escapeXml(node.displayName)}'" />`;
+    }
+    return `<!-- WARNING: Unsupported activity "${escapeXml(templateName)}" — "${escapeXml(node.displayName)}" requires manual implementation -->
+<ui:Comment Text="[BLOCKED] Unsupported activity: ${escapeXml(templateName)}. Business step &quot;${escapeXml(node.displayName)}&quot; requires manual implementation using supported UiPath activities." DisplayName="${escapeXml(node.displayName)} (unsupported — manual implementation required)" />
+<ui:LogMessage Level="Warn" Message="[&quot;WARNING: Business step '${escapeXml(node.displayName)}' uses unsupported activity '${escapeXml(templateName)}' — requires manual implementation&quot;]" DisplayName="Log Unsupported Activity Warning" />`;
+  }
+
+  if (catalogService.isLoaded()) {
+    const schema = catalogService.getActivitySchema(templateName);
+    if (!schema) {
+      const isMandatoryPath = emissionContext === "mandatory-catch" || emissionContext === "mandatory-finally";
+      console.warn(`[Tree Assembler] Unknown template "${templateName}" — not in catalog${isMandatoryPath ? " (in mandatory path)" : ""}, emitting fallback`);
+      if (_activeRemediationContext) {
+        _activeRemediationContext.propertyRemediations.push({
+          level: "activity",
+          file: _activeRemediationContext.fileName,
+          remediationCode: "STUB_ACTIVITY_CATALOG_VIOLATION",
+          originalTag: templateName,
+          originalDisplayName: node.displayName,
+          propertyName: isMandatoryPath ? "(unknown-template-mandatory-path)" : "(unknown-template)",
+          reason: `Activity "${templateName}" is not in the activity catalog. Business step "${node.displayName}" requires manual implementation.${isMandatoryPath ? " This activity is in a mandatory execution path — the workflow is BLOCKED until resolved." : ""}`,
+          classifiedCheck: "CATALOG_VIOLATION",
+          developerAction: `Verify and implement "${node.displayName}" (${templateName}) using supported activities`,
+          estimatedEffortMinutes: isMandatoryPath ? 30 : 20,
+        });
+      }
+      if (isMandatoryPath) {
+        return `<!-- BLOCKED: Unknown activity "${escapeXml(templateName)}" in mandatory ${emissionContext === "mandatory-catch" ? "catch" : "finally"} path — "${escapeXml(node.displayName)}" -->
+<ui:LogMessage Level="Error" Message="[&quot;BLOCKED: Unknown activity '${escapeXml(templateName)}' in mandatory path — business step '${escapeXml(node.displayName)}' requires manual implementation&quot;]" DisplayName="Log Blocked Activity (${escapeXml(node.displayName)})" />
+<Rethrow DisplayName="Rethrow — blocked activity '${escapeXml(node.displayName)}'" />`;
+      }
+      return `<!-- WARNING: Unknown activity template "${escapeXml(templateName)}" — "${escapeXml(node.displayName)}" not found in catalog -->
+<ui:Comment Text="[BLOCKED] Unknown activity: ${escapeXml(templateName)}. Business step &quot;${escapeXml(node.displayName)}&quot; requires manual implementation." DisplayName="${escapeXml(node.displayName)} (unknown — manual implementation required)" />
+<ui:LogMessage Level="Warn" Message="[&quot;WARNING: Business step '${escapeXml(node.displayName)}' uses unknown activity '${escapeXml(templateName)}' — requires manual implementation&quot;]" DisplayName="Log Unknown Activity Warning" />`;
+    }
+  } else {
+    const isMandatoryPath = emissionContext === "mandatory-catch" || emissionContext === "mandatory-finally";
+    console.error(`[Tree Assembler] Catalog not loaded — cannot resolve template "${templateName}" safely${isMandatoryPath ? " (in mandatory path)" : ""}. Emitting stub.`);
+    if (_activeRemediationContext) {
+      _activeRemediationContext.propertyRemediations.push({
+        level: "activity",
+        file: _activeRemediationContext.fileName,
+        remediationCode: "STUB_ACTIVITY_CATALOG_VIOLATION",
+        originalTag: templateName,
+        originalDisplayName: node.displayName,
+        propertyName: isMandatoryPath ? "(catalog-not-loaded-mandatory-path)" : "(catalog-not-loaded)",
+        reason: `Catalog not loaded — cannot verify template "${templateName}" structure. Emitting stub to avoid schema-less degradation.${isMandatoryPath ? " This is in a mandatory execution path — workflow is BLOCKED." : ""}`,
         classifiedCheck: "CATALOG_VIOLATION",
         developerAction: `Verify and re-implement "${node.displayName}" (${templateName}) — catalog was not available at emission time`,
-        estimatedEffortMinutes: 15,
+        estimatedEffortMinutes: isMandatoryPath ? 25 : 15,
       });
+    }
+    if (isMandatoryPath) {
+      return `<!-- BLOCKED: Catalog not loaded for "${escapeXml(templateName)}" in mandatory ${emissionContext === "mandatory-catch" ? "catch" : "finally"} path -->
+<ui:LogMessage Level="Error" Message="[&quot;BLOCKED: Activity '${escapeXml(templateName)}' could not be validated (catalog not loaded) in mandatory path — business step '${escapeXml(node.displayName)}' requires manual implementation&quot;]" DisplayName="Log Blocked Activity (${escapeXml(node.displayName)})" />
+<Rethrow DisplayName="Rethrow — blocked activity '${escapeXml(node.displayName)}'" />`;
     }
     return `<!-- CATALOG NOT LOADED: ${escapeXml(templateName)} — "${escapeXml(node.displayName)}" -->
 <ui:Comment Text="[TODO: Activity ${escapeXml(templateName)} requires catalog validation. Manual implementation required.]" DisplayName="${escapeXml(node.displayName)} (stub)" />`;
   }
 
-  return resolveDynamicTemplate(node, processType);
+  return resolveDynamicTemplate(node, processType, emissionContext);
 }
 
 function resolveAssignTemplate(node: ActivityNode, allVariables: VariableDeclaration[]): string {
@@ -517,38 +580,98 @@ function resolveSendSmtpMailMessageTemplate(node: ActivityNode): string {
 function resolveHttpClientTemplate(node: ActivityNode): string {
   const props = node.properties || {};
   const displayName = escapeXml(node.displayName);
-  const endpointRaw = props.Endpoint || props.endpoint || props.URL || props.url || "PLACEHOLDER_URL";
+  const endpointRaw = props.Endpoint || props.endpoint || props.URL || props.url;
+  if (!endpointRaw) {
+    throw new Error(`[HttpClient] Activity "${node.displayName}" is missing a required Endpoint/URL property — cannot emit HttpClient without a valid endpoint.`);
+  }
   const endpointResolved = resolvePropertyValueRaw(endpointRaw as PropertyValue);
   const method = getPropString(props, "Method", "method") || "GET";
   const outputVar = node.outputVar || "str_ResponseBody";
+  const tag = getActivityTag("HttpClient");
 
-  let xml = `<ui:HttpClient DisplayName="${displayName}" Endpoint="${escapeXml(endpointResolved)}" Method="${escapeXml(method)}"`;
+  let wrappedEndpoint: string;
+  if (endpointResolved.startsWith("[") && endpointResolved.endsWith("]")) {
+    wrappedEndpoint = endpointResolved;
+  } else if (/^[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*$/.test(endpointResolved)) {
+    wrappedEndpoint = `[${endpointResolved}]`;
+  } else if (/^https?:\/\//.test(endpointResolved) || endpointResolved.includes("://")) {
+    wrappedEndpoint = `[&quot;${escapeXml(endpointResolved)}&quot;]`;
+  } else {
+    wrappedEndpoint = `[${endpointResolved}]`;
+  }
+
+  let xml = `<${tag} DisplayName="${displayName}" Endpoint="${wrappedEndpoint}" Method="${escapeXml(method)}"`;
+
+  xml += `>\n`;
+
+  const body = getPropString(props, "Body", "body");
+  const methodUpper = method.toUpperCase();
+  if (body) {
+    xml += `  <${tag}.Body>\n`;
+    xml += `    <InArgument x:TypeArguments="x:String">${ensureBracketWrapped(body)}</InArgument>\n`;
+    xml += `  </${tag}.Body>\n`;
+  } else if (methodUpper === "POST" || methodUpper === "PUT" || methodUpper === "PATCH") {
+    xml += `  <${tag}.Body>\n`;
+    xml += `    <InArgument x:TypeArguments="x:String">[str_RequestBody]</InArgument>\n`;
+    xml += `  </${tag}.Body>\n`;
+  }
 
   const headers = getPropString(props, "Headers", "headers");
   if (headers) {
-    xml += ` Headers="${escapeXml(headers)}"`;
-  }
-  const body = getPropString(props, "Body", "body");
-  if (body) {
-    xml += ` Body="${escapeXml(body)}"`;
+    xml += `  <${tag}.Headers>\n`;
+    xml += `    <InArgument x:TypeArguments="scg:Dictionary(x:String, x:String)">${ensureBracketWrapped(headers)}</InArgument>\n`;
+    xml += `  </${tag}.Headers>\n`;
+  } else {
+    const authToken = getPropString(props, "AuthToken", "authToken", "BearerToken", "bearerToken");
+    if (authToken) {
+      xml += `  <${tag}.Headers>\n`;
+      xml += `    <InArgument x:TypeArguments="scg:Dictionary(x:String, x:String)">[New Dictionary(Of String, String) From {{"Authorization", "Bearer " &amp; ${ensureBracketWrapped(authToken).slice(1, -1)}}}]</InArgument>\n`;
+      xml += `  </${tag}.Headers>\n`;
+    }
   }
 
-  xml += `>\n`;
-  xml += `  <ui:HttpClient.Result>\n`;
+  xml += `  <${tag}.Result>\n`;
   xml += `    <OutArgument x:TypeArguments="x:String">${ensureBracketWrapped(outputVar)}</OutArgument>\n`;
-  xml += `  </ui:HttpClient.Result>\n`;
-  xml += `</ui:HttpClient>`;
+  xml += `  </${tag}.Result>\n`;
+  xml += `</${tag}>`;
 
   return xml;
 }
 
-function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType): string {
+function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, emissionContext: EmissionContext = "normal"): string {
   const props = node.properties || {};
   const displayName = escapeXml(node.displayName);
   const templateName = node.template;
 
-  const needsUiPrefix = !["Assign", "If", "TryCatch", "Sequence", "Delay", "Rethrow", "Throw", "While", "DoWhile", "ForEach"].includes(templateName);
-  const tag = needsUiPrefix ? `ui:${templateName}` : templateName;
+  const strictPrefix = getActivityPrefixStrict(templateName);
+  if (strictPrefix === null) {
+    const isMandatoryPath = emissionContext === "mandatory-catch" || emissionContext === "mandatory-finally";
+    console.warn(`[Tree Assembler] Activity "${templateName}" has no resolved namespace mapping — emitting as unsupported`);
+    if (_activeRemediationContext) {
+      _activeRemediationContext.propertyRemediations.push({
+        level: "activity",
+        file: _activeRemediationContext.fileName,
+        remediationCode: "STUB_ACTIVITY_CATALOG_VIOLATION",
+        originalTag: templateName,
+        originalDisplayName: node.displayName,
+        propertyName: "(unmapped-namespace)",
+        reason: `Activity "${templateName}" could not be resolved to a known UiPath package namespace. Business step "${node.displayName}" requires manual implementation.${isMandatoryPath ? " This is in a mandatory execution path — workflow is BLOCKED." : ""}`,
+        classifiedCheck: "UNMAPPED_NAMESPACE",
+        developerAction: `Resolve namespace mapping for "${templateName}" and re-implement "${node.displayName}"`,
+        estimatedEffortMinutes: isMandatoryPath ? 30 : 20,
+      });
+    }
+    if (isMandatoryPath) {
+      return `<!-- BLOCKED: Unmapped namespace for "${escapeXml(templateName)}" in mandatory path -->
+<ui:LogMessage Level="Error" Message="[&quot;BLOCKED: Activity '${escapeXml(templateName)}' has no resolved namespace — business step '${escapeXml(node.displayName)}' requires manual implementation&quot;]" DisplayName="Log Unmapped Activity (${escapeXml(node.displayName)})" />
+<Rethrow DisplayName="Rethrow — unmapped activity '${escapeXml(node.displayName)}'" />`;
+    }
+    return `<!-- WARNING: Unmapped namespace for "${escapeXml(templateName)}" — "${escapeXml(node.displayName)}" -->
+<ui:Comment Text="[BLOCKED] Unmapped namespace: ${escapeXml(templateName)}. Business step &quot;${escapeXml(node.displayName)}&quot; requires manual namespace resolution." DisplayName="${escapeXml(node.displayName)} (unmapped namespace — manual fix required)" />
+<ui:LogMessage Level="Warn" Message="[&quot;WARNING: Activity '${escapeXml(templateName)}' has no resolved namespace — '${escapeXml(node.displayName)}' requires manual implementation&quot;]" DisplayName="Log Unmapped Activity Warning" />`;
+  }
+
+  const tag = strictPrefix ? `${strictPrefix}:${templateName}` : templateName;
 
   const attrParts: string[] = [`DisplayName="${displayName}"`];
   const childParts: string[] = [];
@@ -583,6 +706,7 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType): s
     }
 
     if (propertyFailures.length > escalationThreshold) {
+      const isMandatoryPath = emissionContext === "mandatory-catch" || emissionContext === "mandatory-finally";
       if (_activeRemediationContext) {
         _activeRemediationContext.propertyRemediations.push({
           level: "activity",
@@ -590,12 +714,17 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType): s
           remediationCode: "STUB_ACTIVITY_PROPERTY_ESCALATION",
           originalTag: templateName,
           originalDisplayName: node.displayName,
-          propertyName: "(escalated)",
-          reason: `${propertyFailures.length} properties failed validation (threshold: ${escalationThreshold}) — escalating to activity-level stub`,
+          propertyName: isMandatoryPath ? "(escalated-mandatory-path)" : "(escalated)",
+          reason: `${propertyFailures.length} properties failed validation (threshold: ${escalationThreshold}) — escalating to activity-level stub${isMandatoryPath ? ". This is in a mandatory execution path — workflow is BLOCKED." : ""}`,
           classifiedCheck: "STUB_ACTIVITY_PROPERTY_ESCALATION",
           developerAction: `Re-implement "${node.displayName}" (${templateName}) in ${_activeRemediationContext.fileName} — ${propertyFailures.length} properties failed: ${propertyFailures.map(f => f.propertyName).join(', ')}`,
-          estimatedEffortMinutes: 20,
+          estimatedEffortMinutes: isMandatoryPath ? 30 : 20,
         });
+      }
+      if (isMandatoryPath) {
+        return `<!-- BLOCKED: Property escalation for "${escapeXml(templateName)}" in mandatory path -->
+<ui:LogMessage Level="Error" Message="[&quot;BLOCKED: Activity '${escapeXml(templateName)}' failed property validation in mandatory path — business step '${escapeXml(node.displayName)}' requires manual implementation&quot;]" DisplayName="Log Blocked Activity (${escapeXml(node.displayName)})" />
+<Rethrow DisplayName="Rethrow — blocked activity '${escapeXml(node.displayName)}'" />`;
       }
       return `<ui:Comment Text="[TODO: Re-implement ${escapeXml(templateName)} activity — ${escapeXml(node.displayName)}. ${propertyFailures.length} properties failed validation. Original properties: ${propertyFailures.map(f => f.propertyName).join(', ')}]" DisplayName="${displayName} (stub)" />`;
     }
@@ -667,7 +796,7 @@ function wrapInTryCatch(innerXml: string, displayName: string): string {
         </ActivityAction.Argument>
         <Sequence DisplayName="Handle Exception">
           <ui:LogMessage Level="Error" Message="[&quot;Error in ${escapeXml(displayName)}: &quot; &amp; exception.Message]" DisplayName="Log Exception" />
-          <ui:Rethrow DisplayName="Rethrow Exception" />
+          <Rethrow DisplayName="Rethrow Exception" />
         </Sequence>
       </ActivityAction>
     </Catch>
@@ -693,22 +822,23 @@ export function assembleNode(
   allVariables: VariableDeclaration[] = [],
   processType: ProcessType = "general",
   depthLevel: number = 0,
+  emissionContext: EmissionContext = "normal",
 ): string {
   switch (node.kind) {
     case "activity":
-      return assembleActivityNode(node, allVariables, processType);
+      return assembleActivityNode(node, allVariables, processType, emissionContext);
     case "sequence":
-      return assembleSequenceNode(node, allVariables, processType, depthLevel);
+      return assembleSequenceNode(node, allVariables, processType, depthLevel, emissionContext);
     case "tryCatch":
-      return assembleTryCatchNode(node, allVariables, processType, depthLevel);
+      return assembleTryCatchNode(node, allVariables, processType, depthLevel, emissionContext);
     case "if":
-      return assembleIfNode(node, allVariables, processType, depthLevel);
+      return assembleIfNode(node, allVariables, processType, depthLevel, emissionContext);
     case "while":
-      return assembleWhileNode(node, allVariables, processType, depthLevel);
+      return assembleWhileNode(node, allVariables, processType, depthLevel, emissionContext);
     case "forEach":
-      return assembleForEachNode(node, allVariables, processType, depthLevel);
+      return assembleForEachNode(node, allVariables, processType, depthLevel, emissionContext);
     case "retryScope":
-      return assembleRetryScopeNode(node, allVariables, processType, depthLevel);
+      return assembleRetryScopeNode(node, allVariables, processType, depthLevel, emissionContext);
     default:
       return `<!-- Unknown node kind -->`;
   }
@@ -718,8 +848,9 @@ function assembleActivityNode(
   node: ActivityNode,
   allVariables: VariableDeclaration[],
   processType: ProcessType,
+  emissionContext: EmissionContext = "normal",
 ): string {
-  let xml = resolveActivityTemplate(node, allVariables, processType);
+  let xml = resolveActivityTemplate(node, allVariables, processType, emissionContext);
 
   if (node.errorHandling === "catch" || node.errorHandling === "escalate") {
     xml = wrapInTryCatch(xml, node.displayName);
@@ -735,10 +866,11 @@ function assembleSequenceNode(
   allVariables: VariableDeclaration[],
   processType: ProcessType,
   depthLevel: number,
+  emissionContext: EmissionContext = "normal",
 ): string {
   const displayName = escapeXml(node.displayName);
   const childrenXml = node.children
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
     .join("\n");
 
   let varsBlock = "";
@@ -763,6 +895,7 @@ function assembleTryCatchNode(
   allVariables: VariableDeclaration[],
   processType: ProcessType,
   depthLevel: number,
+  _parentEmissionContext: EmissionContext = "normal",
 ): string {
   const displayName = escapeXml(node.displayName);
   const tryXml = node.tryChildren
@@ -771,12 +904,12 @@ function assembleTryCatchNode(
 
   const catchXml = node.catchChildren.length > 0
     ? node.catchChildren
-        .map(child => assembleNode(child, allVariables, processType, depthLevel + 1))
+        .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, "mandatory-catch"))
         .join("\n")
-    : `<ui:LogMessage Level="Error" Message="[&quot;Error: &quot; &amp; exception.Message]" DisplayName="Log Exception" />\n<ui:Rethrow DisplayName="Rethrow Exception" />`;
+    : `<ui:LogMessage Level="Error" Message="[&quot;Error: &quot; &amp; exception.Message]" DisplayName="Log Exception" />\n<Rethrow DisplayName="Rethrow Exception" />`;
 
   const finallyXml = node.finallyChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, "mandatory-finally"))
     .join("\n");
 
   let xml = `<TryCatch DisplayName="${displayName}">\n`;
@@ -829,16 +962,17 @@ function assembleIfNode(
   allVariables: VariableDeclaration[],
   processType: ProcessType,
   depthLevel: number,
+  emissionContext: EmissionContext = "normal",
 ): string {
   const displayName = escapeXml(node.displayName);
   const condition = resolveConditionValue(node.condition);
 
   const thenXml = node.thenChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
     .join("\n");
 
   const elseXml = node.elseChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
     .join("\n");
 
   let xml = `<If Condition="${condition}" DisplayName="${displayName}">\n`;
@@ -864,12 +998,13 @@ function assembleWhileNode(
   allVariables: VariableDeclaration[],
   processType: ProcessType,
   depthLevel: number,
+  emissionContext: EmissionContext = "normal",
 ): string {
   const displayName = escapeXml(node.displayName);
   const condition = resolveConditionValue(node.condition);
 
   const bodyXml = node.bodyChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
     .join("\n");
 
   return `<While Condition="${condition}" DisplayName="${displayName}">\n` +
@@ -895,13 +1030,14 @@ function assembleForEachNode(
   allVariables: VariableDeclaration[],
   processType: ProcessType,
   depthLevel: number,
+  emissionContext: EmissionContext = "normal",
 ): string {
   const displayName = escapeXml(node.displayName);
   const itemType = inferForEachItemType(node.itemType || "x:Object", node.valuesExpression);
   const wrappedValues = ensureBracketWrapped(node.valuesExpression);
 
   const bodyXml = node.bodyChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
     .join("\n");
 
   return `<ForEach x:TypeArguments="${itemType}" Values="${escapeXml(wrappedValues)}" DisplayName="${displayName}">\n` +
@@ -921,11 +1057,12 @@ function assembleRetryScopeNode(
   allVariables: VariableDeclaration[],
   processType: ProcessType,
   depthLevel: number,
+  emissionContext: EmissionContext = "normal",
 ): string {
   const displayName = escapeXml(node.displayName);
 
   const bodyXml = node.bodyChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
     .join("\n");
 
   return `<ui:RetryScope NumberOfRetries="${node.numberOfRetries}" RetryInterval="${node.retryInterval}" DisplayName="${displayName}">\n` +

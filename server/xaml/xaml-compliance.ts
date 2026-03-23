@@ -1,7 +1,180 @@
 import { escapeXml } from "../lib/xml-utils";
 import { ACTIVITY_NAME_ALIAS_MAP } from "../uipath-activity-registry";
+import { catalogService } from "../catalog/catalog-service";
+import { XMLValidator } from "fast-xml-parser";
 
 export type TargetFramework = "Windows" | "Portable";
+
+export interface PackageNamespaceInfo {
+  prefix: string;
+  xmlns: string;
+  assembly: string;
+  clrNamespace: string;
+}
+
+export const PACKAGE_NAMESPACE_MAP: Record<string, PackageNamespaceInfo> = {
+  "UiPath.UIAutomation.Activities": { prefix: "ui", xmlns: "http://schemas.uipath.com/workflow/activities", clrNamespace: "UiPath.Core.Activities", assembly: "UiPath.UIAutomation.Activities" },
+  "UiPath.System.Activities": { prefix: "ui", xmlns: "http://schemas.uipath.com/workflow/activities", clrNamespace: "UiPath.Core.Activities", assembly: "UiPath.System.Activities" },
+  "UiPath.Web.Activities": { prefix: "uweb", xmlns: "clr-namespace:UiPath.Web.Activities;assembly=UiPath.Web.Activities", clrNamespace: "UiPath.Web.Activities", assembly: "UiPath.Web.Activities" },
+  "UiPath.DataService.Activities": { prefix: "uds", xmlns: "clr-namespace:UiPath.DataService.Activities;assembly=UiPath.DataService.Activities", clrNamespace: "UiPath.DataService.Activities", assembly: "UiPath.DataService.Activities" },
+  "UiPath.Persistence.Activities": { prefix: "upers", xmlns: "clr-namespace:UiPath.Persistence.Activities;assembly=UiPath.Persistence.Activities", clrNamespace: "UiPath.Persistence.Activities", assembly: "UiPath.Persistence.Activities" },
+  "UiPath.Excel.Activities": { prefix: "uexcel", xmlns: "clr-namespace:UiPath.Excel.Activities;assembly=UiPath.Excel.Activities", clrNamespace: "UiPath.Excel.Activities", assembly: "UiPath.Excel.Activities" },
+  "UiPath.Mail.Activities": { prefix: "umail", xmlns: "clr-namespace:UiPath.Mail.Activities;assembly=UiPath.Mail.Activities", clrNamespace: "UiPath.Mail.Activities", assembly: "UiPath.Mail.Activities" },
+  "UiPath.Database.Activities": { prefix: "udb", xmlns: "clr-namespace:UiPath.Database.Activities;assembly=UiPath.Database.Activities", clrNamespace: "UiPath.Database.Activities", assembly: "UiPath.Database.Activities" },
+  "UiPath.MLActivities": { prefix: "uml", xmlns: "clr-namespace:UiPath.MLActivities;assembly=UiPath.MLActivities", clrNamespace: "UiPath.MLActivities", assembly: "UiPath.MLActivities" },
+  "UiPath.IntelligentOCR.Activities": { prefix: "uocr", xmlns: "clr-namespace:UiPath.IntelligentOCR.Activities;assembly=UiPath.IntelligentOCR.Activities", clrNamespace: "UiPath.IntelligentOCR.Activities", assembly: "UiPath.IntelligentOCR.Activities" },
+  "System.Activities": { prefix: "", xmlns: "http://schemas.microsoft.com/netfx/2009/xaml/activities", clrNamespace: "System.Activities", assembly: "System.Activities" },
+};
+
+const SYSTEM_ACTIVITIES_NO_PREFIX = new Set([
+  "Assign", "If", "TryCatch", "Sequence", "Delay", "Throw", "While", "DoWhile",
+  "ForEach", "Flowchart", "FlowStep", "FlowDecision", "FlowSwitch", "Switch",
+  "AddToCollection", "RemoveFromCollection", "ClearCollection", "ExistsInCollection",
+  "Catch", "Rethrow",
+]);
+
+export function getActivityPrefix(templateName: string): string {
+  const result = getActivityPrefixStrict(templateName);
+  if (result !== null) return result;
+
+  throw new Error(`[XAML Compliance] getActivityPrefix("${templateName}"): no namespace mapping found — activity is unmapped. Add it to GUARANTEED_ACTIVITY_PREFIX_MAP or the activity catalog.`);
+}
+
+const GUARANTEED_ACTIVITY_PREFIX_MAP: Record<string, string> = {
+  "LogMessage": "ui", "Comment": "ui", "InvokeWorkflowFile": "ui",
+  "RetryScope": "ui", "ShouldRetry": "ui", "GetAsset": "ui", "GetCredential": "ui",
+  "AddQueueItem": "ui", "GetTransactionItem": "ui", "SetTransactionStatus": "ui",
+  "TakeScreenshot": "ui", "AddLogFields": "ui", "ReadTextFile": "ui", "WriteTextFile": "ui", "PathExists": "ui",
+  "Click": "ui", "TypeInto": "ui", "GetText": "ui", "ElementExists": "ui",
+  "OpenBrowser": "ui", "NavigateTo": "ui", "AttachBrowser": "ui", "AttachWindow": "ui",
+  "UseApplicationBrowser": "ui", "UseBrowser": "ui", "UseApplication": "ui",
+  "HttpClient": "uweb", "DeserializeJson": "uweb", "SerializeJson": "uweb",
+  "SendSmtpMailMessage": "umail", "SendOutlookMailMessage": "umail", "GetImapMailMessage": "umail",
+  "GetOutlookMailMessages": "umail", "SendMail": "umail", "GetMail": "umail",
+  "ExcelApplicationScope": "uexcel", "UseExcel": "uexcel", "ExcelReadRange": "uexcel",
+  "ExcelWriteRange": "uexcel", "ExcelWriteCell": "uexcel", "ReadRange": "uexcel", "WriteRange": "uexcel",
+  "ExecuteQuery": "udb", "ExecuteNonQuery": "udb", "ConnectToDatabase": "udb",
+  "CreateFormTask": "upers", "WaitForFormTaskAndResume": "upers",
+  "CreateEntity": "uds", "CreateEntityRecord": "uds", "QueryEntity": "uds",
+  "UpdateEntity": "uds", "DeleteEntity": "uds", "GetEntityById": "uds",
+  "MLSkill": "uml", "Predict": "uml",
+  "DigitizeDocument": "uocr", "ClassifyDocument": "uocr", "ExtractDocumentData": "uocr", "ValidateDocumentData": "uocr",
+};
+
+export function getActivityPrefixStrict(templateName: string): string | null {
+  if (SYSTEM_ACTIVITIES_NO_PREFIX.has(templateName)) return "";
+
+  if (GUARANTEED_ACTIVITY_PREFIX_MAP[templateName] !== undefined) {
+    return GUARANTEED_ACTIVITY_PREFIX_MAP[templateName];
+  }
+
+  if (!catalogService.isLoaded()) {
+    try { catalogService.load(); } catch (e) { }
+  }
+
+  if (catalogService.isLoaded()) {
+    const schema = catalogService.getActivitySchema(templateName);
+    if (schema) {
+      const pkgInfo = PACKAGE_NAMESPACE_MAP[schema.packageId];
+      if (pkgInfo) return pkgInfo.prefix;
+    }
+  }
+
+  return null;
+}
+
+export function getActivityTag(templateName: string): string {
+  const strictPrefix = getActivityPrefixStrict(templateName);
+  if (strictPrefix === null) {
+    throw new Error(`[XAML Compliance] getActivityTag("${templateName}"): no namespace mapping found — activity is unmapped and cannot be emitted safely. Add it to GUARANTEED_ACTIVITY_PREFIX_MAP or the activity catalog.`);
+  }
+  return strictPrefix ? `${strictPrefix}:${templateName}` : templateName;
+}
+
+export function collectUsedPackages(xaml: string): Set<string> {
+  const usedPackages = new Set<string>();
+
+  for (const [packageId, info] of Object.entries(PACKAGE_NAMESPACE_MAP)) {
+    if (!info.prefix || info.prefix === "ui") continue;
+    const prefixPattern = new RegExp(`<${info.prefix}:`, "g");
+    if (prefixPattern.test(xaml)) {
+      usedPackages.add(packageId);
+    }
+  }
+
+  if (/<ui:/.test(xaml)) {
+    usedPackages.add("UiPath.System.Activities");
+  }
+
+  return usedPackages;
+}
+
+export function buildDynamicXmlnsDeclarations(usedPackages: Set<string>, isCrossPlatform: boolean, existingXml?: string): string {
+  const lines: string[] = [];
+  const existingPrefixes = new Set<string>();
+
+  if (existingXml) {
+    const prefixPattern = /xmlns:(\w+)="/g;
+    let m;
+    while ((m = prefixPattern.exec(existingXml)) !== null) {
+      existingPrefixes.add(m[1]);
+    }
+  }
+
+  Array.from(usedPackages).forEach(packageId => {
+    const info = PACKAGE_NAMESPACE_MAP[packageId];
+    if (!info || !info.prefix || info.prefix === "ui" || info.prefix === "") return;
+    if (existingPrefixes.has(info.prefix)) return;
+    lines.push(`  xmlns:${info.prefix}="${info.xmlns}"`);
+  });
+
+  return lines.join("\n");
+}
+
+export function buildDynamicAssemblyRefs(usedPackages: Set<string>, existingXml?: string): string {
+  const refs: string[] = [];
+  const existingRefs = new Set<string>();
+
+  if (existingXml) {
+    const refPattern = /<AssemblyReference>([^<]+)<\/AssemblyReference>/g;
+    let m;
+    while ((m = refPattern.exec(existingXml)) !== null) {
+      existingRefs.add(m[1]);
+    }
+  }
+
+  Array.from(usedPackages).forEach(packageId => {
+    const info = PACKAGE_NAMESPACE_MAP[packageId];
+    if (!info) return;
+    if (info.assembly === "System.Activities" || info.assembly === "UiPath.Core.Activities") return;
+    if (existingRefs.has(info.assembly)) return;
+    refs.push(`      <AssemblyReference>${info.assembly}</AssemblyReference>`);
+  });
+
+  if (usedPackages.has("UiPath.Web.Activities") && !existingRefs.has("Newtonsoft.Json")) {
+    refs.push(`      <AssemblyReference>Newtonsoft.Json</AssemblyReference>`);
+  }
+
+  return refs.join("\n");
+}
+
+export function buildDynamicNamespaceImports(usedPackages: Set<string>): string {
+  const imports: string[] = [];
+
+  Array.from(usedPackages).forEach(packageId => {
+    const info = PACKAGE_NAMESPACE_MAP[packageId];
+    if (!info) return;
+    if (info.clrNamespace === "System.Activities" || info.clrNamespace === "UiPath.Core.Activities") return;
+    imports.push(`      <x:String>${info.clrNamespace}</x:String>`);
+  });
+
+  if (usedPackages.has("UiPath.Web.Activities")) {
+    imports.push(`      <x:String>Newtonsoft.Json</x:String>`);
+    imports.push(`      <x:String>Newtonsoft.Json.Linq</x:String>`);
+  }
+
+  return imports.join("\n");
+}
 
 export function ensureBracketWrapped(val: string): string {
   const trimmed = val.trim();
@@ -157,41 +330,62 @@ export function parseInvokeArgs(rawValue: string, direction: "In" | "Out" | "InO
 }
 
 function collapseDoubledArgumentsXmlParser(xml: string): string {
-  const argTags = ["InArgument", "OutArgument"];
-  const MAX_PASSES = 10;
+  const argTags = ["InArgument", "OutArgument", "InOutArgument"];
+  const MAX_PASSES = 20;
+
   for (const tag of argTags) {
-    const outerOpenPattern = new RegExp(
-      `<${tag}(\\s[^>]*)?>\\s*<${tag}(\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>\\s*<\\/${tag}>`,
-      "g"
-    );
     let pass = 0;
     while (pass < MAX_PASSES) {
       const before = xml;
-      xml = xml.replace(outerOpenPattern, (_match, outerAttrs, innerAttrs, content) => {
+      const outerPattern = new RegExp(
+        `<${tag}(\\s[^>]*)?>\\s*<${tag}(\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>\\s*<\\/${tag}>`,
+        "g"
+      );
+      xml = xml.replace(outerPattern, (_match, outerAttrs, innerAttrs, content) => {
         const attrs = ((innerAttrs || outerAttrs) || "").trim();
         const trimmedContent = content.trim();
         return `<${tag}${attrs ? " " + attrs : ""}>${trimmedContent}</${tag}>`;
       });
+
+      const outerNewlinePattern = new RegExp(
+        `<${tag}(\\s[^>]*)?>\\s*\\n\\s*<${tag}(\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>\\s*\\n\\s*<\\/${tag}>`,
+        "g"
+      );
+      xml = xml.replace(outerNewlinePattern, (_match, outerAttrs, innerAttrs, content) => {
+        const attrs = ((innerAttrs || outerAttrs) || "").trim();
+        const trimmedContent = content.trim();
+        return `<${tag}${attrs ? " " + attrs : ""}>${trimmedContent}</${tag}>`;
+      });
+
       if (xml === before) break;
       pass++;
       if (pass > 1) {
-        console.log(`[XAML Compliance] collapseDoubledArguments: pass ${pass} for <${tag}> — still collapsing nested wrappers`);
+        console.log(`[XAML Compliance] collapseDoubledArguments: pass ${pass} for <${tag}> — collapsing deeply nested wrappers`);
       }
     }
   }
+
   for (const tag of argTags) {
-    const nestedPattern = new RegExp(`<${tag}[^>]*>[\\s\\S]*?<${tag}[\\s\\S]*?<\\/${tag}>[\\s\\S]*?<\\/${tag}>`);
+    const nestedPattern = new RegExp(`<${tag}[^>]*>\\s*<${tag}[\\s\\S]*?<\\/${tag}>\\s*<\\/${tag}>`);
     if (nestedPattern.test(xml)) {
-      console.warn(`[XAML Compliance] Post-collapse assertion: nested <${tag}> still detected — attempting brute-force strip of inner wrappers`);
-      const innerStripPattern = new RegExp(`(<${tag}[^>]*>)\\s*<${tag}[^>]*>`, "g");
-      const closingStripPattern = new RegExp(`<\\/${tag}>\\s*(<\\/${tag}>)`, "g");
-      xml = xml.replace(innerStripPattern, "$1");
-      xml = xml.replace(closingStripPattern, "$1");
+      console.warn(`[XAML Compliance] Post-collapse: nested <${tag}> still detected — applying brute-force strip`);
+      let stripPass = 0;
+      while (stripPass < MAX_PASSES) {
+        const beforeStrip = xml;
+        xml = xml.replace(new RegExp(`(<${tag}[^>]*>)\\s*<${tag}[^>]*>`, "g"), "$1");
+        xml = xml.replace(new RegExp(`<\\/${tag}>\\s*(<\\/${tag}>)`, "g"), "$1");
+        if (xml === beforeStrip) break;
+        stripPass++;
+      }
+
       if (nestedPattern.test(xml)) {
-        console.error(`[XAML Compliance] Post-collapse assertion FAILED: nested <${tag}> persists after brute-force strip — manual review required`);
+        const errorMsg = `[XAML Compliance] FATAL: nested <${tag}> persists after ${MAX_PASSES} collapse passes — XAML is malformed`;
+        console.error(errorMsg);
+        throw new Error(errorMsg);
       }
     }
   }
+
   return xml;
 }
 
@@ -344,7 +538,7 @@ function ensureVariableDeclarations(xml: string): string {
   }
 
   const missingVars: { name: string; type: string; refIndex: number }[] = [];
-  for (const [varName, refIdx] of referencedVarsWithPos) {
+  for (const [varName, refIdx] of Array.from(referencedVarsWithPos)) {
     if (!declaredVars.has(varName)) {
       missingVars.push({ name: varName, type: inferVariableType(varName), refIndex: refIdx });
     }
@@ -445,6 +639,200 @@ function fixBareVariableRefsInExpressionAttributes(xml: string): string {
   return xml;
 }
 
+function sanitizeXmlArtifacts(xml: string): string {
+  xml = xml.replace(/="([^"]*?[^}\]])(\}+)"/g, (match, val, braces) => {
+    if (/\[.*\]/.test(val + braces)) return match;
+    if (/New\s+Dictionary|From\s*\{/.test(val)) return match;
+    console.log(`[XAML Compliance] Removed stray } from attribute value`);
+    return `="${val}"`;
+  });
+
+  xml = xml.replace(/"([^"]*?)"\s*\}(?=\s|>|\/)/g, (match, val) => {
+    if (/\[.*\]/.test(match)) return match;
+    return `"${val}"`;
+  });
+
+  return xml;
+}
+
+function injectDynamicNamespaceDeclarations(xml: string, isCrossPlatform: boolean): string {
+  const usedPackages = collectUsedPackages(xml);
+
+  const hasNewtonsoftTypes = /JObject|JToken|JArray|JsonConvert|Newtonsoft/i.test(xml);
+  if (hasNewtonsoftTypes) {
+    usedPackages.add("UiPath.Web.Activities");
+  }
+
+  const additionalXmlns = buildDynamicXmlnsDeclarations(usedPackages, isCrossPlatform, xml);
+  const additionalAssemblyRefs = buildDynamicAssemblyRefs(usedPackages, xml);
+  const additionalNamespaceImports = buildDynamicNamespaceImports(usedPackages);
+
+  if (additionalXmlns) {
+    const xmlnsInsertPoint = xml.indexOf('xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"');
+    if (xmlnsInsertPoint >= 0) {
+      const insertAfter = xmlnsInsertPoint + 'xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"'.length;
+      xml = xml.slice(0, insertAfter) + "\n" + additionalXmlns + xml.slice(insertAfter);
+    }
+  }
+
+  if (additionalAssemblyRefs) {
+    const refsCloseTag = "</sco:Collection>\n  </TextExpression.ReferencesForImplementation>";
+    const refsIdx = xml.indexOf(refsCloseTag);
+    if (refsIdx >= 0) {
+      xml = xml.slice(0, refsIdx) + additionalAssemblyRefs + "\n" + xml.slice(refsIdx);
+    }
+  }
+
+  if (additionalNamespaceImports) {
+    const importsCloseTag = "</sco:Collection>\n  </TextExpression.NamespacesForImplementation>";
+    const importsIdx = xml.indexOf(importsCloseTag);
+    if (importsIdx >= 0) {
+      xml = xml.slice(0, importsIdx) + additionalNamespaceImports + "\n" + xml.slice(importsIdx);
+    }
+  }
+
+  return xml;
+}
+
+const APPROVED_XMLNS_MAPPINGS: Record<string, { validUris: string[] }> = {
+  "ui": { validUris: ["http://schemas.uipath.com/workflow/activities"] },
+  "x": { validUris: ["http://schemas.microsoft.com/winfx/2006/xaml"] },
+  "mc": { validUris: ["http://schemas.openxmlformats.org/markup-compatibility/2006"] },
+  "s": { validUris: ["clr-namespace:System;assembly=mscorlib", "clr-namespace:System;assembly=System.Runtime"] },
+  "sap": { validUris: ["http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"] },
+  "sap2010": { validUris: ["http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"] },
+  "scg": { validUris: ["clr-namespace:System.Collections.Generic;assembly=mscorlib", "clr-namespace:System.Collections.Generic;assembly=System.Runtime"] },
+  "scg2": { validUris: ["clr-namespace:System.Data;assembly=System.Data", "clr-namespace:System.Data;assembly=System.Data.Common"] },
+  "sco": { validUris: ["clr-namespace:System.Collections.ObjectModel;assembly=mscorlib", "clr-namespace:System.Collections.ObjectModel;assembly=System.Runtime"] },
+  "mva": { validUris: ["clr-namespace:Microsoft.VisualBasic.Activities;assembly=System.Activities"] },
+};
+
+for (const [, info] of Object.entries(PACKAGE_NAMESPACE_MAP)) {
+  if (info.prefix && info.prefix !== "" && !APPROVED_XMLNS_MAPPINGS[info.prefix]) {
+    APPROVED_XMLNS_MAPPINGS[info.prefix] = { validUris: [info.xmlns] };
+  }
+}
+
+export function validateNamespacePrefixes(xml: string): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  const declaredPrefixes = new Map<string, string>();
+  const xmlnsPattern = /xmlns:([a-zA-Z][a-zA-Z0-9]*)="([^"]+)"/g;
+  let m;
+  while ((m = xmlnsPattern.exec(xml)) !== null) {
+    declaredPrefixes.set(m[1], m[2]);
+  }
+
+  const usedPrefixes = new Set<string>();
+  const tagPrefixPattern = /<\/?([a-zA-Z][a-zA-Z0-9]*):/g;
+  while ((m = tagPrefixPattern.exec(xml)) !== null) {
+    usedPrefixes.add(m[1]);
+  }
+
+  const attrPrefixPattern = /\s([a-zA-Z][a-zA-Z0-9]*):[a-zA-Z]/g;
+  while ((m = attrPrefixPattern.exec(xml)) !== null) {
+    if (m[1] !== "xmlns") {
+      usedPrefixes.add(m[1]);
+    }
+  }
+
+  Array.from(usedPrefixes).forEach(prefix => {
+    if (prefix === "xml") return;
+    if (!declaredPrefixes.has(prefix)) {
+      errors.push(`Namespace prefix "${prefix}" is used in activity tags but has no corresponding xmlns declaration`);
+      return;
+    }
+
+    const declaredUri = declaredPrefixes.get(prefix)!;
+    const approved = APPROVED_XMLNS_MAPPINGS[prefix];
+    if (approved) {
+      if (!approved.validUris.includes(declaredUri)) {
+        errors.push(`Namespace prefix "${prefix}" is declared with URI "${declaredUri}" which does not match any approved CLR namespace mapping. Expected one of: ${approved.validUris.join(", ")}`);
+      }
+    }
+  });
+
+  return { valid: errors.length === 0, errors };
+}
+
+export function validateActivityTagSemantics(xml: string): { valid: boolean; errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  const activityTagPattern = /<([a-zA-Z][a-zA-Z0-9]*):([A-Z][a-zA-Z0-9]*)[\s>\/]/g;
+  let m;
+  const checkedTags = new Set<string>();
+
+  while ((m = activityTagPattern.exec(xml)) !== null) {
+    const emittedPrefix = m[1];
+    const activityName = m[2];
+    const tagKey = `${emittedPrefix}:${activityName}`;
+
+    if (checkedTags.has(tagKey)) continue;
+    checkedTags.add(tagKey);
+
+    if (["x", "s", "scg", "scg2", "sco", "sap", "sap2010", "mva", "mc"].includes(emittedPrefix)) continue;
+
+    if (SYSTEM_ACTIVITIES_NO_PREFIX.has(activityName)) {
+      errors.push(`Activity "${activityName}" is a System.Activities type but was emitted with prefix "${emittedPrefix}:" — must have no prefix to avoid Studio resolution errors`);
+      continue;
+    }
+
+    const strictPrefix = getActivityPrefixStrict(activityName);
+    if (strictPrefix === null) {
+      if (emittedPrefix === "ui") {
+        warnings.push(`Activity "${activityName}" has no catalog mapping — emitted with default ui: prefix (may be incorrect)`);
+      }
+      continue;
+    }
+
+    if (strictPrefix !== emittedPrefix) {
+      errors.push(`Activity "${activityName}" emitted with prefix "${emittedPrefix}:" but catalog maps it to "${strictPrefix || "(no prefix)"}:" — namespace mismatch will cause Studio resolution errors`);
+    }
+  }
+
+  return { valid: errors.length === 0, errors, warnings };
+}
+
+export function validateXmlWellFormedness(xml: string): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  const result = XMLValidator.validate(xml, {
+    allowBooleanAttributes: true,
+  });
+
+  if (result !== true) {
+    const errObj = result as { err: { code: string; msg: string; line: number; col: number } };
+    if (errObj.err) {
+      errors.push(`XML well-formedness error at line ${errObj.err.line}, col ${errObj.err.col}: ${errObj.err.msg} (code: ${errObj.err.code})`);
+    } else {
+      errors.push(`XML well-formedness validation failed with unknown error`);
+    }
+  }
+
+  const openTags: string[] = [];
+  const tagPattern = /<\/?([a-zA-Z][a-zA-Z0-9]*(?::[a-zA-Z][a-zA-Z0-9]*)?(?:\.[a-zA-Z][a-zA-Z0-9]*)*)(?:\s[^>]*)?\/?>/g;
+  let tagMatch;
+  while ((tagMatch = tagPattern.exec(xml)) !== null) {
+    const fullMatch = tagMatch[0];
+    const tagName = tagMatch[1];
+    if (fullMatch.startsWith("<!--") || fullMatch.endsWith("/>")) continue;
+    if (fullMatch.startsWith("</")) {
+      if (openTags.length > 0 && openTags[openTags.length - 1] === tagName) {
+        openTags.pop();
+      }
+    } else if (!fullMatch.endsWith("/>")) {
+      openTags.push(tagName);
+    }
+  }
+
+  if (openTags.length > 0 && openTags.length <= 5) {
+    errors.push(`Potentially unclosed XML tags detected: ${openTags.join(", ")}`);
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
 export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFramework = "Windows"): string {
   let idCounter = 0;
   const viewStateEntries: { id: string; width: number; height: number }[] = [];
@@ -483,10 +871,10 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
   const className = classMatch ? classMatch[1].replace(/[^A-Za-z0-9_]/g, "") : "Workflow";
   const rootId = nextId(className);
 
-  const activityTagPattern = /<(Sequence|If|TryCatch|ForEach|Assign|State|StateMachine|Transition|Flowchart|FlowStep|FlowDecision|ui:[A-Za-z]+)\s+((?:[^>]*?\s+)?)DisplayName="([^"]*)"([^>]*?)(\s*\/?>)/g;
+  const activityTagPattern = /<(Sequence|If|TryCatch|ForEach|Assign|State|StateMachine|Transition|Flowchart|FlowStep|FlowDecision|[a-zA-Z]+:[A-Za-z]+)\s+((?:[^>]*?\s+)?)DisplayName="([^"]*)"([^>]*?)(\s*\/?>)/g;
   xml = xml.replace(activityTagPattern, (match, tag, preAttrs, displayName, rest, closing) => {
     if (preAttrs.includes("WorkflowViewState.IdRef") || rest.includes("WorkflowViewState.IdRef")) return match;
-    const prefix = tag.replace("ui:", "").replace(/[^A-Za-z]/g, "");
+    const prefix = tag.replace(/^[a-zA-Z]+:/, "").replace(/[^A-Za-z]/g, "");
     const id = nextId(prefix);
     const hint = getHintSize(tag);
     viewStateEntries.push({ id, width: hint.w, height: hint.h });
@@ -578,13 +966,18 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
   xml = xml.replace(/<sap:WorkflowViewState\.ViewStateManager>[\s\S]*?<\/sap:WorkflowViewState\.ViewStateManager>/g, "");
   xml = xml.replace(/<WorkflowViewState\.ViewStateManager>[\s\S]*?<\/WorkflowViewState\.ViewStateManager>/g, "");
 
-  xml = xml.replace(/<ui:ExcelApplicationScope\.Body>\s*(?!<ActivityAction)<Sequence\s/g, () => {
-    return `<ui:ExcelApplicationScope.Body>\n        <ActivityAction x:TypeArguments="x:Object">\n          <ActivityAction.Handler>\n            <Sequence `;
-  });
-  if (xml.includes("<ui:ExcelApplicationScope.Body>") && !xml.includes("<ActivityAction.Handler>")) {
-    xml = xml.replace(/<\/Sequence>\s*<\/ui:ExcelApplicationScope\.Body>/g,
-      `</Sequence>\n          </ActivityAction.Handler>\n        </ActivityAction>\n      </ui:ExcelApplicationScope.Body>`);
+  const excelPrefixes = ["ui", "uexcel"];
+  for (const ep of excelPrefixes) {
+    xml = xml.replace(new RegExp(`<${ep}:ExcelApplicationScope\\.Body>\\s*(?!<ActivityAction)<Sequence\\s`, "g"), () => {
+      return `<${ep}:ExcelApplicationScope.Body>\n        <ActivityAction x:TypeArguments="x:Object">\n          <ActivityAction.Handler>\n            <Sequence `;
+    });
+    if (xml.includes(`<${ep}:ExcelApplicationScope.Body>`) && !xml.includes("<ActivityAction.Handler>")) {
+      xml = xml.replace(new RegExp(`<\\/Sequence>\\s*<\\/${ep}:ExcelApplicationScope\\.Body>`, "g"),
+        `</Sequence>\n          </ActivityAction.Handler>\n        </ActivityAction>\n      </${ep}:ExcelApplicationScope.Body>`);
+    }
   }
+
+  xml = xml.replace(/\.ToString(?!\()/g, ".ToString()");
 
   if (isCrossPlatform) {
     xml = xml.replace(/Condition="\[(\w+) IsNot Nothing\]"/g, 'Condition="[$1 != null]"');
@@ -593,35 +986,54 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
 
     xml = xml.replace(/Condition="\[(\w+) = &quot;([^&]*)&quot;\]"/g, 'Condition="[$1 == &quot;$2&quot;]"');
 
-    xml = xml.replace(/\.ToString(?!\()/g, ".ToString()");
-
     xml = xml.replace(/ &amp; /g, " + ");
   }
 
-  const UIPATH_ACTIVITIES_NEEDING_PREFIX = [
+  xml = sanitizeXmlArtifacts(xml);
+
+  const KNOWN_PREFIXED_ACTIVITIES = [
     "InvokeWorkflowFile", "RetryScope", "AddQueueItem", "GetTransactionItem",
     "SetTransactionStatus", "LogMessage", "GetCredential", "GetAsset",
-    "TakeScreenshot", "AddLogFields", "HttpClient", "DeserializeJson",
-    "SerializeJson", "Comment", "ShouldRetry", "SendSmtpMailMessage",
-    "SendOutlookMailMessage", "GetImapMailMessage", "GetOutlookMailMessages",
-    "SendMail", "GetMail", "ExcelApplicationScope", "UseExcel",
-    "ExcelReadRange", "ExcelWriteRange", "ExcelWriteCell", "ReadRange",
-    "WriteRange", "ElementExists", "Click", "TypeInto", "GetText",
-    "OpenBrowser", "NavigateTo", "AttachBrowser", "AttachWindow",
-    "UseApplicationBrowser", "UseBrowser", "UseApplication",
-    "ExecuteQuery", "ExecuteNonQuery", "ConnectToDatabase",
+    "TakeScreenshot", "AddLogFields", "Comment", "ShouldRetry",
     "ReadTextFile", "WriteTextFile", "PathExists",
+    "HttpClient", "DeserializeJson", "SerializeJson",
+    "SendSmtpMailMessage", "SendOutlookMailMessage", "GetImapMailMessage",
+    "GetOutlookMailMessages", "SendMail", "GetMail",
+    "ExcelApplicationScope", "UseExcel", "ExcelReadRange", "ExcelWriteRange",
+    "ExcelWriteCell", "ReadRange", "WriteRange",
+    "ExecuteQuery", "ExecuteNonQuery", "ConnectToDatabase",
+    "ElementExists", "Click", "TypeInto", "GetText", "OpenBrowser",
+    "NavigateTo", "AttachBrowser", "AttachWindow", "UseApplicationBrowser",
+    "UseBrowser", "UseApplication",
     "CreateFormTask", "WaitForFormTaskAndResume",
+    "CreateEntity", "CreateEntityRecord", "QueryEntity", "UpdateEntity",
+    "DeleteEntity", "GetEntityById",
     "MLSkill", "Predict",
     "DigitizeDocument", "ClassifyDocument", "ExtractDocumentData", "ValidateDocumentData",
-    "Rethrow",
   ];
-  for (const actName of UIPATH_ACTIVITIES_NEEDING_PREFIX) {
-    const openPattern = new RegExp(`<(?!ui:)${actName}(\\s|>|\\/)`, "g");
-    xml = xml.replace(openPattern, `<ui:${actName}$1`);
-    const closePattern = new RegExp(`<\\/(?!ui:)${actName}>`, "g");
-    xml = xml.replace(closePattern, `</ui:${actName}>`);
+
+  for (const actName of KNOWN_PREFIXED_ACTIVITIES) {
+    const prefix = getActivityPrefix(actName);
+    if (!prefix) continue;
+
+    const noPrefixOpen = new RegExp(`<(?![a-zA-Z]+:)${actName}(\\s|>|\\/)`, "g");
+    xml = xml.replace(noPrefixOpen, `<${prefix}:${actName}$1`);
+    const noPrefixClose = new RegExp(`<\\/(?![a-zA-Z]+:)${actName}>`, "g");
+    xml = xml.replace(noPrefixClose, `</${prefix}:${actName}>`);
+
+    if (prefix !== "ui") {
+      const wrongUiOpen = new RegExp(`<ui:${actName}(\\s|>|\\/)`, "g");
+      xml = xml.replace(wrongUiOpen, `<${prefix}:${actName}$1`);
+      const wrongUiClose = new RegExp(`<\\/ui:${actName}>`, "g");
+      xml = xml.replace(wrongUiClose, `</${prefix}:${actName}>`);
+      const wrongUiProp = new RegExp(`<ui:${actName}\\.`, "g");
+      xml = xml.replace(wrongUiProp, `<${prefix}:${actName}.`);
+      const wrongUiPropClose = new RegExp(`<\\/ui:${actName}\\.`, "g");
+      xml = xml.replace(wrongUiPropClose, `</${prefix}:${actName}.`);
+    }
   }
+
+  xml = injectDynamicNamespaceDeclarations(xml, isCrossPlatform);
 
   xml = xml.replace(/<(ui:(?:While|RetryScope))\s+([^>]*?)\/>/g, (match, tag, attrs) => {
     if (tag === "ui:While") {
@@ -710,40 +1122,53 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
     return `<ui:TakeScreenshot ${attrs} />`;
   });
 
-  xml = xml.replace(/<(ui:HttpClient\s)([^>]*?)>/g, (match, prefix, attrs) => {
-    let fixed = attrs;
-    fixed = fixed.replace(/\bURL="([^"]*)"/g, (m: string, val: string) => {
-      if (val.startsWith("[")) return `Endpoint="${escapeXml(val)}"`;
-      if (/^[a-zA-Z_]\w*$/.test(val)) return `Endpoint="[${val}]"`;
-      return `Endpoint="[&quot;${escapeXml(val).replace(/&quot;/g, '&quot;&quot;')}&quot;]"`;
-    });
-    fixed = fixed.replace(/\bEndPoint="([^"]*)"/g, (m: string, val: string) => {
-      if (val.startsWith("[")) return `Endpoint="${escapeXml(val)}"`;
-      if (/^[a-zA-Z_]\w*$/.test(val)) return `Endpoint="[${val}]"`;
-      return `Endpoint="[&quot;${escapeXml(val).replace(/&quot;/g, '&quot;&quot;')}&quot;]"`;
-    });
-    fixed = fixed.replace(/\bOutput="([^"]*)"/g, (m: string, val: string) => {
-      if (val.startsWith("[")) return `ResponseContent="${escapeXml(val)}"`;
-      if (/^[a-zA-Z_]\w*$/.test(val)) return `ResponseContent="[${val}]"`;
-      return `ResponseContent="[str_HttpResponse]"`;
-    });
-    fixed = fixed.replace(/\bResponseType="[^"]*"/g, "");
-    fixed = fixed.replace(/\bHeaders="\{([^"]*)\}"/g, (hm: string, jsonContent: string) => {
-      const decoded = jsonContent.replace(/&quot;/g, '"').replace(/&amp;/g, "&");
-      const pairs: string[] = [];
-      const pairPattern = /"([^"]+)"\s*:\s*"([^"]*)"/g;
-      let pm;
-      while ((pm = pairPattern.exec(decoded)) !== null) {
-        pairs.push(`{&quot;${escapeXml(pm[1])}&quot;, &quot;${escapeXml(pm[2])}&quot;}`);
+  const httpClientPrefixes = ["ui", "uweb"];
+  for (const hcp of httpClientPrefixes) {
+    xml = xml.replace(new RegExp(`<(${hcp}:HttpClient\\s)([^>]*?)>`, "g"), (match, prefix, attrs) => {
+      let fixed = attrs;
+      fixed = fixed.replace(/\bURL="([^"]*)"/g, (m: string, val: string) => {
+        if (val.startsWith("[")) return `Endpoint="${escapeXml(val)}"`;
+        if (/^[a-zA-Z_]\w*$/.test(val)) return `Endpoint="[${val}]"`;
+        return `Endpoint="[&quot;${escapeXml(val).replace(/&quot;/g, '&quot;&quot;')}&quot;]"`;
+      });
+      fixed = fixed.replace(/\bEndPoint="([^"]*)"/g, (m: string, val: string) => {
+        if (val.startsWith("[")) return `Endpoint="${escapeXml(val)}"`;
+        if (/^[a-zA-Z_]\w*$/.test(val)) return `Endpoint="[${val}]"`;
+        return `Endpoint="[&quot;${escapeXml(val).replace(/&quot;/g, '&quot;&quot;')}&quot;]"`;
+      });
+      if (/\bEndpoint=""/.test(fixed)) {
+        console.error(`[XAML Compliance] HttpClient has empty Endpoint="" — this indicates a generation error. The activity will not function correctly in UiPath Studio.`);
       }
-      if (pairs.length > 0) {
-        return `Headers="[New Dictionary(Of String, String) From {${pairs.join(", ")}}]"`;
-      }
-      return "";
+      fixed = fixed.replace(/\bOutput="([^"]*)"/g, (m: string, val: string) => {
+        if (val.startsWith("[")) return `ResponseContent="${escapeXml(val)}"`;
+        if (/^[a-zA-Z_]\w*$/.test(val)) return `ResponseContent="[${val}]"`;
+        return `ResponseContent="[str_HttpResponse]"`;
+      });
+      fixed = fixed.replace(/\bEndpoint="([^"]*)"/g, (m: string, val: string) => {
+        if (!val) return m;
+        if (val.startsWith("[")) return m;
+        if (/^[a-zA-Z_]\w*$/.test(val)) return `Endpoint="[${val}]"`;
+        if (val.startsWith("&quot;") || val.startsWith("http")) return `Endpoint="[&quot;${escapeXml(val).replace(/&quot;/g, '')}&quot;]"`;
+        return m;
+      });
+      fixed = fixed.replace(/\bResponseType="[^"]*"/g, "");
+      fixed = fixed.replace(/\bHeaders="\{([^"]*)\}"/g, (hm: string, jsonContent: string) => {
+        const decoded = jsonContent.replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+        const pairs: string[] = [];
+        const pairPattern = /"([^"]+)"\s*:\s*"([^"]*)"/g;
+        let pm;
+        while ((pm = pairPattern.exec(decoded)) !== null) {
+          pairs.push(`{&quot;${escapeXml(pm[1])}&quot;, &quot;${escapeXml(pm[2])}&quot;}`);
+        }
+        if (pairs.length > 0) {
+          return `Headers="[New Dictionary(Of String, String) From {${pairs.join(", ")}}]"`;
+        }
+        return "";
+      });
+      fixed = fixed.replace(/\s{2,}/g, " ");
+      return `<${prefix}${fixed}>`;
     });
-    fixed = fixed.replace(/\s{2,}/g, " ");
-    return `<${prefix}${fixed}>`;
-  });
+  }
 
 
   xml = xml.replace(/<(InArgument|OutArgument)([^>]*)>\s*<\1([^>]*)>([^<]*)<\/\1>\s*<\/\1>/g, (_m, tag, outerAttrs, innerAttrs, content) => {
@@ -792,6 +1217,35 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
   });
 
   xml = ensureVariableDeclarations(xml);
+
+  const nsValidation = validateNamespacePrefixes(xml);
+  if (!nsValidation.valid) {
+    for (const err of nsValidation.errors) {
+      console.error(`[XAML Compliance] Namespace validation: ${err}`);
+    }
+    throw new Error(`XAML namespace validation failed: ${nsValidation.errors.join("; ")}`);
+  }
+
+  const semanticValidation = validateActivityTagSemantics(xml);
+  if (semanticValidation.warnings.length > 0) {
+    for (const warn of semanticValidation.warnings) {
+      console.warn(`[XAML Compliance] Activity tag warning: ${warn}`);
+    }
+  }
+  if (!semanticValidation.valid) {
+    for (const err of semanticValidation.errors) {
+      console.error(`[XAML Compliance] Activity tag semantic error: ${err}`);
+    }
+    throw new Error(`XAML activity tag semantic validation failed: ${semanticValidation.errors.join("; ")}`);
+  }
+
+  const xmlValidation = validateXmlWellFormedness(xml);
+  if (!xmlValidation.valid) {
+    for (const err of xmlValidation.errors) {
+      console.error(`[XAML Compliance] XML well-formedness: ${err}`);
+    }
+    throw new Error(`XAML XML well-formedness validation failed: ${xmlValidation.errors.join("; ")}`);
+  }
 
   return xml;
 }

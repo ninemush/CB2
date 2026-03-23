@@ -73,6 +73,8 @@ export type QualityGateInput = {
 const VALID_XMLNS_PREFIXES = new Set([
   "x", "mc", "s", "sap", "sap2010", "scg", "scg2", "ui", "ua",
   "mca", "clr", "local", "p", "mva", "sads", "sapv",
+  "uweb", "uds", "upers", "uexcel", "umail", "udb", "uml", "uocr",
+  "sco",
 ]);
 
 const VALID_EXCEPTION_TYPES = new Set([
@@ -446,9 +448,9 @@ function checkCompleteness(input: QualityGateInput): QualityGateViolation[] {
     const shortName = entry.name.split("/").pop() || entry.name;
     const content = entry.content;
 
-    const httpEndpointPattern = /<ui:HttpClient\s[^>]*(?:Endpoint|Url)\s*=\s*""/g;
+    const httpEndpointPattern = /<(?:ui|uweb):HttpClient\s[^>]*(?:Endpoint|Url)\s*=\s*""/g;
     const openBrowserPattern = /<ui:OpenBrowser\s[^>]*(?:Url|InputUrl)\s*=\s*""/g;
-    const httpPropPattern = /<ui:HttpClient\.(?:Endpoint|Url)>\s*<InArgument[^>]*>\s*<\/InArgument>\s*<\/ui:HttpClient\.(?:Endpoint|Url)>/g;
+    const httpPropPattern = /<(?:ui|uweb):HttpClient\.(?:Endpoint|Url)>\s*<InArgument[^>]*>\s*<\/(?:ui|uweb):HttpClient\.(?:Endpoint|Url)>/g;
     const openBrowserPropPattern = /<ui:OpenBrowser\.(?:Url|InputUrl)>\s*<InArgument[^>]*>\s*<\/InArgument>\s*<\/ui:OpenBrowser\.(?:Url|InputUrl)>/g;
 
     let emMatch;
@@ -459,7 +461,7 @@ function checkCompleteness(input: QualityGateInput): QualityGateViolation[] {
         severity: "error",
         check: "empty-http-endpoint",
         file: shortName,
-        detail: `Line ${lineNum}: ui:HttpClient has an empty Endpoint/Url — HTTP request will fail at runtime`,
+        detail: `Line ${lineNum}: HttpClient has an empty Endpoint/Url — HTTP request will fail at runtime`,
       });
     }
     while ((emMatch = openBrowserPattern.exec(content)) !== null) {
@@ -479,7 +481,7 @@ function checkCompleteness(input: QualityGateInput): QualityGateViolation[] {
         severity: "error",
         check: "empty-http-endpoint",
         file: shortName,
-        detail: `Line ${lineNum}: ui:HttpClient has an empty Endpoint/Url property element — HTTP request will fail at runtime`,
+        detail: `Line ${lineNum}: HttpClient has an empty Endpoint/Url property element — HTTP request will fail at runtime`,
       });
     }
     while ((emMatch = openBrowserPropPattern.exec(content)) !== null) {
@@ -510,7 +512,7 @@ function checkCompleteness(input: QualityGateInput): QualityGateViolation[] {
         const beforeContext = content.substring(0, contextIndex);
         const assignPattern = new RegExp(
           `<Assign\\.To>\\s*<OutArgument[^>]*>\\s*\\[${varName}\\]\\s*</OutArgument>|` +
-          `<ui:HttpClient[^>]*ResponseStatusCode[^>]*\\[${varName}\\]|` +
+          `<(?:ui|uweb):HttpClient[^>]*ResponseStatusCode[^>]*\\[${varName}\\]|` +
           `To="\\[${varName}\\]"`,
           "s"
         );
