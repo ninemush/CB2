@@ -576,7 +576,7 @@ class MetadataService {
 
     if (!isAvailable) {
       const unsupportedExternalApiServices = new Set([
-        "integrationService", "automationStore", "apps", "assistant",
+        "automationStore", "apps", "assistant",
       ]);
       if (unsupportedExternalApiServices.has(flagKey)) {
         return "unsupported_external_api";

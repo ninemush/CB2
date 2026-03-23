@@ -378,9 +378,9 @@
     ],
     "uiSection": "primary",
     "defaultRemediationTemplate": {
-      "reason": "Integration Service does not support External Application OAuth access.",
-      "actionOwner": "not-actionable",
-      "recommendedStep": "Integration Service connectors are discovered opportunistically but cannot be managed via External Application OAuth. No user action is available."
+      "reason": "Integration Service is discovered via the Orchestrator token rather than a dedicated External Application OAuth scope.",
+      "actionOwner": "uipath-admin",
+      "recommendedStep": "Ensure the Orchestrator token has access to the Integration Service Connections API. If the probe succeeds (HTTP 200/401/403), the service will show as available or limited."
     },
     "probeConfig": {
       "probePath": "/api/Connections?$top=1",

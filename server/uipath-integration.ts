@@ -2909,6 +2909,11 @@ export type ServiceStatusDetail = {
   parentService?: string;
   displayName?: string;
   remediation?: import("./catalog/metadata-schemas").RemediationGuidance;
+  discoverySummary?: {
+    connectorCount: number;
+    activeConnectionCount: number;
+    summary: string;
+  };
 };
 
 export type ServiceAvailabilityMap = {
@@ -2958,7 +2963,7 @@ export async function probeServiceAvailability(): Promise<ServiceAvailabilityMap
   const httpStatuses = probe.probeHttpStatuses || {};
   const tokenFailureMap = probe.tokenFailures || {};
 
-  const UNSUPPORTED_API_SERVICES = new Set(["integrationService", "automationStore", "apps", "assistant"]);
+  const UNSUPPORTED_API_SERVICES = new Set(["automationStore", "apps", "assistant"]);
 
   const buildDetail = (flagKey: string, flag: boolean, evidence: string, probeError?: string): ServiceStatusDetail => {
     const entry = mds.getTaxonomyEntry(flagKey);
@@ -3062,6 +3067,17 @@ export async function probeServiceAvailability(): Promise<ServiceAvailabilityMap
   if (probe.agentConfidence === "inferred" && serviceDetails.agents) {
     serviceDetails.agents.confidence = "inferred";
     serviceDetails.agents.evidence = "Asset name prefix match";
+  }
+
+  if (isDiscovery && serviceDetails.integrationService) {
+    const activeConns = isDiscovery.connections.filter(
+      (c: { status: string }) => c.status.toLowerCase() === "connected" || c.status.toLowerCase() === "active"
+    );
+    serviceDetails.integrationService.discoverySummary = {
+      connectorCount: isDiscovery.connectors.length,
+      activeConnectionCount: activeConns.length,
+      summary: isDiscovery.summary || `${isDiscovery.connectors.length} connector(s), ${activeConns.length} active connection(s)`,
+    };
   }
 
   return {

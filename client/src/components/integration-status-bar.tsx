@@ -55,6 +55,11 @@ type ServiceStatusDetail = {
   parentService?: string;
   displayName?: string;
   remediation?: RemediationGuidance;
+  discoverySummary?: {
+    connectorCount: number;
+    activeConnectionCount: number;
+    summary: string;
+  };
 };
 
 type DiagnosticsData = {
@@ -216,6 +221,14 @@ function ServiceEntry({ flagKey, detail, indented, parentDetail }: { flagKey: st
           )}
         </TooltipContent>
       </Tooltip>
+      {detail.discoverySummary && (detail.discoverySummary.connectorCount > 0 || detail.discoverySummary.activeConnectionCount > 0) && (
+        <div className="ml-4 text-[10px] text-muted-foreground flex items-center gap-1" data-testid={`discovery-summary-${flagKey}`}>
+          <Plug className="h-2.5 w-2.5" />
+          <span>{detail.discoverySummary.connectorCount} connector{detail.discoverySummary.connectorCount !== 1 ? "s" : ""}</span>
+          <span className="text-border">·</span>
+          <span>{detail.discoverySummary.activeConnectionCount} active connection{detail.discoverySummary.activeConnectionCount !== 1 ? "s" : ""}</span>
+        </div>
+      )}
       {showRemediation && detail.remediation && (
         <RemediationDetail remediation={detail.remediation} />
       )}
