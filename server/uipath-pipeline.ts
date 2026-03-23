@@ -377,7 +377,15 @@ async function extractOrchestratorArtifacts(sddContent: string | undefined, warn
   try {
     const { parseArtifactsFromSDD, extractArtifactsWithLLM } = await import("./uipath-deploy");
     let artifacts = parseArtifactsFromSDD(sddContent);
-    if (!artifacts) artifacts = await extractArtifactsWithLLM(sddContent);
+    if (!artifacts) {
+      console.warn("[Pipeline] No artifact block found in SDD content — attempting LLM extraction as recovery...");
+      artifacts = await extractArtifactsWithLLM(sddContent);
+      if (artifacts) {
+        console.log("[Pipeline] LLM extraction recovery succeeded");
+      } else {
+        console.error("[Pipeline] LLM extraction recovery failed — no artifacts will be provisioned");
+      }
+    }
     return artifacts || null;
   } catch (err: any) {
     const msg = err?.message || "Unknown error";

@@ -2,7 +2,7 @@ import { documentStorage } from "./document-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
 import { evaluateTransition } from "./stage-transition";
-import { parseArtifactBlockAsObject } from "./lib/artifact-parser";
+import { parseArtifactBlockAsObject, validateArtifactBlock } from "./lib/artifact-parser";
 
 export interface ApproveDocumentOptions {
   ideaId: string;
@@ -37,6 +37,20 @@ export async function approveDocument(opts: ApproveDocumentOptions): Promise<App
 
   if (doc.status === "approved") {
     return { approval: null, document: doc, alreadyApproved: true };
+  }
+
+  if (docType === "SDD") {
+    const hasStoredValidity = doc.artifactsValid !== null && doc.artifactsValid !== undefined;
+    if (hasStoredValidity && doc.artifactsValid === false) {
+      throw new Error("SDD cannot be approved: deployment artifacts are missing or invalid. Please revise the SDD to regenerate the artifacts section.");
+    }
+    if (!hasStoredValidity) {
+      const validation = validateArtifactBlock(doc.content);
+      if (!validation.valid) {
+        console.warn(`[Document Service] SDD approval blocked — artifact validation failed: ${validation.failure} — ${validation.details}`);
+        throw new Error(`SDD cannot be approved: deployment artifacts are ${validation.failure === "missing_fence" ? "missing" : "invalid"} (${validation.details}). Please revise the SDD to regenerate the artifacts section.`);
+      }
+    }
   }
 
   const existingApproval = await documentStorage.getApproval(ideaId, docType);

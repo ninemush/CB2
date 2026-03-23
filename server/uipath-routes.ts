@@ -703,9 +703,16 @@ export function registerUiPathRoutes(app: Express): void {
           let artifacts = parseArtifactsFromSDD(sdd.content);
 
           if (!artifacts) {
-            console.log("[UiPath] No artifacts block in SDD, attempting LLM extraction...");
-            sendEvent({ deployStatus: "Extracting artifacts from SDD..." });
+            console.warn("[UiPath] DOWNSTREAM RECOVERY: No artifacts block found in approved SDD — this should have been caught by upstream validation. Attempting LLM extraction as recovery...");
+            sendEvent({ deployStatus: "Extracting artifacts from SDD (recovery)..." });
             artifacts = await extractArtifactsWithLLM(sdd.content);
+            if (!artifacts) {
+              console.error("[UiPath] DOWNSTREAM RECOVERY FAILED: LLM extraction could not produce valid artifacts. Halting deployment.");
+              sendEvent({ deployStatus: "ERROR: Failed to extract deployment artifacts from SDD. Deployment halted — please regenerate the SDD with valid artifacts." });
+              throw new Error("Artifact extraction failed: no valid deployment artifacts could be extracted from SDD. Regenerate the SDD with valid artifacts before retrying deployment.");
+            } else {
+              console.log("[UiPath] DOWNSTREAM RECOVERY SUCCEEDED: LLM extraction produced artifacts");
+            }
           }
 
           if (artifacts && (!artifacts.actionCenter || artifacts.actionCenter.length === 0)) {
@@ -718,7 +725,7 @@ export function registerUiPathRoutes(app: Express): void {
             }
           }
 
-          if (artifacts && (
+          const hasDeployableArtifacts = artifacts && (
             (artifacts.queues?.length || 0) > 0 ||
             (artifacts.assets?.length || 0) > 0 ||
             (artifacts.machines?.length || 0) > 0 ||
@@ -736,7 +743,14 @@ export function registerUiPathRoutes(app: Express): void {
             (artifacts.knowledgeBases?.length || 0) > 0 ||
             (artifacts.promptTemplates?.length || 0) > 0 ||
             (artifacts.maestroProcesses?.length || 0) > 0
-          )) {
+          );
+
+          if (artifacts && !hasDeployableArtifacts) {
+            console.error("[UiPath] Artifact block parsed but contains no deployable artifact arrays. No artifacts will be provisioned.");
+            sendEvent({ deployStatus: "WARNING: SDD artifact block is empty — no artifacts to provision. Consider regenerating the SDD." });
+          }
+
+          if (hasDeployableArtifacts) {
             sendEvent({ deployStatus: "Reconciling artifacts with previous deployment..." });
             const previousManifest = await getPreviousManifest(ideaId);
             const reconciliation = reconcileArtifacts(artifacts, previousManifest);

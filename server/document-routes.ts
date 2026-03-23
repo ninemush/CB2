@@ -16,7 +16,7 @@ import { evaluateTransition } from "./stage-transition";
 import { approveDocument } from "./document-service";
 import { escapeXml } from "./lib/xml-utils";
 import { metadataService } from "./catalog/metadata-service";
-import { ensureArtifactBlock } from "./lib/artifact-parser";
+import { ensureArtifactBlock, parseArtifactBlock } from "./lib/artifact-parser";
 import { z } from "zod";
 import type { UiPathPackage } from "./types/uipath-package";
 import {
@@ -252,7 +252,12 @@ Output ONLY "## 9. Orchestrator & Platform Deployment Specification" followed by
 }
 
 
-async function generateDocument(ideaId: string, docType: string): Promise<string> {
+interface GenerateDocumentResult {
+  content: string;
+  artifactsValid?: boolean;
+}
+
+async function generateDocument(ideaId: string, docType: string): Promise<GenerateDocumentResult> {
   const idea = await storage.getIdea(ideaId);
   if (!idea) throw new Error("Idea not found");
 
@@ -407,6 +412,8 @@ async function generateDocument(ideaId: string, docType: string): Promise<string
     const sddProsePrompt = buildSddProsePrompt(platformCapabilitiesText);
     const sddArtifactsPrompt = buildSddArtifactsPrompt(platformCapabilitiesText);
 
+    const artifactsSystemPrompt = systemPrompt + "\n\nIMPORTANT: Your response MUST begin immediately with the ```orchestrator_artifacts fenced code block. Do NOT include any prose, explanation, or text before the opening fence.";
+
     const [proseResponse, artifactsResponse] = await Promise.all([
       getLLM().create({
         maxTokens: 6144,
@@ -414,8 +421,8 @@ async function generateDocument(ideaId: string, docType: string): Promise<string
         messages: [...chatMessages, { role: "user", content: sddProsePrompt }],
       }),
       getLLM().create({
-        maxTokens: 3072,
-        system: systemPrompt,
+        maxTokens: 4096,
+        system: artifactsSystemPrompt,
         messages: [...chatMessages, { role: "user", content: sddArtifactsPrompt }],
       }),
     ]);
@@ -424,13 +431,41 @@ async function generateDocument(ideaId: string, docType: string): Promise<string
     console.log(`[SDD] Parallel generation completed in ${elapsed}s`);
 
     const proseText = proseResponse.text;
-    const artifactsText = artifactsResponse.text;
+    let artifactsText = artifactsResponse.text;
 
-    const content = await ensureArtifactBlock(proseText, artifactsText);
+    if (!parseArtifactBlock(artifactsText)) {
+      console.warn("[SDD] Primary artifacts call did not produce valid artifact block, retrying with directive prompt...");
+      const ARTIFACTS_RETRY_MAX = 2;
+      for (let retry = 1; retry <= ARTIFACTS_RETRY_MAX; retry++) {
+        try {
+          const retryResponse = await getLLM().create({
+            maxTokens: 4096,
+            system: "You are a UiPath automation consultant. Output ONLY the orchestrator_artifacts fenced code block. Start your response immediately with ```orchestrator_artifacts — no prose, no explanation before or after.",
+            messages: [...chatMessages, {
+              role: "user",
+              content: `Your previous attempt to generate the deployment specification did not produce valid structured output. Generate ONLY the deployment artifacts block now.\n\nStart immediately with:\n\`\`\`orchestrator_artifacts\n{\n  ...\n}\n\`\`\`\n\nInclude all queues, assets, machines, triggers, environments, and other artifacts needed for this automation.`
+            }],
+          });
+          if (parseArtifactBlock(retryResponse.text)) {
+            console.log(`[SDD] Artifacts retry ${retry} succeeded`);
+            artifactsText = retryResponse.text;
+            break;
+          }
+          console.warn(`[SDD] Artifacts retry ${retry}/${ARTIFACTS_RETRY_MAX} did not produce valid block`);
+        } catch (retryErr: any) {
+          console.error(`[SDD] Artifacts retry ${retry} error:`, retryErr?.message);
+        }
+      }
+    }
 
-    const hasBlock = /```orchestrator_artifacts/.test(content);
-    console.log(`[SDD] Final document: ${content.length} chars, has artifacts block: ${hasBlock}`);
-    return content;
+    const ensureResult = await ensureArtifactBlock(proseText, artifactsText);
+
+    const hasBlock = /```orchestrator_artifacts/.test(ensureResult.content);
+    console.log(`[SDD] Final document: ${ensureResult.content.length} chars, has artifacts block: ${hasBlock}, artifactsValid: ${ensureResult.artifactsValid}`);
+    if (!ensureResult.artifactsValid) {
+      console.warn(`[SDD] Artifact validation failed: ${ensureResult.validationResult.failure} — ${ensureResult.validationResult.details}`);
+    }
+    return { content: ensureResult.content, artifactsValid: ensureResult.artifactsValid };
   }
 
   const prompt = docType === "PDD" ? PDD_PROMPT : UIPATH_PROMPT;
@@ -441,7 +476,7 @@ async function generateDocument(ideaId: string, docType: string): Promise<string
     messages: [...chatMessages, { role: "user", content: prompt }],
   });
 
-  return response.text;
+  return { content: response.text };
 }
 
 export function registerDocumentRoutes(app: Express): void {
@@ -507,6 +542,8 @@ export function registerDocumentRoutes(app: Express): void {
           exists: !!sdd,
           status: sddApproval ? "Approved" : sdd ? (sdd.status === "approved" ? "Approved" : "Draft") : "Not Generated",
           version: sdd?.version || null,
+          artifactsValid: sdd?.artifactsValid ?? null,
+          ...(sdd && sdd.artifactsValid === false ? { blockedReason: "Deployment artifacts are missing or invalid. Revise the SDD to regenerate artifacts." } : {}),
         },
         {
           type: "uipath" as const,
@@ -573,7 +610,9 @@ export function registerDocumentRoutes(app: Express): void {
         await documentStorage.updateDocument(existing.id, { status: "superseded" });
       }
 
-      let content = await generateDocument(ideaId, type);
+      const genResult = await generateDocument(ideaId, type);
+      let content = genResult.content;
+      const artifactsValid = type === "SDD" ? (genResult.artifactsValid ?? null) : null;
 
       const nodes = type === "PDD"
         ? await processMapStorage.getNodesByIdeaId(ideaId, "as-is")
@@ -619,7 +658,16 @@ export function registerDocumentRoutes(app: Express): void {
         status: "draft",
         content,
         snapshotJson: snapshot,
+        artifactsValid,
       });
+
+      if (type === "SDD" && artifactsValid === false) {
+        await chatStorage.createMessage(
+          ideaId,
+          "assistant",
+          "⚠️ **SDD generated, but deployment artifacts are missing or invalid.** The document has been saved, but it cannot be approved for package generation until valid deployment artifacts are present. You can request a revision to regenerate the artifacts section."
+        );
+      }
 
       await chatStorage.createMessage(
         ideaId,
@@ -695,9 +743,12 @@ export function registerDocumentRoutes(app: Express): void {
       });
 
       let content = response.text;
+      let artifactsValid: boolean | null = null;
 
       if (type === "SDD" && content.length > 0) {
-        content = await ensureArtifactBlock(content);
+        const ensureResult = await ensureArtifactBlock(content);
+        content = ensureResult.content;
+        artifactsValid = ensureResult.artifactsValid;
       }
 
       await documentStorage.updateDocument(currentDoc.id, { status: "superseded" });
@@ -709,6 +760,7 @@ export function registerDocumentRoutes(app: Express): void {
         status: "draft",
         content,
         snapshotJson: currentDoc.snapshotJson,
+        artifactsValid,
       });
 
       await chatStorage.createMessage(
