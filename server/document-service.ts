@@ -18,6 +18,7 @@ export interface ApproveDocumentResult {
   document: any;
   transition?: any;
   alreadyApproved?: boolean;
+  artifactWarnings?: string[];
 }
 
 export async function approveDocument(opts: ApproveDocumentOptions): Promise<ApproveDocumentResult> {
@@ -39,6 +40,7 @@ export async function approveDocument(opts: ApproveDocumentOptions): Promise<App
     return { approval: null, document: doc, alreadyApproved: true };
   }
 
+  let artifactWarnings: string[] = [];
   if (docType === "SDD") {
     const hasStoredValidity = doc.artifactsValid !== null && doc.artifactsValid !== undefined;
     if (hasStoredValidity && doc.artifactsValid === false) {
@@ -50,6 +52,9 @@ export async function approveDocument(opts: ApproveDocumentOptions): Promise<App
         console.warn(`[Document Service] SDD approval blocked — artifact validation failed: ${validation.failure} — ${validation.details}`);
         throw new Error(`SDD cannot be approved: deployment artifacts are ${validation.failure === "missing_fence" ? "missing" : "invalid"} (${validation.details}). Please revise the SDD to regenerate the artifacts section.`);
       }
+    }
+    if (doc.artifactWarnings) {
+      try { artifactWarnings = JSON.parse(doc.artifactWarnings); } catch {}
     }
   }
 
@@ -136,5 +141,5 @@ export async function approveDocument(opts: ApproveDocumentOptions): Promise<App
     console.error("[Document Service] Transition evaluation failed:", transErr?.message);
   }
 
-  return { approval, document: { ...doc, status: "approved" }, transition };
+  return { approval, document: { ...doc, status: "approved" }, transition, ...(artifactWarnings.length > 0 ? { artifactWarnings } : {}) };
 }

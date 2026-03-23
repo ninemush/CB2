@@ -36,10 +36,20 @@ const REQUIRED_FIELDS_BY_TYPE: Record<string, string[]> = {
 
 export type ArtifactValidationFailure = "missing_fence" | "invalid_json" | "not_object" | "empty_object" | "malformed_entries";
 
+export type ArtifactValidationTier = "valid" | "valid_with_warnings" | "invalid";
+
+const DEFAULTABLE_FIELDS: Record<string, string[]> = {
+  assets: ["type"],
+  triggers: ["type"],
+  actionCenter: ["taskCatalog"],
+};
+
 export interface ArtifactValidationResult {
+  tier: ArtifactValidationTier;
   valid: boolean;
   failure?: ArtifactValidationFailure;
   details?: string;
+  warnings?: string[];
   nonEmptyArrays?: string[];
   malformedEntries?: Array<{ key: string; index: number; missingFields: string[] }>;
 }
@@ -49,18 +59,18 @@ export function validateArtifactBlock(text: string): ArtifactValidationResult {
   if (!fenceMatch) {
     const hasAnyJson = parseArtifactBlock(text);
     if (hasAnyJson) {
-      return { valid: false, failure: "missing_fence", details: "Artifact data found but not in canonical fence format" };
+      return { tier: "invalid", valid: false, failure: "missing_fence", details: "Artifact data found but not in canonical fence format" };
     }
-    return { valid: false, failure: "missing_fence", details: "No orchestrator_artifacts fence block found" };
+    return { tier: "invalid", valid: false, failure: "missing_fence", details: "No orchestrator_artifacts fence block found" };
   }
 
   const parsed = trySanitizeAndParseJson(fenceMatch[1].trim());
   if (parsed === null) {
-    return { valid: false, failure: "invalid_json", details: "Content inside fence is not valid JSON" };
+    return { tier: "invalid", valid: false, failure: "invalid_json", details: "Content inside fence is not valid JSON" };
   }
 
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { valid: false, failure: "not_object", details: "Parsed JSON is not an object" };
+    return { tier: "invalid", valid: false, failure: "not_object", details: "Parsed JSON is not an object" };
   }
 
   const knownKeySet = new Set<string>(ARTIFACT_KEYS as readonly string[]);
@@ -71,7 +81,7 @@ export function validateArtifactBlock(text: string): ArtifactValidationResult {
     if (!knownKeySet.has(key)) continue;
     const val = parsed[key];
     if (!Array.isArray(val)) {
-      return { valid: false, failure: "malformed_entries", details: `Artifact key "${key}" is not an array (got ${typeof val})` };
+      return { tier: "invalid", valid: false, failure: "malformed_entries", details: `Artifact key "${key}" is not an array (got ${typeof val})` };
     }
     if (val.length === 0) continue;
     nonEmptyArrays.push(key);
@@ -93,15 +103,44 @@ export function validateArtifactBlock(text: string): ArtifactValidationResult {
   }
 
   if (nonEmptyArrays.length === 0) {
-    return { valid: false, failure: "empty_object", details: "No recognized artifact arrays with entries found (expected at least one of: " + ARTIFACT_KEYS.join(", ") + ")" };
+    return { tier: "invalid", valid: false, failure: "empty_object", details: "No recognized artifact arrays with entries found (expected at least one of: " + ARTIFACT_KEYS.join(", ") + ")" };
   }
 
   if (malformedEntries.length > 0) {
-    const summary = malformedEntries.map(e => `${e.key}[${e.index}] missing: ${e.missingFields.join(", ")}`).join("; ");
-    return { valid: false, failure: "malformed_entries", details: summary, nonEmptyArrays, malformedEntries };
+    const hardFailEntries = malformedEntries.filter(e => {
+      const defaultable = DEFAULTABLE_FIELDS[e.key] || [];
+      const nonDefaultable = e.missingFields.filter(f => !defaultable.includes(f));
+      return nonDefaultable.length > 0;
+    });
+
+    const warningEntries = malformedEntries.filter(e => {
+      const defaultable = DEFAULTABLE_FIELDS[e.key] || [];
+      return e.missingFields.every(f => defaultable.includes(f) || f === "name");
+    });
+
+    if (hardFailEntries.length > 0 && warningEntries.length === 0) {
+      const summary = hardFailEntries.map(e => `${e.key}[${e.index}] missing: ${e.missingFields.join(", ")}`).join("; ");
+      return { tier: "invalid", valid: false, failure: "malformed_entries", details: summary, nonEmptyArrays, malformedEntries: hardFailEntries };
+    }
+
+    const warnings: string[] = malformedEntries.map(e => {
+      const defaultable = DEFAULTABLE_FIELDS[e.key] || [];
+      const warnFields = e.missingFields.filter(f => defaultable.includes(f) || f === "name");
+      if (warnFields.length > 0) {
+        return `${e.key}[${e.index}] missing defaultable field(s): ${warnFields.join(", ")}`;
+      }
+      return null;
+    }).filter((w): w is string => w !== null);
+
+    if (hardFailEntries.length > 0) {
+      const summary = hardFailEntries.map(e => `${e.key}[${e.index}] missing: ${e.missingFields.join(", ")}`).join("; ");
+      return { tier: "invalid", valid: false, failure: "malformed_entries", details: summary, warnings, nonEmptyArrays, malformedEntries };
+    }
+
+    return { tier: "valid_with_warnings", valid: true, warnings, nonEmptyArrays, malformedEntries };
   }
 
-  return { valid: true, nonEmptyArrays };
+  return { tier: "valid", valid: true, nonEmptyArrays };
 }
 
 function looksLikeArtifacts(obj: any): boolean {
@@ -176,7 +215,17 @@ export function insertArtifactBlock(content: string, artifactBlock: string): str
 export interface EnsureArtifactBlockResult {
   content: string;
   artifactsValid: boolean;
+  artifactWarnings: string[];
   validationResult: ArtifactValidationResult;
+}
+
+function buildEnsureResult(content: string, validation: ArtifactValidationResult): EnsureArtifactBlockResult {
+  return {
+    content,
+    artifactsValid: validation.valid,
+    artifactWarnings: validation.warnings || [],
+    validationResult: validation,
+  };
 }
 
 export async function ensureArtifactBlock(content: string, extraContext?: string): Promise<EnsureArtifactBlockResult> {
@@ -184,7 +233,7 @@ export async function ensureArtifactBlock(content: string, extraContext?: string
     const parsed = parseArtifactBlockAsObject(content);
     if (parsed) {
       const validation = validateArtifactBlock(content);
-      return { content, artifactsValid: validation.valid, validationResult: validation };
+      return buildEnsureResult(content, validation);
     }
   }
 
@@ -194,7 +243,7 @@ export async function ensureArtifactBlock(content: string, extraContext?: string
       console.log("[SDD] Found artifact block in extra context, inserting...");
       const result = insertArtifactBlock(content, contextBlock);
       const validation = validateArtifactBlock(result);
-      return { content: result, artifactsValid: validation.valid, validationResult: validation };
+      return buildEnsureResult(result, validation);
     }
   }
 
@@ -203,25 +252,20 @@ export async function ensureArtifactBlock(content: string, extraContext?: string
     console.log("[SDD] Found artifact data in non-canonical format, canonicalizing...");
     const result = insertArtifactBlock(content, inlineBlock);
     const validation = validateArtifactBlock(result);
-    return { content: result, artifactsValid: validation.valid, validationResult: validation };
+    return buildEnsureResult(result, validation);
   }
 
-  console.log("[SDD] Artifact block missing, running LLM extraction with retries...");
+  console.log("[SDD] Artifact block missing, running LLM extraction...");
   const sourceText = extraContext
     ? (content + "\n\n" + extraContext).slice(0, 24000)
     : content.slice(0, 24000);
 
-  const MAX_RETRIES = 2;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  const MAX_EXTRACTION_ATTEMPTS = 1;
+  for (let attempt = 0; attempt < MAX_EXTRACTION_ATTEMPTS; attempt++) {
     try {
-      const isRetry = attempt > 0;
-      const systemPrompt = isRetry
-        ? "You are a UiPath automation consultant. Your previous response did not contain valid JSON. Output ONLY the fenced code block below with valid JSON. No prose, no explanation — start your response with ```orchestrator_artifacts immediately."
-        : "You are a UiPath automation consultant. Extract the Orchestrator artifact definitions from the document and output ONLY a fenced JSON block. Start your response with ```orchestrator_artifacts immediately. Output nothing else — no prose, no explanation before or after the block.";
+      const systemPrompt = "You are a UiPath automation consultant. Extract the Orchestrator artifact definitions from the document and output ONLY a fenced JSON block. Start your response with ```orchestrator_artifacts immediately. Output nothing else — no prose, no explanation before or after the block.";
 
-      const userPrompt = isRetry
-        ? `Output ONLY the artifact block. Start immediately with \`\`\`orchestrator_artifacts — no text before it.\n\nDocument:\n${sourceText}`
-        : `From this document, extract ALL Orchestrator and platform artifacts and output them as a single fenced block:
+      const userPrompt = `From this document, extract ALL Orchestrator and platform artifacts and output them as a single fenced block:
 
 \`\`\`orchestrator_artifacts
 {
@@ -243,7 +287,7 @@ export async function ensureArtifactBlock(content: string, extraContext?: string
 Document:
 ${sourceText}`;
 
-      console.log(`[SDD] LLM extraction attempt ${attempt + 1}/${MAX_RETRIES + 1}...`);
+      console.log(`[SDD] LLM extraction attempt ${attempt + 1}/${MAX_EXTRACTION_ATTEMPTS}...`);
       const extractionResponse = await getLLM().create({
         maxTokens: 3072,
         system: systemPrompt,
@@ -255,7 +299,7 @@ ${sourceText}`;
         console.log(`[SDD] LLM extraction succeeded on attempt ${attempt + 1}`);
         const result = insertArtifactBlock(content, extractedBlock);
         const validation = validateArtifactBlock(result);
-        return { content: result, artifactsValid: validation.valid, validationResult: validation };
+        return buildEnsureResult(result, validation);
       }
       console.warn(`[SDD] LLM extraction attempt ${attempt + 1} failed to produce valid artifact block`);
     } catch (err: any) {
@@ -263,7 +307,7 @@ ${sourceText}`;
     }
   }
 
-  console.error("[SDD] All artifact extraction attempts failed — document saved without valid artifact block");
+  console.error("[SDD] Artifact extraction failed — document saved without valid artifact block");
   const validation = validateArtifactBlock(content);
-  return { content, artifactsValid: false, validationResult: validation };
+  return buildEnsureResult(content, validation);
 }

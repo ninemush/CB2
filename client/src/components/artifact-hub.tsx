@@ -31,6 +31,9 @@ interface ArtifactSummary {
   status: string;
   version: number | null;
   nodeCount?: number;
+  artifactsValid?: boolean | null;
+  artifactWarnings?: string[];
+  blockedReason?: string;
   meta?: {
     projectName?: string;
     workflowCount?: number;
@@ -680,6 +683,23 @@ export function ArtifactHub({ ideaId, ideaTitle }: ArtifactHubProps) {
                       )}
                       {!artifact.exists && <span>Not yet generated</span>}
                     </div>
+                    {artifact.type === "sdd" && artifact.artifactWarnings && artifact.artifactWarnings.length > 0 && (
+                      <div className="mt-1.5 flex items-start gap-1.5 text-[10px] text-amber-400/80" data-testid="sdd-artifact-warnings">
+                        <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-medium">Minor warnings:</span>
+                          {artifact.artifactWarnings.map((w, i) => (
+                            <div key={i} className="text-amber-400/60 ml-1">{w}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {artifact.type === "sdd" && artifact.blockedReason && (
+                      <div className="mt-1.5 flex items-start gap-1.5 text-[10px] text-red-400/80" data-testid="sdd-artifact-blocked">
+                        <XCircle className="h-3 w-3 shrink-0 mt-0.5" />
+                        <span>{artifact.blockedReason}</span>
+                      </div>
+                    )}
                   </div>
                   {!isDisabled && (
                     <div className="flex items-center gap-1 shrink-0">

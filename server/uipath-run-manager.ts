@@ -255,13 +255,16 @@ async function executeRun(
       throw new RunError("SDD is missing valid deployment artifacts. Please revise the SDD to regenerate the artifacts section before generating a package.", "precondition");
     }
 
-    const { validateArtifactBlock } = await import("./lib/artifact-parser");
-    const artifactValidation = validateArtifactBlock(sdd.content);
-    if (!artifactValidation.valid) {
-      console.error(`[RunManager] Run ${runId}: SDD artifact block validation failed — ${artifactValidation.failure}: ${artifactValidation.details}`);
-      throw new RunError(`SDD deployment artifacts are invalid (${artifactValidation.failure}: ${artifactValidation.details}). Please revise the SDD to fix the artifacts section.`, "precondition");
+    if (sdd.artifactsValid === null || sdd.artifactsValid === undefined) {
+      const { parseArtifactBlock } = await import("./lib/artifact-parser");
+      const hasBlock = parseArtifactBlock(sdd.content);
+      if (!hasBlock) {
+        throw new RunError("SDD is missing deployment artifacts block. Please revise the SDD to regenerate the artifacts section.", "precondition");
+      }
+      console.log(`[RunManager] Run ${runId}: Legacy SDD — artifact block present (lightweight parse check passed)`);
+    } else {
+      console.log(`[RunManager] Run ${runId}: SDD artifact block validated (stored artifactsValid=true)`);
     }
-    console.log(`[RunManager] Run ${runId}: SDD artifact block validated — ${artifactValidation.nonEmptyArrays?.join(", ")}`);
 
     const idea = await storage.getIdea(ideaId);
     if (!idea) {

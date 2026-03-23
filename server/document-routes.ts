@@ -256,6 +256,7 @@ Output ONLY "## 9. Orchestrator & Platform Deployment Specification" followed by
 interface GenerateDocumentResult {
   content: string;
   artifactsValid?: boolean;
+  artifactWarnings?: string[];
 }
 
 async function generateDocument(ideaId: string, docType: string): Promise<GenerateDocumentResult> {
@@ -457,33 +458,30 @@ async function generateDocument(ideaId: string, docType: string): Promise<Genera
     if (!parseArtifactBlock(artifactsText)) {
       console.warn("[SDD] Primary artifacts call did not produce valid artifact block, retrying with directive prompt...");
       runLogger.stageStart("artifacts_retry");
-      const ARTIFACTS_RETRY_MAX = 2;
       let retrySucceeded = false;
-      for (let retry = 1; retry <= ARTIFACTS_RETRY_MAX; retry++) {
-        try {
-          const retryResponse = await getLLM().create({
-            maxTokens: 4096,
-            system: "You are a UiPath automation consultant. Output ONLY the orchestrator_artifacts fenced code block. Start your response immediately with ```orchestrator_artifacts — no prose, no explanation before or after.",
-            messages: [...chatMessages, {
-              role: "user",
-              content: `Your previous attempt to generate the deployment specification did not produce valid structured output. Generate ONLY the deployment artifacts block now.\n\nStart immediately with:\n\`\`\`orchestrator_artifacts\n{\n  ...\n}\n\`\`\`\n\nInclude all queues, assets, machines, triggers, environments, and other artifacts needed for this automation.`
-            }],
-          });
-          if (parseArtifactBlock(retryResponse.text)) {
-            console.log(`[SDD] Artifacts retry ${retry} succeeded`);
-            runLogger.recordRetry("artifacts_retry", retry);
-            artifactsText = retryResponse.text;
-            retrySucceeded = true;
-            break;
-          }
-          console.warn(`[SDD] Artifacts retry ${retry}/${ARTIFACTS_RETRY_MAX} did not produce valid block`);
-          runLogger.recordRetry("artifacts_retry", retry, "Response did not produce valid artifact block");
-        } catch (retryErr: any) {
-          console.error(`[SDD] Artifacts retry ${retry} error:`, retryErr?.message);
-          runLogger.recordRetry("artifacts_retry", retry, retryErr?.message || "Unknown retry error");
+      try {
+        const retryResponse = await getLLM().create({
+          maxTokens: 4096,
+          system: "You are a UiPath automation consultant. Output ONLY the orchestrator_artifacts fenced code block. Start your response immediately with ```orchestrator_artifacts — no prose, no explanation before or after.",
+          messages: [...chatMessages, {
+            role: "user",
+            content: `Your previous attempt to generate the deployment specification did not produce valid structured output. Generate ONLY the deployment artifacts block now.\n\nStart immediately with:\n\`\`\`orchestrator_artifacts\n{\n  ...\n}\n\`\`\`\n\nInclude all queues, assets, machines, triggers, environments, and other artifacts needed for this automation.`
+          }],
+        });
+        if (parseArtifactBlock(retryResponse.text)) {
+          console.log(`[SDD] Artifacts retry succeeded`);
+          runLogger.recordRetry("artifacts_retry", 1);
+          artifactsText = retryResponse.text;
+          retrySucceeded = true;
+        } else {
+          console.warn(`[SDD] Artifacts retry did not produce valid block`);
+          runLogger.recordRetry("artifacts_retry", 1, "Response did not produce valid artifact block");
         }
+      } catch (retryErr: any) {
+        console.error(`[SDD] Artifacts retry error:`, retryErr?.message);
+        runLogger.recordRetry("artifacts_retry", 1, retryErr?.message || "Unknown retry error");
       }
-      runLogger.stageEnd("artifacts_retry", retrySucceeded ? "succeeded" : "degraded", { retries: ARTIFACTS_RETRY_MAX });
+      runLogger.stageEnd("artifacts_retry", retrySucceeded ? "succeeded" : "degraded", { retries: 1 });
     }
 
     runLogger.stageStart("artifact_validation");
@@ -498,7 +496,10 @@ async function generateDocument(ideaId: string, docType: string): Promise<Genera
         failure: ensureResult.validationResult.failure,
       });
     } else {
-      runLogger.stageEnd("artifact_validation", "succeeded", { artifactsValid: true });
+      runLogger.stageEnd("artifact_validation", "succeeded", { artifactsValid: true, hasWarnings: ensureResult.artifactWarnings.length > 0 });
+    }
+    if (ensureResult.artifactWarnings.length > 0) {
+      console.warn(`[SDD] Artifact warnings: ${ensureResult.artifactWarnings.join("; ")}`);
     }
 
     const outcome = runLogger.buildOutcomeSummary();
@@ -513,7 +514,7 @@ async function generateDocument(ideaId: string, docType: string): Promise<Genera
       });
     } catch {}
 
-    return { content: ensureResult.content, artifactsValid: ensureResult.artifactsValid };
+    return { content: ensureResult.content, artifactsValid: ensureResult.artifactsValid, artifactWarnings: ensureResult.artifactWarnings };
     } catch (sddErr: any) {
       const runningStages = runLogger.getStages().filter(s => s.outcome === "running");
       for (const rs of runningStages) {
@@ -648,6 +649,7 @@ export function registerDocumentRoutes(app: Express): void {
           version: sdd?.version || null,
           artifactsValid: sdd?.artifactsValid ?? null,
           ...(sdd && sdd.artifactsValid === false ? { blockedReason: "Deployment artifacts are missing or invalid. Revise the SDD to regenerate artifacts." } : {}),
+          ...(sdd?.artifactWarnings ? { artifactWarnings: JSON.parse(sdd.artifactWarnings) } : {}),
         },
         {
           type: "uipath" as const,
@@ -717,6 +719,8 @@ export function registerDocumentRoutes(app: Express): void {
       const genResult = await generateDocument(ideaId, type);
       let content = genResult.content;
       const artifactsValid = type === "SDD" ? (genResult.artifactsValid ?? null) : null;
+      const artifactWarnings = type === "SDD" && genResult.artifactWarnings?.length
+        ? JSON.stringify(genResult.artifactWarnings) : null;
 
       const nodes = type === "PDD"
         ? await processMapStorage.getNodesByIdeaId(ideaId, "as-is")
@@ -763,6 +767,7 @@ export function registerDocumentRoutes(app: Express): void {
         content,
         snapshotJson: snapshot,
         artifactsValid,
+        artifactWarnings,
       });
 
       if (type === "SDD" && artifactsValid === false) {
@@ -770,6 +775,13 @@ export function registerDocumentRoutes(app: Express): void {
           ideaId,
           "assistant",
           "⚠️ **SDD generated, but deployment artifacts are missing or invalid.** The document has been saved, but it cannot be approved for package generation until valid deployment artifacts are present. You can request a revision to regenerate the artifacts section."
+        );
+      } else if (type === "SDD" && artifactWarnings) {
+        const warnings = genResult.artifactWarnings || [];
+        await chatStorage.createMessage(
+          ideaId,
+          "assistant",
+          `ℹ️ **SDD generated with minor artifact warnings.** The document is valid and can be approved, but some artifact entries have missing optional fields that will use defaults:\n${warnings.map(w => `- ${w}`).join("\n")}`
         );
       }
 
@@ -848,11 +860,14 @@ export function registerDocumentRoutes(app: Express): void {
 
       let content = response.text;
       let artifactsValid: boolean | null = null;
+      let artifactWarnings: string | null = null;
 
       if (type === "SDD" && content.length > 0) {
         const ensureResult = await ensureArtifactBlock(content);
         content = ensureResult.content;
         artifactsValid = ensureResult.artifactsValid;
+        artifactWarnings = ensureResult.artifactWarnings.length > 0
+          ? JSON.stringify(ensureResult.artifactWarnings) : null;
       }
 
       await documentStorage.updateDocument(currentDoc.id, { status: "superseded" });
@@ -865,6 +880,7 @@ export function registerDocumentRoutes(app: Express): void {
         content,
         snapshotJson: currentDoc.snapshotJson,
         artifactsValid,
+        artifactWarnings,
       });
 
       await chatStorage.createMessage(
