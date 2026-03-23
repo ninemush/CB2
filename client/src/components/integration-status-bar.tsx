@@ -16,6 +16,9 @@ import {
   ServerOff,
   ShieldAlert,
   Eye,
+  Plug,
+  Zap,
+  Radio,
 } from "lucide-react";
 import {
   Tooltip,
@@ -58,6 +61,41 @@ type DiagnosticsData = {
   configured: boolean;
   connected?: boolean;
   serviceDetails?: Record<string, ServiceStatusDetail>;
+};
+
+type ConnectorOperation = {
+  id: string;
+  name: string;
+  description?: string;
+  type: "action" | "trigger" | "unknown";
+};
+
+type ISConnector = {
+  id: string;
+  name: string;
+  description?: string;
+  provider?: string;
+  connectionCount: number;
+  operations: ConnectorOperation[];
+};
+
+type ISConnection = {
+  id: string;
+  connectorId: string;
+  connectorName: string;
+  name: string;
+  status: string;
+  accountName?: string;
+  isDefault?: boolean;
+  folderId?: string;
+  eventCheckInterval?: number;
+};
+
+type ISDiscovery = {
+  available: boolean;
+  connectors: ISConnector[];
+  connections: ISConnection[];
+  summary: string;
 };
 
 const truthfulStatusIcon = (detail: ServiceStatusDetail) => {
@@ -185,6 +223,105 @@ function ServiceEntry({ flagKey, detail, indented, parentDetail }: { flagKey: st
   );
 }
 
+function ConnectedSystemsSection({ discovery }: { discovery: ISDiscovery }) {
+  const [expanded, setExpanded] = useState(false);
+  const activeConns = discovery.connections.filter(
+    c => c.status.toLowerCase() === "connected" || c.status.toLowerCase() === "active"
+  );
+
+  if (!discovery.available || (activeConns.length === 0 && discovery.connectors.length === 0)) {
+    return null;
+  }
+
+  const connectorMap = new Map<string, { connector?: ISConnector; connections: ISConnection[] }>();
+  for (const conn of activeConns) {
+    const existing = connectorMap.get(conn.connectorId) || { connections: [] };
+    if (!existing.connector) {
+      existing.connector = discovery.connectors.find(c => c.id === conn.connectorId);
+    }
+    existing.connections.push(conn);
+    connectorMap.set(conn.connectorId, existing);
+  }
+
+  const totalOps = discovery.connectors.reduce((sum, c) => sum + c.operations.length, 0);
+
+  return (
+    <div className="mb-2" data-testid="service-section-connected-systems">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 hover:text-foreground transition-colors w-full"
+        data-testid="button-toggle-connected-systems"
+      >
+        <Plug className="h-2.5 w-2.5" />
+        Connected Systems
+        <span className="text-[9px] font-normal normal-case tracking-normal ml-1">
+          ({activeConns.length} active{totalOps > 0 ? `, ${totalOps} ops` : ""})
+        </span>
+        <ChevronRight className={`h-2.5 w-2.5 ml-auto transition-transform ${expanded ? "rotate-90" : ""}`} />
+      </button>
+      {expanded && (
+        <div className="space-y-1.5 ml-1">
+          {Array.from(connectorMap.entries()).map(([connectorId, { connector, connections }]) => {
+            const name = connector?.name || connections[0]?.connectorName || connectorId;
+            const actions = connector?.operations.filter(o => o.type === "action") || [];
+            const triggers = connector?.operations.filter(o => o.type === "trigger") || [];
+            return (
+              <div key={connectorId} className="text-[11px]" data-testid={`connected-system-${connectorId}`}>
+                <div className="flex items-center gap-1.5">
+                  <span className="relative flex h-2 w-2 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                  </span>
+                  <span className="text-green-400 font-medium">{name}</span>
+                  <span className="text-muted-foreground text-[9px]">
+                    {connections.length} conn.
+                  </span>
+                </div>
+                <div className="ml-4 text-[10px] text-muted-foreground space-y-0.5">
+                  {connections.map(conn => (
+                    <div key={conn.id} className="flex items-center gap-1" data-testid={`connection-${conn.id}`}>
+                      <span>"{conn.name}"</span>
+                      {conn.accountName && <span className="text-[9px]">(account: {conn.accountName})</span>}
+                      {conn.isDefault && <span className="text-[9px] text-amber-400">[default]</span>}
+                    </div>
+                  ))}
+                  {(actions.length > 0 || triggers.length > 0) && (
+                    <div className="mt-0.5 space-y-0.5">
+                      {actions.length > 0 && (
+                        <div className="flex items-start gap-1" data-testid={`ops-actions-${connectorId}`}>
+                          <Zap className="h-2.5 w-2.5 mt-0.5 text-blue-400 shrink-0" />
+                          <span className="text-[9px]">{actions.length} action(s): {actions.slice(0, 5).map(a => a.name).join(", ")}{actions.length > 5 ? ` +${actions.length - 5} more` : ""}</span>
+                        </div>
+                      )}
+                      {triggers.length > 0 && (
+                        <div className="flex items-start gap-1" data-testid={`ops-triggers-${connectorId}`}>
+                          <Radio className="h-2.5 w-2.5 mt-0.5 text-purple-400 shrink-0" />
+                          <span className="text-[9px]">{triggers.length} trigger(s): {triggers.slice(0, 5).map(t => t.name).join(", ")}{triggers.length > 5 ? ` +${triggers.length - 5} more` : ""}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {(() => {
+            const unconnected = discovery.connectors.filter(c => !connectorMap.has(c.id));
+            return unconnected.length > 0 ? (
+              <div className="text-[10px] text-muted-foreground mt-1 border-t border-border/30 pt-1" data-testid="unconnected-connectors">
+                <span className="text-[9px] uppercase tracking-wider">Available (no connections): </span>
+                {unconnected.slice(0, 10).map(c => c.name).join(", ")}
+                {unconnected.length > 10 ? ` +${unconnected.length - 10} more` : ""}
+              </div>
+            ) : null;
+          })()}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function IntegrationStatusBar() {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -213,6 +350,14 @@ export function IntegrationStatusBar() {
 
   const { data: diagnostics } = useQuery<DiagnosticsData>({
     queryKey: ["/api/uipath/diagnostics"],
+    refetchInterval: 120000,
+    staleTime: 100000,
+    retry: 1,
+    enabled: !!health?.ok,
+  });
+
+  const { data: isDiscovery } = useQuery<ISDiscovery>({
+    queryKey: ["/api/uipath/integration-service"],
     refetchInterval: 120000,
     staleTime: 100000,
     retry: 1,
@@ -408,6 +553,10 @@ export function IntegrationStatusBar() {
                     ))}
                   </div>
                 </div>
+              )}
+
+              {isDiscovery && isDiscovery.available && (
+                <ConnectedSystemsSection discovery={isDiscovery} />
               )}
 
               {uncategorized.length > 0 && (

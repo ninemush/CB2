@@ -6,7 +6,7 @@ import { processMapStorage } from "../../process-map-storage";
 import { evaluateTransition } from "../../stage-transition";
 import { approveDocument } from "../../document-service";
 import { PIPELINE_STAGES, type PipelineStage, type AutomationType } from "@shared/schema";
-import { probeServiceAvailability, type ServiceAvailabilityMap } from "../../uipath-integration";
+import { probeServiceAvailability, type ServiceAvailabilityMap, type IntegrationServiceConnection, type IntegrationServiceConnector, type ConnectorOperation } from "../../uipath-integration";
 import { generateDhg, findUiPathMessage, parseUiPathPackage } from "../../uipath-pipeline";
 import { getLLM, type LLMMessage, type LLMContentBlock } from "../../lib/llm";
 import { sanitizeChatForLLM, type SanitizedMessage } from "../../lib/sanitize-chat";
@@ -143,10 +143,32 @@ function buildSystemPrompt(ideaTitle: string, currentStage: string, docContext?:
     let integrationServiceContext = "";
     if (serviceAvailability.integrationServiceDiscovery?.available) {
       const is = serviceAvailability.integrationServiceDiscovery;
-      const activeConns = is.connections.filter(c => c.status.toLowerCase() === "connected" || c.status.toLowerCase() === "active");
+      const activeConns = is.connections.filter((c: IntegrationServiceConnection) => c.status.toLowerCase() === "connected" || c.status.toLowerCase() === "active");
       if (activeConns.length > 0) {
-        const connList = activeConns.map(c => `${c.connectorName} (connection: "${c.name}", ID: ${c.id})`).join(", ");
-        integrationServiceContext = `\n\nINTEGRATION SERVICE — CONNECTED ENTERPRISE SYSTEMS:\nThe following Integration Service connections are ACTIVE on this tenant:\n${activeConns.map(c => `- **${c.connectorName}** — Connection: "${c.name}" (ID: ${c.id}, Status: ${c.status})`).join("\n")}\n\nCRITICAL: When the process involves any of these connected systems, you MUST recommend using the Integration Service connector instead of custom HTTP activities. Integration Service connectors provide pre-built, maintained API actions with built-in authentication — they are always preferred over custom HTTP calls. Reference the specific connector name and connection in your design.`;
+        const connLines = activeConns.map((c: IntegrationServiceConnection) => {
+          let line = `- **${c.connectorName}** — Connection: "${c.name}" (ID: ${c.id}, Status: ${c.status})`;
+          if (c.accountName) line += ` [Account: ${c.accountName}]`;
+          if (c.isDefault) line += ` [Default]`;
+          return line;
+        }).join("\n");
+
+        let opsCatalog = "";
+        const activeConnectorIds = [...new Set(activeConns.map((c: IntegrationServiceConnection) => c.connectorId).filter(Boolean))];
+        const connectorsWithOps = is.connectors.filter((c: IntegrationServiceConnector) => activeConnectorIds.includes(c.id) && c.operations && c.operations.length > 0);
+        if (connectorsWithOps.length > 0) {
+          opsCatalog = `\n\nAvailable Integration Service operations per connector:\n`;
+          for (const connector of connectorsWithOps) {
+            const actions = connector.operations.filter((o: ConnectorOperation) => o.type === "action");
+            const triggers = connector.operations.filter((o: ConnectorOperation) => o.type === "trigger");
+            opsCatalog += `**${connector.name}**: `;
+            const parts: string[] = [];
+            if (actions.length > 0) parts.push(`Actions: ${actions.map((a: ConnectorOperation) => `"${a.name}"`).join(", ")}`);
+            if (triggers.length > 0) parts.push(`Triggers: ${triggers.map((t: ConnectorOperation) => `"${t.name}"`).join(", ")}`);
+            opsCatalog += parts.join("; ") + "\n";
+          }
+        }
+
+        integrationServiceContext = `\n\nINTEGRATION SERVICE — CONNECTED ENTERPRISE SYSTEMS:\nThe following Integration Service connections are ACTIVE on this tenant:\n${connLines}\n\nCRITICAL: When the process involves any of these connected systems, you MUST recommend using the Integration Service connector instead of custom HTTP activities. Integration Service connectors provide pre-built, maintained API actions with built-in authentication — they are always preferred over custom HTTP calls. Reference the specific connector name and connection in your design.${opsCatalog}`;
       }
     }
 

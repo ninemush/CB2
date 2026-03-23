@@ -5,7 +5,7 @@ import { documentStorage } from "./document-storage";
 import { processMapStorage } from "./process-map-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
 import { storage } from "./storage";
-import { getPlatformCapabilities } from "./uipath-integration";
+import { getPlatformCapabilities, type IntegrationServiceConnection, type IntegrationServiceConnector, type ConnectorOperation } from "./uipath-integration";
 import { generateUiPathPackage, generateDhg, findUiPathMessage, parseUiPathPackage, computeVersion, getCachedPipelineResult } from "./uipath-pipeline";
 import { generateConfigXlsx } from "./package-assembler";
 import { startUiPathGenerationRun, type TriggerSource, type RunCallbacks, type RunResult } from "./uipath-run-manager";
@@ -200,6 +200,17 @@ Here is the EXACT format:
         "queues": ["QueueNameFromQueuesAbove"]
       }
     }
+  ],
+  "integrationServiceConnectors": [
+    {
+      "connectorName": "ConnectorName (e.g. Gmail, SAP, Salesforce)",
+      "connectionName": "ExactConnectionNameFromTenant",
+      "connectionId": "connection-id",
+      "usedActions": ["ExactActionName from operation catalog"],
+      "usedTriggers": ["ExactTriggerName from operation catalog"],
+      "description": "How this connector is used in the automation",
+      "packageDependency": "UiPath.IntegrationService.Activities"
+    }
   ]
 }
 \`\`\`
@@ -230,6 +241,11 @@ Rules:
   - Define gateways for conditional routing (exclusive), parallel execution (parallel), or multi-path (inclusive).
   - Define sequenceFlows connecting all elements (serviceTasks, userTasks, gateways) in execution order.
   - Include crossReferences listing all referenced orchestratorProcesses, actionCenterCatalogs, and queues by exact name for deployment wiring.
+- INTEGRATION SERVICE CONNECTOR DEPENDENCIES: When the solution uses Integration Service connectors (e.g., Gmail, SAP, Salesforce, ServiceNow), include integrationServiceConnectors entries. Each entry MUST:
+  - Use the exact connectorName and connectionName from the discovered connected systems.
+  - Reference exact action/trigger names from the operation catalog in usedActions/usedTriggers.
+  - Always set packageDependency to "UiPath.IntegrationService.Activities".
+  - These are declared as dependencies so the deployment system can validate connector availability before provisioning.
 - Be comprehensive — this specification drives full automated deployment.
 
 Output ONLY "## 9. Orchestrator & Platform Deployment Specification" followed by the fenced artifacts block and any brief supporting prose. Nothing else.`;
@@ -261,6 +277,29 @@ async function generateDocument(ideaId: string, docType: string): Promise<string
         if (platformProfile.unavailableRecommendations) {
           contextPrompt += `\n${platformProfile.unavailableRecommendations}`;
         }
+        if (platformProfile.integrationService?.available) {
+          const is = platformProfile.integrationService;
+          const activeConns = is.connections.filter((c: IntegrationServiceConnection) => c.status.toLowerCase() === "connected" || c.status.toLowerCase() === "active");
+          if (activeConns.length > 0) {
+            const connMap = new Map<string, IntegrationServiceConnection[]>();
+            for (const conn of activeConns) {
+              const existing = connMap.get(conn.connectorName) || [];
+              existing.push(conn);
+              connMap.set(conn.connectorName, existing);
+            }
+            let isContext = `\n\nCONNECTED ENTERPRISE SYSTEMS (Integration Service):\nThe following systems are connected via UiPath Integration Service and available for this automation:\n`;
+            Array.from(connMap.entries()).forEach(([connectorName, conns]) => {
+              const connDetails = conns.map((c: IntegrationServiceConnection) => {
+                let detail = `"${c.name}"`;
+                if (c.accountName) detail += ` (account: ${c.accountName})`;
+                return detail;
+              }).join(", ");
+              isContext += `- **${connectorName}**: ${conns.length} connection(s) — ${connDetails}\n`;
+            });
+            isContext += `\nWhen describing integration points in the PDD, reference these connected systems by name. For example: "Email notifications will be sent via the Gmail connector available through Integration Service" rather than generic descriptions.`;
+            contextPrompt += isContext;
+          }
+        }
         console.log(`[PDD] Platform capabilities injected: ${platformProfile.summary}`);
       }
     } catch (err: any) {
@@ -289,12 +328,42 @@ async function generateDocument(ideaId: string, docType: string): Promise<string
     }
     if (platformProfile.integrationService?.available && platformCapabilitiesText) {
       const is = platformProfile.integrationService;
-      const activeConns = is.connections.filter(c => c.status.toLowerCase() === "connected" || c.status.toLowerCase() === "active");
+      const activeConns = is.connections.filter((c: IntegrationServiceConnection) => c.status.toLowerCase() === "connected" || c.status.toLowerCase() === "active");
       if (activeConns.length > 0) {
-        platformCapabilitiesText += `\n\nINTEGRATION SERVICE — CONNECTED ENTERPRISE SYSTEMS:\nThe following Integration Service connections are ACTIVE and ready to use:\n${activeConns.map(c => `- **${c.connectorName}** — Connection: "${c.name}" (ID: ${c.id})`).join("\n")}\n\nWhen designing integration points, you MUST use these Integration Service connectors instead of custom HTTP activities. Reference the specific connector name in the "UiPath Activities and Packages Required" section and include the UiPath.IntegrationService.Activities package. In the "Integration Points" section, specify the connector name and connection ID for each connected system.`;
+        let connLines = activeConns.map((c: IntegrationServiceConnection) => {
+          let line = `- **${c.connectorName}** — Connection: "${c.name}" (ID: ${c.id})`;
+          if (c.accountName) line += ` [Account: ${c.accountName}]`;
+          if (c.isDefault) line += ` [Default]`;
+          return line;
+        }).join("\n");
+
+        let opsCatalog = "";
+        const activeConnectorIds = Array.from(new Set(activeConns.map((c: IntegrationServiceConnection) => c.connectorId).filter(Boolean)));
+        const connectorsWithOps = is.connectors.filter((c: IntegrationServiceConnector) => activeConnectorIds.includes(c.id) && c.operations && c.operations.length > 0);
+        if (connectorsWithOps.length > 0) {
+          opsCatalog = `\n\nINTEGRATION SERVICE — OPERATION CATALOG (per connector):\n`;
+          for (const connector of connectorsWithOps) {
+            const actions = connector.operations.filter((o: ConnectorOperation) => o.type === "action");
+            const triggers = connector.operations.filter((o: ConnectorOperation) => o.type === "trigger");
+            const unknown = connector.operations.filter((o: ConnectorOperation) => o.type === "unknown");
+            opsCatalog += `\n**${connector.name}** (${connector.operations.length} operations):\n`;
+            if (actions.length > 0) {
+              opsCatalog += `  Actions: ${actions.map((a: ConnectorOperation) => `"${a.name}"`).join(", ")}\n`;
+            }
+            if (triggers.length > 0) {
+              opsCatalog += `  Triggers: ${triggers.map((t: ConnectorOperation) => `"${t.name}"`).join(", ")}\n`;
+            }
+            if (unknown.length > 0) {
+              opsCatalog += `  Other: ${unknown.map((u: ConnectorOperation) => `"${u.name}"`).join(", ")}\n`;
+            }
+          }
+          opsCatalog += `\nWhen specifying UiPath activities, reference exact operation names from the catalog above. Use the UiPath.IntegrationService.Activities package with the connector-specific activity (e.g., connector action "Send Email" → use Integration Service "Send Email" activity). For triggers, specify the Integration Service trigger by name (e.g., "When a new email is received" trigger). In the orchestrator artifacts schema, declare Integration Service connectors as dependencies using the integrationServiceConnectors array rather than designing custom HTTP calls.`;
+        }
+
+        platformCapabilitiesText += `\n\nINTEGRATION SERVICE — CONNECTED ENTERPRISE SYSTEMS:\nThe following Integration Service connections are ACTIVE and ready to use:\n${connLines}\n\nWhen designing integration points, you MUST use these Integration Service connectors instead of custom HTTP activities. Reference the specific connector name in the "UiPath Activities and Packages Required" section and include the UiPath.IntegrationService.Activities package. In the "Integration Points" section, specify the connector name and connection ID for each connected system.${opsCatalog}`;
       }
       if (is.connectors.length > 0 && activeConns.length === 0) {
-        const connectorNames = is.connectors.slice(0, 20).map(c => c.name).filter(Boolean).join(", ");
+        const connectorNames = is.connectors.slice(0, 20).map((c: IntegrationServiceConnector) => c.name).filter(Boolean).join(", ");
         platformCapabilitiesText += `\n\nINTEGRATION SERVICE:\n${is.connectors.length} connector(s) available but no active connections configured yet: ${connectorNames}.\nRecommend setting up Integration Service connections for any enterprise systems involved in this automation.`;
       }
     }
