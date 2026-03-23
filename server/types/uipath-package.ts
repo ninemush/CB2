@@ -54,6 +54,8 @@ export interface UiPathPackageInternal {
   targetFramework?: "Windows" | "Portable";
   isServerless?: boolean;
   autopilotEnabled?: boolean;
+  forceRebuild?: boolean;
+  complexityTier?: string;
 }
 
 export interface AgentSpec {

@@ -39,7 +39,7 @@ import archiver from "archiver";
   import { analyzeAndFix, setGovernancePolicies, type AnalysisReport } from "./workflow-analyzer";
   import { runQualityGate, formatQualityGateViolations, classifyQualityIssues, getBlockingFiles, hasOnlyWarnings, hasBlockingIssues, type QualityGateResult, type ClassifiedIssue } from "./uipath-quality-gate";
   import { escapeXml } from "./lib/xml-utils";
-  import { computePackageFingerprint } from "./lib/utils";
+  import { computePackageFingerprint, computeEnrichmentFingerprint, computeXamlFingerprint, computeQualityGateFingerprint } from "./lib/utils";
   import { scanXamlForRequiredPackages, classifyAutomationPattern, shouldUseReFramework, type AutomationPattern, ACTIVITY_NAME_ALIAS_MAP, normalizeActivityName } from "./uipath-activity-registry";
   import { filterBlockedActivitiesFromXaml } from "./uipath-activity-policy";
   import { catalogService, type ProcessType } from "./catalog/catalog-service";
@@ -660,8 +660,36 @@ export function resolveDependencies(
   return { deps, warnings };
 }
 
-type CachedBuild = {
+type CachedStageEnrichment = {
   fingerprint: string;
+  enrichment: EnrichmentResult | null;
+  treeEnrichment: TreeEnrichmentResult | null;
+  usedAIFallback: boolean;
+};
+
+type CachedStageXaml = {
+  fingerprint: string;
+  xamlEntries: { name: string; content: string }[];
+  gaps: XamlGap[];
+  usedPackages: string[];
+  dependencyMap: Record<string, string>;
+  archiveManifest: string[];
+  referencedMLSkillNames: string[];
+  projectJsonContent?: string;
+  configCsv?: string;
+  targetFramework?: string;
+  automationPattern?: string;
+  buffer: Buffer;
+};
+
+type CachedStageQualityGate = {
+  fingerprint: string;
+  qualityGatePassed: boolean;
+  qualityGateResult?: QualityGateResult;
+};
+
+type CachedBuild = {
+  overallFingerprint: string;
   version: string;
   buffer: Buffer;
   gaps: XamlGap[];
@@ -675,6 +703,10 @@ type CachedBuild = {
   referencedMLSkillNames?: string[];
   usedAIFallback?: boolean;
   projectJsonContent?: string;
+  stageEnrichment?: CachedStageEnrichment;
+  stageXaml?: CachedStageXaml;
+  stageQualityGate?: CachedStageQualityGate;
+  complexityTier?: string;
 };
 
 const packageBuildCache = new Map<string, CachedBuild>();
@@ -975,22 +1007,35 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
   let fingerprint: string | undefined;
   const buildCacheKey = ideaId ? `${ideaId}:${generationMode}` : undefined;
+  const forceRebuild = !!pkg.internal?.forceRebuild;
+  const tierStr: string | undefined = complexityTier || pkg.internal?.complexityTier || undefined;
+  const enrichmentFp = ideaId ? computeEnrichmentFingerprint(processNodes, processEdges, sddContent, orchestratorArtifacts, projectName, tierStr, pkg.workflows) : undefined;
+  let cachedEntry: CachedBuild | undefined;
   if (ideaId && buildCacheKey) {
-    fingerprint = computePackageFingerprint(pkg, sddContent, processNodes, processEdges, orchestratorArtifacts, UIPATH_PACKAGE_ALIAS_MAP);
-    const cached = packageBuildCache.get(buildCacheKey);
-    if (cached && cached.fingerprint === fingerprint && cached.version === version) {
-      if (!cached.qualityGatePassed) {
+    fingerprint = computePackageFingerprint(pkg, sddContent, processNodes, processEdges, orchestratorArtifacts, UIPATH_PACKAGE_ALIAS_MAP, tierStr);
+    cachedEntry = packageBuildCache.get(buildCacheKey);
+    if (forceRebuild) {
+      console.log(`[UiPath Cache] FORCE REBUILD requested for ${buildCacheKey} — bypassing all stage caches`);
+      packageBuildCache.delete(buildCacheKey);
+      cachedEntry = undefined;
+    } else if (cachedEntry && cachedEntry.overallFingerprint === fingerprint && cachedEntry.version === version) {
+      if (!cachedEntry.qualityGatePassed) {
         console.log(`[UiPath Cache] HIT for ${buildCacheKey} but quality gate was not passed — rebuilding`);
         packageBuildCache.delete(buildCacheKey);
+        cachedEntry = packageBuildCache.get(buildCacheKey);
       } else {
-        console.log(`[UiPath Cache] HIT for ${buildCacheKey} — skipping AI enrichment and XAML generation`);
-        return { buffer: cached.buffer, gaps: cached.gaps, usedPackages: cached.usedPackages, cacheHit: true, qualityGateResult: cached.qualityGateResult, xamlEntries: cached.xamlEntries, dependencyMap: cached.dependencyMap, archiveManifest: cached.archiveManifest, usedFallbackStubs: false, generationMode, referencedMLSkillNames: cached.referencedMLSkillNames || [], usedAIFallback: cached.usedAIFallback || false, projectJsonContent: cached.projectJsonContent };
+        console.log(`[UiPath Cache] FULL HIT for ${buildCacheKey} — all stages cached (enrichment, XAML, quality gate)`);
+        return { buffer: cachedEntry.buffer, gaps: cachedEntry.gaps, usedPackages: cachedEntry.usedPackages, cacheHit: true, qualityGateResult: cachedEntry.qualityGateResult, xamlEntries: cachedEntry.xamlEntries, dependencyMap: cachedEntry.dependencyMap, archiveManifest: cachedEntry.archiveManifest, usedFallbackStubs: false, generationMode, referencedMLSkillNames: cachedEntry.referencedMLSkillNames || [], usedAIFallback: cachedEntry.usedAIFallback || false, projectJsonContent: cachedEntry.projectJsonContent };
       }
-    }
-    if (cached && cached.fingerprint === fingerprint && cached.version !== version) {
-      console.log(`[UiPath Cache] PARTIAL HIT for ${buildCacheKey} — reusing enrichment, rebuilding with v${version}`);
+    } else if (cachedEntry) {
+      const enrichHit = cachedEntry.stageEnrichment && cachedEntry.stageEnrichment.fingerprint === enrichmentFp;
+      const reasons: string[] = [];
+      if (cachedEntry.overallFingerprint !== fingerprint) reasons.push("overall fingerprint changed");
+      if (cachedEntry.version !== version) reasons.push(`version changed (${cachedEntry.version} → ${version})`);
+      if (cachedEntry.complexityTier !== tierStr) reasons.push(`complexity tier changed (${cachedEntry.complexityTier || "none"} → ${tierStr || "none"})`);
+      console.log(`[UiPath Cache] PARTIAL for ${buildCacheKey} — ${reasons.join(", ")}${enrichHit ? "; enrichment stage still valid" : "; enrichment stage invalidated"}`);
     } else {
-      console.log(`[UiPath Cache] MISS for ${buildCacheKey}${cached ? " (fingerprint changed)" : " (no cache)"}`);
+      console.log(`[UiPath Cache] MISS for ${buildCacheKey} (no cache)`);
     }
   }
 
@@ -1008,16 +1053,20 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
   if (generationMode === "baseline_openable") {
     console.log(`[UiPath] baseline_openable mode — skipping AI enrichment, using flat scaffold`);
   } else {
-    const cachedEntry = buildCacheKey ? packageBuildCache.get(buildCacheKey) : undefined;
-    const canReuseEnrichment = cachedEntry && fingerprint && cachedEntry.fingerprint === fingerprint;
+    const canReuseEnrichment = !forceRebuild && cachedEntry?.stageEnrichment && enrichmentFp && cachedEntry.stageEnrichment.fingerprint === enrichmentFp;
     if (canReuseEnrichment) {
-      enrichment = cachedEntry.enrichment;
-      if (enrichment) {
-        console.log(`[UiPath] Reusing cached AI enrichment for ${ideaId} (${enrichment.nodes.length} nodes)`);
+      enrichment = cachedEntry!.stageEnrichment!.enrichment;
+      treeEnrichment = cachedEntry!.stageEnrichment!.treeEnrichment;
+      _usedAIFallback = cachedEntry!.stageEnrichment!.usedAIFallback;
+      if (enrichment || treeEnrichment) {
+        console.log(`[UiPath Cache] Enrichment cache HIT — enrichment fingerprint unchanged (reusing ${enrichment ? `legacy enrichment with ${enrichment.nodes.length} nodes` : "tree enrichment"})`);
       } else {
-        console.log(`[UiPath] Skipping AI enrichment for ${ideaId} (previously attempted, cached as null)`);
+        console.log(`[UiPath Cache] Enrichment cache HIT — previously attempted, cached as null`);
       }
-    } else if (processNodes.length > 0 && sddContent) {
+    } else if (cachedEntry?.stageEnrichment && enrichmentFp) {
+      console.log(`[UiPath Cache] Enrichment cache MISS — enrichment fingerprint changed`);
+    }
+    if (!canReuseEnrichment && processNodes.length > 0 && sddContent) {
       try {
         const isSimpleTier = complexityTier === "simple";
         const enrichmentLabel = isSimpleTier ? "single-pass" : "tree-based";
@@ -1112,6 +1161,113 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     referencedMLSkillNames: [],
   };
   console.log(`[UiPath] Automation pattern: ${automationPattern}, generationMode: ${generationMode}, useReFramework: ${useReFramework}, reason: ${modeConfig.reason}`);
+
+  if (!forceRebuild && cachedEntry && buildCacheKey) {
+    const _earlyMetaTarget = _metadataService.getStudioTarget();
+    const explicitFw = pkg.internal?.targetFramework;
+    const earlyIsServerless = explicitFw === "Portable" || !!pkg.internal?.isServerless || (!explicitFw && !!(_probeCacheSnapshot?.serverlessDetected) && !_probeCacheSnapshot?.flags?.hasUnattendedSlots);
+    const earlyTf: TargetFramework = _studioProfile ? _studioProfile.targetFramework : (_earlyMetaTarget?.targetFramework || (earlyIsServerless ? "Portable" : "Windows"));
+    const earlyTreeSpec = treeEnrichment?.status === "success" ? treeEnrichment.workflowSpec : null;
+    const earlyDepRes = resolveDependencies(pkg, _studioProfile, earlyTreeSpec, earlyTf as "Windows" | "Portable");
+    const currentDepMap = earlyDepRes.deps;
+    const xamlFpCheck = computeXamlFingerprint(enrichment, treeEnrichment, pkg, orchestratorArtifacts, generationMode, tierStr, currentDepMap, earlyTf);
+    const xamlStageHit = cachedEntry.stageXaml && cachedEntry.stageXaml.fingerprint === xamlFpCheck;
+    const versionMatch = cachedEntry.version === version;
+    if (xamlStageHit && !versionMatch) {
+      console.log(`[UiPath Cache] XAML cache HIT but version changed (${cachedEntry.version} → ${version}) — must rebuild archive with new version metadata`);
+    } else if (xamlStageHit) {
+      const qgFpCheck = computeQualityGateFingerprint(
+        cachedEntry.stageXaml!.xamlEntries,
+        cachedEntry.stageXaml!.projectJsonContent || "",
+        cachedEntry.stageXaml!.configCsv || "",
+        orchestratorArtifacts,
+        earlyTf,
+        tierStr,
+        automationPattern,
+      );
+      const qgStageHit = cachedEntry.stageQualityGate && cachedEntry.stageQualityGate.fingerprint === qgFpCheck && cachedEntry.stageQualityGate.qualityGatePassed;
+      if (qgStageHit) {
+        console.log(`[UiPath Cache] XAML cache HIT — XAML fingerprint unchanged (artifacts/enrichment stable)`);
+        console.log(`[UiPath Cache] Quality gate cache HIT — QG fingerprint unchanged (XAML + validation inputs stable)`);
+        console.log(`[UiPath Cache] All stages cached — returning cached result for ${buildCacheKey}`);
+        return {
+          buffer: cachedEntry.buffer,
+          gaps: cachedEntry.gaps,
+          usedPackages: cachedEntry.usedPackages,
+          cacheHit: true,
+          qualityGateResult: cachedEntry.qualityGateResult,
+          xamlEntries: cachedEntry.xamlEntries,
+          dependencyMap: cachedEntry.dependencyMap,
+          archiveManifest: cachedEntry.archiveManifest,
+          usedFallbackStubs: false,
+          generationMode,
+          referencedMLSkillNames: cachedEntry.referencedMLSkillNames || [],
+          usedAIFallback: cachedEntry.usedAIFallback || false,
+          projectJsonContent: cachedEntry.projectJsonContent,
+        };
+      } else {
+        const qgReason = !cachedEntry.stageQualityGate
+          ? "no cached QG stage"
+          : !cachedEntry.stageQualityGate.qualityGatePassed
+            ? "previous QG did not pass"
+            : "QG fingerprint changed";
+        console.log(`[UiPath Cache] XAML cache HIT — XAML fingerprint unchanged`);
+        console.log(`[UiPath Cache] Quality gate cache MISS — ${qgReason}; re-running quality gate with cached XAML`);
+        const cachedXaml = cachedEntry.stageXaml!;
+        const rerunQG = runQualityGate({
+          xamlEntries: cachedXaml.xamlEntries,
+          projectJsonContent: cachedXaml.projectJsonContent || "",
+          configData: cachedXaml.configCsv || "",
+          orchestratorArtifacts,
+          targetFramework: earlyTf as "Windows" | "Portable",
+          archiveManifest: cachedXaml.archiveManifest,
+          archiveContentHashes: {},
+          automationPattern: (cachedXaml.automationPattern || "attended") as AutomationPattern,
+        });
+        if (rerunQG.passed) {
+          console.log(`[UiPath Cache] Quality gate re-run PASSED — updating cache and returning cached XAML with fresh QG result`);
+          const freshQgFp = computeQualityGateFingerprint(
+            cachedXaml.xamlEntries,
+            cachedXaml.projectJsonContent || "",
+            cachedXaml.configCsv || "",
+            orchestratorArtifacts,
+            earlyTf,
+            tierStr,
+            automationPattern,
+          );
+          cachedEntry.qualityGatePassed = true;
+          cachedEntry.qualityGateResult = rerunQG;
+          cachedEntry.stageQualityGate = {
+            fingerprint: freshQgFp,
+            qualityGatePassed: true,
+            qualityGateResult: rerunQG,
+          };
+          return {
+            buffer: cachedXaml.buffer,
+            gaps: cachedXaml.gaps,
+            usedPackages: cachedXaml.usedPackages,
+            cacheHit: true,
+            qualityGateResult: rerunQG,
+            xamlEntries: cachedXaml.xamlEntries,
+            dependencyMap: cachedXaml.dependencyMap,
+            archiveManifest: cachedXaml.archiveManifest,
+            usedFallbackStubs: false,
+            generationMode,
+            referencedMLSkillNames: cachedXaml.referencedMLSkillNames || [],
+            usedAIFallback: cachedEntry.usedAIFallback || false,
+            projectJsonContent: cachedXaml.projectJsonContent,
+          };
+        } else {
+          console.log(`[UiPath Cache] Quality gate re-run FAILED (${rerunQG.summary?.totalErrors || 0} error(s)) — proceeding with full rebuild`);
+        }
+      }
+    } else {
+      const xamlReason = !cachedEntry.stageXaml ? "no cached XAML stage" : "XAML fingerprint changed (enrichment or pkg spec changed)";
+      console.log(`[UiPath Cache] XAML cache MISS — ${xamlReason}`);
+      console.log(`[UiPath Cache] Quality gate cache MISS — upstream XAML stage invalidated`);
+    }
+  }
+
   const queueName = enrichment?.reframeworkConfig?.queueName
     || orchestratorArtifacts?.queues?.[0]?.name
     || "TransactionQueue";
@@ -2853,8 +3009,54 @@ ${depEntries}
 
   if (buildCacheKey && fingerprint) {
     evictOldestCacheEntry();
-    packageBuildCache.set(buildCacheKey, { fingerprint, version, buffer, gaps: allGaps, usedPackages: allUsedPkgs, enrichment, qualityGatePassed: qualityGateResult.passed, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, referencedMLSkillNames: [...genCtx.referencedMLSkillNames], usedAIFallback: _usedAIFallback, projectJsonContent: finalProjectJsonStr });
-    console.log(`[UiPath Cache] Stored build for ${buildCacheKey} (${buffer.length} bytes, v${version})`);
+    const stageEnrichment: CachedStageEnrichment = {
+      fingerprint: enrichmentFp || fingerprint,
+      enrichment,
+      treeEnrichment,
+      usedAIFallback: _usedAIFallback,
+    };
+    const xamlFp = computeXamlFingerprint(enrichment, treeEnrichment, pkg, orchestratorArtifacts, generationMode, tierStr, finalDependencyMap, tf);
+    const stageXaml: CachedStageXaml = {
+      fingerprint: xamlFp,
+      xamlEntries: finalXamlEntries,
+      gaps: allGaps,
+      usedPackages: allUsedPkgs,
+      dependencyMap: finalDependencyMap,
+      archiveManifest: finalArchiveManifest,
+      referencedMLSkillNames: [...genCtx.referencedMLSkillNames],
+      projectJsonContent: finalProjectJsonStr,
+      configCsv: configCsv,
+      targetFramework: tf,
+      automationPattern,
+      buffer,
+    };
+    const qgFp = computeQualityGateFingerprint(finalXamlEntries, finalProjectJsonStr, configCsv, orchestratorArtifacts, tf, tierStr, automationPattern);
+    const stageQualityGate: CachedStageQualityGate = {
+      fingerprint: qgFp,
+      qualityGatePassed: qualityGateResult.passed,
+      qualityGateResult,
+    };
+    packageBuildCache.set(buildCacheKey, {
+      overallFingerprint: fingerprint,
+      version,
+      buffer,
+      gaps: allGaps,
+      usedPackages: allUsedPkgs,
+      enrichment,
+      qualityGatePassed: qualityGateResult.passed,
+      qualityGateResult,
+      xamlEntries: finalXamlEntries,
+      dependencyMap: finalDependencyMap,
+      archiveManifest: finalArchiveManifest,
+      referencedMLSkillNames: [...genCtx.referencedMLSkillNames],
+      usedAIFallback: _usedAIFallback,
+      projectJsonContent: finalProjectJsonStr,
+      stageEnrichment,
+      stageXaml,
+      stageQualityGate,
+      complexityTier: tierStr,
+    });
+    console.log(`[UiPath Cache] Stored build for ${buildCacheKey} (${buffer.length} bytes, v${version}) with per-stage fingerprints [enrichment=${stageEnrichment.fingerprint.slice(0, 8)}, xaml=${xamlFp.slice(0, 8)}, qg=${qgFp.slice(0, 8)}]`);
   }
   return { buffer, gaps: allGaps, usedPackages: allUsedPkgs, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, usedFallbackStubs: usedFallback, generationMode, referencedMLSkillNames: [...genCtx.referencedMLSkillNames], dependencyWarnings: dependencyWarnings.length > 0 ? dependencyWarnings : undefined, usedAIFallback: _usedAIFallback, outcomeReport, projectJsonContent: finalProjectJsonStr };
 }

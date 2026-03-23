@@ -634,6 +634,7 @@ export async function compilePackageFromSpecs(
     _accumulatedWarnings?: PipelineWarning[];
     runId?: string;
     complexityTier?: ComplexityTier;
+    forceRebuild?: boolean;
   },
 ): Promise<PipelineResult> {
   const ver = options?.version || computeVersion();
@@ -671,6 +672,9 @@ export async function compilePackageFromSpecs(
     let buildResult: BuildResult;
     try {
       const _pipelineProfile = catalogService.getStudioProfile();
+      if (options?.forceRebuild) {
+        enriched.internal.forceRebuild = true;
+      }
       buildResult = await buildNuGetPackage(enriched, ver, ideaId, mode, options?.onPipelineProgress ? (event) => {
         options.onPipelineProgress!(event);
       } : undefined, _pipelineProfile, options?.complexityTier);
@@ -1174,6 +1178,7 @@ export async function generateUiPathPackage(
     _accumulatedDowngrades?: DowngradeEvent[];
     _accumulatedWarnings?: PipelineWarning[];
     _usedAIFallback?: boolean;
+    forceRebuild?: boolean;
   },
 ): Promise<PipelineResult> {
   const ver = options?.version || computeVersion();
@@ -1182,6 +1187,7 @@ export async function generateUiPathPackage(
   const pipelineWarnings: PipelineWarning[] = options?._accumulatedWarnings ? [...options._accumulatedWarnings] : [];
   const downgrades: DowngradeEvent[] = options?._accumulatedDowngrades ? [...options._accumulatedDowngrades] : [];
   let usedAIFallback = options?._usedAIFallback || false;
+  const forceRebuild = options?.forceRebuild || false;
 
   const noop: PipelineProgressCallback = () => {};
   const tracker = new PipelineStageTracker(options?.onPipelineProgress || noop);
@@ -1193,7 +1199,10 @@ export async function generateUiPathPackage(
     const degradationKey = (downgrades.length > 0 || usedAIFallback) ? "degraded" : "clean";
     const cacheKey = `${ideaId}:${mode}:${mvMode}:${degradationKey}`;
     const cached = pipelineCache.get(cacheKey);
-    if (cached && cached.fingerprint === fp) {
+    if (forceRebuild) {
+      console.log(`[Pipeline Cache] FORCE REBUILD requested for ${cacheKey} — bypassing pipeline cache`);
+      pipelineCache.delete(cacheKey);
+    } else if (cached && cached.fingerprint === fp) {
       tracker.complete("decomposition", "Cache hit — serving cached result");
       tracker.cleanup();
       return cached;
@@ -1245,6 +1254,7 @@ export async function generateUiPathPackage(
         _accumulatedDowngrades: downgrades,
         _accumulatedWarnings: options?._accumulatedWarnings,
         complexityTier: complexity.tier,
+        forceRebuild,
       });
 
       return result;
@@ -1308,6 +1318,7 @@ export interface BuildPipelineOptions {
   onMetaValidation?: (event: MetaValidationEvent) => void;
   preloadedContext?: IdeaContext;
   version?: string;
+  forceRebuild?: boolean;
 }
 
 export async function runBuildPipeline(
@@ -1323,6 +1334,7 @@ export async function runBuildPipeline(
     onPipelineProgress: options?.onPipelineProgress,
     onMetaValidation: options?.onMetaValidation,
     preloadedContext: options?.preloadedContext,
+    forceRebuild: options?.forceRebuild,
   });
 }
 

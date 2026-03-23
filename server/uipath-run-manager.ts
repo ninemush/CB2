@@ -443,6 +443,7 @@ async function executeRun(
       generationMode: options?.generationMode,
       metaValidationMode: userMetaValidationMode,
       preloadedContext,
+      forceRebuild: options?.forceRegenerate,
     });
 
     console.log(`[RunManager] Run ${runId}: build pipeline phase completed — status: ${pipelineResult.status}`);
