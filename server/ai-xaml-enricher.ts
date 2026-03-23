@@ -496,7 +496,8 @@ export async function enrichWithAITree(
   orchestratorArtifacts: any,
   projectName: string,
   timeoutMs: number = 45000,
-  automationPattern?: AutomationPattern
+  automationPattern?: AutomationPattern,
+  skipRetry?: boolean,
 ): Promise<TreeEnrichmentResult | null> {
   try {
     const nodeDescriptions = nodes
@@ -628,6 +629,18 @@ Generate the hierarchical WorkflowSpec JSON tree. Use tryCatch nodes to wrap act
     let spec = await attemptTreeEnrichment();
 
     if (!spec) {
+      if (skipRetry) {
+        const allErrors = lastValidationErrors.length > 0
+          ? lastValidationErrors
+          : lastParseError ? [lastParseError] : ["Unknown validation failure"];
+        console.log(`[AI XAML Enricher Tree] First attempt failed and skipRetry=true — returning validation_failed status with ${allErrors.length} errors`);
+        return {
+          status: "validation_failed",
+          processType,
+          validationErrors: allErrors,
+        };
+      }
+
       const errorContext = lastValidationErrors.length > 0
         ? `IMPORTANT: Your previous response FAILED Zod schema validation with these specific errors:\n${lastValidationErrors.map((e, i) => `  ${i + 1}. ${e}`).join("\n")}\n\nFix these errors. The root must have 'name' (non-empty string), 'rootSequence' (object with kind='sequence', displayName, children array), and 'variables' (array). All nodes in children arrays must have a valid 'kind' field: activity, sequence, tryCatch, if, while, forEach, or retryScope.`
         : lastParseError

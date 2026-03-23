@@ -37,8 +37,10 @@ import {
   type GenerationMetrics,
   type EntryWorkflowMetadata,
 } from "./meta-validation";
+import { classifyComplexity, type ComplexityTier, type ComplexityClassification } from "./complexity-classifier";
 
 export type { GenerationMode };
+export type { ComplexityTier, ComplexityClassification };
 
 export interface MetaValidationEvent {
   status: string;
@@ -524,6 +526,7 @@ export async function generateWorkflowSpecs(
     onPipelineProgress?: PipelineProgressCallback;
     preloadedContext?: IdeaContext;
     runId?: string;
+    complexityTier?: ComplexityTier;
   },
 ): Promise<SpecGenerationResult> {
   const mode: GenerationMode = options?.generationMode || "full_implementation";
@@ -630,6 +633,7 @@ export async function compilePackageFromSpecs(
     _accumulatedDowngrades?: DowngradeEvent[];
     _accumulatedWarnings?: PipelineWarning[];
     runId?: string;
+    complexityTier?: ComplexityTier;
   },
 ): Promise<PipelineResult> {
   const ver = options?.version || computeVersion();
@@ -669,7 +673,7 @@ export async function compilePackageFromSpecs(
       const _pipelineProfile = catalogService.getStudioProfile();
       buildResult = await buildNuGetPackage(enriched, ver, ideaId, mode, options?.onPipelineProgress ? (event) => {
         options.onPipelineProgress!(event);
-      } : undefined, _pipelineProfile);
+      } : undefined, _pipelineProfile, options?.complexityTier);
     } catch (err) {
       if (err instanceof QualityGateError && mode === "full_implementation" && currentDowngradeAttempt < maxDowngradeAttempts) {
         const downgradeEvent: DowngradeEvent = {
@@ -1197,6 +1201,21 @@ export async function generateUiPathPackage(
     const workflowCount = (pkg as any).workflows?.length || 0;
     tracker.complete("decomposition", `Decomposed into ${workflowCount} workflow(s)`, { workflowCount });
 
+    const complexity = classifyComplexity(
+      pkg,
+      ctx.sdd?.content,
+      ctx.mapNodes,
+    );
+    tracker.start("complexity_classification", `Classifying process complexity`);
+    const complexityPath = complexity.streamlined ? "streamlined" : "full pipeline";
+    tracker.complete("complexity_classification", `Complexity: ${complexity.tier} (${complexityPath})`, {
+      complexityTier: complexity.tier,
+      complexityScore: complexity.score,
+      streamlined: complexity.streamlined,
+      reasons: complexity.reasons,
+    });
+    console.log(`[Pipeline] Complexity classification: tier=${complexity.tier}, score=${complexity.score}, streamlined=${complexity.streamlined}, reasons=${complexity.reasons.join("; ")}`);
+
     let specResult: SpecGenerationResult;
     try {
       specResult = await generateWorkflowSpecs(ideaId, pkg, {
@@ -1204,6 +1223,7 @@ export async function generateUiPathPackage(
         onProgress: options?.onProgress,
         onPipelineProgress: options?.onPipelineProgress,
         preloadedContext: ctx,
+        complexityTier: complexity.tier,
       });
     } catch (specErr) {
       throw specErr;
@@ -1224,6 +1244,7 @@ export async function generateUiPathPackage(
         _downgradeAttempt: options?._downgradeAttempt,
         _accumulatedDowngrades: downgrades,
         _accumulatedWarnings: options?._accumulatedWarnings,
+        complexityTier: complexity.tier,
       });
 
       return result;

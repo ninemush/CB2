@@ -1315,6 +1315,10 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           if (evt.stage === "complete" && evt.type === "completed") {
             setDeployPipelineComplete(true);
           }
+          if (evt.stage === "complexity_classification" && evt.type === "completed" && evt.context?.complexityTier) {
+            const pathLabel = evt.context.streamlined ? "streamlined" : "full pipeline";
+            setLiveStatus(`Generating package (${pathLabel})...`);
+          }
         }
         if (data.docProgress) {
           const docType = data.docProgress.docType || "PDD";

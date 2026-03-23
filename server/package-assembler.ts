@@ -47,6 +47,7 @@ import archiver from "archiver";
   import { validateWorkflowSpec as validateSpec, type SpecValidationReport } from "./catalog/spec-validator";
   import { UIPATH_PACKAGE_ALIAS_MAP, QualityGateError, isFrameworkAssembly, type UiPathConfig } from "./uipath-shared";
   import { metadataService as _metadataService } from "./catalog/metadata-service";
+  import type { ComplexityTier } from "./complexity-classifier";
 
 async function getProbeCache() {
   const { getProbeCache: _getProbeCache } = await import("./uipath-integration");
@@ -963,7 +964,7 @@ function buildDeterministicScaffold(
 
 
 
-export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1.0.0", ideaId?: string, generationMode: GenerationMode = "full_implementation", onProgress?: (event: { type: "started" | "heartbeat" | "completed" | "warning" | "failed"; stage: string; message: string }) => void, studioProfile?: StudioProfile | null): Promise<BuildResult> {
+export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1.0.0", ideaId?: string, generationMode: GenerationMode = "full_implementation", onProgress?: (event: { type: "started" | "heartbeat" | "completed" | "warning" | "failed"; stage: string; message: string }) => void, studioProfile?: StudioProfile | null, complexityTier?: ComplexityTier): Promise<BuildResult> {
   const _probeCacheSnapshot = await getProbeCache();
   const _studioProfile = studioProfile !== undefined ? studioProfile : catalogService.getStudioProfile();
   const projectName = (pkg.projectName || "Automation").replace(/\s+/g, "_");
@@ -1018,9 +1019,11 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
     } else if (processNodes.length > 0 && sddContent) {
       try {
-        console.log(`[UiPath] Requesting tree-based AI enrichment for ${processNodes.length} process nodes...`);
+        const isSimpleTier = complexityTier === "simple";
+        const enrichmentLabel = isSimpleTier ? "single-pass" : "tree-based";
+        console.log(`[UiPath] Requesting ${enrichmentLabel} AI enrichment for ${processNodes.length} process nodes${isSimpleTier ? " (simple tier — no retry)" : ""}...`);
         const treeHeartbeat = onProgress ? setInterval(() => {
-          onProgress({ type: "heartbeat", stage: "ai_enrichment", message: "AI is building the workflow tree structure — this may take a minute for complex processes..." });
+          onProgress({ type: "heartbeat", stage: "ai_enrichment", message: isSimpleTier ? "AI is generating workflow structure (streamlined)..." : "AI is building the workflow tree structure — this may take a minute for complex processes..." });
         }, 10000) : null;
         try {
           const treeResult = await enrichWithAITree(
@@ -1029,24 +1032,30 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
             sddContent,
             orchestratorArtifacts,
             projectName,
-            45000,
-            automationPattern
+            isSimpleTier ? 30000 : 45000,
+            automationPattern,
+            isSimpleTier,
           );
           if (treeResult && treeResult.status === "success") {
             treeEnrichment = treeResult;
             console.log(`[UiPath] Tree enrichment successful: "${treeResult.workflowSpec.name}", ${treeResult.workflowSpec.variables.length} variables`);
           } else if (treeResult && treeResult.status === "validation_failed") {
             const errorSummary = treeResult.validationErrors.join("; ");
-            console.log(`[UiPath] Tree enrichment validation failed after retry: ${errorSummary} — falling through to legacy/scaffold`);
+            console.log(`[UiPath] Tree enrichment validation failed${isSimpleTier ? " (no retry — simple tier)" : " after retry"}: ${errorSummary} — falling through to ${isSimpleTier ? "scaffold" : "legacy/scaffold"}`);
           }
         } finally {
           if (treeHeartbeat) clearInterval(treeHeartbeat);
         }
       } catch (err: any) {
-        console.log(`[UiPath] Tree enrichment error: ${err.message} — falling back to legacy/scaffold`);
+        console.log(`[UiPath] Tree enrichment error: ${err.message} — falling back to ${complexityTier === "simple" ? "scaffold" : "legacy/scaffold"}`);
       }
 
-      if (!treeEnrichment) {
+      if (!treeEnrichment && complexityTier === "simple") {
+        console.log(`[UiPath] Simple-tier process — skipping legacy AI enrichment fallback, using deterministic scaffold`);
+        const scaffold = buildDeterministicScaffold(processNodes, projectName, sddContent || undefined);
+        treeEnrichment = scaffold.treeEnrichment;
+        _usedAIFallback = scaffold.usedAIFallback;
+      } else if (!treeEnrichment) {
         try {
           console.log(`[UiPath] Falling back to legacy AI enrichment for ${processNodes.length} process nodes...`);
           const legacyHeartbeat = onProgress ? setInterval(() => {
