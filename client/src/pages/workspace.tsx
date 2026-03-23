@@ -1008,6 +1008,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const pddTriggeredRef = useRef(false);
   const sddTriggeredRef = useRef(false);
   const uipathTriggeredRef = useRef(false);
+  const pendingDocTriggerRef = useRef<"PDD" | "SDD" | null>(null);
   const generateDocRef = useRef<((type: "PDD" | "SDD") => void) | null>(null);
   const generateUiPathRef = useRef<((force?: boolean, source?: "chat" | "retry" | "approval" | "auto") => void) | null>(null);
   const generateToBeRef = useRef<(() => void) | null>(null);
@@ -1291,8 +1292,6 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           setClassifiedIntent(data.intentClassified);
         }
         if (data.done) {
-          isGeneratingDocRef.current = false;
-          generatingDocTypeRef.current = "";
           setStreamingMsg((prev) =>
             prev ? { ...prev, isStreaming: false } : prev
           );
@@ -1363,6 +1362,11 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             pddTriggeredRef.current = true;
             setTimeout(() => generateDocRef.current?.("PDD"), 500);
           }
+        }
+        if (data.docTrigger) {
+          const triggerType = data.docTrigger.type as "PDD" | "SDD";
+          console.log(`[DocTrigger] Server requested ${triggerType} generation via dedicated endpoint`);
+          pendingDocTriggerRef.current = triggerType;
         }
         if (data.transition) {
           queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
@@ -1495,12 +1499,6 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     } finally {
       setIsStreaming(false);
       abortControllerRef.current = null;
-      const wasGeneratingDoc = isGeneratingDocRef.current;
-      const isOwnGeneration = docGenIdRef.current === docGenIdAtStart;
-      if (isOwnGeneration && wasGeneratingDoc) {
-        isGeneratingDocRef.current = false;
-        generatingDocTypeRef.current = "";
-      }
       setDeployStep("");
       setPendingUserMsg(null);
       const finalContent = streamingMsgRef.current;
@@ -1515,10 +1513,16 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       }
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "artifacts"] });
 
-      if (isOwnGeneration && wasGeneratingDoc) {
-        stopDocStreaming({ force: true });
-      } else if (wasGeneratingDoc && isGeneratingDocRef.current && docGenIdRef.current === docGenIdAtStart) {
-        stopDocStreaming({ force: true });
+      stopDocStreaming({ force: true });
+
+      if (pendingDocTriggerRef.current) {
+        const pendingType = pendingDocTriggerRef.current;
+        pendingDocTriggerRef.current = null;
+        const triggerRef = pendingType === "PDD" ? pddTriggeredRef : sddTriggeredRef;
+        if (!triggerRef.current) {
+          triggerRef.current = true;
+          setTimeout(() => generateDocRef.current?.(pendingType), 300);
+        }
       }
 
       const isToBeRun = toBeGeneratingRef.current;
@@ -1707,7 +1711,11 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   }, [idea.id, idea.stage, isToBeRelatedMessage]);
 
   const generateDocument = useCallback(async (type: "PDD" | "SDD") => {
-    if (isGeneratingDoc || isStreaming) return;
+    if (isGeneratingDoc || isStreaming) {
+      const triggerRef = type === "PDD" ? pddTriggeredRef : sddTriggeredRef;
+      triggerRef.current = false;
+      return;
+    }
     startDocStreaming(type);
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => abortController.abort(), 180_000);

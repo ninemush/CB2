@@ -1010,15 +1010,56 @@ CRITICAL RULES:
 
       try { res.write(`data: ${JSON.stringify({ intentClassified: classifiedIntent })}\n\n`); } catch {}
 
-      let earlyDocType: "PDD" | "SDD" | null = null;
       if (chatApprovalDone) {
         console.log(`[Chat] ${approvalIntent} approved via chat — skipping inline doc generation (client auto-chain will handle next step)`);
       } else if (classifiedIntent === "PDD" || classifiedIntent === "PDD_SDD") {
-        earlyDocType = "PDD";
-        try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "PDD" } })}\n\n`); } catch {}
+        const toBeApproval = await processMapStorage.getApproval(ideaId, "to-be");
+        if (!toBeApproval) {
+          const gateMsg = "The PDD (Process Design Document) can only be generated after the To-Be process map has been approved. Please review and approve the To-Be map first, then the PDD will be generated automatically.";
+          await chatStorage.createMessage(ideaId, "assistant", gateMsg);
+          try {
+            res.write(`data: ${JSON.stringify({ token: gateMsg })}\n\n`);
+            res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+          } catch {}
+          if (heartbeat) clearInterval(heartbeat);
+          res.end();
+          return;
+        }
+        console.log(`[Chat] PDD generation requested — delegating to dedicated endpoint via docTrigger`);
+        const confirmMsg = "Starting PDD generation...";
+        await chatStorage.createMessage(ideaId, "assistant", confirmMsg);
+        try {
+          res.write(`data: ${JSON.stringify({ token: confirmMsg })}\n\n`);
+          res.write(`data: ${JSON.stringify({ docTrigger: { type: "PDD" } })}\n\n`);
+          res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        } catch {}
+        if (heartbeat) clearInterval(heartbeat);
+        res.end();
+        return;
       } else if (classifiedIntent === "SDD") {
-        earlyDocType = "SDD";
-        try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "SDD" } })}\n\n`); } catch {}
+        const pddApprovalGate = await documentStorage.getApproval(ideaId, "PDD");
+        if (!pddApprovalGate) {
+          const gateMsg = "The SDD (Solution Design Document) can only be generated after the PDD has been approved. Please review and approve the PDD first, then the SDD will be generated automatically.";
+          await chatStorage.createMessage(ideaId, "assistant", gateMsg);
+          try {
+            res.write(`data: ${JSON.stringify({ token: gateMsg })}\n\n`);
+            res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+          } catch {}
+          if (heartbeat) clearInterval(heartbeat);
+          res.end();
+          return;
+        }
+        console.log(`[Chat] SDD generation requested — delegating to dedicated endpoint via docTrigger`);
+        const confirmMsg = "Starting SDD generation...";
+        await chatStorage.createMessage(ideaId, "assistant", confirmMsg);
+        try {
+          res.write(`data: ${JSON.stringify({ token: confirmMsg })}\n\n`);
+          res.write(`data: ${JSON.stringify({ docTrigger: { type: "SDD" } })}\n\n`);
+          res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        } catch {}
+        if (heartbeat) clearInterval(heartbeat);
+        res.end();
+        return;
       } else if (classifiedIntent === "UIPATH_GEN") {
         try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "UiPath" } })}\n\n`); } catch {}
       } else if (classifiedIntent === "DEPLOY") {
@@ -1178,12 +1219,6 @@ CRITICAL RULES:
       } else if (chatApprovalDone && approvalIntent) {
         const nextStep = approvalIntent === "PDD" ? "I'll now generate the SDD." : approvalIntent === "SDD" ? "I'll now generate the UiPath automation package." : "";
         intentOverride = `\n\nAPPROVAL CONFIRMATION DIRECTIVE: The ${approvalIntent} has just been approved via the user's chat message. Respond with a brief confirmation (1-3 sentences). You MUST include the exact phrase "${approvalIntent} approved" in your response. ${nextStep} Do NOT generate any documents or use [DOC:] tags in this response — the next step will be triggered automatically. IMPORTANT: You MUST NOT generate an SDD or PDD or any document in this response. Only confirm the approval. The client will handle the next step.`;
-      } else if (classifiedIntent === "PDD") {
-        intentOverride = "\n\nDOCUMENT GENERATION DIRECTIVE: The user is requesting a PDD (Process Design Document). You MUST generate a PDD using the [DOC:PDD:0] tag. Do NOT generate an SDD. Start your response with [DOC:PDD:0] followed by the full PDD content.";
-      } else if (classifiedIntent === "SDD") {
-        intentOverride = "\n\nDOCUMENT GENERATION DIRECTIVE: The user is requesting an SDD (Solution Design Document). You MUST generate an SDD using the [DOC:SDD:0] tag. Do NOT generate a PDD. Start your response with [DOC:SDD:0] followed by the full SDD content.";
-      } else if (classifiedIntent === "PDD_SDD") {
-        intentOverride = "\n\nDOCUMENT GENERATION DIRECTIVE: The user is requesting both PDD and SDD. Per the pipeline sequence, the PDD must be generated and approved first. Generate the PDD NOW using [DOC:PDD:0]. The SDD will be generated separately after PDD approval. Start your response with [DOC:PDD:0] followed by the full PDD content. Do NOT generate an SDD in this response.";
       } else if (classifiedIntent === "DEPLOY") {
         intentOverride = "\n\nDEPLOYMENT DIRECTIVE: The user is requesting deployment to UiPath Orchestrator. Proceed with the deployment flow.";
         try { res.write(`data: ${JSON.stringify({ deployStatus: "Planning deployment..." })}\n\n`); } catch {}
@@ -1287,9 +1322,8 @@ CRITICAL RULES:
 
       let fullResponse = "";
       let stopReason = "";
-      let docProgressDocType: "PDD" | "SDD" | null = earlyDocType;
-      let docProgressStarted = earlyDocType !== null;
-      let expectSddAfterPdd = classifiedIntent === "PDD_SDD";
+      let docProgressDocType: "PDD" | "SDD" | null = null;
+      let docProgressStarted = false;
       let lastEmittedSectionNumber = -1;
 
       for await (const event of stream) {
@@ -1324,12 +1358,6 @@ CRITICAL RULES:
                 console.log(`[Chat] Detected inline PDD generation (no [DOC:] tag) — enabling doc progress`);
               }
             }
-          } else if (expectSddAfterPdd && docProgressDocType === "PDD" && /\[DOC:SDD:/.test(fullResponse)) {
-            docProgressDocType = "SDD";
-            lastEmittedSectionNumber = -1;
-            expectSddAfterPdd = false;
-            try { res.write(`data: ${JSON.stringify({ docProgress: { started: true, docType: "SDD" } })}\n\n`); } catch { /* ignore */ }
-            console.log(`[Chat] Switched doc progress indicator from PDD to SDD (PDD_SDD flow)`);
           }
 
           if (docProgressStarted && docProgressDocType) {
@@ -1362,10 +1390,6 @@ CRITICAL RULES:
             .replace(/\[STAGE_BACK:\s*[^\]]+\]/g, "")
             .replace(/\[AUTOMATION_TYPE:\s*[^\]]+\]/gi, "")
             .trim();
-          const disconnectDocTag = disconnectResponse.match(/^\[DOC:(PDD|SDD):\d+\]/);
-          if (disconnectDocTag) {
-            disconnectResponse = disconnectResponse.slice(disconnectDocTag[0].length).trim();
-          }
           if (disconnectResponse.length > 0) {
             await chatStorage.createMessage(ideaId, "assistant", disconnectResponse);
           }
@@ -1373,73 +1397,8 @@ CRITICAL RULES:
         return;
       }
 
-      const isDocResponse = /^\[DOC:(PDD|SDD):\d+\]/.test(fullResponse.trim()) ||
-        (fullResponse.length > 2000 && /## \d+\.\s/.test(fullResponse) &&
-          (/Executive Summary/.test(fullResponse) || /orchestrator_artifacts/.test(fullResponse)));
-
-      if (isDocResponse && (stopReason === "max_tokens" || fullResponse.length > 7500)) {
-        const trimmed = fullResponse.trimEnd();
-        const looksIncomplete = stopReason === "max_tokens" || (
-          !trimmed.endsWith("---") &&
-          !trimmed.endsWith("```") &&
-          !trimmed.endsWith("---\n")
-        );
-
-        if (looksIncomplete) {
-          console.log(`[Chat] Document appears truncated (stopReason=${stopReason}, len=${fullResponse.length}). Auto-continuing...`);
-          res.write(`data: ${JSON.stringify({ token: "\n\n*[Continuing document generation...]*\n\n" })}\n\n`);
-
-          const continueMessages = [
-            ...chatMessages,
-            { role: "assistant" as const, content: fullResponse },
-            { role: "user" as const, content: "Continue exactly where you left off. Do NOT repeat any content already generated. Do NOT add a new document tag. Just continue the remaining sections seamlessly." },
-          ];
-
-          try {
-            const contStream = getLLM().stream({
-              maxTokens: 8192,
-              system: systemPrompt,
-              messages: continueMessages,
-            });
-            let continuation = "";
-            for await (const evt of contStream) {
-              if (clientDisconnected) {
-                console.log(`[Chat] Client disconnected during continuation — aborting`);
-                contStream.abort();
-                break;
-              }
-              if (evt.type === "text_delta" && evt.text) {
-                const text = evt.text;
-                continuation += text;
-                try { res.write(`data: ${JSON.stringify({ token: text })}\n\n`); } catch { break; }
-
-                if (docProgressStarted && docProgressDocType) {
-                  const combinedText = fullResponse + "\n" + continuation;
-                  const contSectionRe = /## (?:(\d+)[\.\)]\s+)?([^\n]+)/g;
-                  let csMatch: RegExpExecArray | null;
-                  let contHighest = lastEmittedSectionNumber;
-                  while ((csMatch = contSectionRe.exec(combinedText)) !== null) {
-                    const sectionNumber = csMatch[1] ? parseInt(csMatch[1], 10) : (contHighest + 1);
-                    contHighest = Math.max(contHighest, sectionNumber);
-                    if (sectionNumber > lastEmittedSectionNumber) {
-                      lastEmittedSectionNumber = sectionNumber;
-                      const sectionName = csMatch[2].trim();
-                      try { res.write(`data: ${JSON.stringify({ docProgress: { section: sectionName, sectionNumber, docType: docProgressDocType } })}\n\n`); } catch { /* ignore */ }
-                    }
-                  }
-                }
-              }
-            }
-            fullResponse += "\n" + continuation;
-            console.log(`[Chat] Continuation added ${continuation.length} chars. Total doc: ${fullResponse.length} chars.`);
-          } catch (contErr: any) {
-            console.error(`[Chat] Continuation failed:`, contErr?.message);
-          }
-        }
-      }
-
       const isMapResponse = /\[STEP:\s*\d/.test(fullResponse);
-      if (!isDocResponse && isMapResponse && stopReason === "max_tokens") {
+      if (isMapResponse && stopReason === "max_tokens") {
         const MAX_MAP_CONTINUATIONS = 3;
         let mapContRound = 0;
         let contStopReason = stopReason;
@@ -1491,12 +1450,6 @@ CRITICAL RULES:
         .replace(/\[STAGE_BACK:\s*[^\]]+\]/g, "")
         .replace(/\[AUTOMATION_TYPE:\s*[^\]]+\]/gi, "")
         .trim();
-
-      const docTagMatch = cleanedResponse.match(/^\[DOC:(PDD|SDD):\d+\]/);
-      if (docTagMatch) {
-        cleanedResponse = cleanedResponse.slice(docTagMatch[0].length).trim();
-        console.log(`[Chat] Stripped inline doc tag from chat response — document generation is handled by the dedicated endpoint`);
-      }
 
       let savedStreamMsgId: number | null = null;
       const isDeployOnly = fullResponse.includes("[DEPLOY_UIPATH]") && cleanedResponse.replace(/\s+/g, "").length < 10;
