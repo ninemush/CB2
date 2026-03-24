@@ -486,6 +486,7 @@ function buildDhgFromBuildResult(
     automationType: ctx.idea.automationType as "rpa" | "agent" | "hybrid" || undefined,
     analysisReports,
     outcomeReport: buildResult.outcomeReport,
+    xamlContents: xamlEntries.map(e => e.content),
   });
 
   let dhgContent = legacyDhgContent;

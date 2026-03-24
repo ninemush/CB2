@@ -1683,23 +1683,27 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
     }
 
-    for (const wf of workflows) {
-      const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
-      if (generatedWorkflowNames.has(wfName)) continue;
-      const result = tryGenerateOrStub(
-        () => generateRichXamlFromSpec(wf, sddContent || undefined, undefined, tf, apEnabled, genCtx),
-        wfName,
-        wf.name || "Workflow",
-      );
-      if (result) {
-        xamlResults.push(result);
-        deferredWrites.set(`${libPath}/${wfName}.xaml`, compliancePass(result.xaml, `${wfName}.xaml`));
-        generatedWorkflowNames.add(wfName);
-        if (wfName === "Main") hasMain = true;
-        console.log(`[UiPath] Generated rich XAML for "${wfName}": ${result.gaps.length} gaps, ${result.usedPackages.length} packages`);
-      } else if (wfName === "Main") {
-        hasMain = true;
+    if (!treeEnrichment) {
+      for (const wf of workflows) {
+        const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
+        if (generatedWorkflowNames.has(wfName)) continue;
+        const result = tryGenerateOrStub(
+          () => generateRichXamlFromSpec(wf, sddContent || undefined, undefined, tf, apEnabled, genCtx),
+          wfName,
+          wf.name || "Workflow",
+        );
+        if (result) {
+          xamlResults.push(result);
+          deferredWrites.set(`${libPath}/${wfName}.xaml`, compliancePass(result.xaml, `${wfName}.xaml`));
+          generatedWorkflowNames.add(wfName);
+          if (wfName === "Main") hasMain = true;
+          console.log(`[UiPath] Generated rich XAML for "${wfName}": ${result.gaps.length} gaps, ${result.usedPackages.length} packages`);
+        } else if (wfName === "Main") {
+          hasMain = true;
+        }
       }
+    } else {
+      console.log(`[UiPath] Skipping workflows loop: tree-assembly produced monolithic XAML — suppressing modular sub-workflow emission to avoid orphaned files`);
     }
 
     if (!hasMain && processNodes.length > 0 && !enrichment?.decomposition?.length && !treeEnrichment) {
@@ -3033,6 +3037,13 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
     }
 
+    const xamlContentsForDhg: string[] = [];
+    Array.from(deferredWrites.entries()).forEach(([path, content]) => {
+      if (path.endsWith(".xaml")) {
+        xamlContentsForDhg.push(content);
+      }
+    });
+
     const dhg = generateDeveloperHandoffGuide({
       projectName,
       description: pkg.description || "",
@@ -3053,6 +3064,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       generationModeReason: modeConfig.reason,
       qualityIssues: collectedQualityIssues,
       stubbedWorkflows: earlyStubFallbacks.length > 0 ? earlyStubFallbacks : undefined,
+      xamlContents: xamlContentsForDhg,
     });
     archive.append(dhg, { name: `${libPath}/DeveloperHandoffGuide.md` });
     console.log(`[UiPath] Generated Developer Handoff Guide: ${allGaps.length} gaps, ~${(allGaps.reduce((s: number, g: XamlGap) => s + g.estimatedMinutes, 0) / 60).toFixed(1)}h effort, REFramework=${useReFramework}`);

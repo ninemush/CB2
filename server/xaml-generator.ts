@@ -2865,8 +2865,15 @@ ${isCrossPlatform ? "<!-- Cross-Platform (Portable) — KillProcess not availabl
 
 export function aggregateGaps(results: XamlGeneratorResult[]): XamlGap[] {
   const all: XamlGap[] = [];
+  const seen = new Set<string>();
   for (const r of results) {
-    all.push(...r.gaps);
+    for (const gap of r.gaps) {
+      const key = `${gap.category}::${gap.activity}::${gap.description}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        all.push(gap);
+      }
+    }
   }
   return all;
 }
@@ -2926,6 +2933,7 @@ export type DhgOptions = {
   qualityIssues?: DhgQualityIssue[];
   stubbedWorkflows?: string[];
   outcomeReport?: PipelineOutcomeReport;
+  xamlContents?: string[];
 };
 
 export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
@@ -2945,6 +2953,7 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
     automationType,
     targetFramework,
     autopilotEnabled,
+    xamlContents,
   } = opts;
 
   const selectorGaps = gaps.filter((g) => g.category === "selector");
@@ -3167,7 +3176,16 @@ export function generateDeveloperHandoffGuide(opts: DhgOptions): string {
     }
   }
 
-  const totalActivityCount = enrichment?.nodes?.reduce((s, n) => s + (n.activities?.length || 0), 0) ?? 0;
+  let totalActivityCount = 0;
+  if (xamlContents && xamlContents.length > 0) {
+    const activityPattern = /<ui:\w+/g;
+    for (const content of xamlContents) {
+      const matches = content.match(activityPattern);
+      if (matches) totalActivityCount += matches.length;
+    }
+  } else {
+    totalActivityCount = enrichment?.nodes?.reduce((s, n) => s + (n.activities?.length || 0), 0) ?? 0;
+  }
 
   sectionNum++;
   md += `## ${sectionNum}. Tier 1 — AI Completed (No Human Action Required)\n\n`;
