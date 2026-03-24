@@ -3,7 +3,7 @@ import { processMapStorage } from "./process-map-storage";
 import { documentStorage } from "./document-storage";
 import { storage } from "./storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
-import { evaluateTransition } from "./stage-transition";
+import { cascadeInvalidateAndTransition } from "./cascade-invalidation";
 import { renderProcessMapImage } from "./process-map-renderer";
 import { z } from "zod";
 import { db } from "./db";
@@ -931,27 +931,15 @@ export function registerProcessMapRoutes(app: Express): void {
       invalidated: false,
     });
 
-    if (viewType === "as-is") {
-      if (existingApproval) {
-        await processMapStorage.invalidateApprovals(ideaId, "to-be", "As-Is map was re-approved (v" + nextVersion + ")");
-        await processMapStorage.invalidateApprovals(ideaId, "sdd", "As-Is map was re-approved (v" + nextVersion + ")");
-        await processMapStorage.clearAllForView(ideaId, "to-be");
-        await processMapStorage.clearAllForView(ideaId, "sdd");
-        try { await documentStorage.deleteApproval(ideaId, "PDD"); } catch {}
-        try { await documentStorage.deleteApproval(ideaId, "SDD"); } catch {}
-        try { await storage.updateIdea(ideaId, { automationType: null, automationTypeRationale: null }); } catch {}
-        console.log(`[ProcessMap] Cascade invalidation: As-Is v${nextVersion} invalidated feasibility, To-Be, PDD, SDD for idea=${ideaId}`);
-      }
-
-    }
-
-    if (viewType === "to-be" && existingApproval) {
-      await processMapStorage.invalidateApprovals(ideaId, "sdd", "To-Be map was re-approved (v" + nextVersion + ")");
-      await processMapStorage.clearAllForView(ideaId, "sdd");
-      try { await documentStorage.deleteApproval(ideaId, "PDD"); } catch {}
-      try { await documentStorage.deleteApproval(ideaId, "SDD"); } catch {}
-      console.log(`[ProcessMap] Cascade invalidation: To-Be v${nextVersion} invalidated PDD, SDD for idea=${ideaId}`);
-    }
+    await cascadeInvalidateAndTransition(
+      ideaId,
+      viewType as "as-is" | "to-be",
+      existingApproval,
+      nextVersion,
+      req.session.userId!,
+      user.displayName,
+      (req.session.activeRole || user.role) as string
+    );
 
     const isReapproval = existingApproval != null;
     let nextAction: string | undefined;
@@ -975,17 +963,6 @@ export function registerProcessMapRoutes(app: Express): void {
       );
     }
 
-    try {
-      await evaluateTransition(
-        ideaId,
-        req.session.userId!,
-        user.displayName,
-        (req.session.activeRole || user.role) as string
-      );
-    } catch (transErr: any) {
-      console.error("[ProcessMap] Transition evaluation failed:", transErr?.message);
-    }
-
-    return res.status(201).json({ ...approval, nextAction });
+    return res.status(201).json({ ...approval, nextAction, isReapproval });
   });
 }

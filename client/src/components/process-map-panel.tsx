@@ -552,7 +552,7 @@ function filterNodesForLevel(
 interface ProcessMapPanelProps {
   ideaId: string;
   onStepsChange?: (count: number) => void;
-  onApproved?: (approvedView?: string) => void;
+  onApproved?: (approvedView?: string, isReapproval?: boolean) => void;
   onCompletenessChange?: (pct: number) => void;
   onViewChange?: (view: ProcessView) => void;
   onSwitchViewReady?: (fn: (view: ProcessView) => void) => void;
@@ -3109,12 +3109,12 @@ export default function ProcessMapPanel({ ideaId, onStepsChange, onApproved, onC
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "process-map"] });
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "process-approval-history"] });
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "messages"] });
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "approval-summary"] });
-      onApproved?.(activeView);
+      onApproved?.(activeView, !!data?.isReapproval);
     },
   });
 

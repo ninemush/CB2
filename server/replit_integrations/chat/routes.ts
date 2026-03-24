@@ -4,6 +4,7 @@ import { storage } from "../../storage";
 import { documentStorage } from "../../document-storage";
 import { processMapStorage } from "../../process-map-storage";
 import { evaluateTransition } from "../../stage-transition";
+import { cascadeInvalidateAndTransition } from "../../cascade-invalidation";
 import { approveDocument } from "../../document-service";
 import { PIPELINE_STAGES, type PipelineStage, type AutomationType } from "@shared/schema";
 import { probeServiceAvailability, type ServiceAvailabilityMap, type IntegrationServiceConnection, type IntegrationServiceConnector, type ConnectorOperation } from "../../uipath-integration";
@@ -830,23 +831,6 @@ export function registerChatRoutes(app: Express): void {
                 await processMapStorage.invalidateApprovals(ideaId, viewToApprove, `Superseded by chat approval`);
               }
 
-              if (viewToApprove === "as-is" && existingApproval) {
-                await processMapStorage.invalidateApprovals(ideaId, "to-be", "As-Is map was re-approved via chat");
-                await processMapStorage.invalidateApprovals(ideaId, "sdd", "As-Is map was re-approved via chat");
-                await processMapStorage.clearAllForView(ideaId, "to-be");
-                await processMapStorage.clearAllForView(ideaId, "sdd");
-                try { await documentStorage.deleteApproval(ideaId, "PDD"); } catch {}
-                try { await documentStorage.deleteApproval(ideaId, "SDD"); } catch {}
-                try { await storage.updateIdea(ideaId, { automationType: null, automationTypeRationale: null }); } catch {}
-                console.log(`[Chat] Cascade invalidation: As-Is re-approved via chat, invalidated feasibility, To-Be, PDD, SDD for idea=${ideaId}`);
-              }
-
-              if (viewToApprove === "to-be" && existingApproval) {
-                try { await documentStorage.deleteApproval(ideaId, "PDD"); } catch {}
-                try { await documentStorage.deleteApproval(ideaId, "SDD"); } catch {}
-                console.log(`[Chat] Cascade invalidation: To-Be re-approved via chat, invalidated PDD, SDD for idea=${ideaId}`);
-              }
-
               const nextVersion = await processMapStorage.getNextVersion(ideaId, viewToApprove);
               const snapshot = JSON.stringify({ nodes, edges });
               await processMapStorage.createApproval({
@@ -859,6 +843,16 @@ export function registerChatRoutes(app: Express): void {
                 snapshotJson: snapshot,
                 invalidated: false,
               });
+              await cascadeInvalidateAndTransition(
+                ideaId,
+                viewToApprove,
+                existingApproval,
+                nextVersion,
+                req.session.userId!,
+                user.displayName,
+                (req.session.activeRole || user.role) as string
+              );
+
               mapApprovalViews.push(viewToApprove);
               console.log(`[Chat] ${viewToApprove} map approved via chat by ${user.displayName} (v${nextVersion})`);
 
@@ -878,7 +872,7 @@ export function registerChatRoutes(app: Express): void {
               res.setHeader("Cache-Control", "no-cache");
               res.setHeader("Connection", "keep-alive");
               res.flushHeaders();
-              res.write(`data: ${JSON.stringify({ mapApproval: { views: mapApprovalViews, nextAction: mapApprovalNextAction } })}\n\n`);
+              res.write(`data: ${JSON.stringify({ mapApproval: { views: mapApprovalViews, nextAction: mapApprovalNextAction, isReapproval: !!existingApproval } })}\n\n`);
             }
           }
         } catch (mapApprovalErr: any) {
