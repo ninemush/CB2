@@ -232,7 +232,11 @@ async function executeRun(
     });
 
     if (callbacks?.onPipelineEvent) {
-      try { callbacks.onPipelineEvent(event); } catch {}
+      try {
+        callbacks.onPipelineEvent(event);
+      } catch (cbErr: any) {
+        console.error(`[Observer] pipelineProgressCallback: onPipelineEvent callback error for runId=${runId}:`, cbErr?.message || cbErr);
+      }
     }
 
     const isSpecStage = event.stage?.startsWith("spec_");
@@ -725,6 +729,7 @@ export function createObserverRun(runId: string, ideaId: string, source: "chat" 
   entry.emitter.setMaxListeners(20);
   observerRuns.set(runId, entry);
   latestObserverRunByIdea.set(ideaId, runId);
+  console.log(`[Observer] createObserverRun: runId=${runId}, ideaId=${ideaId}, source=${source}`);
   return { ...state };
 }
 
@@ -741,14 +746,17 @@ export function getLatestObserverRun(ideaId: string): ObserverRunState | null {
 
 export function emitObserverProgress(runId: string, message: string): void {
   const entry = observerRuns.get(runId);
-  if (!entry) return;
+  if (!entry) {
+    console.warn(`[Observer] emitObserverProgress: observer run ${runId} not found — event dropped`);
+    return;
+  }
   entry.state.phaseProgress = message;
   entry.state.updatedAt = Date.now();
   emitObserverEvent(runId, { type: "progress", data: { progress: message }, timestamp: Date.now() });
 }
 
 export function emitObserverPipelineEvent(runId: string, evt: PipelineProgressEvent): void {
-  console.log(`[ObserverPipeline] Emitting pipeline event: stage=${evt.stage}, type=${evt.type}, run=${runId}`);
+  console.log(`[Observer] emitObserverPipelineEvent: runId=${runId}, stage=${evt.stage}, type=${evt.type}`);
   emitObserverEvent(runId, { type: "pipeline", data: { pipelineEvent: evt }, timestamp: Date.now() });
 }
 
@@ -799,27 +807,37 @@ export function isObserverRunCancelled(runId: string): boolean {
 
 function emitObserverEvent(runId: string, event: ObserverRunEvent): void {
   const entry = observerRuns.get(runId);
-  if (!entry) return;
+  if (!entry) {
+    console.warn(`[Observer] emitObserverEvent: observer run ${runId} not found — ${event.type} event dropped`);
+    return;
+  }
   entry.events.push(event);
+  const listenerCount = entry.emitter.listenerCount("event");
+  console.log(`[Observer] emitObserverEvent: runId=${runId}, type=${event.type}, totalStored=${entry.events.length}, liveListeners=${listenerCount}`);
   entry.emitter.emit("event", event);
 }
 
 export function subscribeToObserverRun(runId: string, onEvent: (event: ObserverRunEvent) => void, replayAll?: boolean): () => void {
   const entry = observerRuns.get(runId);
   if (!entry) {
+    console.warn(`[Observer] subscribeToObserverRun: observer run ${runId} not found`);
     onEvent({ type: "error", data: { error: "Run not found" }, timestamp: Date.now() });
     return () => {};
   }
 
   if (replayAll) {
-    console.log(`[ObserverSubscribe] Replaying ${entry.events.length} events for run=${runId}`);
+    console.log(`[Observer] subscribeToObserverRun: replaying ${entry.events.length} stored events for runId=${runId}`);
     for (const evt of entry.events) {
       onEvent(evt);
     }
   }
 
-  const handler = (evt: ObserverRunEvent) => onEvent(evt);
+  const handler = (evt: ObserverRunEvent) => {
+    console.log(`[Observer] subscribeToObserverRun: live event type=${evt.type} for runId=${runId}`);
+    onEvent(evt);
+  };
   entry.emitter.on("event", handler);
+  console.log(`[Observer] subscribeToObserverRun: live listener attached for runId=${runId}, totalListeners=${entry.emitter.listenerCount("event")}`);
 
   return () => {
     entry.emitter.off("event", handler);

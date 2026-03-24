@@ -145,7 +145,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
 
     if (data.pipelineEvent) {
       const evt = data.pipelineEvent;
-      console.log(`[useUiPathRun] Pipeline event received: stage=${evt.stage}, type=${evt.type}, message=${evt.message}`);
+      console.log(`[useUiPathRun] pipelineEvent received: stage=${evt.stage}, type=${evt.type}, message=${evt.message}, runId=${runId}`);
       pipelineEntryCounter.current++;
       setPipelineLogEntries(prev => [...prev, {
         id: `pe-${pipelineEntryCounter.current}`,
@@ -259,6 +259,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
     }
 
     if (data.done) {
+      console.log(`[useUiPathRun] done event received: runId=${runId}, status=${data.status}`);
       setPipelineComplete(true);
       const finalRun = currentRunRef.current;
       if (finalRun && finalRun.runId === runId) {
@@ -308,7 +309,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
     abortControllerRef.current = controller;
 
     const url = `/api/ideas/${ideaId}/uipath-runs/${runId}/stream${replay ? "?replay=true" : ""}`;
-    console.log(`[useUiPathRun] Subscribing to SSE stream: ${url}`);
+    console.log(`[useUiPathRun] subscribing to SSE stream: runId=${runId}, replay=${!!replay}, url=${url}`);
     fetch(url, { credentials: "include", signal: controller.signal })
       .then(async (res) => {
         if (!res.ok) {
@@ -316,8 +317,10 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
           finishRun();
           return;
         }
+        console.log(`[useUiPathRun] SSE stream connected: runId=${runId}`);
         const reader = res.body?.getReader();
         if (!reader) {
+          console.error("[useUiPathRun] SSE stream has no readable body");
           finishRun();
           return;
         }
@@ -334,7 +337,9 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
               try {
                 const data = JSON.parse(line.slice(6));
                 processSSEData(data, runId);
-              } catch {}
+              } catch (parseErr) {
+                console.error("[useUiPathRun] SSE parse error:", parseErr, "raw:", line.slice(6, 200));
+              }
             }
           }
         }

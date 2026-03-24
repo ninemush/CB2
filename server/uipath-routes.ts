@@ -2257,6 +2257,8 @@ export function registerUiPathRoutes(app: Express): void {
     const replay = req.query.replay === "true";
 
     if (observerRun) {
+      console.log(`[Observer] SSE stream: connecting for runId=${runId}, replay=${replay}, currentStatus=${observerRun.status}`);
+
       const heartbeatInterval = setInterval(() => {
         try {
           if (res.writableEnded) { clearInterval(heartbeatInterval); return; }
@@ -2268,34 +2270,43 @@ export function registerUiPathRoutes(app: Express): void {
       res.write(`data: ${JSON.stringify({ heartbeat: true })}\n\n`);
       if (typeof (res as any).flush === "function") (res as any).flush();
 
-      const unsubscribe = subscribeToObserverRun(runId, (event) => {
+      let unsubscribeFn: () => void = () => {};
+      unsubscribeFn = subscribeToObserverRun(runId, (event) => {
         try {
-          if (res.writableEnded) return;
-          console.log(`[ObserverSSE] Sending event type=${event.type} for run=${runId}`);
-          res.write(`data: ${JSON.stringify(event.data)}\n\n`);
+          if (res.writableEnded) {
+            console.log(`[Observer] SSE stream: res already ended, skipping event type=${event.type} for runId=${runId}`);
+            return;
+          }
+          const payload = JSON.stringify(event.data);
+          res.write(`data: ${payload}\n\n`);
           if (typeof (res as any).flush === "function") (res as any).flush();
+          console.log(`[Observer] SSE stream: wrote event type=${event.type} for runId=${runId}`);
 
           if (event.type === "done" || event.type === "error") {
+            console.log(`[Observer] SSE stream: ending stream for runId=${runId} due to event type=${event.type}`);
             clearInterval(heartbeatInterval);
             res.end();
           }
         } catch (e: any) {
+          console.error(`[Observer] SSE stream: error writing event for runId=${runId}:`, e.message);
           clearInterval(heartbeatInterval);
-          unsubscribe();
+          unsubscribeFn();
         }
       }, replay);
 
       if (isObserverTerminalStatus(observerRun.status) && !replay) {
+        console.log(`[Observer] SSE stream: run already terminal (${observerRun.status}), sending final status for runId=${runId}`);
         clearInterval(heartbeatInterval);
         res.write(`data: ${JSON.stringify({ done: true, status: observerRun.status, warnings: observerRun.warnings, templateComplianceScore: observerRun.complianceScore, completenessLevel: observerRun.completenessLevel, outcomeSummary: observerRun.outcomeSummary })}\n\n`);
         res.end();
-        unsubscribe();
+        unsubscribeFn();
         return;
       }
 
       req.on("close", () => {
+        console.log(`[Observer] SSE stream: client disconnected for runId=${runId}`);
         clearInterval(heartbeatInterval);
-        unsubscribe();
+        unsubscribeFn();
       });
     } else if (dbActiveRun) {
       for (const event of dbActiveRun.events) {
