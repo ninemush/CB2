@@ -18,7 +18,7 @@ export interface IStorage {
   deleteIdea(id: string): Promise<boolean>;
   getIdeasByOwnerEmail(email: string): Promise<Idea[]>;
   updateIdeaStage(id: string, stage: string): Promise<Idea | undefined>;
-  updateIdea(id: string, updates: Partial<Pick<Idea, "title" | "description" | "tag" | "automationType" | "automationTypeRationale" | "agentConfig">>): Promise<Idea | undefined>;
+  updateIdea(id: string, updates: Partial<Pick<Idea, "title" | "description" | "tag" | "automationType" | "automationTypeRationale" | "feasibilityComplexity" | "feasibilityEffortEstimate" | "agentConfig">>): Promise<Idea | undefined>;
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(ideaId?: string): Promise<AuditLog[]>;
   createGenerationRun(run: InsertUipathGenerationRun): Promise<UipathGenerationRun>;
@@ -99,7 +99,7 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async updateIdea(id: string, updates: Partial<Pick<Idea, "title" | "description" | "tag" | "automationType" | "automationTypeRationale" | "agentConfig">>): Promise<Idea | undefined> {
+  async updateIdea(id: string, updates: Partial<Pick<Idea, "title" | "description" | "tag" | "automationType" | "automationTypeRationale" | "feasibilityComplexity" | "feasibilityEffortEstimate" | "agentConfig">>): Promise<Idea | undefined> {
     const [updated] = await db
       .update(ideas)
       .set({ ...updates, updatedAt: new Date() })

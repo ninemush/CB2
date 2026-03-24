@@ -292,10 +292,30 @@ After your analysis, output EXACTLY ONE of these tags:
 [AUTOMATION_TYPE: agent | <rationale in 1-2 sentences>]
 [AUTOMATION_TYPE: hybrid | <rationale in 1-2 sentences>]
 
+Immediately after the [AUTOMATION_TYPE:] tag, output a feasibility summary block in this exact format:
+[FEASIBILITY_SUMMARY]
+Complexity: <low|medium|high>
+Effort: <effort estimate, e.g. "2-4 weeks", "1-2 sprints", "3-5 days">
+[/FEASIBILITY_SUMMARY]
+
 Examples:
 [AUTOMATION_TYPE: rpa | This process follows strict rules with structured data from SAP — every step is deterministic with known UI selectors and no judgment calls.]
+[FEASIBILITY_SUMMARY]
+Complexity: low
+Effort: 1-2 weeks
+[/FEASIBILITY_SUMMARY]
+
 [AUTOMATION_TYPE: agent | This process involves triaging unstructured customer emails, interpreting intent, and making context-dependent routing decisions — ideal for an AI agent.]
+[FEASIBILITY_SUMMARY]
+Complexity: high
+Effort: 4-6 weeks
+[/FEASIBILITY_SUMMARY]
+
 [AUTOMATION_TYPE: hybrid | The core invoice processing is structured RPA, but exception handling and vendor communication require judgment — a hybrid with agent nodes for exceptions is optimal.]
+[FEASIBILITY_SUMMARY]
+Complexity: medium
+Effort: 3-4 weeks
+[/FEASIBILITY_SUMMARY]
 
 MAESTRO ORCHESTRATION KNOWLEDGE:
 UiPath Maestro is the next-generation orchestration layer for agentic automation, process apps, and case management using BPMN process modeling. When evaluating a solution, consider whether Maestro orchestration is appropriate:
@@ -1518,13 +1538,27 @@ CRITICAL RULES:
       if (autoTypeMatch) {
         const detectedType = autoTypeMatch[1].toLowerCase() as AutomationType;
         const rationale = autoTypeMatch[2].trim();
+
+        let complexity: string | null = null;
+        let effortEstimate: string | null = null;
+        const feasibilityMatch = fullResponse.match(/\[FEASIBILITY_SUMMARY\]\s*\n?\s*Complexity:\s*(low|medium|high)\s*\n?\s*Effort:\s*([^\n\[]+)\s*\n?\s*\[\/FEASIBILITY_SUMMARY\]/i);
+        if (feasibilityMatch) {
+          complexity = feasibilityMatch[1].toLowerCase();
+          effortEstimate = feasibilityMatch[2].trim();
+        }
+
         try {
-          await storage.updateIdea(ideaId, {
+          const updatePayload: Record<string, any> = {
             automationType: detectedType,
             automationTypeRationale: rationale,
-          });
-          console.log(`[Chat] Automation type set to "${detectedType}" for idea ${ideaId}: ${rationale}`);
+            feasibilityComplexity: complexity,
+            feasibilityEffortEstimate: effortEstimate,
+          };
+
+          await storage.updateIdea(ideaId, updatePayload);
+          console.log(`[Chat] Automation type set to "${detectedType}" for idea ${ideaId}: ${rationale}${complexity ? ` | complexity=${complexity}` : ""}${effortEstimate ? ` | effort=${effortEstimate}` : ""}`);
           res.write(`data: ${JSON.stringify({ automationType: { type: detectedType, rationale } })}\n\n`);
+          res.write(`data: ${JSON.stringify({ feasibilityAssessment: { type: detectedType, rationale, complexity: complexity || null, effortEstimate: effortEstimate || null } })}\n\n`);
         } catch (atErr: any) {
           console.error(`[Chat] Failed to save automation type:`, atErr?.message);
         }

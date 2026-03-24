@@ -46,6 +46,7 @@ import { PIPELINE_STAGES, type Idea, type PipelineStage, type ChatMessage as DBC
 import ProcessMapPanel from "@/components/process-map-panel";
 import { parseStepsFromText, parseStepsByView } from "@/lib/step-parser";
 import { DocumentCard, UiPathPackageCard } from "@/components/document-card";
+import { FeasibilityCard } from "@/components/feasibility-card";
 import { useUiPathRun, type PipelineLogEntry, type CancelState } from "@/hooks/use-uipath-run";
 import { ArtifactHub } from "@/components/artifact-hub";
 import { MetaValidationBar } from "@/components/meta-validation-bar";
@@ -1015,6 +1016,8 @@ function stripStepTags(text: string): string {
     .replace(/\[DEPLOY_UIPATH\]/g, "")
     .replace(/\[DEPLOY_REPORT:[\s\S]*?\]/g, "")
     .replace(/\[STAGE_BACK:\s*[^\]]+\]/g, "")
+    .replace(/\[AUTOMATION_TYPE:\s*[^\]]*\]/gi, "")
+    .replace(/\[FEASIBILITY_SUMMARY\][\s\S]*?\[\/FEASIBILITY_SUMMARY\]/gi, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -1095,6 +1098,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const [streamingDocContent, setStreamingDocContent] = useState<string>("");
   const [streamingDocElapsed, setStreamingDocElapsed] = useState(0);
   const streamingDocElapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [feasibilityData, setFeasibilityData] = useState<{ type: string; rationale: string; complexity?: string | null; effortEstimate?: string | null } | null>(null);
   const [messageQueue, setMessageQueue] = useState<Array<{ id: string; text: string; imageData?: { base64: string; mediaType: string } }>>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initialScrollDoneRef = useRef(false);
@@ -1581,6 +1585,10 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           });
         }
         if (data.automationType) {
+          queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
+        }
+        if (data.feasibilityAssessment) {
+          setFeasibilityData(data.feasibilityAssessment);
           queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
         }
         if (data.dhgProgress) {
@@ -2318,13 +2326,43 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       )}
 
       <div className="flex-1 overflow-y-auto scrollbar-thin px-3 py-3 space-y-3" data-testid="chat-messages">
-        {displayMessages.map((msg) => {
+        {(() => {
+          const effectiveFeasibility = feasibilityData
+            ? { type: feasibilityData.type as "rpa" | "agent" | "hybrid", rationale: feasibilityData.rationale, complexity: feasibilityData.complexity, effortEstimate: feasibilityData.effortEstimate }
+            : (idea.automationType && idea.automationTypeRationale)
+              ? { type: idea.automationType as "rpa" | "agent" | "hybrid", rationale: idea.automationTypeRationale, complexity: (idea as any).feasibilityComplexity || null, effortEstimate: (idea as any).feasibilityEffortEstimate || null }
+              : null;
+
+          const asIsApprovalIndex = effectiveFeasibility ? displayMessages.findIndex(
+            (m) => m.role === "assistant" && (m.content.includes("As-Is process map approved") || m.content.includes("As-Is process map re-approved") || m.content.includes("feasibility assessment"))
+          ) : -1;
+          const fallbackIndex = effectiveFeasibility ? Math.max(0, displayMessages.findIndex((m) => m.role === "assistant") + 1) : -1;
+          const feasibilityInsertIndex = asIsApprovalIndex >= 0 ? asIsApprovalIndex + 1 : fallbackIndex;
+
+          const rendered: JSX.Element[] = [];
+
+          displayMessages.forEach((msg, idx) => {
+            if (effectiveFeasibility && idx === feasibilityInsertIndex) {
+              rendered.push(
+                <div key="feasibility-card" className="flex justify-start" data-testid="chat-feasibility-card">
+                  <div className="max-w-[95%] w-full">
+                    <FeasibilityCard
+                      automationType={effectiveFeasibility.type}
+                      rationale={effectiveFeasibility.rationale}
+                      complexity={effectiveFeasibility.complexity}
+                      effortEstimate={effectiveFeasibility.effortEstimate}
+                    />
+                  </div>
+                </div>
+              );
+            }
+
           if (msg.docType && msg.docId != null) {
             const latestDocOfType = [...displayMessages]
               .filter((m) => m.docType === msg.docType)
               .pop();
             const isLatest = latestDocOfType?.id === msg.id;
-            return (
+            rendered.push(
               <div key={msg.id} className="flex justify-start" data-testid={`chat-message-${msg.id}`}>
                 <div className="max-w-[95%] w-full">
                   <DocumentCard
@@ -2339,6 +2377,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                 </div>
               </div>
             );
+            return;
           }
 
           if (msg.uipathData) {
@@ -2350,7 +2389,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             const cardCompletenessLevel = completedRun?.completenessLevel;
             const cardOutcomeSummary = completedRun?.outcomeSummary;
             const isLatestUiPathMsg = displayMessages.filter(m => m.uipathData).pop()?.id === msg.id;
-            return (
+            rendered.push(
               <div key={msg.id} className="flex justify-start" data-testid={`chat-message-${msg.id}`}>
                 <div className="max-w-[95%] w-full">
                   <UiPathPackageCard
@@ -2368,10 +2407,11 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                 </div>
               </div>
             );
+            return;
           }
 
           if (msg.deployReport && (msg.deployReport.results?.length > 0 || msg.deployReport.packageId || msg.deployReport.processName)) {
-            return (
+            rendered.push(
               <div key={msg.id} className="flex justify-start" data-testid={`chat-message-${msg.id}`}>
                 <div className="max-w-[95%] w-full space-y-2">
                   {msg.content && (
@@ -2395,22 +2435,26 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                 </div>
               </div>
             );
+            return;
           }
 
           if (msg.isStreaming && msg.role === "assistant") {
             if (deployStep && deployPipelineLogEntries.length > 0) {
-              return <PipelineLogPanel key={`${msg.id}-deploy-pipeline-log`} entries={deployPipelineLogEntries} isComplete={deployPipelineComplete} onCancel={undefined} />;
+              rendered.push(<PipelineLogPanel key={`${msg.id}-deploy-pipeline-log`} entries={deployPipelineLogEntries} isComplete={deployPipelineComplete} onCancel={undefined} />);
+              return;
             }
             if (deployStep) {
-              return <StreamingProgressIndicator key={`${msg.id}-deploy`} mode="deploy" deployStep={deployStep} />;
+              rendered.push(<StreamingProgressIndicator key={`${msg.id}-deploy`} mode="deploy" deployStep={deployStep} />);
+              return;
             }
             if (uipathIsRunning) {
-              return <UiPathProgressPanel key={`${msg.id}-uipath-progress`} entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={() => cancelUiPathRun()} cancelState={uipathCancelState} startTime={uipathStartTime} />;
+              rendered.push(<UiPathProgressPanel key={`${msg.id}-uipath-progress`} entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={() => cancelUiPathRun()} cancelState={uipathCancelState} startTime={uipathStartTime} />);
+              return;
             }
             if (isGeneratingDoc || isGeneratingDocRef.current) {
               const docType = (generatingDocType || generatingDocTypeRef.current || "PDD") as "PDD" | "SDD";
               if (streamingDocContent && streamingDocContent.length > 10) {
-                return (
+                rendered.push(
                   <div key={`${msg.id}-streaming-doc`} className="flex justify-start" data-testid="streaming-doc-card">
                     <div className="max-w-[95%] w-full">
                       <DocumentCard
@@ -2425,15 +2469,18 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
                     </div>
                   </div>
                 );
+                return;
               }
-              return <StreamingProgressIndicator key={`${msg.id}-doc-${docType}`} mode="doc" docType={docType} currentSection={docProgressSection} onCancel={cancelDocGeneration} />;
+              rendered.push(<StreamingProgressIndicator key={`${msg.id}-doc-${docType}`} mode="doc" docType={docType} currentSection={docProgressSection} onCancel={cancelDocGeneration} />);
+              return;
             }
             if (!msg.content) {
-              return <StreamingProgressIndicator key={`${msg.id}-thinking`} mode="thinking" liveStatus={liveStatus} stage={idea.stage} classifiedIntent={classifiedIntent} />;
+              rendered.push(<StreamingProgressIndicator key={`${msg.id}-thinking`} mode="thinking" liveStatus={liveStatus} stage={idea.stage} classifiedIntent={classifiedIntent} />);
+              return;
             }
           }
 
-          return (
+          rendered.push(
             <div
               key={msg.id}
               className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
@@ -2484,7 +2531,25 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
               </div>
             </div>
           );
-        })}
+        });
+
+        if (effectiveFeasibility && feasibilityInsertIndex >= displayMessages.length) {
+            rendered.push(
+              <div key="feasibility-card" className="flex justify-start" data-testid="chat-feasibility-card">
+                <div className="max-w-[95%] w-full">
+                  <FeasibilityCard
+                    automationType={effectiveFeasibility.type}
+                    rationale={effectiveFeasibility.rationale}
+                    complexity={effectiveFeasibility.complexity}
+                    effortEstimate={effectiveFeasibility.effortEstimate}
+                  />
+                </div>
+              </div>
+            );
+          }
+
+          return rendered;
+        })()}
         {uipathIsRunning && !streamingMsg && (
           <UiPathProgressPanel entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={() => cancelUiPathRun()} cancelState={uipathCancelState} startTime={uipathStartTime} />
         )}

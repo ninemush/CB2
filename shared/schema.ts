@@ -54,6 +54,8 @@ export const ideas = pgTable("ideas", {
   tag: text("tag"),
   automationType: text("automation_type"),
   automationTypeRationale: text("automation_type_rationale"),
+  feasibilityComplexity: text("feasibility_complexity"),
+  feasibilityEffortEstimate: text("feasibility_effort_estimate"),
   agentConfig: text("agent_config"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
