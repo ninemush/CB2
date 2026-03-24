@@ -51,6 +51,8 @@ export interface UseUiPathRunReturn {
   pipelineLogEntries: PipelineLogEntry[];
   pipelineComplete: boolean;
   isRunning: boolean;
+  showProgressPanel: boolean;
+  dismissProgressPanel: () => void;
   startRun: (source?: "chat" | "retry" | "approval" | "auto", force?: boolean) => Promise<void>;
   cancelRun: () => void;
   metaValidationChipStatus: string;
@@ -59,6 +61,9 @@ export interface UseUiPathRunReturn {
   cancelState: CancelState;
   generationStartTime: number | null;
 }
+
+const SSE_MAX_RETRIES = 3;
+const SSE_BACKOFF_BASE_MS = 1000;
 
 export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
   const { toast } = useToast();
@@ -69,6 +74,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
   const [pipelineComplete, setPipelineComplete] = useState(false);
   const pipelineEntryCounter = useRef(0);
   const [isRunning, setIsRunning] = useState(false);
+  const [showProgressPanel, setShowProgressPanel] = useState(false);
   const [metaValidationChipStatus, setMetaValidationChipStatus] = useState<string>("ready");
   const [metaValidationFixCount, setMetaValidationFixCount] = useState(0);
   const [liveStatus, setLiveStatus] = useState("");
@@ -77,68 +83,30 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
   const abortControllerRef = useRef<AbortController | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
   const cancelRequestedRef = useRef(false);
+  const retryCountRef = useRef(0);
 
-  useEffect(() => {
-    setCurrentRun(null);
-    currentRunRef.current = null;
-    setCompletedRuns(new Map());
-    setPipelineLogEntries([]);
-    setPipelineComplete(false);
-    pipelineEntryCounter.current = 0;
+  const processSSEDataRef = useRef<(data: any, runId: string) => void>(() => {});
+  const finishRunRef = useRef<() => void>(() => {});
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current !== null) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
+
+  const finishRun = useCallback(() => {
     setIsRunning(false);
-    setLiveStatus("");
     setCancelState("idle");
-    setGenerationStartTime(null);
     activeRunIdRef.current = null;
     cancelRequestedRef.current = false;
+    retryCountRef.current = 0;
+    clearRetryTimer();
+    queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "messages"] });
+  }, [ideaId, clearRetryTimer]);
 
-    (async () => {
-      try {
-        const res = await fetch(`/api/ideas/${ideaId}/uipath-runs/latest`, { credentials: "include" });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!data.run) return;
-        const run = data.run;
-        const isActive = run.status === "BUILDING" || run.status === "PENDING";
-        const runState: UiPathRunState = {
-          runId: run.runId,
-          status: run.status,
-          source: run.source,
-          warnings: run.warnings,
-          complianceScore: run.complianceScore,
-          outcomeSummary: run.outcomeSummary,
-          createdAt: run.createdAt,
-        };
-
-        if (isActive) {
-          setCurrentRun(runState);
-          currentRunRef.current = runState;
-          setIsRunning(true);
-          activeRunIdRef.current = run.runId;
-          setLiveStatus("Generating UiPath package...");
-          setGenerationStartTime(run.createdAt || Date.now());
-          setCancelState("idle");
-          subscribeToStream(ideaId, run.runId, true);
-        } else if (run.status !== "CANCELLED") {
-          setCompletedRuns(new Map([[run.runId, {
-            runId: run.runId,
-            status: run.status,
-            warnings: run.warnings,
-            complianceScore: run.complianceScore,
-            completenessLevel: run.completenessLevel,
-            outcomeSummary: run.outcomeSummary,
-          }]]));
-        }
-      } catch {}
-    })();
-
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
-    };
-  }, [ideaId]);
+  finishRunRef.current = finishRun;
 
   const processSSEData = useCallback((data: any, runId: string) => {
     if (data.heartbeat) return;
@@ -293,16 +261,11 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
           });
         }
       }
-      finishRun();
+      finishRunRef.current();
     }
   }, [toast]);
 
-  const finishRun = useCallback(() => {
-    setIsRunning(false);
-    setLiveStatus("");
-    activeRunIdRef.current = null;
-    queryClient.invalidateQueries({ queryKey: ["/api/ideas", ideaId, "messages"] });
-  }, [ideaId]);
+  processSSEDataRef.current = processSSEData;
 
   const subscribeToStream = useCallback((ideaId: string, runId: string, replay?: boolean) => {
     const controller = new AbortController();
@@ -314,14 +277,15 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
       .then(async (res) => {
         if (!res.ok) {
           console.error("[useUiPathRun] Stream response not OK:", res.status);
-          finishRun();
+          finishRunRef.current();
           return;
         }
         console.log(`[useUiPathRun] SSE stream connected: runId=${runId}`);
+        retryCountRef.current = 0;
         const reader = res.body?.getReader();
         if (!reader) {
           console.error("[useUiPathRun] SSE stream has no readable body");
-          finishRun();
+          finishRunRef.current();
           return;
         }
         const decoder = new TextDecoder();
@@ -336,7 +300,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
             if (line.startsWith("data: ")) {
               try {
                 const data = JSON.parse(line.slice(6));
-                processSSEData(data, runId);
+                processSSEDataRef.current(data, runId);
               } catch (parseErr) {
                 console.error("[useUiPathRun] SSE parse error:", parseErr, "raw:", line.slice(6, 200));
               }
@@ -358,14 +322,114 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
             return next;
           });
         }
-        finishRun();
+        finishRunRef.current();
       })
       .catch((err) => {
         if (err?.name === "AbortError") return;
         console.error("[useUiPathRun] Stream error:", err);
-        finishRun();
+        const attempt = retryCountRef.current;
+        if (attempt < SSE_MAX_RETRIES) {
+          retryCountRef.current = attempt + 1;
+          const delay = SSE_BACKOFF_BASE_MS * Math.pow(2, attempt);
+          console.log(`[useUiPathRun] Retrying SSE connection in ${delay}ms (attempt ${attempt + 1}/${SSE_MAX_RETRIES})`);
+          setLiveStatus(`Connection lost — retrying (${attempt + 1}/${SSE_MAX_RETRIES})...`);
+          retryTimerRef.current = setTimeout(() => {
+            retryTimerRef.current = null;
+            if (activeRunIdRef.current === runId) {
+              subscribeToStream(ideaId, runId, true);
+            }
+          }, delay);
+        } else {
+          console.error(`[useUiPathRun] SSE retries exhausted after ${SSE_MAX_RETRIES} attempts`);
+          pipelineEntryCounter.current++;
+          setPipelineLogEntries(prev => {
+            const hasFailEntry = prev.some(e => e.type === "failed");
+            if (hasFailEntry) return prev;
+            return [...prev, {
+              id: `pe-fail-${pipelineEntryCounter.current}`,
+              type: "failed" as const,
+              stage: "connection",
+              message: "Connection lost — could not reconnect to server",
+              timestamp: Date.now(),
+            }];
+          });
+          finishRunRef.current();
+        }
       });
-  }, [processSSEData, finishRun]);
+  }, []);
+
+  const dismissProgressPanel = useCallback(() => {
+    setShowProgressPanel(false);
+  }, []);
+
+  useEffect(() => {
+    setCurrentRun(null);
+    currentRunRef.current = null;
+    setCompletedRuns(new Map());
+    setPipelineLogEntries([]);
+    setPipelineComplete(false);
+    pipelineEntryCounter.current = 0;
+    setIsRunning(false);
+    setShowProgressPanel(false);
+    setLiveStatus("");
+    setCancelState("idle");
+    setGenerationStartTime(null);
+    activeRunIdRef.current = null;
+    cancelRequestedRef.current = false;
+    retryCountRef.current = 0;
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/ideas/${ideaId}/uipath-runs/latest`, { credentials: "include" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.run) return;
+        const run = data.run;
+        const isActive = run.status === "BUILDING" || run.status === "PENDING";
+        const runState: UiPathRunState = {
+          runId: run.runId,
+          status: run.status,
+          source: run.source,
+          warnings: run.warnings,
+          complianceScore: run.complianceScore,
+          outcomeSummary: run.outcomeSummary,
+          createdAt: run.createdAt,
+        };
+
+        if (isActive) {
+          setCurrentRun(runState);
+          currentRunRef.current = runState;
+          setIsRunning(true);
+          setShowProgressPanel(true);
+          activeRunIdRef.current = run.runId;
+          setLiveStatus("Generating UiPath package...");
+          setGenerationStartTime(run.createdAt || Date.now());
+          setCancelState("idle");
+          subscribeToStream(ideaId, run.runId, true);
+        } else if (run.status !== "CANCELLED") {
+          setCompletedRuns(new Map([[run.runId, {
+            runId: run.runId,
+            status: run.status,
+            warnings: run.warnings,
+            complianceScore: run.complianceScore,
+            completenessLevel: run.completenessLevel,
+            outcomeSummary: run.outcomeSummary,
+          }]]));
+        }
+      } catch {}
+    })();
+
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      if (retryTimerRef.current !== null) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+  }, [ideaId, subscribeToStream]);
 
   const startRun = useCallback(async (source: "chat" | "retry" | "approval" | "auto" = "auto", force?: boolean) => {
     if (isRunning) {
@@ -374,6 +438,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
     }
 
     setIsRunning(true);
+    setShowProgressPanel(true);
     setLiveStatus("Generating UiPath package...");
     setPipelineLogEntries([]);
     setPipelineComplete(false);
@@ -382,6 +447,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
     setCancelState("idle");
     setGenerationStartTime(Date.now());
     cancelRequestedRef.current = false;
+    retryCountRef.current = 0;
 
     try {
       const res = await fetch(`/api/ideas/${ideaId}/uipath-runs`, {
@@ -400,6 +466,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
         });
         setIsRunning(false);
         setLiveStatus("");
+        setShowProgressPanel(false);
         return;
       }
 
@@ -440,6 +507,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
       });
       setIsRunning(false);
       setLiveStatus("");
+      setShowProgressPanel(false);
     }
   }, [ideaId, isRunning, toast, subscribeToStream]);
 
@@ -447,6 +515,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
     if (cancelState !== "idle" && cancelState !== "cancel_failed") return;
     setCancelState("cancelling");
     cancelRequestedRef.current = true;
+    clearRetryTimer();
     const runId = activeRunIdRef.current;
     if (runId) {
       fetch(`/api/ideas/${ideaId}/uipath-runs/${runId}/cancel`, {
@@ -510,7 +579,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
         activeRunIdRef.current = null;
       }, 1500);
     }
-  }, [ideaId, toast, cancelState]);
+  }, [ideaId, toast, cancelState, clearRetryTimer]);
 
   return {
     currentRun,
@@ -518,6 +587,8 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
     pipelineLogEntries,
     pipelineComplete,
     isRunning,
+    showProgressPanel,
+    dismissProgressPanel,
     startRun,
     cancelRun: doCancelRun,
     metaValidationChipStatus,

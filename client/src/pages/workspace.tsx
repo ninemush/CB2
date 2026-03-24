@@ -347,12 +347,16 @@ function UiPathProgressPanel({
   onCancel,
   cancelState,
   startTime,
+  isRunning = true,
+  onDismiss,
 }: {
   entries: PipelineLogEntry[];
   isComplete: boolean;
   onCancel?: () => void;
   cancelState: CancelState;
   startTime: number | null;
+  isRunning?: boolean;
+  onDismiss?: () => void;
 }) {
   const logEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -362,9 +366,10 @@ function UiPathProgressPanel({
     if (!startTime) return;
     const update = () => setElapsed(Math.round((Date.now() - startTime) / 1000));
     update();
+    if (!isRunning) return;
     const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
-  }, [startTime]);
+  }, [startTime, isRunning]);
 
   useEffect(() => {
     if (logEndRef.current) {
@@ -482,7 +487,7 @@ function UiPathProgressPanel({
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-muted-foreground/50 tabular-nums" data-testid="uipath-elapsed-timer">{elapsed}s</span>
-            {onCancel && !isComplete && (
+            {onCancel && !isComplete && isRunning && (
               <button
                 onClick={onCancel}
                 disabled={cancelDisabled}
@@ -490,6 +495,15 @@ function UiPathProgressPanel({
                 data-testid="button-cancel-uipath"
               >
                 {cancelLabel}
+              </button>
+            )}
+            {!isRunning && onDismiss && (
+              <button
+                onClick={onDismiss}
+                className="text-[10px] shrink-0 text-muted-foreground hover:text-foreground underline"
+                data-testid="button-dismiss-uipath"
+              >
+                Dismiss
               </button>
             )}
           </div>
@@ -1051,6 +1065,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     pipelineLogEntries,
     pipelineComplete,
     isRunning: uipathIsRunning,
+    showProgressPanel: uipathShowProgressPanel,
+    dismissProgressPanel: uipathDismissProgressPanel,
     startRun: startUiPathRun,
     cancelRun: cancelUiPathRun,
     metaValidationChipStatus,
@@ -2419,8 +2435,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
               rendered.push(<StreamingProgressIndicator key={`${msg.id}-deploy`} mode="deploy" deployStep={deployStep} />);
               return;
             }
-            if (uipathIsRunning) {
-              rendered.push(<UiPathProgressPanel key={`${msg.id}-uipath-progress`} entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={() => cancelUiPathRun()} cancelState={uipathCancelState} startTime={uipathStartTime} />);
+            if (uipathShowProgressPanel) {
+              rendered.push(<UiPathProgressPanel key={`${msg.id}-uipath-progress`} entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={() => cancelUiPathRun()} cancelState={uipathCancelState} startTime={uipathStartTime} isRunning={uipathIsRunning} onDismiss={uipathDismissProgressPanel} />);
               return;
             }
             if (isGeneratingDoc || isGeneratingDocRef.current) {
@@ -2522,10 +2538,10 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
 
           return rendered;
         })()}
-        {uipathIsRunning && !streamingMsg && (
-          <UiPathProgressPanel entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={() => cancelUiPathRun()} cancelState={uipathCancelState} startTime={uipathStartTime} />
+        {uipathShowProgressPanel && !streamingMsg && (
+          <UiPathProgressPanel entries={pipelineLogEntries} isComplete={pipelineComplete} onCancel={() => cancelUiPathRun()} cancelState={uipathCancelState} startTime={uipathStartTime} isRunning={uipathIsRunning} onDismiss={uipathDismissProgressPanel} />
         )}
-        {isGeneratingDoc && !streamingMsg && !uipathIsRunning && (
+        {isGeneratingDoc && !streamingMsg && !uipathShowProgressPanel && (
           streamingDocContent && streamingDocContent.length > 10 ? (
             <div className="flex justify-start" data-testid="streaming-doc-card-bottom">
               <div className="max-w-[95%] w-full">
