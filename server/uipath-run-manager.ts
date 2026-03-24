@@ -13,6 +13,7 @@ import { uipathPackageSchema } from "./types/uipath-package";
 import { UIPATH_PROMPT, repairTruncatedPackageJson } from "./uipath-prompts";
 import { QualityGateError } from "./uipath-integration";
 import type { MetaValidationMode } from "./meta-validation";
+import { generateDecomposedSpec } from "./uipath-spec-decomposer";
 
 export type TriggerSource = "manual" | "chat" | "api";
 
@@ -338,7 +339,7 @@ async function executeRun(
     if (!packageJson) {
       runLogger.stageStart("llm_generation");
       await storage.updateGenerationRunStatus(runId, "running", "llm_generation");
-      console.log(`[RunManager] Run ${runId}: LLM generation phase started`);
+      console.log(`[RunManager] Run ${runId}: Decomposed LLM generation phase started`);
 
       pipelineProgressCallback({ type: "started", stage: "llm_context_loading", message: "Loading PDD and SDD context" });
       const pdd = await documentStorage.getLatestDocument(ideaId, "PDD");
@@ -354,86 +355,58 @@ async function executeRun(
       if (mapSummary.length > 0) systemCtx += `\n\nProcess Map Steps:\n${JSON.stringify(mapSummary)}`;
       pipelineProgressCallback({ type: "completed", stage: "llm_prompt_assembly", message: "AI prompt assembled" });
 
-      pipelineProgressCallback({ type: "started", stage: "llm_generation", message: "Sending request to AI model" });
-      emitProgress("Sending request to AI model...");
-
-      const keepAliveMessages = [
-        "Analysing process specification and requirements...",
-        "Identifying automation boundaries and scope...",
-        "Mapping business rules to workflow logic...",
-        "Designing main workflow structure...",
-        "Planning sequence and flowchart activities...",
-        "Determining variable types and scopes...",
-        "Mapping input and output arguments...",
-        "Configuring application integration points...",
-        "Designing exception handling strategy...",
-        "Planning retry and recovery mechanisms...",
-        "Structuring UI automation selectors...",
-        "Defining transaction processing logic...",
-        "Building activity dependency graph...",
-        "Optimising workflow execution paths...",
-        "Generating invoke workflow references...",
-        "Finalising package dependencies...",
-        "Assembling complete package specification...",
-        "Performing final quality checks...",
-        "Wrapping up generation — almost there...",
-      ];
-      let keepAliveIdx = 0;
-      const keepAliveInterval = setInterval(() => {
-        const msg = keepAliveIdx < keepAliveMessages.length
-          ? keepAliveMessages[keepAliveIdx]
-          : "Still generating — AI model is processing your specification...";
-        keepAliveIdx++;
-        pipelineProgressCallback({ type: "heartbeat", stage: "llm_generation", message: msg });
-        emitProgress(msg);
-      }, 15000);
-
-      let response;
       try {
-        response = await getCodeLLM().create({
-          maxTokens: 16384,
-          system: systemCtx,
-          messages: [{ role: "user", content: UIPATH_PROMPT }],
-          timeoutMs: SDD_LLM_TIMEOUT_MS,
+        const decomposedResult = await generateDecomposedSpec({
+          systemContext: systemCtx,
+          runId,
+          runLogger,
+          onProgress: (msg: string) => emitProgress(msg),
+          onPipelineProgress: pipelineProgressCallback,
         });
-      } finally {
-        clearInterval(keepAliveInterval);
-      }
 
-      console.log(`[RunManager] Run ${runId}: LLM generation phase completed`);
-      runLogger.stageEnd("llm_generation", "succeeded");
-      pipelineProgressCallback({ type: "completed", stage: "llm_generation", message: "AI response received" });
+        packageJson = decomposedResult.packageSpec;
 
-      runLogger.stageStart("llm_parsing");
-      pipelineProgressCallback({ type: "started", stage: "llm_parsing", message: "Parsing AI-generated specification" });
-      emitProgress("Parsing AI-generated specification...");
-      const rawText = response.text || "{}";
+        const decompositionMetrics = decomposedResult.metrics;
+        runLogger.stageEnd("llm_generation", "succeeded", {
+          decomposed: true,
+          workflowCount: packageJson.workflows.length,
+          stubCount: decompositionMetrics.stubCount,
+          totalLlmCalls: decompositionMetrics.totalLlmCalls,
+          scaffoldDurationMs: decompositionMetrics.scaffoldDurationMs,
+          totalElapsedMs: decompositionMetrics.totalElapsedMs,
+          perWorkflow: decompositionMetrics.perWorkflow,
+        });
+        pipelineProgressCallback({
+          type: "completed",
+          stage: "llm_generation",
+          message: `Decomposed generation complete: ${packageJson.workflows.length} workflows (${decompositionMetrics.stubCount} stubbed)`,
+          context: {
+            workflowCount: packageJson.workflows.length,
+            stubCount: decompositionMetrics.stubCount,
+            totalLlmCalls: decompositionMetrics.totalLlmCalls,
+          },
+        });
 
-      if (response.stopReason === "max_tokens") {
-        emitProgress("Response truncated, attempting JSON repair...");
-      }
-
-      try {
-        const parsed = sanitizeAndParseJson(rawText);
-        packageJson = uipathPackageSchema.parse(parsed);
-        runLogger.stageEnd("llm_parsing", "succeeded", { workflowCount: (packageJson.workflows || []).length });
-        pipelineProgressCallback({ type: "completed", stage: "llm_parsing", message: "Package specification validated", context: { workflowCount: (packageJson.workflows || []).length } });
-      } catch (parseErr: any) {
-        emitProgress("Initial parse failed, attempting repair...");
-        runLogger.recordRetry("llm_parsing", 1, "Initial parse failed, attempting repair");
-        const repaired = repairTruncatedPackageJson(rawText);
-        if (repaired) {
-          try {
-            packageJson = uipathPackageSchema.parse(repaired);
-            runLogger.stageEnd("llm_parsing", "succeeded", { repaired: true, workflowCount: (repaired.workflows || []).length });
-            pipelineProgressCallback({ type: "completed", stage: "llm_parsing", message: `Repaired: ${(repaired.workflows || []).length} workflows recovered`, context: { repaired: true } });
-          } catch {}
-        }
-        if (!packageJson) {
-          runLogger.stageEnd("llm_parsing", "failed", undefined, "Failed to parse AI-generated package");
-          pipelineProgressCallback({ type: "failed", stage: "llm_parsing", message: "Failed to parse AI-generated package" });
-          throw new RunError("Failed to parse AI-generated package. Please try again.", "llm_parse");
-        }
+        runLogger.stageStart("llm_parsing");
+        pipelineProgressCallback({ type: "started", stage: "llm_parsing", message: "Validating merged package specification" });
+        emitProgress("Validating merged package specification...");
+        runLogger.stageEnd("llm_parsing", "succeeded", {
+          workflowCount: packageJson.workflows.length,
+          decomposed: true,
+        });
+        pipelineProgressCallback({
+          type: "completed",
+          stage: "llm_parsing",
+          message: "Package specification validated",
+          context: { workflowCount: packageJson.workflows.length },
+        });
+      } catch (decompErr: any) {
+        runLogger.stageEnd("llm_generation", "failed", undefined, decompErr?.message);
+        pipelineProgressCallback({ type: "failed", stage: "llm_generation", message: decompErr?.message || "Decomposed generation failed" });
+        throw new RunError(
+          `Package spec generation failed: ${decompErr?.message || "Unknown error"}. Please try again.`,
+          "llm_parse",
+        );
       }
 
       if (!packageJson.workflows || packageJson.workflows.length === 0) {
