@@ -88,6 +88,7 @@ const INTENT_THINKING_MESSAGES: Record<string, string> = {
   "PDD_SDD": "Generating documents...",
   "DHG": "Generating Developer Handoff Guide...",
   "FEASIBILITY": "Running feasibility assessment...",
+  "TO_BE_MAP": "Generating To-Be process map...",
 };
 
 const STAGE_DISPLAY_LABELS: Record<string, string> = {
@@ -1578,6 +1579,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
         }
         if (data.feasibilityAssessment) {
           setFeasibilityData(data.feasibilityAssessment);
+          setClassifiedIntent("TO_BE_MAP");
           queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
         }
         if (data.dhgProgress) {
@@ -1915,6 +1917,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       return;
     }
     startDocStreaming(type);
+    setClassifiedIntent(type);
     const abortController = new AbortController();
     const abortTimeoutMs = type === "SDD" ? 300_000 : 180_000;
     const timeoutId = setTimeout(() => abortController.abort(), abortTimeoutMs);
@@ -1993,6 +1996,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       });
     } finally {
       clearTimeout(timeoutId);
+      setClassifiedIntent("");
       stopDocStreaming({ force: true });
     }
   }, [isGeneratingDoc, isStreaming, startDocStreaming, stopDocStreaming, idea.id, toast]);
