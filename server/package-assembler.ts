@@ -631,7 +631,7 @@ function getMetadataFallbackVersion(pkgName: string): string | null {
 }
 
 export function resolveDependencies(
-  pkg: { workflows?: Array<{ steps?: Array<{ activityType?: string; activityPackage?: string }> }> },
+  pkg: { workflows?: Array<{ name?: string; steps?: Array<{ activityType?: string; activityPackage?: string }> }> },
   studioProfile: StudioProfile | null,
   treeSpec: TreeWorkflowSpec | null,
   targetFramework?: "Windows" | "Portable",
@@ -672,6 +672,30 @@ export function resolveDependencies(
       console.log(`[Dependency Resolution] Excluded framework assembly from dependencies: ${fwAsm}`);
     }
   });
+
+  const packageProvenance: Record<string, { activities: string[]; workflows: string[] }> = {};
+  if (pkg.workflows) {
+    for (const wf of pkg.workflows) {
+      const wfName = wf.name || "unknown-workflow";
+      for (const step of wf.steps || []) {
+        const pkgs: string[] = [];
+        if (step.activityPackage) pkgs.push(normalizePackageName(step.activityPackage));
+        if (step.activityType) {
+          const resolved = catalogService.getPackageForActivity(step.activityType);
+          if (resolved) pkgs.push(normalizePackageName(resolved));
+        }
+        for (const p of pkgs) {
+          if (!packageProvenance[p]) packageProvenance[p] = { activities: [], workflows: [] };
+          if (step.activityType && !packageProvenance[p].activities.includes(step.activityType)) {
+            packageProvenance[p].activities.push(step.activityType);
+          }
+          if (!packageProvenance[p].workflows.includes(wfName)) {
+            packageProvenance[p].workflows.push(wfName);
+          }
+        }
+      }
+    }
+  }
 
   for (const rawPkgName of referencedPackages) {
     const pkgName = normalizePackageName(rawPkgName);
@@ -722,8 +746,17 @@ export function resolveDependencies(
     }
 
     if (!version) {
+      const prov = packageProvenance[pkgName];
+      const activityInfo = prov?.activities.length ? ` Referenced by activities: [${prov.activities.join(", ")}].` : "";
+      const workflowInfo = prov?.workflows.length ? ` Found in workflows: [${prov.workflows.join(", ")}].` : "";
+      const layersChecked = [
+        studioProfile ? "studio-profile (getPreferredVersion): no match" : "studio-profile: not available",
+        catalogService.isLoaded() ? "activity-catalog (getConfirmedVersion): no match" : "activity-catalog: not loaded",
+        "generation-metadata (packageVersionRanges): no match",
+      ].join("; ");
       throw new Error(
-        `[Dependency Resolution] FATAL: Package "${pkgName}" is referenced by activities but has no validated version in the catalog, studio profile, or metadata service. ` +
+        `[Dependency Resolution] FATAL: Package "${pkgName}" is referenced by activities but has no validated version.${activityInfo}${workflowInfo} ` +
+        `Authority layers checked: [${layersChecked}]. ` +
         `Cannot emit a fabricated version — build aborted. Add this package to the generation-metadata.json packageVersionRanges or activity catalog to resolve.`
       );
     }
@@ -1862,8 +1895,17 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           });
           console.warn(`[Dependency CrossCheck] Using validated metadata service version for ${pkgName}: ${fallback}`);
         } else {
+          const xamlFiles = xamlEntries
+            ? xamlEntries.filter((e: { name: string; content: string }) => e.content.includes(pkgName)).map((e: { name: string; content: string }) => e.name)
+            : [];
+          const xamlContext = xamlFiles.length ? ` Found in XAML files: [${xamlFiles.join(", ")}].` : "";
+          const layersChecked = [
+            catalogService.isLoaded() ? "activity-catalog (getPreferredVersion): no match" : "activity-catalog: not loaded",
+            "generation-metadata (getBaselineFallbackVersion): no match",
+          ].join("; ");
           throw new Error(
-            `[Dependency CrossCheck] FATAL: Package "${pkgName}" is referenced in emitted XAML but has no validated version in the catalog, studio profile, or metadata service. ` +
+            `[Dependency CrossCheck] FATAL: Package "${pkgName}" is referenced in emitted XAML but has no validated version.${xamlContext} ` +
+            `Authority layers checked: [${layersChecked}]. ` +
             `Cannot emit a fabricated version — build aborted. Add this package to the generation-metadata.json packageVersionRanges or activity catalog to resolve.`
           );
         }
@@ -2614,8 +2656,17 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           autoFixSummary.push(`Added dependency from validated metadata service: ${pkgName}@${fallback}`);
           console.warn(`[Dependency CrossCheck] Post-fix: using validated metadata service version for ${pkgName}: ${fallback}`);
         } else {
+          const postRemXamlFiles = xamlEntries
+            ? xamlEntries.filter((e: { name: string; content: string }) => e.content.includes(pkgName)).map((e: { name: string; content: string }) => e.name)
+            : [];
+          const postRemXamlContext = postRemXamlFiles.length ? ` Found in XAML files: [${postRemXamlFiles.join(", ")}].` : "";
+          const postRemLayersChecked = [
+            catalogService.isLoaded() ? "activity-catalog (getPreferredVersion): no match" : "activity-catalog: not loaded",
+            "generation-metadata (getBaselineFallbackVersion): no match",
+          ].join("; ");
           throw new Error(
-            `[Dependency CrossCheck] FATAL: Package "${pkgName}" is referenced in post-remediation XAML but has no validated version. ` +
+            `[Dependency CrossCheck] FATAL: Package "${pkgName}" is referenced in post-remediation XAML but has no validated version.${postRemXamlContext} ` +
+            `Authority layers checked: [${postRemLayersChecked}]. ` +
             `Build aborted. Add this package to the generation-metadata.json packageVersionRanges or activity catalog.`
           );
         }

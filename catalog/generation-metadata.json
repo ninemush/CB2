@@ -125,6 +125,41 @@
       "preferred": "13.0.3",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
       "verificationSource": "nuget-feed"
+    },
+    "UiPath.GSuite.Activities": {
+      "min": "1.15.0",
+      "max": "1.99.0",
+      "preferred": "1.15.1",
+      "lastVerifiedAt": "2026-03-24T00:00:00Z",
+      "verificationSource": "nuget-feed"
+    },
+    "UiPath.PDF.Activities": {
+      "min": "3.17.0",
+      "max": "3.99.0",
+      "preferred": "3.17.0",
+      "lastVerifiedAt": "2026-03-24T00:00:00Z",
+      "verificationSource": "nuget-feed"
+    },
+    "UiPath.Word.Activities": {
+      "min": "1.10.0",
+      "max": "1.99.0",
+      "preferred": "1.10.0",
+      "lastVerifiedAt": "2026-03-24T00:00:00Z",
+      "verificationSource": "nuget-feed"
+    },
+    "UiPath.Cryptography.Activities": {
+      "min": "1.4.0",
+      "max": "1.99.0",
+      "preferred": "1.4.0",
+      "lastVerifiedAt": "2026-03-24T00:00:00Z",
+      "verificationSource": "nuget-feed"
+    },
+    "UiPath.MicrosoftOffice365.Activities": {
+      "min": "2.5.0",
+      "max": "2.99.0",
+      "preferred": "2.5.0",
+      "lastVerifiedAt": "2026-03-24T00:00:00Z",
+      "verificationSource": "nuget-feed"
     }
   },
   "minimumRequiredPackages": [
