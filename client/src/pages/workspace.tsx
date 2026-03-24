@@ -1144,6 +1144,24 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     setStreamingDocElapsed(0);
     if (streamingDocElapsedRef.current) clearInterval(streamingDocElapsedRef.current);
     streamingDocElapsedRef.current = setInterval(() => setStreamingDocElapsed(p => p + 1), 1000);
+    if (docGenSafetyTimerRef.current) clearTimeout(docGenSafetyTimerRef.current);
+    const safetyMs = type === "SDD" ? 360_000 : 240_000;
+    docGenSafetyTimerRef.current = setTimeout(() => {
+      if (isGeneratingDocRef.current) {
+        console.warn(`[DocGen] Safety timeout: isGeneratingDoc stuck for ${safetyMs / 1000}s, forcing reset`);
+        isGeneratingDocRef.current = false;
+        generatingDocTypeRef.current = "";
+        setIsGeneratingDoc(false);
+        setGeneratingDocType("");
+        setDocProgressSection("");
+        setStreamingDocContent("");
+        setStreamingDocElapsed(0);
+        if (streamingDocElapsedRef.current) {
+          clearInterval(streamingDocElapsedRef.current);
+          streamingDocElapsedRef.current = null;
+        }
+      }
+    }, safetyMs);
   }, []);
 
   const stopDocStreaming = useCallback((opts?: { force?: boolean }) => {
@@ -1158,6 +1176,10 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     if (streamingDocElapsedRef.current) {
       clearInterval(streamingDocElapsedRef.current);
       streamingDocElapsedRef.current = null;
+    }
+    if (docGenSafetyTimerRef.current) {
+      clearTimeout(docGenSafetyTimerRef.current);
+      docGenSafetyTimerRef.current = null;
     }
   }, []);
 
@@ -1177,6 +1199,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   const sddTriggeredRef = useRef(false);
   const uipathTriggeredRef = useRef(false);
   const pendingDocTriggerRef = useRef<"PDD" | "SDD" | null>(null);
+  const toBeMapApprovedRef = useRef(false);
+  const docGenSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const generateDocRef = useRef<((type: "PDD" | "SDD") => void) | null>(null);
   const generateUiPathRef = useRef<((force?: boolean, source?: "chat" | "retry" | "approval" | "auto") => void) | null>(null);
   const generateToBeRef = useRef<(() => void) | null>(null);
@@ -1185,10 +1209,12 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     if (isReapproval) {
       if (viewType === "as-is") {
         toBeTriggeredRef.current = false;
+        toBeMapApprovedRef.current = false;
         pddTriggeredRef.current = false;
         sddTriggeredRef.current = false;
         uipathTriggeredRef.current = false;
       } else {
+        toBeMapApprovedRef.current = false;
         pddTriggeredRef.current = false;
         sddTriggeredRef.current = false;
         uipathTriggeredRef.current = false;
@@ -1196,10 +1222,12 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     }
 
     if (viewType === "as-is") {
+      toBeMapApprovedRef.current = false;
       if (toBeTriggeredRef.current) return;
       toBeTriggeredRef.current = true;
       setTimeout(() => generateToBeRef.current?.(), 500);
     } else {
+      toBeMapApprovedRef.current = true;
       if (pddTriggeredRef.current) return;
       pddTriggeredRef.current = true;
       setTimeout(() => generateDocRef.current?.("PDD"), 500);
@@ -1284,7 +1312,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     const hasToBeSteps = savedMessages.some(
       (m) => m.role === "assistant" && m.content.includes("TO-BE Process Map")
     );
-    if (hasAsIsApproval && !hasToBeSteps && !toBeTriggeredRef.current && !isStreaming && !isGeneratingDoc) {
+    if (hasAsIsApproval && !hasToBeSteps && !toBeTriggeredRef.current && !toBeGeneratingRef.current && !isStreaming && !isGeneratingDoc) {
       dispatchGenerationForApproval("as-is", isAsIsReapproval);
       return;
     }
@@ -1299,6 +1327,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     const hasPdd = savedMessages.some(
       (m) => m.content.startsWith("[DOC:PDD:") || (m as any).docType === "PDD"
     );
+    if (hasToBeApproval) {
+      toBeMapApprovedRef.current = true;
+    }
     if (hasToBeApproval && !hasPdd && !pddTriggeredRef.current && !isGeneratingDoc) {
       dispatchGenerationForApproval("to-be", isToBeReapproval);
       return;
@@ -1884,6 +1915,10 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
             console.log(`[ProcessMap] Blocked bulk write to as-is view — stage is past Design (${idea.stage}), skipping to protect approved AS-IS map`);
             continue;
           }
+          if (viewType === "to-be" && isPastDesign && toBeMapApprovedRef.current) {
+            console.log(`[ProcessMap] Blocked bulk write to to-be view — stage is past Design (${idea.stage}) and To-Be map already approved, skipping to protect approved TO-BE map`);
+            continue;
+          }
 
           console.log(`[ProcessMap] Bulk creating ${bulkNodes.length} nodes, ${remappedEdges.length} edges for view=${viewType} (clear=${clearExisting})`);
 
@@ -1911,7 +1946,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
   }, [idea.id, idea.stage, isToBeRelatedMessage]);
 
   const generateDocument = useCallback(async (type: "PDD" | "SDD") => {
-    if (isGeneratingDoc || isStreaming) {
+    if (isGeneratingDoc || isGeneratingDocRef.current || isStreaming) {
+      console.log(`[DocGen] Skipping ${type} generation — already generating (isGeneratingDoc=${isGeneratingDoc}, ref=${isGeneratingDocRef.current}, isStreaming=${isStreaming})`);
       const triggerRef = type === "PDD" ? pddTriggeredRef : sddTriggeredRef;
       triggerRef.current = false;
       return;
@@ -1998,6 +2034,16 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       clearTimeout(timeoutId);
       setClassifiedIntent("");
       stopDocStreaming({ force: true });
+      if (pendingDocTriggerRef.current) {
+        const pendingType = pendingDocTriggerRef.current;
+        pendingDocTriggerRef.current = null;
+        const triggerRef = pendingType === "PDD" ? pddTriggeredRef : sddTriggeredRef;
+        if (!triggerRef.current) {
+          console.log(`[DocGen] Consuming pending doc trigger after generation completed: ${pendingType}`);
+          triggerRef.current = true;
+          setTimeout(() => generateDocRef.current?.(pendingType), 300);
+        }
+      }
     }
   }, [isGeneratingDoc, isStreaming, startDocStreaming, stopDocStreaming, idea.id, toast]);
 

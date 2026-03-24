@@ -13,6 +13,7 @@ import { startUiPathGenerationRun, type TriggerSource, type RunCallbacks, type R
 import { UIPATH_PROMPT, repairTruncatedPackageJson } from "./uipath-prompts";
 export { UIPATH_PROMPT, repairTruncatedPackageJson };
 import type { MetaValidationMode } from "./meta-validation";
+import { acquireDocGenerationLock, releaseDocGenerationLock, isGenerationCancelled, consumePendingInvalidation, runCompletionCallbacks } from "./lib/doc-generation-lock";
 import { evaluateTransition } from "./stage-transition";
 import { approveDocument } from "./document-service";
 import { escapeXml } from "./lib/xml-utils";
@@ -761,6 +762,12 @@ export function registerDocumentRoutes(app: Express): void {
       return res.status(400).json({ message: "Invalid document type" });
     }
 
+    const lockResult = acquireDocGenerationLock(ideaId, type);
+    if (!lockResult.acquired) {
+      console.warn(`[Document Generate] Rejected duplicate ${type} generation for idea=${ideaId} — ${lockResult.reason}`);
+      return res.status(409).json({ message: `${type} generation already in progress` });
+    }
+
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
@@ -789,6 +796,14 @@ export function registerDocumentRoutes(app: Express): void {
       }
 
       const genResult = await generateDocument(ideaId, type, onStageEvent);
+
+      if (isGenerationCancelled(ideaId, type)) {
+        console.warn(`[Document Generate] ${type} generation for idea=${ideaId} was cancelled during execution — discarding results`);
+        sseWrite({ error: true, message: `${type} generation was cancelled due to map re-approval` });
+        res.end();
+        return;
+      }
+
       let content = genResult.content;
       const artifactsValid = type === "SDD" ? (genResult.artifactsValid ?? null) : null;
       const artifactWarnings = type === "SDD" && genResult.artifactWarnings?.length
@@ -871,6 +886,20 @@ export function registerDocumentRoutes(app: Express): void {
       if (error?.status) console.error(`API status: ${error.status}`);
       sseWrite({ error: true, message: `Failed to generate ${type}: ${msg.slice(0, 200)}` });
       res.end();
+    } finally {
+      releaseDocGenerationLock(ideaId, type);
+      const pending = consumePendingInvalidation(ideaId);
+      if (pending) {
+        console.log(`[Document Generate] Running deferred cascade invalidation for idea=${ideaId} after ${type} generation completed`);
+        try {
+          const { cascadeInvalidate } = await import("./cascade-invalidation");
+          const existingApproval = await processMapStorage.getApproval(ideaId, pending.viewType);
+          await cascadeInvalidate(ideaId, pending.viewType, existingApproval || { deferred: true }, pending.nextVersion);
+        } catch (cascadeErr: any) {
+          console.error(`[Document Generate] Deferred cascade invalidation failed:`, cascadeErr?.message);
+        }
+      }
+      await runCompletionCallbacks(ideaId);
     }
   });
 

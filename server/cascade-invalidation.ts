@@ -2,6 +2,7 @@ import { processMapStorage } from "./process-map-storage";
 import { documentStorage } from "./document-storage";
 import { storage } from "./storage";
 import { evaluateTransition } from "./stage-transition";
+import { isDocGenerationActive, cancelDocGeneration, setPendingInvalidation } from "./lib/doc-generation-lock";
 
 export async function cascadeInvalidate(
   ideaId: string,
@@ -10,6 +11,16 @@ export async function cascadeInvalidate(
   nextVersion: number
 ): Promise<void> {
   if (!existingApproval) return;
+
+  const genState = isDocGenerationActive(ideaId);
+  if (genState.active) {
+    console.warn(`[CascadeInvalidation] Deferring cascade invalidation for idea=${ideaId} — document generation in progress (types: ${genState.types.join(", ")}). Marking in-flight generations as cancelled and queuing invalidation.`);
+    for (const genType of genState.types) {
+      cancelDocGeneration(ideaId, genType);
+    }
+    setPendingInvalidation(ideaId, viewType, nextVersion);
+    return;
+  }
 
   if (viewType === "as-is") {
     await processMapStorage.invalidateApprovals(ideaId, "to-be", "As-Is map was re-approved (v" + nextVersion + ")");
