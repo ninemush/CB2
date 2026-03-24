@@ -95,6 +95,8 @@ const STAGE_DISPLAY_LABELS: Record<string, string> = {
   "llm_parallel_generation": "Generating prose and artifacts...",
   "llm_generation": "Generating document content...",
   "artifacts_retry": "Retrying artifact generation...",
+  "artifacts_retry_retry": "Retrying artifact generation...",
+  "artifacts_retry_fallback": "Retrying artifact generation (fallback)...",
   "artifact_validation": "Validating artifacts...",
 };
 
@@ -111,32 +113,18 @@ interface StreamingProgressProps {
 
 function StreamingProgressIndicator({ mode, liveStatus, docType, currentSection, deployStep, onCancel, stage, classifiedIntent }: StreamingProgressProps) {
   const [elapsed, setElapsed] = useState(0);
-  const [hasReceivedRealStage, setHasReceivedRealStage] = useState(false);
-  const gracePeriodExpiredRef = useRef(false);
-  const [gracePeriodExpired, setGracePeriodExpired] = useState(false);
 
   useEffect(() => {
     const interval = setInterval(() => setElapsed((p) => p + 1), 1000);
     return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      gracePeriodExpiredRef.current = true;
-      setGracePeriodExpired(true);
-    }, 9000);
-    return () => clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    if (currentSection && !hasReceivedRealStage) {
-      setHasReceivedRealStage(true);
-    }
-  }, [currentSection, hasReceivedRealStage]);
-
-  const steps = DOC_PROGRESS_STEPS[docType || "PDD"] || DOC_PROGRESS_STEPS.PDD;
+  const isUiPathOrDHG = docType === "UiPath" || docType === "DHG";
+  const uiPathSteps = DOC_PROGRESS_STEPS[docType || ""] || [];
   const stepDuration = docType === "UiPath" ? 10 : 6;
-  const fallbackStep = steps[Math.min(Math.floor(elapsed / stepDuration), steps.length - 1)];
+  const fallbackStep = isUiPathOrDHG && uiPathSteps.length > 0
+    ? uiPathSteps[Math.min(Math.floor(elapsed / stepDuration), uiPathSteps.length - 1)]
+    : null;
 
   const getThinkingMessage = () => {
     if (liveStatus) {
@@ -165,13 +153,9 @@ function StreamingProgressIndicator({ mode, liveStatus, docType, currentSection,
     );
   }
 
-  const isUiPath = docType === "UiPath";
   const getDocStatusText = () => {
-    if (isUiPath) return currentSection || fallbackStep;
-    if (hasReceivedRealStage && currentSection) return currentSection;
-    if (!hasReceivedRealStage && !gracePeriodExpired) return "Starting generation...";
-    if (!hasReceivedRealStage && gracePeriodExpired) return fallbackStep;
-    return fallbackStep;
+    if (isUiPathOrDHG) return currentSection || fallbackStep || "Starting generation...";
+    return currentSection || "Starting generation...";
   };
 
   const statusText = mode === "deploy"
@@ -180,7 +164,7 @@ function StreamingProgressIndicator({ mode, liveStatus, docType, currentSection,
 
   const title = mode === "deploy"
     ? "Deploying to UiPath..."
-    : isUiPath
+    : docType === "UiPath"
       ? "Generating UiPath..."
       : `Generating ${docType || "document"}...`;
 
@@ -708,30 +692,6 @@ function UiPathProgressPanel({
 }
 
 const DOC_PROGRESS_STEPS: Record<string, string[]> = {
-  PDD: [
-    "Analyzing process steps...",
-    "Writing Executive Summary...",
-    "Writing Process Scope...",
-    "Describing As-Is Process...",
-    "Describing To-Be Process...",
-    "Documenting Pain Points...",
-    "Writing Automation Assessment...",
-    "Documenting Assumptions & Exceptions...",
-    "Writing Data & System Requirements...",
-    "Finalizing document...",
-  ],
-  SDD: [
-    "Analyzing process architecture...",
-    "Writing Technical Overview...",
-    "Defining Solution Components...",
-    "Documenting Application Interactions...",
-    "Writing Error Handling Strategy...",
-    "Defining Orchestrator Artifacts...",
-    "Writing Security & Compliance...",
-    "Documenting Testing Strategy...",
-    "Generating Artifact Definitions...",
-    "Finalizing specification...",
-  ],
   UiPath: [
     "Reading SDD content...",
     "Generating package specification...",
@@ -1965,8 +1925,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
 
               if (data.stageEvent) {
                 const evt = data.stageEvent;
-                const stageName = evt.stage.replace(/_retry$/, "").replace(/_fallback$/, "");
-                const label = STAGE_DISPLAY_LABELS[stageName] || `Processing ${stageName.replace(/_/g, " ")}...`;
+                const label = STAGE_DISPLAY_LABELS[evt.stage] || `Processing ${evt.stage.replace(/_/g, " ")}...`;
                 if (evt.type === "stage_start") {
                   setDocProgressSection(label);
                 } else if (evt.type === "stage_end" && evt.outcome === "failed" && evt.error) {
