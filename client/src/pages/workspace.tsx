@@ -1718,7 +1718,8 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
     }
     startDocStreaming(type);
     const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 180_000);
+    const abortTimeoutMs = type === "SDD" ? 300_000 : 180_000;
+    const timeoutId = setTimeout(() => abortController.abort(), abortTimeoutMs);
     try {
       const res = await fetch(`/api/ideas/${idea.id}/documents/generate`, {
         method: "POST",
@@ -1735,8 +1736,9 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
       await queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id, "documents"] });
       queryClient.invalidateQueries({ queryKey: ["/api/ideas", idea.id] });
     } catch (err: any) {
+      const timeoutMinutes = Math.round(abortTimeoutMs / 60_000);
       const message = err?.name === "AbortError"
-        ? "Document generation timed out after 3 minutes. Please try again."
+        ? `Document generation timed out after ${timeoutMinutes} minutes. Please try again.`
         : (err?.message || "Something went wrong. Please try again.");
       toast({
         title: `${type} generation failed`,

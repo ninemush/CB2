@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { getLLM } from "./lib/llm";
+import { getLLM, SDD_LLM_TIMEOUT_MS } from "./lib/llm";
 import { RunLogger } from "./lib/run-logger";
 import { sanitizeChatForLLM } from "./lib/sanitize-chat";
 import { documentStorage } from "./document-storage";
@@ -436,22 +436,42 @@ async function generateDocument(ideaId: string, docType: string): Promise<Genera
 
     const artifactsSystemPrompt = systemPrompt + "\n\nIMPORTANT: Your response MUST begin immediately with the ```orchestrator_artifacts fenced code block. Do NOT include any prose, explanation, or text before the opening fence.";
 
-    const [proseResponse, artifactsResponse] = await Promise.all([
+    const sddTimeout = SDD_LLM_TIMEOUT_MS;
+    console.log(`[SDD] Using timeout of ${sddTimeout / 1000}s for LLM calls`);
+
+    const [proseResult, artifactsResult] = await Promise.allSettled([
       getLLM().create({
         maxTokens: 6144,
         system: systemPrompt,
         messages: [...chatMessages, { role: "user", content: sddProsePrompt }],
+        timeoutMs: sddTimeout,
       }),
       getLLM().create({
         maxTokens: 4096,
         system: artifactsSystemPrompt,
         messages: [...chatMessages, { role: "user", content: sddArtifactsPrompt }],
+        timeoutMs: sddTimeout,
       }),
     ]);
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+    const failures: string[] = [];
+    if (proseResult.status === "rejected") failures.push(`prose: ${proseResult.reason?.message || "unknown error"}`);
+    if (artifactsResult.status === "rejected") failures.push(`artifacts: ${artifactsResult.reason?.message || "unknown error"}`);
+
+    if (failures.length > 0) {
+      const failureDetail = failures.join("; ");
+      console.error(`[SDD] Parallel generation failed after ${elapsed}s — ${failureDetail}`);
+      runLogger.stageEnd("llm_parallel_generation", "failed", { elapsedSeconds: elapsed, timeoutMs: sddTimeout, failures: failureDetail });
+      throw new Error(`SDD generation failed (${failureDetail})`);
+    }
+
+    const proseResponse = (proseResult as PromiseFulfilledResult<any>).value;
+    const artifactsResponse = (artifactsResult as PromiseFulfilledResult<any>).value;
+
     console.log(`[SDD] Parallel generation completed in ${elapsed}s`);
-    runLogger.stageEnd("llm_parallel_generation", "succeeded", { elapsedSeconds: elapsed });
+    runLogger.stageEnd("llm_parallel_generation", "succeeded", { elapsedSeconds: elapsed, timeoutMs: sddTimeout });
 
     const proseText = proseResponse.text;
     let artifactsText = artifactsResponse.text;
@@ -468,6 +488,7 @@ async function generateDocument(ideaId: string, docType: string): Promise<Genera
             role: "user",
             content: `Your previous attempt to generate the deployment specification did not produce valid structured output. Generate ONLY the deployment artifacts block now.\n\nStart immediately with:\n\`\`\`orchestrator_artifacts\n{\n  ...\n}\n\`\`\`\n\nInclude all queues, assets, machines, triggers, environments, and other artifacts needed for this automation.`
           }],
+          timeoutMs: sddTimeout,
         });
         if (parseArtifactBlock(retryResponse.text)) {
           console.log(`[SDD] Artifacts retry succeeded`);

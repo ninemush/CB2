@@ -32,6 +32,7 @@ export interface LLMMessage {
 }
 
 export const LLM_TIMEOUT_MS = 120_000;
+export const SDD_LLM_TIMEOUT_MS = 240_000;
 
 export interface LLMOptions {
   system: string;
