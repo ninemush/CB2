@@ -3,7 +3,7 @@ import { storage } from "./storage";
 import { documentStorage } from "./document-storage";
 import { processMapStorage } from "./process-map-storage";
 import { chatStorage } from "./replit_integrations/chat/storage";
-import { getCodeLLM } from "./lib/llm";
+import { getCodeLLM, SDD_LLM_TIMEOUT_MS } from "./lib/llm";
 import { RunLogger } from "./lib/run-logger";
 import { runBuildPipeline, getCachedPipelineResult, findUiPathMessage, type IdeaContext, type PipelineResult } from "./uipath-pipeline";
 import type { PipelineProgressEvent, PipelineProgressCallback } from "./uipath-pipeline";
@@ -368,6 +368,7 @@ async function executeRun(
           maxTokens: 16384,
           system: systemCtx,
           messages: [{ role: "user", content: UIPATH_PROMPT }],
+          timeoutMs: SDD_LLM_TIMEOUT_MS,
         });
       } finally {
         clearInterval(keepAliveInterval);
