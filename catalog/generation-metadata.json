@@ -897,30 +897,6 @@
       "verificationSource": "uipath-official-feed",
       "discoveredAt": "2026-03-25T19:07:01.899Z"
     },
-    "UiPath.System.Activities.Runtime.Legacy": {
-      "min": "24.3.0",
-      "max": "24.99.0",
-      "preferred": "24.10.8",
-      "lastVerifiedAt": "2026-03-25T19:07:01.899Z",
-      "verificationSource": "uipath-official-feed",
-      "discoveredAt": "2026-03-25T19:07:01.899Z"
-    },
-    "UiPath.System.Activities.Runtime.Portable": {
-      "min": "25.10.0",
-      "max": "25.10.99",
-      "preferred": "25.10.5",
-      "lastVerifiedAt": "2026-03-25T19:07:01.899Z",
-      "verificationSource": "uipath-official-feed",
-      "discoveredAt": "2026-03-25T19:07:01.899Z"
-    },
-    "UiPath.System.Activities.Runtime.Windows": {
-      "min": "25.10.0",
-      "max": "25.10.99",
-      "preferred": "25.10.5",
-      "lastVerifiedAt": "2026-03-25T19:07:01.899Z",
-      "verificationSource": "uipath-official-feed",
-      "discoveredAt": "2026-03-25T19:07:01.899Z"
-    },
     "UiPath.SystemCenter.Activities": {
       "min": "1.0.0",
       "max": "1.99.0",
@@ -965,14 +941,6 @@
       "min": "5.0.7",
       "max": "5.99.0",
       "preferred": "5.0.7",
-      "lastVerifiedAt": "2026-03-25T19:07:01.899Z",
-      "verificationSource": "uipath-official-feed",
-      "discoveredAt": "2026-03-25T19:07:01.899Z"
-    },
-    "UiPath.UIAutomation.Activities.Runtime.Portable": {
-      "min": "25.10.1",
-      "max": "25.10.99",
-      "preferred": "25.10.28",
       "lastVerifiedAt": "2026-03-25T19:07:01.899Z",
       "verificationSource": "uipath-official-feed",
       "discoveredAt": "2026-03-25T19:07:01.899Z"

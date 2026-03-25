@@ -95,6 +95,7 @@ const ACTIVITY_PACKAGE_EXCLUSIONS = [
 
 const RUNTIME_TEST_SUFFIXES = [
   ".Runtime",
+  ".Runtime.",
   ".Design",
   ".DesignExperience",
   "RuntimeTests_portable",
@@ -107,7 +108,7 @@ function isActivityPackage(packageId: string): boolean {
   if (ACTIVITY_PACKAGE_EXCLUSIONS.some(excl => packageId.startsWith(excl))) {
     return false;
   }
-  if (RUNTIME_TEST_SUFFIXES.some(suffix => packageId.endsWith(suffix))) {
+  if (RUNTIME_TEST_SUFFIXES.some(suffix => packageId.endsWith(suffix) || packageId.includes(suffix))) {
     return false;
   }
   if (packageId.includes("Activities")) {
@@ -1204,14 +1205,6 @@ export async function verifyPreferredVersionsOnStartup(): Promise<{ verified: nu
       const level = isRequired ? "ERROR" : "WARNING";
       const msg = `[FeedCheck] ${level}: Cannot verify ${pkgName}@${preferred} — feeds unreachable`;
       console.warn(msg);
-      details.push(msg);
-      continue;
-    }
-
-    if (feedResult.versions.length === 0) {
-      verified++;
-      const msg = `[FeedCheck] INFO: ${pkgName}@${preferred} — not available on public feeds (private/Studio-bundled package), accepting curated version`;
-      console.log(msg);
       details.push(msg);
       continue;
     }
