@@ -2423,8 +2423,8 @@ export function generateInitAllSettingsXaml(orchestratorArtifacts?: any, targetF
       <!-- Reads Config.xlsx (Settings + Constants sheets) and retrieves Orchestrator assets -->
       <!-- Assets: ${assetCount} | Queues: ${queueCount} -->`;
   const assets = orchestratorArtifacts?.assets || [];
-  const credAssets = assets.filter((a: any) => a.type === "Credential");
-  const textAssets = assets.filter((a: any) => a.type !== "Credential");
+  const credAssets = assets.filter((a: any) => a.type === "Credential" || !a.type);
+  const textAssets = assets.filter((a: any) => a.type && a.type !== "Credential");
 
   if (credAssets.length > 0) {
     for (const asset of credAssets) {
@@ -2486,6 +2486,9 @@ export function generateInitAllSettingsXaml(orchestratorArtifacts?: any, targetF
   xmlns:scg2="clr-namespace:System.Data;assembly=System.Data"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <x:Members>
+    <x:Property Name="out_Config" Type="OutArgument(scg:Dictionary(x:String, x:Object))" />
+  </x:Members>
   <Sequence DisplayName="Initialize All Settings">
     <Sequence.Variables>
       <Variable x:TypeArguments="scg2:DataTable" Name="dt_Settings" />
@@ -2495,6 +2498,7 @@ export function generateInitAllSettingsXaml(orchestratorArtifacts?: any, targetF
       <Variable x:TypeArguments="x:String" Name="str_TempUser" />
       <Variable x:TypeArguments="s:Security.SecureString" Name="sec_TempPass" />
       <Variable x:TypeArguments="scg2:DataRow" Name="row_Current" />
+      <Variable x:TypeArguments="scg:Dictionary(x:String, x:Object)" Name="dict_Config" Default="[${isCSharp ? "new Dictionary&lt;string, object&gt;()" : "new Dictionary(Of String, Object)"}]" />
     </Sequence.Variables>
     <ui:LogMessage Level="Info" Message="[${sq}Reading configuration from Config.xlsx...${sq}]" DisplayName="Log Config Start" />
     ${excelBlock}
@@ -2503,6 +2507,10 @@ export function generateInitAllSettingsXaml(orchestratorArtifacts?: any, targetF
         <Argument x:TypeArguments="scg2:DataRow" x:Name="row" />
         <Sequence DisplayName="Process Setting Row">
           <ui:LogMessage Level="Trace" Message="[&quot;Processing setting: &quot;${initConcat}row(&quot;Name&quot;)${toStringCall}]" DisplayName="Log Setting" />
+          <Assign DisplayName="Store Setting in Config Dictionary">
+            <Assign.To><OutArgument x:TypeArguments="x:Object">[dict_Config(row(&quot;Name&quot;)${toStringCall})]</OutArgument></Assign.To>
+            <Assign.Value><InArgument x:TypeArguments="x:Object">[row(&quot;Value&quot;)]</InArgument></Assign.Value>
+          </Assign>
         </Sequence>
       </ActivityAction>
     </ForEach>${assetActivities}
@@ -2511,9 +2519,17 @@ export function generateInitAllSettingsXaml(orchestratorArtifacts?: any, targetF
         <Argument x:TypeArguments="scg2:DataRow" x:Name="constRow" />
         <Sequence DisplayName="Store Constant">
           <ui:LogMessage Level="Trace" Message="[&quot;Loaded constant: &quot;${initConcat}constRow(&quot;Name&quot;)${toStringCall}]" DisplayName="Log Constant" />
+          <Assign DisplayName="Store Constant in Config Dictionary">
+            <Assign.To><OutArgument x:TypeArguments="x:Object">[dict_Config(constRow(&quot;Name&quot;)${toStringCall})]</OutArgument></Assign.To>
+            <Assign.Value><InArgument x:TypeArguments="x:Object">[constRow(&quot;Value&quot;)]</InArgument></Assign.Value>
+          </Assign>
         </Sequence>
       </ActivityAction>
     </ForEach>
+    <Assign DisplayName="Output Config Dictionary">
+      <Assign.To><OutArgument x:TypeArguments="scg:Dictionary(x:String, x:Object)">[out_Config]</OutArgument></Assign.To>
+      <Assign.Value><InArgument x:TypeArguments="scg:Dictionary(x:String, x:Object)">[dict_Config]</InArgument></Assign.Value>
+    </Assign>
     <ui:LogMessage Level="Info" Message="'Configuration loaded successfully'" DisplayName="Log Config Complete" />
   </Sequence>
 </Activity>`;
