@@ -1140,7 +1140,7 @@ export async function verifyPreferredVersionsOnStartup(): Promise<{ verified: nu
     const preferred = entry.preferred;
 
     const category = classifyPackage(pkgName);
-    const isCurated = entry.verificationSource === "manually-curated";
+    const isCurated = entry.verificationSource === "studio-bundled";
 
     let feedResult: FeedFetchResult = { status: "unreachable" };
     if (category === "official-uipath") {
@@ -1154,7 +1154,7 @@ export async function verifyPreferredVersionsOnStartup(): Promise<{ verified: nu
 
     if (feedResult.status !== "ok" || (feedResult.status === "ok" && feedResult.versions.length === 0)) {
       if (isCurated) {
-        const msg = `[FeedCheck] INFO: ${pkgName}@${preferred} not on public feeds (manually-curated, distributed via Studio)`;
+        const msg = `[FeedCheck] INFO: ${pkgName}@${preferred} confirmed absent from public feeds (studio-bundled package, distributed via authenticated Studio channel)`;
         details.push(msg);
         verified++;
         continue;

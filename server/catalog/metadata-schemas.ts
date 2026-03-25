@@ -12,7 +12,7 @@ export const verificationSourceSchema = z.enum([
   "uipath-official-feed",
   "uipath-marketplace",
   "nuget-feed",
-  "manually-curated",
+  "studio-bundled",
 ]);
 
 export type VerificationSource = z.infer<typeof verificationSourceSchema>;

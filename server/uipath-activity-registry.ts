@@ -629,6 +629,27 @@ const TYPE_ARGUMENT_PACKAGE_MAP: Record<string, string> = {
   "UiPath.Database.Activities": "UiPath.Database.Activities",
 };
 
+function inferPackageFromNamespace(ns: string): string | null {
+  if (!ns.startsWith("UiPath.")) return null;
+  const parts = ns.replace("UiPath.", "").split(".");
+  if (parts.length === 0) return null;
+
+  if (ns.includes(".Activities")) {
+    const actIdx = parts.indexOf("Activities");
+    if (actIdx >= 0) {
+      return "UiPath." + parts.slice(0, actIdx + 1).join(".");
+    }
+  }
+
+  if (parts.length >= 1) {
+    const domain = parts[0];
+    const candidate = `UiPath.${domain}.Activities`;
+    return candidate;
+  }
+
+  return null;
+}
+
 const NAMESPACE_PREFIX_TO_PACKAGE: Record<string, string> = {
   "uexcel": "UiPath.Excel.Activities",
   "uweb": "UiPath.Web.Activities",
@@ -670,11 +691,16 @@ export function scanXamlForRequiredPackages(xamlContent: string): Set<string> {
     }
   }
 
-  const xmlnsPattern = /xmlns:\w+="clr-namespace:UiPath\.([^;]+);assembly=(UiPath\.[^"]+)"/g;
+  const xmlnsPattern = /xmlns:\w+="clr-namespace:(UiPath\.[^;]+);assembly=([^"]+)"/g;
   while ((match = xmlnsPattern.exec(xamlContent)) !== null) {
+    const ns = match[1].trim();
     const assemblyName = match[2].trim();
-    if (!isFrameworkAssembly(assemblyName)) {
+    if (assemblyName.startsWith("UiPath.") && !isFrameworkAssembly(assemblyName)) {
       packages.add(assemblyName);
+    }
+    const inferred = inferPackageFromNamespace(ns);
+    if (inferred && !isFrameworkAssembly(inferred)) {
+      packages.add(inferred);
     }
   }
 
@@ -690,12 +716,19 @@ export function scanXamlForRequiredPackages(xamlContent: string): Set<string> {
 
   const assemblyRefPattern = /clr-namespace:([^;]+);assembly=([^"]+)/g;
   while ((match = assemblyRefPattern.exec(xamlContent)) !== null) {
+    const ns = match[1].trim();
     const assemblyName = match[2].trim();
     if (assemblyName === "Newtonsoft.Json") {
       packages.add("Newtonsoft.Json");
     }
     if (assemblyName.startsWith("UiPath.") && !isFrameworkAssembly(assemblyName)) {
       packages.add(assemblyName);
+    }
+    if (ns.startsWith("UiPath.") && !assemblyName.startsWith("UiPath.")) {
+      const inferred = inferPackageFromNamespace(ns);
+      if (inferred && !isFrameworkAssembly(inferred)) {
+        packages.add(inferred);
+      }
     }
   }
 
