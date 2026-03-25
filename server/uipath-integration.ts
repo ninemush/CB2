@@ -1469,7 +1469,17 @@ async function fetchWithAlternates(
   try {
     const res = await fetch(primaryUrl, { headers });
     if (res.ok || res.status === 401 || res.status === 403) {
-      return { res, usedUrl: primaryUrl, triedAlternate: false };
+      if (res.ok) {
+        const text = await res.clone().text();
+        const trimmed = text.trimStart();
+        if (trimmed.startsWith("<") || trimmed.startsWith("<!DOCTYPE")) {
+          console.log(`[UiPath Probe] ${resourceType}: primary ${primaryUrl} returned HTML — trying alternates`);
+        } else {
+          return { res, usedUrl: primaryUrl, triedAlternate: false };
+        }
+      } else {
+        return { res, usedUrl: primaryUrl, triedAlternate: false };
+      }
     }
   } catch { /* primary failed, try alternates */ }
 
@@ -1478,6 +1488,14 @@ async function fetchWithAlternates(
     try {
       const res = await fetch(alt, { headers });
       if (res.ok || res.status === 401 || res.status === 403) {
+        if (res.ok) {
+          const text = await res.clone().text();
+          const trimmed = text.trimStart();
+          if (trimmed.startsWith("<") || trimmed.startsWith("<!DOCTYPE")) {
+            console.log(`[UiPath Probe] ${resourceType}: alternate ${alt} returned HTML — skipping`);
+            continue;
+          }
+        }
         const baseUrl = probePath ? alt.replace(probePath, "") : alt;
         console.log(`[UiPath Probe] ${resourceType}: primary URL failed, alternate succeeded: ${baseUrl}`);
         const { metadataService: mds } = await import("./catalog/metadata-service");
