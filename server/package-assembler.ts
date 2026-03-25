@@ -96,17 +96,36 @@ export function isValidNuGetVersion(version: string): boolean {
   return /^\[?\d+\.\d+(\.\d+){0,2}(,\s*\))?\]?$/.test(version);
 }
 
-const STUDIO_25_10_VERIFIED_VERSIONS: Record<string, string> = {
-  "UiPath.System.Activities": "[25.10.7, 25.10.99)",
-  "UiPath.UIAutomation.Activities": "[25.10.7, 25.10.99)",
-  "UiPath.Mail.Activities": "[1.23.1, 1.99.0)",
-  "UiPath.Excel.Activities": "[2.24.3, 2.99.0)",
-  "UiPath.Web.Activities": "[1.21.0, 1.99.0)",
-  "UiPath.Database.Activities": "[1.9.0, 1.99.0)",
-  "UiPath.Persistence.Activities": "[25.10.7, 25.10.99)",
-  "UiPath.IntelligentOCR.Activities": "[8.22.0, 8.99.0)",
-  "UiPath.MLActivities": "[25.10.7, 25.10.99)",
+const STUDIO_25_10_VERIFIED_VERSIONS_FALLBACK: Record<string, string> = {
+  "UiPath.System.Activities": "[25.10.0, 25.10.99)",
+  "UiPath.UIAutomation.Activities": "[25.10.0, 25.10.99)",
+  "UiPath.Mail.Activities": "[1.20.0, 1.99.0)",
+  "UiPath.Excel.Activities": "[2.23.0, 2.99.0)",
+  "UiPath.Web.Activities": "[1.17.0, 1.99.0)",
+  "UiPath.Database.Activities": "[1.8.0, 1.99.0)",
+  "UiPath.Persistence.Activities": "[25.10.0, 25.10.99)",
+  "UiPath.IntelligentOCR.Activities": "[8.20.0, 8.99.0)",
+  "UiPath.MLActivities": "[25.10.0, 25.10.99)",
 };
+
+function getVerifiedVersionRange(pkgName: string): string | undefined {
+  const range = _metadataService.getPackageVersionRange(pkgName);
+  if (range) {
+    return `[${range.min}, ${range.max})`;
+  }
+  return STUDIO_25_10_VERIFIED_VERSIONS_FALLBACK[pkgName];
+}
+
+function getPreferredVersionFromMeta(pkgName: string): string | null {
+  if (!_metadataService.getStudioTarget()) {
+    _metadataService.load();
+  }
+  const preferred = _metadataService.getPreferredVersion(pkgName);
+  if (preferred) return preferred;
+  const range = _metadataService.getPackageVersionRange(pkgName);
+  if (range) return range.min;
+  return null;
+}
 
 const KNOWN_TRANSITIVE_COLLISION_PAIRS: Array<{
   packages: [string, string];
@@ -120,18 +139,6 @@ const KNOWN_TRANSITIVE_COLLISION_PAIRS: Array<{
   },
 ];
 
-const STUDIO_25_10_PREFERRED_VERSIONS: Record<string, string> = {
-  "UiPath.System.Activities": "25.10.7",
-  "UiPath.UIAutomation.Activities": "25.10.7",
-  "UiPath.Mail.Activities": "1.23.1",
-  "UiPath.Excel.Activities": "2.24.3",
-  "UiPath.Web.Activities": "1.21.0",
-  "UiPath.Database.Activities": "1.9.0",
-  "UiPath.Persistence.Activities": "25.10.7",
-  "UiPath.IntelligentOCR.Activities": "8.22.0",
-  "UiPath.MLActivities": "25.10.7",
-};
-
 function extractExactVersion(versionStr: string): string {
   let v = versionStr.trim();
   v = v.replace(/^\[/, "").replace(/[,)\]]/g, "").trim();
@@ -144,7 +151,7 @@ function validateAndEnforceDependencyCompatibility(
   warnings: DependencyResolutionResult["warnings"],
 ): void {
   for (const [pkgName, version] of Object.entries(deps)) {
-    const range = STUDIO_25_10_VERIFIED_VERSIONS[pkgName];
+    const range = getVerifiedVersionRange(pkgName);
     if (!range) continue;
 
     const rangeMatch = range.match(/^\[(\d+\.\d+\.\d+),\s*(\d+\.\d+\.\d+)\)$/);
@@ -154,7 +161,7 @@ function validateAndEnforceDependencyCompatibility(
     const cleanVersion = extractExactVersion(version);
 
     if (compareVersions(cleanVersion, minVer) < 0 || compareVersions(cleanVersion, maxVer) >= 0) {
-      const preferredVersion = STUDIO_25_10_PREFERRED_VERSIONS[pkgName];
+      const preferredVersion = getPreferredVersionFromMeta(pkgName);
       if (preferredVersion) {
         const oldVersion = deps[pkgName];
         deps[pkgName] = `[${preferredVersion}]`;
@@ -185,8 +192,8 @@ function validateAndEnforceDependencyCompatibility(
         const systemPkg = collision.packages.find(p => p === "UiPath.System.Activities") || pkg2;
         const otherPkg = systemPkg === pkg1 ? pkg2 : pkg1;
 
-        const systemPreferred = STUDIO_25_10_PREFERRED_VERSIONS[systemPkg];
-        const otherPreferred = STUDIO_25_10_PREFERRED_VERSIONS[otherPkg];
+        const systemPreferred = getPreferredVersionFromMeta(systemPkg);
+        const otherPreferred = getPreferredVersionFromMeta(otherPkg);
 
         if (systemPreferred && deps[systemPkg]) {
           const currentSysVer = extractExactVersion(deps[systemPkg]);
@@ -2224,15 +2231,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
     {
       const nsCoverageWarnings = validateNamespaceCoverage(allXamlContent, deps);
+      const autoAddedPackages = new Set<string>();
       for (const warning of nsCoverageWarnings) {
-        console.warn(`[Namespace Coverage] ${warning}`);
-        dependencyWarnings.push({
-          code: "NAMESPACE_MISSING_DEPENDENCY",
-          message: warning,
-          stage: "namespace-coverage-validation",
-          recoverable: true,
-        });
-
         const pkgMatch = warning.match(/\(package: ([^)]+)\)/);
         if (pkgMatch) {
           const missingPkg = pkgMatch[1];
@@ -2246,10 +2246,24 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
             }
             if (version) {
               deps[missingPkg] = version;
+              autoAddedPackages.add(missingPkg);
               console.log(`[Namespace Coverage] Auto-added missing dependency ${missingPkg}@${version} to satisfy namespace/assembly reference`);
             }
           }
         }
+      }
+      for (const warning of nsCoverageWarnings) {
+        const pkgMatch = warning.match(/\(package: ([^)]+)\)/);
+        if (pkgMatch && autoAddedPackages.has(pkgMatch[1])) {
+          continue;
+        }
+        console.warn(`[Namespace Coverage] ${warning}`);
+        dependencyWarnings.push({
+          code: "NAMESPACE_MISSING_DEPENDENCY",
+          message: warning,
+          stage: "namespace-coverage-validation",
+          recoverable: true,
+        });
       }
     }
 

@@ -14,7 +14,7 @@ import { evaluateTransition } from "./stage-transition";
 import { SUPPORTED_MODELS, CHAT_SUPPORTED_MODELS, setDbModel, getActiveModel, getProviderName, setDbCodeModel, getActiveCodeModel, getCodeProviderName, setDbMetaValidationModel, getActiveMetaValidationModel, getMetaValidationProviderName } from "./lib/llm";
 import { getMetricsSummary, getAllMetrics, type MetaValidationMode } from "./meta-validation";
 import { metadataService } from "./catalog/metadata-service";
-import { refreshAll, refreshGeneration, refreshIntegration, startRefreshScheduler, discoverNewerLines } from "./catalog/metadata-refresher";
+import { refreshAll, refreshGeneration, refreshIntegration, startRefreshScheduler, discoverNewerLines, verifyPreferredVersionsOnStartup } from "./catalog/metadata-refresher";
 
 declare module "express-session" {
   interface SessionData {
@@ -635,6 +635,17 @@ export async function registerRoutes(
 
   const schedulerIntervalMs = parseInt(process.env.METADATA_REFRESH_INTERVAL_MS || "", 10) || 24 * 60 * 60 * 1000;
   startRefreshScheduler(schedulerIntervalMs);
+
+  verifyPreferredVersionsOnStartup().then(result => {
+    if (result.corrected > 0 || result.unreachable > 0) {
+      console.log(`[Startup] Feed verification: ${result.verified} verified, ${result.corrected} corrected, ${result.unreachable} unreachable`);
+      for (const detail of result.details) {
+        console.log(`[Startup] ${detail}`);
+      }
+    }
+  }).catch(err => {
+    console.warn(`[Startup] Feed verification failed: ${err.message}`);
+  });
 
   return httpServer;
 }

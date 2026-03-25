@@ -695,6 +695,7 @@ function checkVariableArgumentDeclarations(input: QualityGateInput, violations: 
     const content = entry.content;
     const { variables, arguments: args } = extractDeclaredSymbols(content);
     const allDeclared = new Set([...variables.keys(), ...args.keys()]);
+    const isInitAllSettings = shortName.toLowerCase().includes("initallsettings");
 
     const keywords = new Set([
       "True", "False", "Nothing", "null", "New", "Not", "And", "Or", "If",
@@ -718,6 +719,19 @@ function checkVariableArgumentDeclarations(input: QualityGateInput, violations: 
         if (/^[A-Z][a-z]/.test(ident) && expr.includes(`${ident}.`) && !allDeclared.has(ident)) continue;
         const prefixes = ["str_", "int_", "bool_", "dt_", "qi_", "obj_", "dbl_", "sec_", "io_", "in_", "out_", "list_", "arr_", "dict_"];
         if (prefixes.some(p => ident.startsWith(p)) && !allDeclared.has(ident)) {
+          if (ident === "dict_Config" && !isInitAllSettings) {
+            if (!allDeclared.has("in_Config")) {
+              const lineNum = content.substring(0, match.index).split("\n").length;
+              violations.push({
+                category: "completeness",
+                severity: "warning",
+                check: "dict-config-scope",
+                file: shortName,
+                detail: `Line ${lineNum}: "dict_Config" is referenced but not declared — add an "in_Config" argument of type Dictionary(Of String, Object) to receive config from the parent workflow`,
+              });
+            }
+            continue;
+          }
           const lineNum = content.substring(0, match.index).split("\n").length;
           violations.push({
             category: "completeness",

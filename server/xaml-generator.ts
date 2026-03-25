@@ -1279,9 +1279,9 @@ function renderControlFlowActivity(
       const nestedProps = sanitizePropsForRendering(thenProp.properties || {});
       thenContent = renderActivityOrControlFlow(thenProp.activityType, thenProp.displayName || "Then Activity", nestedProps, thenProp , targetFramework);
     } else if (typeof thenProp === "string" && thenProp.length > 0 && thenProp !== "..." && thenProp !== "[object Object]") {
-      thenContent = `\n                <ui:LogMessage Level="Info" Message="'Then: ${escapeXml(String(thenProp))}'" DisplayName="Then: ${escapeXml(enforced)}" />`;
+      thenContent = `\n                <ui:LogMessage Level="Info" Message="[&quot;Then: ${escapeXml(String(thenProp))}&quot;]" DisplayName="Then: ${escapeXml(enforced)}" />`;
     } else {
-      thenContent = `\n                <ui:LogMessage Level="Info" Message="'Then path: ${escapeXml(enforced)}'" DisplayName="Then Path" />`;
+      thenContent = `\n                <ui:LogMessage Level="Info" Message="[&quot;Then path: ${escapeXml(enforced)}&quot;]" DisplayName="Then Path" />`;
     }
 
     let elseContent = "";
@@ -1290,9 +1290,9 @@ function renderControlFlowActivity(
       const nestedProps = sanitizePropsForRendering(elseProp.properties || {});
       elseContent = renderActivityOrControlFlow(elseProp.activityType, elseProp.displayName || "Else Activity", nestedProps, elseProp , targetFramework);
     } else if (typeof elseProp === "string" && elseProp.length > 0 && elseProp !== "..." && elseProp !== "[object Object]") {
-      elseContent = `\n                <ui:LogMessage Level="Info" Message="'Else: ${escapeXml(String(elseProp))}'" DisplayName="Else: ${escapeXml(enforced)}" />`;
+      elseContent = `\n                <ui:LogMessage Level="Info" Message="[&quot;Else: ${escapeXml(String(elseProp))}&quot;]" DisplayName="Else: ${escapeXml(enforced)}" />`;
     } else {
-      elseContent = `\n                <ui:LogMessage Level="Info" Message="'Else path: ${escapeXml(enforced)}'" DisplayName="Else Path" />`;
+      elseContent = `\n                <ui:LogMessage Level="Info" Message="[&quot;Else path: ${escapeXml(enforced)}&quot;]" DisplayName="Else Path" />`;
     }
 
     return `${needsConditionReview ? `\n          <ui:Comment Text="TODO: Replace default True condition with actual business logic for: ${escapeXml(enforced)}" DisplayName="Review Condition" />` : ""}
@@ -1365,7 +1365,7 @@ function renderControlFlowActivity(
       const nestedProps = sanitizePropsForRendering(bodyProp.properties || {});
       bodyContent = renderActivityOrControlFlow(bodyProp.activityType, bodyProp.displayName || "Loop Body", nestedProps, bodyProp , targetFramework);
     } else {
-      bodyContent = `\n                <ui:LogMessage Level="Info" Message="'Processing item in: ${escapeXml(enforced)}'" DisplayName="Loop Body" />`;
+      bodyContent = `\n                <ui:LogMessage Level="Info" Message="[&quot;Processing item in: ${escapeXml(enforced)}&quot;]" DisplayName="Loop Body" />`;
     }
 
     return `${needsValuesReview ? `\n          <ui:Comment Text="TODO: Replace default empty collection with actual data source for: ${escapeXml(enforced)}" DisplayName="Review Collection" />` : ""}
@@ -1389,7 +1389,7 @@ function renderControlFlowActivity(
       const nestedProps = sanitizePropsForRendering(tryProp.properties || {});
       tryContent = renderActivityOrControlFlow(tryProp.activityType, tryProp.displayName || "Try Body", nestedProps, tryProp , targetFramework);
     } else {
-      tryContent = `\n                <ui:LogMessage Level="Info" Message="'Try block: ${escapeXml(enforced)}'" DisplayName="Try Body" />`;
+      tryContent = `\n                <ui:LogMessage Level="Info" Message="[&quot;Try block: ${escapeXml(enforced)}&quot;]" DisplayName="Try Body" />`;
     }
 
     let finallyContent = "";
@@ -1412,7 +1412,7 @@ function renderControlFlowActivity(
                     <DelegateInArgument x:TypeArguments="s:Exception" Name="exception" />
                   </ActivityAction.Argument>
                   <Sequence DisplayName="Catch: ${escapeXml(enforced)}">
-                    <ui:LogMessage Level="Error" Message="['Error in ${escapeXml(enforced)}: ' + exception.Message]" DisplayName="Log Exception" />
+                    <ui:LogMessage Level="Error" Message="[&quot;Error in ${escapeXml(enforced)}: &quot; &amp; exception.Message]" DisplayName="Log Exception" />
                   </Sequence>
                 </ActivityAction>
               </Catch>
@@ -1707,7 +1707,7 @@ function renderAgentTaskSequence(stepName: string, description: string, role: st
               <Variable x:TypeArguments="x:String" Name="str_AgentInput" Default="&quot;&quot;" />
               <Variable x:TypeArguments="x:String" Name="str_AgentOutput" Default="&quot;&quot;" />
             </Sequence.Variables>
-            <ui:LogMessage Level="Info" Message="'Invoking agent for: ${safeStepName}'" DisplayName="Log Agent Start: ${safeStepName}" />
+            <ui:LogMessage Level="Info" Message="[&quot;Invoking agent for: ${safeStepName}&quot;]" DisplayName="Log Agent Start: ${safeStepName}" />
             <ui:InvokeWorkflowFile DisplayName="Invoke Agent: ${safeStepName}" WorkflowFileName="AgentInvocation_Stub.xaml">
               <ui:InvokeWorkflowFile.Arguments>
                 <InArgument x:TypeArguments="x:String" x:Key="in_AgentName">"${safeStepName}"</InArgument>
@@ -1719,7 +1719,7 @@ function renderAgentTaskSequence(stepName: string, description: string, role: st
               <Assign.To><OutArgument x:TypeArguments="x:String">[str_AgentOutput]</OutArgument></Assign.To>
               <Assign.Value><InArgument x:TypeArguments="x:String">[str_AgentOutput]</InArgument></Assign.Value>
             </Assign>
-            <ui:LogMessage Level="Info" Message="'Agent completed: ${safeStepName}'" DisplayName="Log Agent Complete: ${safeStepName}" />
+            <ui:LogMessage Level="Info" Message="[&quot;Agent completed: ${safeStepName}&quot;]" DisplayName="Log Agent Complete: ${safeStepName}" />
           </Sequence>`;
 }
 
@@ -1730,8 +1730,8 @@ function renderAgentDecision(stepName: string, description: string, role: string
     `[Agent Decision] ${stepName}\nAgent Role: ${agentRole}\nJudgment Call: ${description || stepName}\nThis decision is evaluated by a UiPath Agent using LLM reasoning rather than deterministic rules.\nThe agent analyzes context and makes a judgment-based determination.`
   );
 
-  const defaultThen = thenXml || `\n              <ui:LogMessage Level="Info" Message="'Agent decision YES path: ${safeStepName}'" DisplayName="Agent Then Path" />`;
-  const defaultElse = elseXml || `\n              <ui:LogMessage Level="Info" Message="'Agent decision NO path: ${safeStepName}'" DisplayName="Agent Else Path" />`;
+  const defaultThen = thenXml || `\n              <ui:LogMessage Level="Info" Message="[&quot;Agent decision YES path: ${safeStepName}&quot;]" DisplayName="Agent Then Path" />`;
+  const defaultElse = elseXml || `\n              <ui:LogMessage Level="Info" Message="[&quot;Agent decision NO path: ${safeStepName}&quot;]" DisplayName="Agent Else Path" />`;
 
   return `
           <Sequence DisplayName="Agent Decision Setup: ${safeStepName}" sap2010:Annotation.AnnotationText="${annotationText}">
@@ -1739,7 +1739,7 @@ function renderAgentDecision(stepName: string, description: string, role: string
               <Variable x:TypeArguments="x:Boolean" Name="bool_AgentDecisionResult" Default="False" />
               <Variable x:TypeArguments="x:String" Name="str_AgentDecisionInput" Default="&quot;&quot;" />
             </Sequence.Variables>
-            <ui:LogMessage Level="Info" Message="'Invoking agent decision for: ${safeStepName}'" DisplayName="Log Agent Decision Start" />
+            <ui:LogMessage Level="Info" Message="[&quot;Invoking agent decision for: ${safeStepName}&quot;]" DisplayName="Log Agent Decision Start" />
             <ui:InvokeWorkflowFile DisplayName="Agent Evaluate: ${safeStepName}" WorkflowFileName="AgentInvocation_Stub.xaml">
               <ui:InvokeWorkflowFile.Arguments>
                 <InArgument x:TypeArguments="x:String" x:Key="in_AgentName">"${safeStepName}"</InArgument>
@@ -1757,7 +1757,7 @@ function renderAgentDecision(stepName: string, description: string, role: string
                 </Sequence>
               </If.Else>
             </If>
-            <ui:LogMessage Level="Info" Message="'Agent decision completed: ${safeStepName}'" DisplayName="Log Agent Decision Complete" />
+            <ui:LogMessage Level="Info" Message="[&quot;Agent decision completed: ${safeStepName}&quot;]" DisplayName="Log Agent Decision Complete" />
           </Sequence>`;
 }
 
@@ -1770,7 +1770,7 @@ function wrapInIf(innerXml: string, condition: string, displayName: string): str
             </If.Then>
             <If.Else>
               <Sequence DisplayName="Else: ${escapeXml(displayName)}">
-                <ui:LogMessage Level="Info" Message="'Condition not met: ${escapeXml(displayName)}'" DisplayName="Log Else Path" />
+                <ui:LogMessage Level="Info" Message="[&quot;Condition not met: ${escapeXml(displayName)}&quot;]" DisplayName="Log Else Path" />
               </Sequence>
             </If.Else>
           </If>`;
@@ -1899,7 +1899,7 @@ export function generateRichXamlFromNodes(
         <!-- Generated: ${timestamp} -->
         <!-- Process Map: ${nodes.length} nodes, ${edges.length} edges -->
         <!-- Trace: Each activity below references its source process map step -->
-        <ui:LogMessage Level="Info" Message="'=== Starting: ${escapeXml(workflowName)} ==='" DisplayName="Log Start" />`;
+        <ui:LogMessage Level="Info" Message="[&quot;=== Starting: ${escapeXml(workflowName)} ===&quot;]" DisplayName="Log Start" />`;
 
   const startNodes = sortedNodes.filter(n => n.nodeType === "start");
   const endNodes = sortedNodes.filter(n => n.nodeType === "end");
@@ -1909,7 +1909,7 @@ export function generateRichXamlFromNodes(
   if (startNodes.length > 0) {
     for (const node of startNodes) {
       activities += `
-        <ui:LogMessage Level="Info" Message="'Initialization: ${escapeXml(node.name)}'" DisplayName="Init: ${escapeXml(node.name)}" />`;
+        <ui:LogMessage Level="Info" Message="[&quot;Initialization: ${escapeXml(node.name)}&quot;]" DisplayName="Init: ${escapeXml(node.name)}" />`;
     }
     activities += `
         <!-- TODO: Add config file reading (InitAllSettings) and variable initialization here -->`;
@@ -2039,8 +2039,8 @@ export function generateRichXamlFromNodes(
           }
         }
 
-        if (!thenActivities) thenActivities = `\n            <ui:LogMessage Level="Info" Message="'Then: ${escapeXml(node.name)}'" DisplayName="Then Path" />`;
-        if (!elseActivities) elseActivities = `\n              <ui:LogMessage Level="Info" Message="'Else: ${escapeXml(node.name)}'" DisplayName="Else Path" />`;
+        if (!thenActivities) thenActivities = `\n            <ui:LogMessage Level="Info" Message="[&quot;Then: ${escapeXml(node.name)}&quot;]" DisplayName="Then Path" />`;
+        if (!elseActivities) elseActivities = `\n              <ui:LogMessage Level="Info" Message="[&quot;Else: ${escapeXml(node.name)}&quot;]" DisplayName="Else Path" />`;
 
         if (needsConditionReview) {
           activities += `
@@ -2125,7 +2125,7 @@ export function generateRichXamlFromNodes(
 
       if (!thenActivities) {
         thenActivities = `
-            <ui:LogMessage Level="Info" Message="'Then branch: ${escapeXml(node.name)}'" DisplayName="Then Path" />`;
+            <ui:LogMessage Level="Info" Message="[&quot;Then branch: ${escapeXml(node.name)}&quot;]" DisplayName="Then Path" />`;
       }
 
       if (needsConditionReview) {
@@ -2140,7 +2140,7 @@ export function generateRichXamlFromNodes(
           </If.Then>
           <If.Else>
             <Sequence DisplayName="No: ${escapeXml(node.name)}">${elseActivities || `
-              <ui:LogMessage Level="Info" Message="'Else branch: ${escapeXml(node.name)}'" DisplayName="Else Path" />`}
+              <ui:LogMessage Level="Info" Message="[&quot;Else branch: ${escapeXml(node.name)}&quot;]" DisplayName="Else Path" />`}
             </Sequence>
           </If.Else>
         </If>`;
@@ -2180,17 +2180,25 @@ export function generateRichXamlFromNodes(
 
   for (const node of endNodes) {
     activities += `
-        <ui:LogMessage Level="Info" Message="'Completed: ${escapeXml(node.name)}'" DisplayName="End: ${escapeXml(node.name)}" />`;
+        <ui:LogMessage Level="Info" Message="[&quot;Completed: ${escapeXml(node.name)}&quot;]" DisplayName="End: ${escapeXml(node.name)}" />`;
   }
 
   activities += `
-        <ui:LogMessage Level="Info" Message="'=== Completed: ${escapeXml(workflowName)} ==='" DisplayName="Log Completion" />`;
+        <ui:LogMessage Level="Info" Message="[&quot;=== Completed: ${escapeXml(workflowName)} ===&quot;]" DisplayName="Log Completion" />`;
 
   const variablesBlock = renderVariablesBlock(allVariables, targetFramework);
 
   const isMainWorkflow2 = workflowName.toLowerCase() === "main" || workflowName.toLowerCase() === "main.xaml";
+  const isInitAllSettings = workflowName.toLowerCase().includes("initallsettings");
   const wfArgs = !isMainWorkflow2 && enrichment?.arguments?.length ? enrichment.arguments : [];
+  const hasDictConfigRef = !isMainWorkflow2 && !isInitAllSettings && activities.includes("dict_Config");
+  if (hasDictConfigRef && !wfArgs.some(a => a.name === "in_Config")) {
+    wfArgs.push({ name: "in_Config", direction: "InArgument", type: "scg:Dictionary(x:String, x:Object)" });
+  }
   const xMembersBlock = generateXMembersBlock(wfArgs, targetFramework);
+  const dictConfigVariable = hasDictConfigRef
+    ? `<Variable x:TypeArguments="scg:Dictionary(x:String, x:Object)" Name="dict_Config" Default="[in_Config]" />\n    `
+    : "";
 
   const xaml = `<?xml version="1.0" encoding="utf-8"?>
 <Activity mc:Ignorable="sap sap2010" x:Class="${escapeXml(workflowName.replace(/\s+/g, "_"))}"
@@ -2204,7 +2212,7 @@ export function generateRichXamlFromNodes(
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 ${xMembersBlock}  <Sequence DisplayName="${escapeXml(workflowName)}">
-    ${variablesBlock}${activities}
+    ${dictConfigVariable}${variablesBlock}${activities}
   </Sequence>
 </Activity>`;
 
@@ -2233,7 +2241,7 @@ export function generateRichXamlFromSpec(
   const steps = workflow.steps || [];
 
   activities += `
-        <ui:LogMessage Level="Info" Message="'=== Starting: ${escapeXml(wfName)} ==='" DisplayName="Log Start" />`;
+        <ui:LogMessage Level="Info" Message="[&quot;=== Starting: ${escapeXml(wfName)} ===&quot;]" DisplayName="Log Start" />`;
 
   if (workflow.arguments && workflow.arguments.length > 0) {
     const validationXaml = generateArgumentValidationXaml(workflow.arguments, wfName);
@@ -2375,12 +2383,21 @@ export function generateRichXamlFromSpec(
   }
 
   activities += `
-        <ui:LogMessage Level="Info" Message="'=== Completed: ${escapeXml(wfName)} ==='" DisplayName="Log Completion" />`;
+        <ui:LogMessage Level="Info" Message="[&quot;=== Completed: ${escapeXml(wfName)} ===&quot;]" DisplayName="Log Completion" />`;
 
   const variablesBlock = renderVariablesBlock(allVariables, targetFramework);
 
   const specArgs = workflow.arguments || [];
+  const isSpecMainWf = wfName.toLowerCase() === "main" || wfName.toLowerCase() === "main.xaml";
+  const isSpecInitAll = wfName.toLowerCase().includes("initallsettings");
+  const specHasDictConfig = !isSpecMainWf && !isSpecInitAll && activities.includes("dict_Config");
+  if (specHasDictConfig && !specArgs.some((a: any) => a.name === "in_Config")) {
+    specArgs.push({ name: "in_Config", direction: "InArgument", type: "scg:Dictionary(x:String, x:Object)" });
+  }
   const xMembersBlockSpec = generateXMembersBlock(specArgs, targetFramework);
+  const specDictConfigVar = specHasDictConfig
+    ? `<Variable x:TypeArguments="scg:Dictionary(x:String, x:Object)" Name="dict_Config" Default="[in_Config]" />\n    `
+    : "";
 
   const xaml = `<?xml version="1.0" encoding="utf-8"?>
 <Activity mc:Ignorable="sap sap2010" x:Class="${escapeXml(wfName.replace(/\s+/g, "_"))}"
@@ -2394,7 +2411,7 @@ export function generateRichXamlFromSpec(
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 ${xMembersBlockSpec}  <Sequence DisplayName="${escapeXml(wfName)}">
-    ${variablesBlock}${activities}
+    ${specDictConfigVar}${variablesBlock}${activities}
   </Sequence>
 </Activity>`;
 
@@ -2539,7 +2556,7 @@ export function generateInitAllSettingsXaml(orchestratorArtifacts?: any, targetF
       <Assign.To><OutArgument x:TypeArguments="scg:Dictionary(x:String, x:Object)">[out_Config]</OutArgument></Assign.To>
       <Assign.Value><InArgument x:TypeArguments="scg:Dictionary(x:String, x:Object)">[dict_Config]</InArgument></Assign.Value>
     </Assign>
-    <ui:LogMessage Level="Info" Message="'Configuration loaded successfully'" DisplayName="Log Config Complete" />
+    <ui:LogMessage Level="Info" Message="[&quot;Configuration loaded successfully&quot;]" DisplayName="Log Config Complete" />
   </Sequence>
 </Activity>`;
 }
@@ -2570,7 +2587,7 @@ export function generateReframeworkMainXaml(projectName: string, queueName: stri
       <Variable x:TypeArguments="x:Int32" Name="int_RetryNumber" Default="0" />
       <Variable x:TypeArguments="x:Int32" Name="int_MaxRetries" Default="3" />
       <Variable x:TypeArguments="x:String" Name="str_TransactionID" />
-      <Variable x:TypeArguments="x:String" Name="str_QueueName" Default="'${escapeXml(queueName)}'" />
+      <Variable x:TypeArguments="x:String" Name="str_QueueName" Default="&quot;${escapeXml(queueName)}&quot;" />
       <Variable x:TypeArguments="ui:QueueItem" Name="qi_TransactionItem" />
       <Variable x:TypeArguments="x:Boolean" Name="bool_SystemReady" Default="False" />
     </StateMachine.Variables>
@@ -2578,13 +2595,13 @@ export function generateReframeworkMainXaml(projectName: string, queueName: stri
     <State DisplayName="Init" x:Name="State_Init">
       <State.Entry>
         <Sequence DisplayName="Initialize Process">
-          <ui:LogMessage Level="Info" Message="'=== Initializing ${safeName} ==='" DisplayName="Log Init Start" />
+          <ui:LogMessage Level="Info" Message="[&quot;=== Initializing ${safeName} ===&quot;]" DisplayName="Log Init Start" />
           <ui:InvokeWorkflowFile DisplayName="Initialize Settings" WorkflowFileName="InitAllSettings.xaml" />
           <Assign DisplayName="Set System Ready">
             <Assign.To><OutArgument x:TypeArguments="x:Boolean">[bool_SystemReady]</OutArgument></Assign.To>
             <Assign.Value><InArgument x:TypeArguments="x:Boolean">True</InArgument></Assign.Value>
           </Assign>
-          <ui:LogMessage Level="Info" Message="'Initialization complete'" DisplayName="Log Init Complete" />
+          <ui:LogMessage Level="Info" Message="[&quot;Initialization complete&quot;]" DisplayName="Log Init Complete" />
         </Sequence>
       </State.Entry>
       <Transition DisplayName="Init -&gt; Get Transaction" To="{x:Reference State_GetTransaction}">
@@ -2746,7 +2763,7 @@ export function generateGetTransactionDataXaml(queueName: string, targetFramewor
         </Sequence>
       </If.Then>
       <If.Else>
-        <ui:LogMessage Level="Info" Message="'No more transactions in queue'" DisplayName="Log Queue Empty" />
+        <ui:LogMessage Level="Info" Message="[&quot;No more transactions in queue&quot;]" DisplayName="Log Queue Empty" />
       </If.Else>
     </If>
   </Sequence>
@@ -2822,11 +2839,11 @@ export function generateCloseAllApplicationsXaml(targetFramework: TargetFramewor
   const nsScg = isCrossPlatform ? "System.Runtime" : "mscorlib";
 
   const closeBody = isCrossPlatform
-    ? `<ui:LogMessage Level="Info" Message="'Closing all applications (Cross-Platform mode)...'" DisplayName="Log Cleanup Start" />
-          <ui:LogMessage Level="Info" Message="'Application cleanup completed'" DisplayName="Log Cleanup Complete" />`
-    : `<ui:LogMessage Level="Info" Message="'Closing all applications...'" DisplayName="Log Cleanup Start" />
+    ? `<ui:LogMessage Level="Info" Message="[&quot;Closing all applications (Cross-Platform mode)...&quot;]" DisplayName="Log Cleanup Start" />
+          <ui:LogMessage Level="Info" Message="[&quot;Application cleanup completed&quot;]" DisplayName="Log Cleanup Complete" />`
+    : `<ui:LogMessage Level="Info" Message="[&quot;Closing all applications...&quot;]" DisplayName="Log Cleanup Start" />
           <ui:CloseApplication DisplayName="Close Browser" />
-          <ui:LogMessage Level="Info" Message="'All applications closed'" DisplayName="Log Cleanup Complete" />`;
+          <ui:LogMessage Level="Info" Message="[&quot;All applications closed&quot;]" DisplayName="Log Cleanup Complete" />`;
 
   return `<?xml version="1.0" encoding="utf-8"?>
 <!-- CloseAllApplications.xaml — Auto-generated by CannonBall -->
@@ -2869,13 +2886,13 @@ export function generateKillAllProcessesXaml(targetFramework: TargetFramework = 
   const nsScg = isCrossPlatform ? "System.Runtime" : "mscorlib";
 
   const killBody = isCrossPlatform
-    ? `<ui:LogMessage Level="Warn" Message="'Process cleanup requested (Cross-Platform mode — KillProcess not available on Serverless)'" DisplayName="Log Kill Start" />
-    <ui:LogMessage Level="Info" Message="'Process cleanup completed'" DisplayName="Log Kill Complete" />`
-    : `<ui:LogMessage Level="Warn" Message="'Force killing all application processes...'" DisplayName="Log Kill Start" />
+    ? `<ui:LogMessage Level="Warn" Message="[&quot;Process cleanup requested (Cross-Platform mode — KillProcess not available on Serverless)&quot;]" DisplayName="Log Kill Start" />
+    <ui:LogMessage Level="Info" Message="[&quot;Process cleanup completed&quot;]" DisplayName="Log Kill Complete" />`
+    : `<ui:LogMessage Level="Warn" Message="[&quot;Force killing all application processes...&quot;]" DisplayName="Log Kill Start" />
     <ui:KillProcess DisplayName="Kill Chrome" ProcessName="chrome" />
     <ui:KillProcess DisplayName="Kill IE" ProcessName="iexplore" />
     <ui:KillProcess DisplayName="Kill Excel" ProcessName="EXCEL" />
-    <ui:LogMessage Level="Info" Message="'All processes terminated'" DisplayName="Log Kill Complete" />`;
+    <ui:LogMessage Level="Info" Message="[&quot;All processes terminated&quot;]" DisplayName="Log Kill Complete" />`;
 
   return `<?xml version="1.0" encoding="utf-8"?>
 <!-- KillAllProcesses.xaml — Auto-generated by CannonBall -->

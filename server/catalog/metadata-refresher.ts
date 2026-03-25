@@ -877,6 +877,128 @@ export async function refreshAll(): Promise<{ generation: RefreshResult; integra
   };
 }
 
+export async function verifyPreferredVersionsOnStartup(): Promise<{ verified: number; corrected: number; unreachable: number; details: string[] }> {
+  const details: string[] = [];
+  let verified = 0;
+  let corrected = 0;
+  let unreachable = 0;
+
+  const existingPath = join(CATALOG_DIR, "generation-metadata.json");
+  if (!existsSync(existingPath)) {
+    details.push("No generation-metadata.json found — skipping feed availability check");
+    return { verified: 0, corrected: 0, unreachable: 0, details };
+  }
+
+  let existing: GenerationMetadata | null = null;
+  try {
+    const raw = readFileSync(existingPath, "utf-8");
+    const parsed = generationMetadataSchema.safeParse(JSON.parse(raw));
+    if (parsed.success) existing = parsed.data;
+  } catch { }
+
+  if (!existing) {
+    details.push("generation-metadata.json could not be parsed — skipping feed availability check");
+    return { verified: 0, corrected: 0, unreachable: 0, details };
+  }
+
+  const requiredPackages = existing.minimumRequiredPackages || [];
+  let needsWrite = false;
+
+  for (const pkgName of Object.keys(existing.packageVersionRanges)) {
+    const entry = existing.packageVersionRanges[pkgName];
+    const preferred = entry.preferred;
+    const category = classifyPackage(pkgName);
+
+    let feedResult: FeedFetchResult = { status: "unreachable" };
+    if (category === "official-uipath") {
+      feedResult = await fetchVersionsFromV3Feed(UIPATH_OFFICIAL_FEED_INDEX, pkgName);
+      if (feedResult.status === "unreachable") {
+        feedResult = await fetchVersionsFromNugetFlatContainer(pkgName);
+      }
+    } else if (category === "general") {
+      feedResult = await fetchVersionsFromNugetFlatContainer(pkgName);
+    }
+
+    if (feedResult.status !== "ok") {
+      unreachable++;
+      const isRequired = requiredPackages.includes(pkgName);
+      const level = isRequired ? "ERROR" : "WARNING";
+      const msg = `[FeedCheck] ${level}: Cannot verify ${pkgName}@${preferred} — feeds unreachable`;
+      console.warn(msg);
+      details.push(msg);
+      continue;
+    }
+
+    if (feedResult.versions.includes(preferred)) {
+      verified++;
+      continue;
+    }
+
+    const validatedVersion = validatePreferredVersion(preferred, feedResult.versions, entry.min, entry.max);
+    if (validatedVersion && validatedVersion !== preferred) {
+      const msg = `[FeedCheck] CORRECTED: ${pkgName} preferred ${preferred} not found on feed — auto-corrected to ${validatedVersion}`;
+      console.warn(msg);
+      details.push(msg);
+      existing.packageVersionRanges[pkgName] = {
+        ...entry,
+        preferred: validatedVersion,
+        lastVerifiedAt: new Date().toISOString(),
+      };
+      corrected++;
+      needsWrite = true;
+    } else if (!validatedVersion) {
+      const isRequired = requiredPackages.includes(pkgName);
+      const level = isRequired ? "ERROR" : "WARNING";
+      const msg = `[FeedCheck] ${level}: ${pkgName} preferred ${preferred} not found and no compatible version available in range [${entry.min}, ${entry.max}]`;
+      console.warn(msg);
+      details.push(msg);
+    } else {
+      verified++;
+    }
+  }
+
+  if (needsWrite) {
+    try {
+      const updated = { ...existing, lastRefreshedAt: new Date().toISOString() };
+      const validation = generationMetadataSchema.safeParse(updated);
+      if (validation.success) {
+        atomicWrite(existingPath, JSON.stringify(updated, null, 2));
+        metadataService.reload("generation");
+        details.push(`[FeedCheck] Updated generation-metadata.json with ${corrected} corrected version(s)`);
+
+        const profilePath = join(CATALOG_DIR, "studio-profile.json");
+        if (existsSync(profilePath)) {
+          try {
+            const profileRaw = JSON.parse(readFileSync(profilePath, "utf-8"));
+            let profileUpdated = false;
+            for (const [pkgName, range] of Object.entries(updated.packageVersionRanges)) {
+              if (profileRaw.allowedPackageVersionRanges?.[pkgName]) {
+                const typedRange = range as { min: string; max: string; preferred: string };
+                if (profileRaw.allowedPackageVersionRanges[pkgName].preferred !== typedRange.preferred) {
+                  profileRaw.allowedPackageVersionRanges[pkgName].preferred = typedRange.preferred;
+                  profileUpdated = true;
+                }
+              }
+            }
+            if (profileUpdated) {
+              atomicWrite(profilePath, JSON.stringify(profileRaw, null, 2));
+              details.push("[FeedCheck] Synced corrected versions to studio-profile.json");
+            }
+          } catch { }
+        }
+      }
+    } catch (err: any) {
+      details.push(`[FeedCheck] Failed to write corrected metadata: ${err.message}`);
+    }
+  }
+
+  if (verified > 0 || corrected > 0) {
+    console.log(`[FeedCheck] Startup verification complete: ${verified} verified, ${corrected} corrected, ${unreachable} unreachable`);
+  }
+
+  return { verified, corrected, unreachable, details };
+}
+
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
 
 export function startRefreshScheduler(intervalMs: number = 24 * 60 * 60 * 1000): void {
