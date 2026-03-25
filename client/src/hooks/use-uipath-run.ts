@@ -155,6 +155,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
         if (result.status && result.status !== "BUILDING" && result.status !== "PENDING") {
           runCompletedViaPollingRef.current = true;
           stopPolling();
+          finishRunRef.current();
         }
       } catch (err) {
         console.warn("[useUiPathRun] polling error:", err);
@@ -208,6 +209,9 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
       if (evt.stage === "complete" && evt.type === "completed") {
         setPipelineComplete(true);
       }
+      if (evt.type === "failed") {
+        setPipelineComplete(true);
+      }
     }
 
     if (data.progress) {
@@ -243,6 +247,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
       });
 
       if (status === "FAILED") {
+        setPipelineComplete(true);
         toast({
           title: "Package build failed",
           description: data.error || "Package build produced no output",
@@ -401,7 +406,10 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
             }
           }
         }
-        if (runCompletedViaPollingRef.current) return;
+        if (runCompletedViaPollingRef.current) {
+          finishRunRef.current();
+          return;
+        }
         const finalRun = currentRunRef.current;
         if (finalRun && finalRun.runId === runId && (finalRun.status === "BUILDING" || finalRun.status === "PENDING")) {
           setCurrentRun(prev => {

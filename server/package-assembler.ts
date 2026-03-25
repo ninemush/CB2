@@ -1464,6 +1464,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     const deferredWrites = new Map<string, string>();
     const apEnabled = !!pkg.internal?.autopilotEnabled || !!(_probeCacheSnapshot?.flags?.autopilot);
     const earlyStubFallbacks: string[] = [];
+    const complianceFallbacks: Array<{ file: string; reason: string }> = [];
     const allPolicyBlocked: Array<{ file: string; activities: string[] }> = [];
     const collectedQualityIssues: DhgQualityIssue[] = [];
     function postComplianceCatalogConformance(content: string, fileName: string): string {
@@ -1623,7 +1624,14 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       const wfName = (spec.name || projectName).replace(/\s+/g, "_");
       try {
         const { xaml, variables } = assembleWorkflowFromSpec(spec, treeEnrichment.processType);
-        const compliant = compliancePass(xaml, `${wfName}.xaml`);
+        let compliant: string;
+        try {
+          compliant = compliancePass(xaml, `${wfName}.xaml`);
+        } catch (compErr: any) {
+          console.warn(`[UiPath] Compliance pass failed for tree-assembled "${wfName}": ${compErr.message} — replacing with stub workflow`);
+          compliant = compliancePass(generateStubWorkflow(wfName, { reason: `Compliance transform failed — ${compErr.message}` }), `${wfName}.xaml`, true);
+          complianceFallbacks.push({ file: `${wfName}.xaml`, reason: compErr.message });
+        }
         deferredWrites.set(`${libPath}/${wfName}.xaml`, compliant);
         generatedWorkflowNames.add(wfName);
         if (wfName === "Main" || wfName === "Process") hasMain = true;
@@ -1656,7 +1664,15 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           );
           if (result) {
             xamlResults.push(result);
-            deferredWrites.set(`${libPath}/${wfName}.xaml`, compliancePass(result.xaml, `${wfName}.xaml`));
+            let decompCompliant: string;
+            try {
+              decompCompliant = compliancePass(result.xaml, `${wfName}.xaml`);
+            } catch (compErr: any) {
+              console.warn(`[UiPath] Compliance pass failed for decomposed "${wfName}": ${compErr.message} — replacing with stub workflow`);
+              decompCompliant = compliancePass(generateStubWorkflow(wfName, { reason: `Compliance transform failed — ${compErr.message}` }), `${wfName}.xaml`, true);
+              complianceFallbacks.push({ file: `${wfName}.xaml`, reason: compErr.message });
+            }
+            deferredWrites.set(`${libPath}/${wfName}.xaml`, decompCompliant);
             generatedWorkflowNames.add(wfName);
             if (wfName === "Main") hasMain = true;
             console.log(`[UiPath] Generated decomposed workflow "${wfName}": ${decompNodes.length} nodes, ${result.gaps.length} gaps`);
@@ -1672,7 +1688,15 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           );
           if (result) {
             xamlResults.push(result);
-            deferredWrites.set(`${libPath}/${wfName}.xaml`, compliancePass(result.xaml, `${wfName}.xaml`));
+            let specCompliant: string;
+            try {
+              specCompliant = compliancePass(result.xaml, `${wfName}.xaml`);
+            } catch (compErr: any) {
+              console.warn(`[UiPath] Compliance pass failed for spec-decomposed "${wfName}": ${compErr.message} — replacing with stub workflow`);
+              specCompliant = compliancePass(generateStubWorkflow(wfName, { reason: `Compliance transform failed — ${compErr.message}` }), `${wfName}.xaml`, true);
+              complianceFallbacks.push({ file: `${wfName}.xaml`, reason: compErr.message });
+            }
+            deferredWrites.set(`${libPath}/${wfName}.xaml`, specCompliant);
             generatedWorkflowNames.add(wfName);
             if (wfName === "Main") hasMain = true;
             console.log(`[UiPath] Generated decomposed workflow "${wfName}" from spec (no matching nodes): ${result.gaps.length} gaps`);
@@ -1694,7 +1718,15 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         );
         if (result) {
           xamlResults.push(result);
-          deferredWrites.set(`${libPath}/${wfName}.xaml`, compliancePass(result.xaml, `${wfName}.xaml`));
+          let richCompliant: string;
+          try {
+            richCompliant = compliancePass(result.xaml, `${wfName}.xaml`);
+          } catch (compErr: any) {
+            console.warn(`[UiPath] Compliance pass failed for rich XAML "${wfName}": ${compErr.message} — replacing with stub workflow`);
+            richCompliant = compliancePass(generateStubWorkflow(wfName, { reason: `Compliance transform failed — ${compErr.message}` }), `${wfName}.xaml`, true);
+            complianceFallbacks.push({ file: `${wfName}.xaml`, reason: compErr.message });
+          }
+          deferredWrites.set(`${libPath}/${wfName}.xaml`, richCompliant);
           generatedWorkflowNames.add(wfName);
           if (wfName === "Main") hasMain = true;
           console.log(`[UiPath] Generated rich XAML for "${wfName}": ${result.gaps.length} gaps, ${result.usedPackages.length} packages`);
@@ -1715,7 +1747,15 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       );
       if (processResult) {
         xamlResults.push(processResult);
-        deferredWrites.set(`${libPath}/${processFileName}.xaml`, compliancePass(processResult.xaml, `${processFileName}.xaml`));
+        let processCompliant: string;
+        try {
+          processCompliant = compliancePass(processResult.xaml, `${processFileName}.xaml`);
+        } catch (compErr: any) {
+          console.warn(`[UiPath] Compliance pass failed for process "${processFileName}": ${compErr.message} — replacing with stub workflow`);
+          processCompliant = compliancePass(generateStubWorkflow(processFileName, { reason: `Compliance transform failed — ${compErr.message}` }), `${processFileName}.xaml`, true);
+          complianceFallbacks.push({ file: `${processFileName}.xaml`, reason: compErr.message });
+        }
+        deferredWrites.set(`${libPath}/${processFileName}.xaml`, processCompliant);
         console.log(`[UiPath] Generated process XAML from ${processNodes.length} map nodes: ${processResult.gaps.length} gaps`);
       }
     }
@@ -2181,6 +2221,17 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
     const autoFixSummary: string[] = [];
     const outcomeRemediations: RemediationEntry[] = [];
+    for (const fb of complianceFallbacks) {
+      outcomeRemediations.push({
+        level: "workflow",
+        file: fb.file,
+        remediationCode: "STUB_WORKFLOW_GENERATOR_FAILURE",
+        reason: `Compliance transform failed — ${fb.reason}`,
+        classifiedCheck: "compliance-crash",
+        developerAction: `Manually implement ${fb.file} — compliance transforms corrupted the generated XAML`,
+        estimatedEffortMinutes: 15,
+      });
+    }
     const outcomeAutoRepairs: AutoRepairEntry[] = [];
     const structuralPreservationMetrics: StructuralPreservationMetrics[] = [];
 
@@ -3076,6 +3127,82 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     archive.append(dhg, { name: `${libPath}/DeveloperHandoffGuide.md` });
     console.log(`[UiPath] Generated Developer Handoff Guide: ${allGaps.length} gaps, ~${(allGaps.reduce((s: number, g: XamlGap) => s + g.estimatedMinutes, 0) / 60).toFixed(1)}h effort, REFramework=${useReFramework}`);
 
+    const finalValidation = validateXamlContent(xamlEntries);
+    const malformedQuotes = finalValidation.filter(v => v.check === "malformed-quote");
+    const pseudoXaml = finalValidation.filter(v => v.check === "pseudo-xaml");
+    const placeholders = finalValidation.filter(v => v.check === "placeholder");
+    const invokedFiles = finalValidation.filter(v => v.check === "invoked-file");
+    const duplicateFiles = finalValidation.filter(v => v.check === "duplicate-file");
+    const xmlWellformedness = finalValidation.filter(v => v.check === "xml-wellformedness");
+    console.log(`[UiPath Pre-Package Validation Report]`);
+    console.log(`  No malformed quotes:       ${malformedQuotes.length === 0 ? "PASS" : `FAIL (${malformedQuotes.length} violation(s))`}`);
+    console.log(`  No pseudo-XAML:             ${pseudoXaml.length === 0 ? "PASS" : `FAIL (${pseudoXaml.length} violation(s))`}`);
+    console.log(`  No placeholder values:      ${placeholders.length === 0 ? "PASS" : `FAIL (${placeholders.length} violation(s))`}`);
+    console.log(`  Every invoked file exists:  ${invokedFiles.length === 0 ? "PASS" : `FAIL (${invokedFiles.length} violation(s))`}`);
+    console.log(`  No duplicate files:         ${duplicateFiles.length === 0 ? "PASS" : `FAIL (${duplicateFiles.length} violation(s))`}`);
+    console.log(`  All XAML well-formed:       ${xmlWellformedness.length === 0 ? "PASS" : `FAIL (${xmlWellformedness.length} violation(s))`}`);
+    for (const v of finalValidation) {
+      if (v.check === "malformed-quote" || v.check === "xml-wellformedness" || v.check === "duplicate-file") {
+        console.warn(`  [${v.check}] ${v.file}: ${v.detail}`);
+      }
+    }
+
+    const severeValidationErrors = [...xmlWellformedness, ...duplicateFiles, ...malformedQuotes];
+    if (severeValidationErrors.length > 0) {
+      const details = severeValidationErrors.map(v => `  [${v.check}] ${v.file}: ${v.detail}`).join("\n");
+      console.error(`[UiPath Pre-Package Validation] ${severeValidationErrors.length} severe violation(s) found — attempting per-file remediation:\n${details}`);
+
+      const corruptedFiles = new Set(severeValidationErrors.map(v => v.file));
+      const allCorrupted = corruptedFiles.size >= xamlEntries.length;
+
+      if (allCorrupted) {
+        throw new Error(
+          `UiPath pre-package validation failed with ${severeValidationErrors.length} severe violation(s) (all files corrupted):\n${details}`
+        );
+      }
+
+      let remediationFailed = false;
+      for (const corruptedFile of corruptedFiles) {
+        const stubName = corruptedFile.replace(/\.xaml$/i, "");
+        const stubXaml = generateStubWorkflow(stubName, { reason: `Final validation remediation — original XAML had well-formedness violations` });
+        let stubCompliant: string;
+        try {
+          stubCompliant = compliancePass(stubXaml, corruptedFile, true);
+        } catch (stubCompErr: any) {
+          if (corruptedFile === "Main.xaml") {
+            remediationFailed = true;
+            console.error(`[UiPath Pre-Package Validation] Cannot remediate entry-point Main.xaml — stub compliance also failed: ${stubCompErr.message}`);
+            continue;
+          }
+          stubCompliant = stubXaml;
+        }
+        const entryIdx = xamlEntries.findIndex(e => e.name === corruptedFile || (e.name.split("/").pop() || e.name) === corruptedFile);
+        if (entryIdx >= 0) {
+          xamlEntries[entryIdx] = { ...xamlEntries[entryIdx], content: stubCompliant };
+        }
+        const archivePath = Array.from(deferredWrites.keys()).find(
+          p => (p.split("/").pop() || p) === corruptedFile
+        );
+        if (archivePath) deferredWrites.set(archivePath, stubCompliant);
+        outcomeRemediations.push({
+          level: "workflow",
+          file: corruptedFile,
+          remediationCode: "STUB_WORKFLOW_BLOCKING",
+          reason: `Final validation: XAML well-formedness violations — replaced with stub`,
+          classifiedCheck: "xml-wellformedness",
+          developerAction: `Fix XML structure in ${corruptedFile} — ensure proper nesting and closing tags`,
+          estimatedEffortMinutes: 15,
+        });
+        console.warn(`[UiPath Pre-Package Validation] Remediated corrupted file "${corruptedFile}" with stub workflow`);
+      }
+
+      if (remediationFailed) {
+        throw new Error(
+          `UiPath pre-package validation failed — entry-point Main.xaml corrupted and stub remediation failed:\n${details}`
+        );
+      }
+    }
+
     for (const [path, content] of deferredWrites.entries()) {
       archive.append(content, { name: path });
     }
@@ -3156,35 +3283,6 @@ ${depEntries}
   </metadata>
 </package>`;
     archive.append(nuspecXml, { name: `${projectName}.nuspec` });
-
-    const finalValidation = validateXamlContent(xamlEntries);
-    const malformedQuotes = finalValidation.filter(v => v.check === "malformed-quote");
-    const pseudoXaml = finalValidation.filter(v => v.check === "pseudo-xaml");
-    const placeholders = finalValidation.filter(v => v.check === "placeholder");
-    const invokedFiles = finalValidation.filter(v => v.check === "invoked-file");
-    const duplicateFiles = finalValidation.filter(v => v.check === "duplicate-file");
-    const xmlWellformedness = finalValidation.filter(v => v.check === "xml-wellformedness");
-    console.log(`[UiPath Pre-Package Validation Report]`);
-    console.log(`  No malformed quotes:       ${malformedQuotes.length === 0 ? "PASS" : `FAIL (${malformedQuotes.length} violation(s))`}`);
-    console.log(`  No pseudo-XAML:             ${pseudoXaml.length === 0 ? "PASS" : `FAIL (${pseudoXaml.length} violation(s))`}`);
-    console.log(`  No placeholder values:      ${placeholders.length === 0 ? "PASS" : `FAIL (${placeholders.length} violation(s))`}`);
-    console.log(`  Every invoked file exists:  ${invokedFiles.length === 0 ? "PASS" : `FAIL (${invokedFiles.length} violation(s))`}`);
-    console.log(`  No duplicate files:         ${duplicateFiles.length === 0 ? "PASS" : `FAIL (${duplicateFiles.length} violation(s))`}`);
-    console.log(`  All XAML well-formed:       ${xmlWellformedness.length === 0 ? "PASS" : `FAIL (${xmlWellformedness.length} violation(s))`}`);
-    for (const v of finalValidation) {
-      if (v.check === "malformed-quote" || v.check === "xml-wellformedness" || v.check === "duplicate-file") {
-        console.warn(`  [${v.check}] ${v.file}: ${v.detail}`);
-      }
-    }
-
-    const severeValidationErrors = [...xmlWellformedness, ...duplicateFiles, ...malformedQuotes];
-    if (severeValidationErrors.length > 0) {
-      const details = severeValidationErrors.map(v => `  [${v.check}] ${v.file}: ${v.detail}`).join("\n");
-      console.error(`[UiPath Pre-Package Validation] Blocking package due to ${severeValidationErrors.length} severe violation(s):\n${details}`);
-      throw new Error(
-        `UiPath pre-package validation failed with ${severeValidationErrors.length} severe violation(s):\n${details}`
-      );
-    }
 
   const buffer = await archive.finalize();
 
