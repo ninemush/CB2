@@ -27,30 +27,6 @@ const CORE_PACKAGES = [
   "UiPath.IntelligentOCR.Activities",
 ];
 
-const KNOWN_OFFICIAL_UIPATH_PREFIXES = [
-  "UiPath.System.",
-  "UiPath.UIAutomation.",
-  "UiPath.Mail.",
-  "UiPath.Excel.",
-  "UiPath.Web.",
-  "UiPath.Database.",
-  "UiPath.Persistence.",
-  "UiPath.IntelligentOCR.",
-  "UiPath.DataService.",
-  "UiPath.MLActivities",
-  "UiPath.IntegrationService.",
-  "UiPath.GenAI.",
-  "UiPath.WebAPI.",
-  "UiPath.Testing.",
-  "UiPath.Form.",
-  "UiPath.ComplexScenarios.",
-  "UiPath.GSuite.",
-  "UiPath.PDF.",
-  "UiPath.Word.",
-  "UiPath.Cryptography.",
-  "UiPath.MicrosoftOffice365.",
-];
-
 const MARKETPLACE_PACKAGES: string[] = [];
 
 interface RefreshResult {
@@ -74,14 +50,54 @@ interface FeedResolution {
 
 type FeedFetchResult = { status: "ok"; versions: string[] } | { status: "unreachable" };
 
+const ACTIVITY_PACKAGE_EXCLUSIONS = [
+  "UiPath.Studio",
+  "UiPath.Robot",
+  "UiPath.Orchestrator",
+  "UiPath.Platform",
+  "UiPath.DesignCenter",
+  "UiPath.CoreIpc",
+];
+
+function isActivityPackage(packageId: string): boolean {
+  if (ACTIVITY_PACKAGE_EXCLUSIONS.some(excl => packageId.startsWith(excl))) {
+    return false;
+  }
+  if (packageId.includes("Activities") || packageId.includes(".Activity")) {
+    return true;
+  }
+  const knownActivityPatterns = [
+    "UiPath.MLActivities",
+    "UiPath.GenAI.",
+    "UiPath.Credentials.",
+    "UiPath.CV.",
+    "UiPath.AmazonWorkSpaces",
+    "UiPath.Amazon.",
+    "UiPath.Azure.",
+    "UiPath.Google.",
+    "UiPath.Salesforce.",
+    "UiPath.SAP.",
+    "UiPath.ServiceNow.",
+    "UiPath.Jira.",
+    "UiPath.Slack.",
+    "UiPath.Workday.",
+    "UiPath.MicrosoftDynamics.",
+    "UiPath.MicrosoftOffice365.",
+    "UiPath.Teams.",
+    "UiPath.Tableau.",
+    "UiPath.PowerBI.",
+  ];
+  if (knownActivityPatterns.some(p => packageId.startsWith(p))) {
+    return true;
+  }
+  return false;
+}
+
 type PackageCategory = "official-uipath" | "marketplace" | "general";
 
 function classifyPackage(packageId: string): PackageCategory {
   if (MARKETPLACE_PACKAGES.includes(packageId)) {
     return "marketplace";
-  }
-  if (KNOWN_OFFICIAL_UIPATH_PREFIXES.some(prefix => packageId.startsWith(prefix))) {
-    return "official-uipath";
   }
   if (packageId.startsWith("UiPath.")) {
     return "official-uipath";
@@ -322,7 +338,7 @@ async function discoverPackagesViaSearch(
       if (results.length === 0) break;
 
       for (const result of results) {
-        if (typeof result.id === "string" && result.id.startsWith("UiPath.") && result.id.includes(".Activities")) {
+        if (typeof result.id === "string" && result.id.startsWith("UiPath.") && isActivityPackage(result.id)) {
           allPackageIds.push(result.id);
         }
       }

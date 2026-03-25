@@ -686,10 +686,8 @@ export function scanXamlForRequiredPackages(xamlContent: string): Set<string> {
     if (assemblyName === "Newtonsoft.Json") {
       packages.add("Newtonsoft.Json");
     }
-    for (const [, pkgName] of Object.entries(NAMESPACE_PREFIX_TO_PACKAGE)) {
-      if (assemblyName === pkgName) {
-        packages.add(pkgName);
-      }
+    if (assemblyName.startsWith("UiPath.") && !isFrameworkAssembly(assemblyName)) {
+      packages.add(assemblyName);
     }
   }
 
