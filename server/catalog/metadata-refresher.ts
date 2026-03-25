@@ -18,6 +18,7 @@ const UIPATH_MARKETPLACE_INDEX = "https://gallery.uipath.com/api/v3/index.json";
 
 const CORE_PACKAGES = [
   "UiPath.System.Activities",
+  "UiPath.UIAutomation.Activities",
 ];
 
 const MARKETPLACE_PACKAGES: string[] = [];
@@ -50,35 +51,72 @@ const ACTIVITY_PACKAGE_EXCLUSIONS = [
   "UiPath.Platform",
   "UiPath.DesignCenter",
   "UiPath.CoreIpc",
+  "UiPath.Activities.Api",
+  "UiPath.Activities.Contracts",
+  "UiPath.Activities.RuntimeGovernance",
+  "UiPath.Telemetry.",
+  "UiPath.OpenTelemetry",
+  "UiPath.System.Runtime",
+  "UiPath.Serverless.",
+  "UiPath.Integration.Api.Client",
+  "UiPath.IntegrationService.Client",
+  "UiPath.IntegrationService.Adapters",
+  "UiPath.IntegrationService.Infrastructure",
+  "UiPath.ConnectionClient",
+  "UiPath.Driver.",
+  "UiPath.EmguCVBundle",
+  "UiPath.CefSharpBundle",
+  "UiPath.AppSignatures",
+  "UiPath.BAF",
+  "UiPath.ErrorInfo",
+  "UiPath.FeatureFlagsService",
+  "UiPath.ImageProcessing",
+  "UiPath.OfficeLibs",
+  "UiPath.OmniPage.Bundle",
+  "UiPath.Vision",
+  "UiPath.Plugin.",
+  "UiPath.CLI",
+  "UiPath.ClipboardAI",
+  "UiPath.CodedWorkflows",
+  "UiPath.StudioWeb",
+  "UiPath.SolutionAccelerators",
+  "UiPath.OCR.Contracts",
+  "UiPath.DocumentProcessing.Contracts",
+  "UiPath.DocumentUnderstanding.Common.SDK",
+  "UiPath.DocumentUnderstanding.Digitizer",
+  "UiPath.DocumentUnderstanding.OCR.LocalServer",
+  "UiPath.DocumentUnderstanding.Orchestrator",
+  "UiPath.ComputerVision.LocalServer",
+  "UiPath.Atlassian.Jira.SDK",
+  "UiPath.FormActivityLibrary",
+  "UiPath.IPC.",
+  "UiPath.LanguageModel.",
+];
+
+const RUNTIME_TEST_SUFFIXES = [
+  ".Runtime",
+  ".Design",
+  ".DesignExperience",
+  "RuntimeTests_portable",
+  "RuntimeTests_windows",
+  ".Bootstrap",
+  ".RecoveryPanel",
 ];
 
 function isActivityPackage(packageId: string): boolean {
   if (ACTIVITY_PACKAGE_EXCLUSIONS.some(excl => packageId.startsWith(excl))) {
     return false;
   }
-  if (packageId.includes("Activities") || packageId.includes(".Activity")) {
+  if (RUNTIME_TEST_SUFFIXES.some(suffix => packageId.endsWith(suffix))) {
+    return false;
+  }
+  if (packageId.includes("Activities")) {
     return true;
   }
   const knownActivityPatterns = [
-    "UiPath.MLActivities",
     "UiPath.GenAI.",
     "UiPath.Credentials.",
     "UiPath.CV.",
-    "UiPath.AmazonWorkSpaces",
-    "UiPath.Amazon.",
-    "UiPath.Azure.",
-    "UiPath.Google.",
-    "UiPath.Salesforce.",
-    "UiPath.SAP.",
-    "UiPath.ServiceNow.",
-    "UiPath.Jira.",
-    "UiPath.Slack.",
-    "UiPath.Workday.",
-    "UiPath.MicrosoftDynamics.",
-    "UiPath.MicrosoftOffice365.",
-    "UiPath.Teams.",
-    "UiPath.Tableau.",
-    "UiPath.PowerBI.",
   ];
   if (knownActivityPatterns.some(p => packageId.startsWith(p))) {
     return true;
@@ -608,11 +646,6 @@ export async function refreshGeneration(): Promise<RefreshResult> {
       const existingRange = updatedRanges[pkgName];
       if (!existingRange) continue;
 
-      if (existingRange.verificationSource === "manually-curated") {
-        updatedCount++;
-        continue;
-      }
-
       const category = classifyPackage(pkgName);
       const resolution = await resolvePackageFromFeeds(
         pkgName,
@@ -1066,12 +1099,8 @@ export async function verifyPreferredVersionsOnStartup(): Promise<{ verified: nu
     const entry = existing.packageVersionRanges[pkgName];
     const preferred = entry.preferred;
 
-    if (entry.verificationSource === "manually-curated") {
-      verified++;
-      continue;
-    }
-
     const category = classifyPackage(pkgName);
+    const isCurated = entry.verificationSource === "manually-curated";
 
     let feedResult: FeedFetchResult = { status: "unreachable" };
     if (category === "official-uipath") {
@@ -1083,7 +1112,11 @@ export async function verifyPreferredVersionsOnStartup(): Promise<{ verified: nu
       feedResult = await fetchVersionsFromNugetFlatContainer(pkgName);
     }
 
-    if (feedResult.status !== "ok") {
+    if (feedResult.status !== "ok" || (feedResult.status === "ok" && feedResult.versions.length === 0)) {
+      if (isCurated) {
+        verified++;
+        continue;
+      }
       unreachable++;
       const isRequired = requiredPackages.includes(pkgName);
       const level = isRequired ? "ERROR" : "WARNING";
