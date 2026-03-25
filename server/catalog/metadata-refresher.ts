@@ -5,11 +5,16 @@ import {
   serviceEndpointsSchema,
   type GenerationMetadata,
   type ServiceEndpoints,
+  type VerificationSource,
 } from "./metadata-schemas";
 import { metadataService } from "./metadata-service";
 
 const CATALOG_DIR = join(process.cwd(), "catalog");
+
 const NUGET_V3_BASE = "https://api.nuget.org/v3-flatcontainer";
+
+const UIPATH_OFFICIAL_FEED_INDEX = "https://pkgs.dev.azure.com/uipath/Public.Feeds/_packaging/UiPath-Official/nuget/v3/index.json";
+const UIPATH_MARKETPLACE_INDEX = "https://gallery.uipath.com/api/v3/index.json";
 
 const CORE_PACKAGES = [
   "UiPath.System.Activities",
@@ -22,6 +27,32 @@ const CORE_PACKAGES = [
   "UiPath.IntelligentOCR.Activities",
 ];
 
+const KNOWN_OFFICIAL_UIPATH_PREFIXES = [
+  "UiPath.System.",
+  "UiPath.UIAutomation.",
+  "UiPath.Mail.",
+  "UiPath.Excel.",
+  "UiPath.Web.",
+  "UiPath.Database.",
+  "UiPath.Persistence.",
+  "UiPath.IntelligentOCR.",
+  "UiPath.DataService.",
+  "UiPath.MLActivities",
+  "UiPath.IntegrationService.",
+  "UiPath.GenAI.",
+  "UiPath.WebAPI.",
+  "UiPath.Testing.",
+  "UiPath.Form.",
+  "UiPath.ComplexScenarios.",
+  "UiPath.GSuite.",
+  "UiPath.PDF.",
+  "UiPath.Word.",
+  "UiPath.Cryptography.",
+  "UiPath.MicrosoftOffice365.",
+];
+
+const MARKETPLACE_PACKAGES: string[] = [];
+
 interface RefreshResult {
   family: "generation" | "integration";
   success: boolean;
@@ -33,6 +64,29 @@ interface VersionRange {
   min: string;
   max: string;
   preferred: string;
+}
+
+interface FeedResolution {
+  range: VersionRange;
+  source: VerificationSource;
+  usedFallback: boolean;
+}
+
+type FeedFetchResult = { status: "ok"; versions: string[] } | { status: "unreachable" };
+
+type PackageCategory = "official-uipath" | "marketplace" | "general";
+
+function classifyPackage(packageId: string): PackageCategory {
+  if (MARKETPLACE_PACKAGES.includes(packageId)) {
+    return "marketplace";
+  }
+  if (KNOWN_OFFICIAL_UIPATH_PREFIXES.some(prefix => packageId.startsWith(prefix))) {
+    return "official-uipath";
+  }
+  if (packageId.startsWith("UiPath.")) {
+    return "official-uipath";
+  }
+  return "general";
 }
 
 function parseMajorMinor(version: string): { major: number; minor: number } | null {
@@ -56,33 +110,385 @@ function isVersionInCompatibleLine(version: string, seedMin: string, seedMax: st
   return true;
 }
 
-async function fetchVersionRange(
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
+
+let _serviceIndexCache: Map<string, { packageBaseAddress: string; expiresAt: number }> = new Map();
+const SERVICE_INDEX_CACHE_TTL_MS = 30 * 60 * 1000;
+
+interface ServiceIndexResolution {
+  packageBaseAddress: string | null;
+  registrationsBaseUrl: string | null;
+}
+
+let _serviceIndexDetailCache: Map<string, { resolution: ServiceIndexResolution; expiresAt: number }> = new Map();
+
+async function resolveServiceIndex(feedIndexUrl: string): Promise<ServiceIndexResolution | null> {
+  const cached = _serviceIndexDetailCache.get(feedIndexUrl);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.resolution;
+  }
+
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(feedIndexUrl, { signal: controller.signal });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const data: any = await res.json();
+    const resources: any[] = data.resources || [];
+
+    let packageBaseAddress: string | null = null;
+    let registrationsBaseUrl: string | null = null;
+
+    for (const resource of resources) {
+      const type = resource["@type"];
+      if (typeof type !== "string") continue;
+
+      if (!packageBaseAddress && type.startsWith("PackageBaseAddress")) {
+        packageBaseAddress = resource["@id"];
+      }
+      if (!registrationsBaseUrl && type.startsWith("RegistrationsBaseUrl")) {
+        registrationsBaseUrl = resource["@id"];
+      }
+    }
+
+    if (!packageBaseAddress) {
+      for (const resource of resources) {
+        const type = resource["@type"];
+        if (typeof type === "string" && type.includes("PackageBaseAddress")) {
+          packageBaseAddress = resource["@id"];
+          break;
+        }
+      }
+    }
+
+    if (!registrationsBaseUrl) {
+      for (const resource of resources) {
+        const type = resource["@type"];
+        if (typeof type === "string" && type.includes("RegistrationsBaseUrl")) {
+          registrationsBaseUrl = resource["@id"];
+          break;
+        }
+      }
+    }
+
+    if (packageBaseAddress && !packageBaseAddress.endsWith("/")) {
+      packageBaseAddress += "/";
+    }
+    if (registrationsBaseUrl && !registrationsBaseUrl.endsWith("/")) {
+      registrationsBaseUrl += "/";
+    }
+
+    const resolution: ServiceIndexResolution = { packageBaseAddress, registrationsBaseUrl };
+
+    if (packageBaseAddress || registrationsBaseUrl) {
+      _serviceIndexDetailCache.set(feedIndexUrl, {
+        resolution,
+        expiresAt: Date.now() + SERVICE_INDEX_CACHE_TTL_MS,
+      });
+    }
+
+    return resolution;
+  } catch {
+    return null;
+  }
+}
+
+async function resolvePackageBaseAddress(feedIndexUrl: string): Promise<string | null> {
+  const cached = _serviceIndexCache.get(feedIndexUrl);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.packageBaseAddress;
+  }
+
+  const index = await resolveServiceIndex(feedIndexUrl);
+  if (!index) return null;
+
+  if (index.packageBaseAddress) {
+    _serviceIndexCache.set(feedIndexUrl, {
+      packageBaseAddress: index.packageBaseAddress,
+      expiresAt: Date.now() + SERVICE_INDEX_CACHE_TTL_MS,
+    });
+    return index.packageBaseAddress;
+  }
+
+  return null;
+}
+
+async function fetchVersionsViaRegistrations(
+  registrationsBaseUrl: string,
   packageId: string,
-  seedMin: string,
-  seedMax: string,
-): Promise<VersionRange | null> {
+): Promise<FeedFetchResult> {
+  try {
+    const regUrl = `${registrationsBaseUrl}${packageId.toLowerCase()}/index.json`;
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(regUrl, { signal: controller.signal });
+    clearTimeout(tid);
+    if (!res.ok) {
+      if (res.status === 404) return { status: "ok", versions: [] };
+      return { status: "unreachable" };
+    }
+    const data: any = await res.json();
+    const items: any[] = data.items || [];
+    const versions: string[] = [];
+    for (const page of items) {
+      const pageItems: any[] = page.items || [];
+      for (const entry of pageItems) {
+        const catalogEntry = entry.catalogEntry || entry;
+        const version = catalogEntry.version;
+        if (typeof version === "string") {
+          versions.push(version);
+        }
+      }
+    }
+    return { status: "ok", versions: versions.filter(v => !v.includes("-")) };
+  } catch {
+    return { status: "unreachable" };
+  }
+}
+
+async function fetchVersionsFromV3Feed(
+  feedIndexUrl: string,
+  packageId: string,
+): Promise<FeedFetchResult> {
+  const serviceIndex = await resolveServiceIndex(feedIndexUrl);
+  if (!serviceIndex) return { status: "unreachable" };
+
+  if (serviceIndex.packageBaseAddress) {
+    try {
+      const indexUrl = `${serviceIndex.packageBaseAddress}${packageId.toLowerCase()}/index.json`;
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch(indexUrl, { signal: controller.signal });
+      clearTimeout(tid);
+      if (!res.ok) {
+        if (res.status === 404) {
+          return { status: "ok", versions: [] };
+        }
+        return { status: "unreachable" };
+      }
+      const data: any = await res.json();
+      const versions: string[] = data.versions || [];
+      return { status: "ok", versions: versions.filter(v => !v.includes("-")) };
+    } catch {
+      return { status: "unreachable" };
+    }
+  }
+
+  if (serviceIndex.registrationsBaseUrl) {
+    return fetchVersionsViaRegistrations(serviceIndex.registrationsBaseUrl, packageId);
+  }
+
+  return { status: "unreachable" };
+}
+
+async function fetchVersionsFromNugetFlatContainer(
+  packageId: string,
+): Promise<FeedFetchResult> {
   try {
     const indexUrl = `${NUGET_V3_BASE}/${packageId.toLowerCase()}/index.json`;
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 10000);
     const res = await fetch(indexUrl, { signal: controller.signal });
     clearTimeout(tid);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (res.status === 404) {
+        return { status: "ok", versions: [] };
+      }
+      return { status: "unreachable" };
+    }
     const data: any = await res.json();
     const versions: string[] = data.versions || [];
-    const stableVersions = versions.filter(v => !v.includes("-"));
-    const compatibleVersions = stableVersions.filter(v =>
-      isVersionInCompatibleLine(v, seedMin, seedMax)
-    );
-    if (compatibleVersions.length === 0) return null;
-    return {
-      min: compatibleVersions[0],
-      max: compatibleVersions[compatibleVersions.length - 1],
-      preferred: compatibleVersions[compatibleVersions.length - 1],
-    };
+    return { status: "ok", versions: versions.filter(v => !v.includes("-")) };
   } catch {
+    return { status: "unreachable" };
+  }
+}
+
+function resolveCompatibleRange(
+  versions: string[],
+  seedMin: string,
+  seedMax: string,
+): VersionRange | null {
+  const compatibleVersions = versions.filter(v =>
+    isVersionInCompatibleLine(v, seedMin, seedMax)
+  );
+  if (compatibleVersions.length === 0) return null;
+
+  compatibleVersions.sort(compareVersions);
+
+  return {
+    min: compatibleVersions[0],
+    max: compatibleVersions[compatibleVersions.length - 1],
+    preferred: compatibleVersions[compatibleVersions.length - 1],
+  };
+}
+
+function validatePreferredVersion(
+  preferred: string,
+  availableVersions: string[],
+  seedMin: string,
+  seedMax: string,
+): string | null {
+  if (availableVersions.includes(preferred)) {
+    return preferred;
+  }
+
+  const compatible = availableVersions
+    .filter(v => isVersionInCompatibleLine(v, seedMin, seedMax) && !v.includes("-"))
+    .sort(compareVersions);
+
+  if (compatible.length === 0) return null;
+
+  const downgradeCandidates = compatible.filter(v => compareVersions(v, preferred) <= 0);
+  if (downgradeCandidates.length > 0) {
+    return downgradeCandidates[downgradeCandidates.length - 1];
+  }
+
+  return compatible[compatible.length - 1];
+}
+
+async function resolvePackageFromFeeds(
+  packageId: string,
+  seedMin: string,
+  seedMax: string,
+  category: PackageCategory,
+  existingRange: { min: string; max: string; preferred: string; lastVerifiedAt: string; verificationSource: VerificationSource } | null,
+): Promise<FeedResolution | null> {
+  if (category === "official-uipath") {
+    const officialResult = await fetchVersionsFromV3Feed(UIPATH_OFFICIAL_FEED_INDEX, packageId);
+
+    if (officialResult.status === "ok") {
+      if (officialResult.versions.length > 0) {
+        const range = resolveCompatibleRange(officialResult.versions, seedMin, seedMax);
+        if (range) {
+          const validated = validatePreferredVersion(range.preferred, officialResult.versions, seedMin, seedMax);
+          if (validated) {
+            return {
+              range: { ...range, preferred: validated },
+              source: "uipath-official-feed",
+              usedFallback: false,
+            };
+          }
+        }
+      }
+      return null;
+    }
+
+    console.warn(`[MetadataRefresher] UiPath Official feed unreachable for ${packageId}, falling back to nuget.org`);
+
+    const nugetResult = await fetchVersionsFromNugetFlatContainer(packageId);
+    if (nugetResult.status === "ok" && nugetResult.versions.length > 0) {
+      const range = resolveCompatibleRange(nugetResult.versions, seedMin, seedMax);
+      if (range) {
+        const validated = validatePreferredVersion(range.preferred, nugetResult.versions, seedMin, seedMax);
+        if (validated) {
+          return {
+            range: { ...range, preferred: validated },
+            source: "nuget-feed",
+            usedFallback: true,
+          };
+        }
+      }
+    }
+
+    if (existingRange) {
+      console.warn(`[MetadataRefresher] No restorable version found on fallback feeds for ${packageId}, using last-known-good cached version range`);
+      return {
+        range: { min: existingRange.min, max: existingRange.max, preferred: existingRange.preferred },
+        source: existingRange.verificationSource,
+        usedFallback: true,
+      };
+    }
+
     return null;
   }
+
+  if (category === "marketplace") {
+    const marketplaceResult = await fetchVersionsFromV3Feed(UIPATH_MARKETPLACE_INDEX, packageId);
+
+    if (marketplaceResult.status === "ok") {
+      if (marketplaceResult.versions.length > 0) {
+        const range = resolveCompatibleRange(marketplaceResult.versions, seedMin, seedMax);
+        if (range) {
+          const validated = validatePreferredVersion(range.preferred, marketplaceResult.versions, seedMin, seedMax);
+          if (validated) {
+            return {
+              range: { ...range, preferred: validated },
+              source: "uipath-marketplace",
+              usedFallback: false,
+            };
+          }
+        }
+      }
+      return null;
+    }
+
+    console.warn(`[MetadataRefresher] Marketplace feed unreachable for ${packageId}, falling back to nuget.org`);
+    const nugetResult = await fetchVersionsFromNugetFlatContainer(packageId);
+    if (nugetResult.status === "ok" && nugetResult.versions.length > 0) {
+      const range = resolveCompatibleRange(nugetResult.versions, seedMin, seedMax);
+      if (range) {
+        const validated = validatePreferredVersion(range.preferred, nugetResult.versions, seedMin, seedMax);
+        if (validated) {
+          return {
+            range: { ...range, preferred: validated },
+            source: "nuget-feed",
+            usedFallback: true,
+          };
+        }
+      }
+    }
+
+    if (existingRange) {
+      console.warn(`[MetadataRefresher] No restorable version found on fallback feeds for ${packageId}, using last-known-good cached version range`);
+      return {
+        range: { min: existingRange.min, max: existingRange.max, preferred: existingRange.preferred },
+        source: existingRange.verificationSource,
+        usedFallback: true,
+      };
+    }
+
+    return null;
+  }
+
+  const nugetResult = await fetchVersionsFromNugetFlatContainer(packageId);
+  if (nugetResult.status === "ok" && nugetResult.versions.length > 0) {
+    const range = resolveCompatibleRange(nugetResult.versions, seedMin, seedMax);
+    if (range) {
+      const validated = validatePreferredVersion(range.preferred, nugetResult.versions, seedMin, seedMax);
+      if (validated) {
+        return {
+          range: { ...range, preferred: validated },
+          source: "nuget-feed",
+          usedFallback: false,
+        };
+      }
+    }
+  }
+
+  if (existingRange) {
+    const reason = nugetResult.status === "unreachable" ? "unreachable" : "has no compatible versions";
+    console.warn(`[MetadataRefresher] nuget.org ${reason} for ${packageId}, using last-known-good cached version range`);
+    return {
+      range: { min: existingRange.min, max: existingRange.max, preferred: existingRange.preferred },
+      source: existingRange.verificationSource,
+      usedFallback: true,
+    };
+  }
+
+  return null;
 }
 
 function atomicWrite(filePath: string, data: string): void {
@@ -112,22 +518,60 @@ export async function refreshGeneration(): Promise<RefreshResult> {
 
     const updatedRanges = { ...existing.packageVersionRanges };
     let updatedCount = 0;
+    let fallbackCount = 0;
+    let failedPackages: string[] = [];
+    const allPackageNames = Object.keys(updatedRanges);
 
-    for (const pkgName of CORE_PACKAGES) {
+    for (const pkgName of allPackageNames) {
       const existingRange = updatedRanges[pkgName];
       if (!existingRange) continue;
-      const range = await fetchVersionRange(pkgName, existingRange.min, existingRange.max);
-      if (range && updatedRanges[pkgName]) {
+
+      const category = classifyPackage(pkgName);
+      const resolution = await resolvePackageFromFeeds(
+        pkgName,
+        existingRange.min,
+        existingRange.max,
+        category,
+        existingRange,
+      );
+
+      if (resolution) {
+        const previousPreferred = existingRange.preferred;
+        const newPreferred = resolution.range.preferred;
+
+        if (resolution.usedFallback) {
+          fallbackCount++;
+          console.warn(`[MetadataRefresher] ${pkgName}: resolved via fallback (${resolution.source})`);
+        }
+
+        if (previousPreferred !== newPreferred && compareVersions(newPreferred, previousPreferred) < 0) {
+          console.warn(`[MetadataRefresher] ${pkgName}: preferred version downgraded from ${previousPreferred} to ${newPreferred} (unavailable on ${resolution.source})`);
+        }
+
         updatedRanges[pkgName] = {
           ...updatedRanges[pkgName],
-          min: range.min,
-          max: range.max,
-          preferred: range.preferred,
+          min: resolution.range.min,
+          max: resolution.range.max,
+          preferred: resolution.range.preferred,
           lastVerifiedAt: now,
-          verificationSource: "nuget-feed",
+          verificationSource: resolution.source,
         };
         updatedCount++;
+      } else {
+        failedPackages.push(pkgName);
+        console.error(`[MetadataRefresher] ${pkgName}: FAILED to resolve on any authoritative feed. No compatible version found.`);
       }
+    }
+
+    const requiredPackages = existing.minimumRequiredPackages || [];
+    const unresolvableRequired = requiredPackages.filter(pkg => failedPackages.includes(pkg));
+    if (unresolvableRequired.length > 0) {
+      metadataService.recordRefreshResult("generation", false);
+      return {
+        family: "generation",
+        success: false,
+        message: `Package generation blocked: required dependencies cannot be resolved to a restorable version on any authoritative feed: ${unresolvableRequired.join(", ")}`,
+      };
     }
 
     if (updatedCount === 0) {
@@ -135,11 +579,11 @@ export async function refreshGeneration(): Promise<RefreshResult> {
       return {
         family: "generation",
         success: false,
-        message: `No package versions could be verified from NuGet feed (0/${CORE_PACKAGES.length} succeeded). Timestamps preserved from last successful verification.`,
+        message: `No package versions could be verified from any feed (0/${allPackageNames.length} succeeded). Timestamps preserved from last successful verification.`,
       };
     }
 
-    const isPartial = updatedCount < CORE_PACKAGES.length;
+    const isPartial = updatedCount < allPackageNames.length;
     const updated: GenerationMetadata = {
       ...existing,
       packageVersionRanges: updatedRanges,
@@ -157,10 +601,22 @@ export async function refreshGeneration(): Promise<RefreshResult> {
     metadataService.reload("generation");
     metadataService.recordRefreshResult("generation", true);
 
+    let statusParts: string[] = [];
+    statusParts.push(`Updated ${updatedCount}/${allPackageNames.length} packages`);
+    if (fallbackCount > 0) {
+      statusParts.push(`${fallbackCount} via nuget.org fallback`);
+    }
+    if (failedPackages.length > 0) {
+      statusParts.push(`${failedPackages.length} unresolvable (non-required): ${failedPackages.join(", ")}`);
+    }
+    if (isPartial) {
+      statusParts.push("partial — snapshot-level verification timestamp preserved");
+    }
+
     return {
       family: "generation",
       success: true,
-      message: `Updated ${updatedCount}/${CORE_PACKAGES.length} package versions from NuGet feed${isPartial ? " (partial — snapshot-level verification timestamp preserved)" : ""}`,
+      message: statusParts.join("; "),
       updatedAt: now,
     };
   } catch (err: any) {
@@ -269,19 +725,6 @@ export interface NewerLineResult {
   packages: NewerLineDiscovery[];
 }
 
-function compareVersions(a: string, b: string): number {
-  const pa = a.split(".").map(Number);
-  const pb = b.split(".").map(Number);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const na = pa[i] || 0;
-    const nb = pb[i] || 0;
-    if (na > nb) return 1;
-    if (na < nb) return -1;
-  }
-  return 0;
-}
-
 function extractMajorMinor(version: string): string | null {
   const parts = version.split(".");
   if (parts.length < 2) return null;
@@ -289,19 +732,35 @@ function extractMajorMinor(version: string): string | null {
 }
 
 async function fetchAllStableVersions(packageId: string): Promise<string[]> {
-  try {
-    const indexUrl = `${NUGET_V3_BASE}/${packageId.toLowerCase()}/index.json`;
-    const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(indexUrl, { signal: controller.signal });
-    clearTimeout(tid);
-    if (!res.ok) return [];
-    const data: any = await res.json();
-    const versions: string[] = data.versions || [];
-    return versions.filter(v => !v.includes("-"));
-  } catch {
+  const category = classifyPackage(packageId);
+
+  if (category === "official-uipath") {
+    const officialResult = await fetchVersionsFromV3Feed(UIPATH_OFFICIAL_FEED_INDEX, packageId);
+    if (officialResult.status === "ok" && officialResult.versions.length > 0) {
+      return officialResult.versions;
+    }
+    if (officialResult.status === "unreachable") {
+      console.warn(`[MetadataRefresher] fetchAllStableVersions: UiPath Official feed unreachable for ${packageId}, falling back to nuget.org`);
+      const nugetResult = await fetchVersionsFromNugetFlatContainer(packageId);
+      return nugetResult.status === "ok" ? nugetResult.versions : [];
+    }
     return [];
   }
+
+  if (category === "marketplace") {
+    const marketplaceResult = await fetchVersionsFromV3Feed(UIPATH_MARKETPLACE_INDEX, packageId);
+    if (marketplaceResult.status === "ok" && marketplaceResult.versions.length > 0) {
+      return marketplaceResult.versions;
+    }
+    if (marketplaceResult.status === "unreachable") {
+      const nugetResult = await fetchVersionsFromNugetFlatContainer(packageId);
+      return nugetResult.status === "ok" ? nugetResult.versions : [];
+    }
+    return [];
+  }
+
+  const nugetResult = await fetchVersionsFromNugetFlatContainer(packageId);
+  return nugetResult.status === "ok" ? nugetResult.versions : [];
 }
 
 let _newerLineCache: { result: NewerLineResult; expiresAt: number } | null = null;

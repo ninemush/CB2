@@ -343,7 +343,7 @@ class MetadataService {
         return {
           ...range,
           lastVerifiedAt: "unknown",
-          verificationSource: "legacy-profile",
+          verificationSource: "nuget-feed",
         };
       }
     }

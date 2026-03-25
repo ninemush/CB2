@@ -8,12 +8,20 @@ export const studioTargetSchema = z.object({
   expressionLanguage: z.enum(["VisualBasic", "CSharp"]),
 });
 
+export const verificationSourceSchema = z.enum([
+  "uipath-official-feed",
+  "uipath-marketplace",
+  "nuget-feed",
+]);
+
+export type VerificationSource = z.infer<typeof verificationSourceSchema>;
+
 export const packageVersionRangeEntrySchema = z.object({
   min: z.string(),
   max: z.string(),
   preferred: z.string(),
   lastVerifiedAt: z.string().datetime(),
-  verificationSource: z.string(),
+  verificationSource: verificationSourceSchema,
 });
 
 export const generationMetadataSchema = z.object({

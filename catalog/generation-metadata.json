@@ -12,112 +12,112 @@
       "max": "25.10.99",
       "preferred": "25.10.7",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.UIAutomation.Activities": {
       "min": "25.10.0",
       "max": "25.10.99",
       "preferred": "25.10.7",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.Mail.Activities": {
       "min": "1.20.0",
       "max": "1.99.0",
       "preferred": "1.23.1",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.Excel.Activities": {
       "min": "2.23.0",
       "max": "2.99.0",
       "preferred": "2.24.3",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.Web.Activities": {
       "min": "1.17.0",
       "max": "1.99.0",
       "preferred": "1.21.0",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.Database.Activities": {
       "min": "1.8.0",
       "max": "1.99.0",
       "preferred": "1.9.0",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.Persistence.Activities": {
       "min": "25.10.0",
       "max": "25.10.99",
       "preferred": "25.10.7",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.IntelligentOCR.Activities": {
       "min": "8.20.0",
       "max": "8.99.0",
       "preferred": "8.22.0",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.DataService.Activities": {
       "min": "25.10.0",
       "max": "25.10.99",
       "preferred": "25.10.7",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.MLActivities": {
       "min": "25.10.0",
       "max": "25.10.99",
       "preferred": "25.10.7",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.IntegrationService.Activities": {
       "min": "25.10.0",
       "max": "25.10.99",
       "preferred": "25.10.7",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.GenAI.Activities": {
       "min": "25.10.0",
       "max": "25.10.99",
       "preferred": "25.10.1",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.WebAPI.Activities": {
       "min": "1.17.0",
       "max": "1.99.0",
       "preferred": "1.21.0",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.Testing.Activities": {
       "min": "25.10.0",
       "max": "25.10.99",
       "preferred": "25.10.7",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.Form.Activities": {
       "min": "25.10.0",
       "max": "25.10.99",
       "preferred": "25.10.7",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.ComplexScenarios.Activities": {
       "min": "1.4.0",
       "max": "1.99.0",
       "preferred": "1.4.6",
       "lastVerifiedAt": "2026-03-21T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "Newtonsoft.Json": {
       "min": "13.0.1",
@@ -131,35 +131,35 @@
       "max": "1.99.0",
       "preferred": "1.15.1",
       "lastVerifiedAt": "2026-03-24T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.PDF.Activities": {
       "min": "3.17.0",
       "max": "3.99.0",
       "preferred": "3.17.0",
       "lastVerifiedAt": "2026-03-24T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.Word.Activities": {
       "min": "1.10.0",
       "max": "1.99.0",
       "preferred": "1.10.0",
       "lastVerifiedAt": "2026-03-24T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.Cryptography.Activities": {
       "min": "1.4.0",
       "max": "1.99.0",
       "preferred": "1.4.0",
       "lastVerifiedAt": "2026-03-24T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.MicrosoftOffice365.Activities": {
       "min": "2.5.0",
       "max": "2.99.0",
       "preferred": "2.5.0",
       "lastVerifiedAt": "2026-03-24T00:00:00Z",
-      "verificationSource": "nuget-feed"
+      "verificationSource": "uipath-official-feed"
     }
   },
   "minimumRequiredPackages": [
