@@ -434,8 +434,32 @@ async function discoverAndResolveNewPackages(
 ): Promise<DiscoveryResult> {
   const result: DiscoveryResult = { newEntries: {}, count: 0 };
 
-  const discovery = await discoverPackagesViaSearch(searchQueryServiceUrl, "UiPath", 100);
-  if (discovery.status !== "ok") return result;
+  const allDiscoveredIds = new Set<string>();
+  const searchQueries = [
+    "UiPath",
+    "UiPath.IntegrationService",
+    "UiPath.Amazon",
+    "UiPath.Azure",
+    "UiPath.Google",
+    "UiPath.Microsoft",
+    "UiPath.Salesforce",
+    "UiPath.Oracle",
+    "UiPath.SAP",
+    "UiPath.Document",
+  ];
+
+  for (const query of searchQueries) {
+    const disc = await discoverPackagesViaSearch(searchQueryServiceUrl, query, 100);
+    if (disc.status === "ok") {
+      for (const id of disc.packageIds) {
+        allDiscoveredIds.add(id);
+      }
+    }
+  }
+
+  if (allDiscoveredIds.size === 0) return result;
+
+  const discovery = { status: "ok" as const, packageIds: Array.from(allDiscoveredIds) };
 
   for (const pkgId of discovery.packageIds) {
     if (existingRanges[pkgId]) continue;
@@ -584,6 +608,22 @@ async function resolvePackageFromFeeds(
           if (validated) {
             return {
               range: { ...range, preferred: validated },
+              source: "uipath-official-feed",
+              usedFallback: false,
+            };
+          }
+        }
+        const stableVersions = officialResult.versions.filter(v => !v.includes("-")).sort(compareVersions);
+        if (stableVersions.length > 0) {
+          const latestStable = stableVersions[stableVersions.length - 1];
+          const lp = parseMajorMinor(latestStable);
+          if (lp) {
+            return {
+              range: {
+                min: seedMin,
+                max: `${lp.major}.99.0`,
+                preferred: latestStable,
+              },
               source: "uipath-official-feed",
               usedFallback: false,
             };
