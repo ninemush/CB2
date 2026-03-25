@@ -1764,6 +1764,16 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     deferredWrites.set(`${libPath}/InitAllSettings.xaml`, compliancePass(initXaml, "InitAllSettings.xaml"));
 
     if (useReFramework && !hasMain) {
+      const preRefXamlLen = xamlEntries.length;
+      const preRefReportsLen = analysisReports.length;
+      const preRefBlockedLen = allPolicyBlocked.length;
+      const refDeferredKeys = [
+        `${libPath}/Main.xaml`,
+        `${libPath}/GetTransactionData.xaml`,
+        `${libPath}/SetTransactionStatus.xaml`,
+        `${libPath}/CloseAllApplications.xaml`,
+        `${libPath}/KillAllProcesses.xaml`,
+      ];
       try {
         console.log(`[UiPath] Generating REFramework structure (queue: ${queueName})`);
         const mainXaml = generateReframeworkMainXaml(projectName, queueName, tf);
@@ -1783,6 +1793,17 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         deferredWrites.set(`${libPath}/KillAllProcesses.xaml`, compliancePass(killXaml, "KillAllProcesses.xaml"));
       } catch (reframeworkErr: any) {
         console.error(`[UiPath] REFramework compliance failed, falling back to simple linear Main.xaml: ${reframeworkErr.message}`);
+        const rolledBackXaml = xamlEntries.length - preRefXamlLen;
+        const rolledBackReports = analysisReports.length - preRefReportsLen;
+        const rolledBackBlocked = allPolicyBlocked.length - preRefBlockedLen;
+        xamlEntries.length = preRefXamlLen;
+        analysisReports.length = preRefReportsLen;
+        allPolicyBlocked.length = preRefBlockedLen;
+        let rolledBackDeferred = 0;
+        for (const key of refDeferredKeys) {
+          if (deferredWrites.delete(key)) rolledBackDeferred++;
+        }
+        console.log(`[UiPath] REFramework rollback: removed ${rolledBackXaml} xamlEntries, ${rolledBackReports} analysisReports, ${rolledBackBlocked} allPolicyBlocked, ${rolledBackDeferred} deferredWrites keys`);
         hasMain = false;
         useReFramework = false;
       }
@@ -2181,7 +2202,11 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         const archivePath = Array.from(deferredWrites.keys()).find(
           p => (p.split("/").pop() || p) === (xamlEntries[i].name.split("/").pop() || xamlEntries[i].name)
         );
-        if (archivePath) deferredWrites.set(archivePath, cleaned);
+        if (archivePath) {
+          deferredWrites.set(archivePath, cleaned);
+        } else {
+          console.warn(`[UiPath Parity] No deferredWrites key found for basename "${xamlEntries[i].name}" during placeholder cleanup — skipping deferred update`);
+        }
         console.log(`[UiPath Pre-Package Check] ${xamlEntries[i].name}: stripped ${placeholderCount} placeholder token(s)`);
       }
     }
@@ -2455,6 +2480,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
             );
             if (archivePath) {
               deferredWrites.set(archivePath, content);
+            } else {
+              console.warn(`[UiPath Parity] No deferredWrites key found for basename "${fileName}" during catalog conformance — skipping deferred update`);
             }
           }
         }
@@ -2478,6 +2505,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         );
         if (archivePath) {
           deferredWrites.set(archivePath, normalized);
+        } else {
+          console.warn(`[UiPath Parity] No deferredWrites key found for basename "${entry.name}" during assign normalization — skipping deferred update`);
         }
       }
     }
@@ -2558,6 +2587,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === basename);
         if (archivePath) {
           deferredWrites.set(archivePath, content);
+        } else {
+          console.warn(`[UiPath Parity] No deferredWrites key found for basename "${basename}" during XAML sanitization — skipping deferred update`);
         }
         if (!wasFixed) autoFixSummary.push(`Applied XAML sanitization fixes to ${xamlEntries[i].name}`);
       }
@@ -2692,6 +2723,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === basename);
         if (archivePath) {
           deferredWrites.set(archivePath, entry.content);
+        } else {
+          console.warn(`[UiPath Parity] No deferredWrites key found for basename "${basename}" during quality gate sync — skipping deferred update`);
         }
       }
 
@@ -2797,6 +2830,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
               const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === shortName);
               if (archivePath) {
                 deferredWrites.set(archivePath, content);
+              } else {
+                console.warn(`[UiPath Parity] No deferredWrites key found for basename "${shortName}" during per-activity stub — skipping deferred update`);
               }
             }
           }
@@ -2840,6 +2875,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                 const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === shortName);
                 if (archivePath) {
                   deferredWrites.set(archivePath, seqResult.content);
+                } else {
+                  console.warn(`[UiPath Parity] No deferredWrites key found for basename "${shortName}" during per-sequence stub — skipping deferred update`);
                 }
                 perSequenceFixed = true;
                 autoFixSummary.push(`Per-sequence stub: replaced ${seqResult.replacedActivityCount} activities in sequence "${seqResult.sequenceDisplayName}" in ${shortName}`);
@@ -2908,6 +2945,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                 const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === shortName);
                 if (archivePath) {
                   deferredWrites.set(archivePath, compliant);
+                } else {
+                  console.warn(`[UiPath Parity] No deferredWrites key found for basename "${shortName}" during structural preservation — skipping deferred update`);
                 }
 
                 anyStructuralPreserved = true;
@@ -2971,6 +3010,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                 const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === shortName);
                 if (archivePath) {
                   deferredWrites.set(archivePath, stubCompliant);
+                } else {
+                  console.warn(`[UiPath Parity] No deferredWrites key found for basename "${shortName}" during full stub fallback — skipping deferred update`);
                 }
                 earlyStubFallbacks.push(shortName);
                 autoFixSummary.push(`Replaced ${entryName} with per-workflow Studio-openable stub (blocking issues: ${blockingDetails.map(d => d.check).join(", ")})`);
@@ -3183,7 +3224,11 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         const archivePath = Array.from(deferredWrites.keys()).find(
           p => (p.split("/").pop() || p) === corruptedFile
         );
-        if (archivePath) deferredWrites.set(archivePath, stubCompliant);
+        if (archivePath) {
+          deferredWrites.set(archivePath, stubCompliant);
+        } else {
+          console.warn(`[UiPath Parity] No deferredWrites key found for basename "${corruptedFile}" during final validation remediation — skipping deferred update`);
+        }
         outcomeRemediations.push({
           level: "workflow",
           file: corruptedFile,
@@ -3201,6 +3246,29 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           `UiPath pre-package validation failed — entry-point Main.xaml corrupted and stub remediation failed:\n${details}`
         );
       }
+    }
+
+    if (xamlEntries.length > 0) {
+      let parityMatches = 0;
+      let parityMismatches = 0;
+      const mismatchedFiles: string[] = [];
+      for (const entry of xamlEntries) {
+        const basename = entry.name.split("/").pop() || entry.name;
+        const deferredKey = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === basename);
+        const deferredContent = deferredKey ? deferredWrites.get(deferredKey) : undefined;
+        const entriesHash = createHash("sha256").update(entry.content).digest("hex").substring(0, 12);
+        const deferredHash = deferredContent ? createHash("sha256").update(deferredContent).digest("hex").substring(0, 12) : "MISSING";
+        const match = deferredContent === entry.content;
+        if (match) {
+          parityMatches++;
+        } else {
+          parityMismatches++;
+          mismatchedFiles.push(basename);
+        }
+        console.log(`[Parity Pre-Check] ${basename}: entries=${entriesHash}, deferred=${deferredHash}, match=${match ? "true" : "FALSE"}`);
+      }
+      const mismatchSuffix = parityMismatches > 0 ? `, ${parityMismatches} mismatch(es): ${mismatchedFiles.join(", ")}` : "";
+      console.log(`[Parity Pre-Check] Summary: ${parityMatches}/${xamlEntries.length} files match${mismatchSuffix}`);
     }
 
     for (const [path, content] of deferredWrites.entries()) {
