@@ -565,13 +565,16 @@ export function classifyAutomationPattern(
 
   const uiKeywords = ["click", "type into", "get text", "selector", "browser", "screen", "screenshot", "ui automation", "desktop app", "web app", "navigate to", "open browser"];
   const apiKeywords = ["api", "http", "rest", "endpoint", "json", "deserialize", "serialize", "web service", "request", "response"];
-  const queueKeywords = ["queue", "transaction", "orchestrator queue", "retry", "reframework"];
+  const strongQueueKeywords = ["orchestrator queue", "reframework", "queue item"];
+  const weakQueueKeywords = ["queue", "transaction", "retry"];
 
   const uiScore = uiKeywords.filter(k => allText.includes(k)).length;
   const apiScore = apiKeywords.filter(k => allText.includes(k)).length;
-  const queueScore = queueKeywords.filter(k => allText.includes(k)).length;
+  const strongQueueScore = strongQueueKeywords.filter(k => allText.includes(k)).length;
+  const weakQueueScore = weakQueueKeywords.filter(k => allText.includes(k)).length;
+  const queueScore = strongQueueScore * 2 + weakQueueScore;
 
-  if (queueScore >= 2) return "transactional-queue";
+  if (queueScore >= 4 || strongQueueScore >= 1) return "transactional-queue";
   if (uiScore > 0 && apiScore > 0) return "hybrid";
   if (uiScore >= 2) return "ui-automation";
   if (apiScore >= 2) return "api-data-driven";

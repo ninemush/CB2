@@ -9,7 +9,7 @@ const SCAFFOLD_MAX_TOKENS = 4096;
 const DETAIL_MAX_TOKENS = 8192;
 const DETAIL_RETRY_LIMIT = 2;
 const DETAIL_LLM_TIMEOUT_MS = 90_000;
-const DECOMPOSITION_AGGREGATE_TIMEOUT_MS = 5 * 60 * 1000;
+const DECOMPOSITION_AGGREGATE_TIMEOUT_BASE_MS = 5 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 4_000;
 
 export interface DecompositionMetrics {
@@ -467,14 +467,14 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
   }, HEARTBEAT_INTERVAL_MS);
 
   try {
+  const aggregateTimeoutMs = Math.max(DECOMPOSITION_AGGREGATE_TIMEOUT_BASE_MS, orderedWorkflows.length * 120_000);
   for (let i = 0; i < orderedWorkflows.length; i++) {
     const entry = orderedWorkflows[i];
     heartbeatState = { index: i, name: entry.name, total: orderedWorkflows.length };
-
-    if (Date.now() - detailPhaseStart > DECOMPOSITION_AGGREGATE_TIMEOUT_MS) {
+    if (Date.now() - detailPhaseStart > aggregateTimeoutMs) {
       aggregateTimedOut = true;
       const remainingNames = orderedWorkflows.slice(i).map(w => w.name);
-      console.warn(`[SpecDecomposer] Run ${runId}: Aggregate timeout (${DECOMPOSITION_AGGREGATE_TIMEOUT_MS}ms) exceeded — stubbing ${remainingNames.length} remaining workflow(s): ${remainingNames.join(", ")}`);
+      console.warn(`[SpecDecomposer] Run ${runId}: Aggregate timeout (${aggregateTimeoutMs}ms) exceeded — stubbing ${remainingNames.length} remaining workflow(s): ${remainingNames.join(", ")}`);
 
       for (let j = i; j < orderedWorkflows.length; j++) {
         const remaining = orderedWorkflows[j];
@@ -531,7 +531,7 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
     const detailPrompt = buildDetailPrompt(entry, scaffold);
 
     for (let attempt = 0; attempt <= DETAIL_RETRY_LIMIT; attempt++) {
-      const aggregateRemaining = DECOMPOSITION_AGGREGATE_TIMEOUT_MS - (Date.now() - detailPhaseStart);
+      const aggregateRemaining = aggregateTimeoutMs - (Date.now() - detailPhaseStart);
       if (aggregateRemaining <= 0) {
         aggregateTimedOut = true;
         console.warn(`[SpecDecomposer] Run ${runId}: Aggregate timeout reached during retries for "${entry.name}" — stubbing`);

@@ -1290,7 +1290,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
   );
   const modeConfig = selectGenerationMode(automationPattern, undefined, _studioProfile);
   generationMode = modeConfig.mode;
-  const useReFramework = modeConfig.blockReFramework ? false : shouldUseReFramework(automationPattern);
+  let useReFramework = modeConfig.blockReFramework ? false : shouldUseReFramework(automationPattern);
   const genCtx: XamlGenerationContext = {
     generationMode,
     automationPattern,
@@ -1724,23 +1724,30 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     deferredWrites.set(`${libPath}/InitAllSettings.xaml`, compliancePass(initXaml, "InitAllSettings.xaml"));
 
     if (useReFramework && !hasMain) {
-      console.log(`[UiPath] Generating REFramework structure (queue: ${queueName})`);
-      const mainXaml = generateReframeworkMainXaml(projectName, queueName, tf);
-      deferredWrites.set(`${libPath}/Main.xaml`, compliancePass(mainXaml, "Main.xaml"));
-      hasMain = true;
+      try {
+        console.log(`[UiPath] Generating REFramework structure (queue: ${queueName})`);
+        const mainXaml = generateReframeworkMainXaml(projectName, queueName, tf);
+        deferredWrites.set(`${libPath}/Main.xaml`, compliancePass(mainXaml, "Main.xaml"));
+        hasMain = true;
 
-      const getTransXaml = generateGetTransactionDataXaml(queueName, tf);
-      deferredWrites.set(`${libPath}/GetTransactionData.xaml`, compliancePass(getTransXaml, "GetTransactionData.xaml"));
+        const getTransXaml = generateGetTransactionDataXaml(queueName, tf);
+        deferredWrites.set(`${libPath}/GetTransactionData.xaml`, compliancePass(getTransXaml, "GetTransactionData.xaml"));
 
-      const setStatusXaml = generateSetTransactionStatusXaml(tf);
-      deferredWrites.set(`${libPath}/SetTransactionStatus.xaml`, compliancePass(setStatusXaml, "SetTransactionStatus.xaml"));
+        const setStatusXaml = generateSetTransactionStatusXaml(tf);
+        deferredWrites.set(`${libPath}/SetTransactionStatus.xaml`, compliancePass(setStatusXaml, "SetTransactionStatus.xaml"));
 
-      const closeAppsXaml = generateCloseAllApplicationsXaml(tf);
-      deferredWrites.set(`${libPath}/CloseAllApplications.xaml`, compliancePass(closeAppsXaml, "CloseAllApplications.xaml"));
+        const closeAppsXaml = generateCloseAllApplicationsXaml(tf);
+        deferredWrites.set(`${libPath}/CloseAllApplications.xaml`, compliancePass(closeAppsXaml, "CloseAllApplications.xaml"));
 
-      const killXaml = generateKillAllProcessesXaml(tf);
-      deferredWrites.set(`${libPath}/KillAllProcesses.xaml`, compliancePass(killXaml, "KillAllProcesses.xaml"));
-    } else if (!hasMain) {
+        const killXaml = generateKillAllProcessesXaml(tf);
+        deferredWrites.set(`${libPath}/KillAllProcesses.xaml`, compliancePass(killXaml, "KillAllProcesses.xaml"));
+      } catch (reframeworkErr: any) {
+        console.error(`[UiPath] REFramework compliance failed, falling back to simple linear Main.xaml: ${reframeworkErr.message}`);
+        hasMain = false;
+        useReFramework = false;
+      }
+    }
+    if (!hasMain) {
       let mainActivities = `
         <ui:InvokeWorkflowFile DisplayName="Initialize Settings" WorkflowFileName="InitAllSettings.xaml" />`;
 

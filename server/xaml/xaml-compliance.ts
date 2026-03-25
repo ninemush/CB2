@@ -1018,26 +1018,6 @@ export function validateXmlWellFormedness(xml: string): { valid: boolean; errors
     }
   }
 
-  const openTags: string[] = [];
-  const tagPattern = /<\/?([a-zA-Z][a-zA-Z0-9]*(?::[a-zA-Z][a-zA-Z0-9]*)?(?:\.[a-zA-Z][a-zA-Z0-9]*)*)(?:\s[^>]*)?\/?>/g;
-  let tagMatch;
-  while ((tagMatch = tagPattern.exec(xml)) !== null) {
-    const fullMatch = tagMatch[0];
-    const tagName = tagMatch[1];
-    if (fullMatch.startsWith("<!--") || fullMatch.endsWith("/>")) continue;
-    if (fullMatch.startsWith("</")) {
-      if (openTags.length > 0 && openTags[openTags.length - 1] === tagName) {
-        openTags.pop();
-      }
-    } else if (!fullMatch.endsWith("/>")) {
-      openTags.push(tagName);
-    }
-  }
-
-  if (openTags.length > 0 && openTags.length <= 5) {
-    errors.push(`Potentially unclosed XML tags detected: ${openTags.join(", ")}`);
-  }
-
   return { valid: errors.length === 0, errors };
 }
 
