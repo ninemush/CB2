@@ -545,30 +545,6 @@ function resolveCompatibleRange(
   };
 }
 
-function validatePreferredVersion(
-  preferred: string,
-  availableVersions: string[],
-  seedMin: string,
-  seedMax: string,
-): string | null {
-  if (availableVersions.includes(preferred) && compareVersions(preferred, seedMin) >= 0) {
-    return preferred;
-  }
-
-  const compatible = availableVersions
-    .filter(v => !v.includes("-") && compareVersions(v, seedMin) >= 0)
-    .sort(compareVersions);
-
-  if (compatible.length === 0) return null;
-
-  const downgradeCandidates = compatible.filter(v => compareVersions(v, preferred) <= 0);
-  if (downgradeCandidates.length > 0) {
-    return downgradeCandidates[downgradeCandidates.length - 1];
-  }
-
-  return compatible[compatible.length - 1];
-}
-
 async function resolvePackageFromFeeds(
   packageId: string,
   seedMin: string,
@@ -1219,35 +1195,6 @@ export async function verifyPreferredVersionsOnStartup(): Promise<{ verified: nu
         atomicWrite(existingPath, JSON.stringify(updated, null, 2));
         metadataService.reload("generation");
         details.push(`[FeedCheck] Updated generation-metadata.json with ${upgraded} upgraded and ${corrected} corrected version(s)`);
-
-        const profilePath = join(CATALOG_DIR, "studio-profile.json");
-        if (existsSync(profilePath)) {
-          try {
-            const profileRaw = JSON.parse(readFileSync(profilePath, "utf-8"));
-            let profileUpdated = false;
-            for (const [pkgName, range] of Object.entries(updated.packageVersionRanges)) {
-              if (profileRaw.allowedPackageVersionRanges?.[pkgName]) {
-                const typedRange = range as { min: string; max: string; preferred: string };
-                const profileEntry = profileRaw.allowedPackageVersionRanges[pkgName];
-                if (profileEntry.preferred !== typedRange.preferred ||
-                    profileEntry.min !== typedRange.min ||
-                    profileEntry.max !== typedRange.max) {
-                  profileRaw.allowedPackageVersionRanges[pkgName] = {
-                    ...profileEntry,
-                    min: typedRange.min,
-                    max: typedRange.max,
-                    preferred: typedRange.preferred,
-                  };
-                  profileUpdated = true;
-                }
-              }
-            }
-            if (profileUpdated) {
-              atomicWrite(profilePath, JSON.stringify(profileRaw, null, 2));
-              details.push("[FeedCheck] Synced corrected versions to studio-profile.json");
-            }
-          } catch { }
-        }
       }
     } catch (err: any) {
       details.push(`[FeedCheck] Failed to write corrected metadata: ${err.message}`);
