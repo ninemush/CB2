@@ -8,7 +8,8 @@ import { RunLogger } from "./lib/run-logger";
 const SCAFFOLD_MAX_TOKENS = 4096;
 const DETAIL_MAX_TOKENS = 8192;
 const DETAIL_RETRY_LIMIT = 2;
-const DETAIL_LLM_TIMEOUT_MS = 90_000;
+const DETAIL_LLM_TIMEOUT_MS = 150_000;
+const DETAIL_TIMEOUT_ESCALATION_MS = 50_000;
 const DECOMPOSITION_AGGREGATE_TIMEOUT_BASE_MS = 5 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 4_000;
 
@@ -518,6 +519,7 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
     const wfStart = Date.now();
     let attempts = 0;
     let succeeded = false;
+    let timeoutEscalations = 0;
 
     console.log(`[SpecDecomposer] Run ${runId}: Starting workflow ${i + 1}/${orderedWorkflows.length}: "${entry.name}"`);
     onProgress?.(`Generating workflow ${i + 1}/${orderedWorkflows.length}: ${entry.name}...`);
@@ -551,11 +553,12 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
       attempts++;
       metrics.totalLlmCalls++;
 
-      console.log(`[SpecDecomposer] Run ${runId}: Workflow "${entry.name}" attempt ${attempt + 1}/${DETAIL_RETRY_LIMIT + 1}`);
+      const escalatedTimeout = DETAIL_LLM_TIMEOUT_MS + (timeoutEscalations * DETAIL_TIMEOUT_ESCALATION_MS);
+      const perWorkflowTimeout = Math.min(escalatedTimeout, aggregateRemaining);
+
+      console.log(`[SpecDecomposer] Run ${runId}: Workflow "${entry.name}" attempt ${attempt + 1}/${DETAIL_RETRY_LIMIT + 1} (timeout: ${Math.round(perWorkflowTimeout / 1000)}s)`);
 
       try {
-        const perWorkflowTimeout = Math.min(DETAIL_LLM_TIMEOUT_MS, aggregateRemaining);
-
         const detailResponse = await getCodeLLM().create({
           maxTokens: DETAIL_MAX_TOKENS,
           system: systemContext,
@@ -597,26 +600,43 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
         break;
       } catch (err: any) {
         const wfDuration = Date.now() - wfStart;
-        console.warn(`[SpecDecomposer] Run ${runId}: Workflow "${entry.name}" attempt ${attempt + 1} failed after ${wfDuration}ms: ${err?.message}`);
+        const isTimeout = /timed?\s*out/i.test(err?.message ?? "");
+        const failureKind = isTimeout ? "timeout" : "error";
+        const timeoutSec = Math.round(perWorkflowTimeout / 1000);
+        console.warn(`[SpecDecomposer] Run ${runId}: Workflow "${entry.name}" attempt ${attempt + 1} failed (${failureKind}) after ${wfDuration}ms (timeout was ${timeoutSec}s): ${err?.message}`);
         runLogger.recordRetry(`spec_workflow_detail_${entry.name}`, attempt + 1, err?.message);
-        onPipelineProgress?.({
-          type: "warning",
-          stage: "spec_workflow_detail",
-          message: `Workflow "${entry.name}" attempt ${attempt + 1} failed, retrying`,
-          context: { workflowName: entry.name, attempt: attempt + 1, total: orderedWorkflows.length },
-        });
 
-        if (attempt === DETAIL_RETRY_LIMIT) {
-          console.error(`[SpecDecomposer] Run ${runId}: Stubbing workflow "${entry.name}" after ${attempts} attempts (${wfDuration}ms)`);
-          const stub = makeStubWorkflow(entry);
-          workflowDetails.set(entry.name, stub);
-          metrics.stubCount++;
-          mergeWarnings.push(`Workflow "${entry.name}" was stubbed after ${attempts} failed attempts`);
+        if (isTimeout) {
+          timeoutEscalations++;
+        }
+
+        if (attempt < DETAIL_RETRY_LIMIT) {
+          const nextEscalatedTimeout = DETAIL_LLM_TIMEOUT_MS + (timeoutEscalations * DETAIL_TIMEOUT_ESCALATION_MS);
+          const nextAggregateRemaining = aggregateTimeoutMs - (Date.now() - detailPhaseStart);
+          const nextEffectiveTimeout = Math.min(nextEscalatedTimeout, Math.max(0, nextAggregateRemaining));
+          const nextTimeoutSec = Math.round(nextEffectiveTimeout / 1000);
+          const retryMessage = isTimeout
+            ? `Workflow "${entry.name}" attempt ${attempt + 1} timed out after ${timeoutSec}s, retrying with ${nextTimeoutSec}s timeout`
+            : `Workflow "${entry.name}" attempt ${attempt + 1} failed (${err?.message}), retrying with ${nextTimeoutSec}s timeout`;
           onPipelineProgress?.({
             type: "warning",
             stage: "spec_workflow_detail",
-            message: `Workflow "${entry.name}" stubbed after ${attempts} failed attempts`,
-            context: { workflowName: entry.name, attempts, outcome: "stubbed", reason: err?.message },
+            message: retryMessage,
+            context: { workflowName: entry.name, attempt: attempt + 1, total: orderedWorkflows.length, failureKind, timeoutUsed: timeoutSec, nextTimeout: nextTimeoutSec },
+          });
+        }
+
+        if (attempt === DETAIL_RETRY_LIMIT) {
+          console.error(`[SpecDecomposer] Run ${runId}: Stubbing workflow "${entry.name}" after ${attempts} attempts (${wfDuration}ms, last failure: ${failureKind})`);
+          const stub = makeStubWorkflow(entry);
+          workflowDetails.set(entry.name, stub);
+          metrics.stubCount++;
+          mergeWarnings.push(`Workflow "${entry.name}" was stubbed after ${attempts} failed attempts (last failure: ${failureKind})`);
+          onPipelineProgress?.({
+            type: "warning",
+            stage: "spec_workflow_detail",
+            message: `Workflow "${entry.name}" stubbed after ${attempts} failed attempts (last failure: ${failureKind})`,
+            context: { workflowName: entry.name, attempts, outcome: "stubbed", reason: err?.message, failureKind },
           });
           onPipelineProgress?.({
             type: "completed",
