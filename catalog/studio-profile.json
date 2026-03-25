@@ -7,7 +7,7 @@
   "allowedPackageVersionRanges": {
     "UiPath.System.Activities": {
       "min": "25.10.0",
-      "max": "25.10.99",
+      "max": "26.99.0",
       "preferred": "26.2.3"
     },
     "UiPath.UIAutomation.Activities": {
@@ -17,27 +17,27 @@
     },
     "UiPath.Mail.Activities": {
       "min": "1.20.0",
-      "max": "1.99.0",
+      "max": "2.99.0",
       "preferred": "2.7.11"
     },
     "UiPath.Database.Activities": {
       "min": "1.8.0",
-      "max": "1.99.0",
+      "max": "2.99.0",
       "preferred": "2.0.0"
     },
     "UiPath.Persistence.Activities": {
-      "min": "25.10.0",
-      "max": "25.10.99",
+      "min": "1.6.0",
+      "max": "1.99.0",
       "preferred": "1.8.1"
     },
     "UiPath.MLActivities": {
-      "min": "25.10.0",
-      "max": "25.10.99",
+      "min": "1.0.0",
+      "max": "2.99.0",
       "preferred": "2.0.4"
     },
     "UiPath.IntelligentOCR.Activities": {
-      "min": "8.20.0",
-      "max": "8.99.0",
+      "min": "6.20.0",
+      "max": "6.99.0",
       "preferred": "6.27.3"
     },
     "UiPath.Web.Activities": {
@@ -47,7 +47,7 @@
     },
     "UiPath.Excel.Activities": {
       "min": "2.23.0",
-      "max": "2.99.0",
+      "max": "3.99.0",
       "preferred": "3.4.1"
     },
     "Newtonsoft.Json": {

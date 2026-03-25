@@ -1106,7 +1106,7 @@ export async function verifyPreferredVersionsOnStartup(): Promise<{ verified: nu
   const existingPath = join(CATALOG_DIR, "generation-metadata.json");
   if (!existsSync(existingPath)) {
     details.push("No generation-metadata.json found — skipping feed availability check");
-    return { verified: 0, corrected: 0, unreachable: 0, details };
+    return { verified: 0, corrected: 0, upgraded: 0, unreachable: 0, details };
   }
 
   let existing: GenerationMetadata | null = null;
@@ -1118,7 +1118,7 @@ export async function verifyPreferredVersionsOnStartup(): Promise<{ verified: nu
 
   if (!existing) {
     details.push("generation-metadata.json could not be parsed — skipping feed availability check");
-    return { verified: 0, corrected: 0, unreachable: 0, details };
+    return { verified: 0, corrected: 0, upgraded: 0, unreachable: 0, details };
   }
 
   const requiredPackages = existing.minimumRequiredPackages || [];
@@ -1228,8 +1228,16 @@ export async function verifyPreferredVersionsOnStartup(): Promise<{ verified: nu
             for (const [pkgName, range] of Object.entries(updated.packageVersionRanges)) {
               if (profileRaw.allowedPackageVersionRanges?.[pkgName]) {
                 const typedRange = range as { min: string; max: string; preferred: string };
-                if (profileRaw.allowedPackageVersionRanges[pkgName].preferred !== typedRange.preferred) {
-                  profileRaw.allowedPackageVersionRanges[pkgName].preferred = typedRange.preferred;
+                const profileEntry = profileRaw.allowedPackageVersionRanges[pkgName];
+                if (profileEntry.preferred !== typedRange.preferred ||
+                    profileEntry.min !== typedRange.min ||
+                    profileEntry.max !== typedRange.max) {
+                  profileRaw.allowedPackageVersionRanges[pkgName] = {
+                    ...profileEntry,
+                    min: typedRange.min,
+                    max: typedRange.max,
+                    preferred: typedRange.preferred,
+                  };
                   profileUpdated = true;
                 }
               }
@@ -1245,6 +1253,36 @@ export async function verifyPreferredVersionsOnStartup(): Promise<{ verified: nu
       details.push(`[FeedCheck] Failed to write corrected metadata: ${err.message}`);
     }
   }
+
+  try {
+    const profilePath = join(CATALOG_DIR, "studio-profile.json");
+    if (existsSync(profilePath)) {
+      const metaRaw = JSON.parse(readFileSync(existingPath, "utf-8"));
+      const profileRaw = JSON.parse(readFileSync(profilePath, "utf-8"));
+      let profileSynced = false;
+      for (const [pkgName, range] of Object.entries(metaRaw.packageVersionRanges || {})) {
+        if (profileRaw.allowedPackageVersionRanges?.[pkgName]) {
+          const typedRange = range as { min: string; max: string; preferred: string };
+          const profileEntry = profileRaw.allowedPackageVersionRanges[pkgName];
+          if (profileEntry.preferred !== typedRange.preferred ||
+              profileEntry.min !== typedRange.min ||
+              profileEntry.max !== typedRange.max) {
+            profileRaw.allowedPackageVersionRanges[pkgName] = {
+              ...profileEntry,
+              min: typedRange.min,
+              max: typedRange.max,
+              preferred: typedRange.preferred,
+            };
+            profileSynced = true;
+          }
+        }
+      }
+      if (profileSynced) {
+        atomicWrite(profilePath, JSON.stringify(profileRaw, null, 2));
+        details.push("[FeedCheck] Synced studio-profile.json ranges to match generation-metadata.json");
+      }
+    }
+  } catch { }
 
   if (verified > 0 || corrected > 0 || upgraded > 0) {
     console.log(`[FeedCheck] Startup verification complete: ${verified} verified, ${upgraded} upgraded, ${corrected} corrected, ${unreachable} unreachable`);
