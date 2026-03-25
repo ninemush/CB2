@@ -8,6 +8,7 @@ import {
   type VerificationSource,
 } from "./metadata-schemas";
 import { metadataService } from "./metadata-service";
+import { generateAndWriteCatalog } from "./catalog-generator";
 
 const CATALOG_DIR = join(process.cwd(), "catalog");
 
@@ -793,6 +794,13 @@ export async function refreshGeneration(): Promise<RefreshResult> {
     metadataService.reload("generation");
     metadataService.recordRefreshResult("generation", true);
 
+    try {
+      const genResult = generateAndWriteCatalog();
+      console.log(`[MetadataRefresher] Regenerated activity catalog after generation refresh: ${genResult.packages} packages, ${genResult.activities} activities`);
+    } catch (genErr: any) {
+      console.warn(`[MetadataRefresher] Failed to regenerate activity catalog after generation refresh: ${genErr.message}`);
+    }
+
     let statusParts: string[] = [];
     statusParts.push(`Updated ${updatedCount}/${Object.keys(updatedRanges).length} packages`);
     if (discoveredCount > 0) {
@@ -1195,6 +1203,13 @@ export async function verifyPreferredVersionsOnStartup(): Promise<{ verified: nu
         atomicWrite(existingPath, JSON.stringify(updated, null, 2));
         metadataService.reload("generation");
         details.push(`[FeedCheck] Updated generation-metadata.json with ${upgraded} upgraded and ${corrected} corrected version(s)`);
+
+        try {
+          const genResult = generateAndWriteCatalog();
+          details.push(`[FeedCheck] Regenerated activity catalog: ${genResult.packages} packages, ${genResult.activities} activities`);
+        } catch (genErr: any) {
+          details.push(`[FeedCheck] Failed to regenerate activity catalog: ${genErr.message}`);
+        }
       }
     } catch (err: any) {
       details.push(`[FeedCheck] Failed to write corrected metadata: ${err.message}`);
@@ -1276,6 +1291,13 @@ export async function runStartupDiscovery(): Promise<void> {
         atomicWrite(existingPath, JSON.stringify(updated, null, 2));
         metadataService.reload("generation");
         console.log(`[Discovery] Expanded catalog with ${discResult.count} new packages (total: ${Object.keys(currentRanges).length})`);
+
+        try {
+          const genResult = generateAndWriteCatalog();
+          console.log(`[Discovery] Regenerated activity catalog: ${genResult.packages} packages, ${genResult.activities} activities`);
+        } catch (genErr: any) {
+          console.warn(`[Discovery] Failed to regenerate activity catalog: ${genErr.message}`);
+        }
       } else {
         console.warn(`[Discovery] Validation failed after adding ${discResult.count} packages: ${validation.error.message}`);
       }
