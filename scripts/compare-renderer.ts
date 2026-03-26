@@ -60,9 +60,11 @@ interface RenderConfig {
   ranksep: number;
   density: number;
   edgeCornerRadius: number;
-  clearance: number;
   badgeHeight: number;
   nameTruncate: number;
+  edgesep: number;
+  strokeWidth: number;
+  arrowSize: number;
 }
 
 const CURRENT: RenderConfig = {
@@ -81,9 +83,11 @@ const CURRENT: RenderConfig = {
   ranksep: 80,
   density: 72,
   edgeCornerRadius: 8,
-  clearance: 40,
   badgeHeight: 14,
   nameTruncate: 30,
+  edgesep: 40,
+  strokeWidth: 1.5,
+  arrowSize: 8,
 };
 
 const IMPROVED: RenderConfig = {
@@ -98,13 +102,15 @@ const IMPROVED: RenderConfig = {
   decisionFontSize: 11,
   nameMaxChars: 40,
   nameMaxLines: 2,
-  nodesep: 80,
-  ranksep: 120,
+  nodesep: 100,
+  ranksep: 130,
   density: 144,
-  edgeCornerRadius: 10,
-  clearance: 60,
+  edgeCornerRadius: 12,
   badgeHeight: 18,
   nameTruncate: 40,
+  edgesep: 60,
+  strokeWidth: 2,
+  arrowSize: 10,
 };
 
 const TEST_NODES: MapNode[] = [
@@ -195,29 +201,33 @@ function wrapText(str: string, maxCharsPerLine: number, maxLines: number): strin
     }
   }
   if (current && lines.length < maxLines) lines.push(current);
-  if (lines.length === maxLines && current && !lines.includes(current)) {
-    lines[maxLines - 1] = truncate(lines[maxLines - 1], maxCharsPerLine);
+  if (lines.length > 0 && lines[lines.length - 1].length > maxCharsPerLine) {
+    lines[lines.length - 1] = truncate(lines[lines.length - 1], maxCharsPerLine);
   }
   return lines;
 }
 
 function getLabelSemanticSide(label: string | null | undefined): "left" | "right" | null {
   const lbl = (label || "").trim();
-  if (/^(no|rejected|fail|invalid|incomplete|false|exceed|above|poor|flag)/i.test(lbl)) return "right";
+  if (/^(no|rejected|fail|invalid|incomplete|false|exceed|above|poor|flag|needs)/i.test(lbl)) return "right";
   if (/^(yes|approved|pass|valid|complete|true|within|below|stp|auto)/i.test(lbl)) return "left";
   return null;
 }
 
-function computeLayout(nodes: MapNode[], edges: MapEdge[], cfg: RenderConfig): { layoutNodes: LayoutNode[]; layoutEdges: LayoutEdge[] } {
+function computeLayout(
+  nodes: MapNode[],
+  edges: MapEdge[],
+  cfg: RenderConfig,
+): { layoutNodes: LayoutNode[]; layoutEdges: LayoutEdge[] } {
   const g = new dagre.graphlib.Graph({ multigraph: true });
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({
     rankdir: "TB",
     nodesep: cfg.nodesep,
     ranksep: cfg.ranksep,
-    edgesep: 40,
-    marginx: 40,
-    marginy: 40,
+    edgesep: cfg.edgesep,
+    marginx: 50,
+    marginy: 50,
   });
 
   for (const node of nodes) {
@@ -245,10 +255,14 @@ function computeLayout(nodes: MapNode[], edges: MapEdge[], cfg: RenderConfig): {
   });
 
   const nodeTypeMap: Record<string, string> = {};
-  nodes.forEach(n => { nodeTypeMap[String(n.id)] = n.nodeType || "task"; });
+  nodes.forEach((n) => {
+    nodeTypeMap[String(n.id)] = n.nodeType || "task";
+  });
 
   const nodeById: Record<string, LayoutNode> = {};
-  layoutNodes.forEach(n => { nodeById[n.id] = n; });
+  layoutNodes.forEach((n) => {
+    nodeById[n.id] = n;
+  });
 
   const edgesBySource: Record<string, MapEdge[]> = {};
   for (const edge of edges) {
@@ -260,59 +274,40 @@ function computeLayout(nodes: MapNode[], edges: MapEdge[], cfg: RenderConfig): {
   const layoutEdges: LayoutEdge[] = edges.map((edge) => {
     const srcType = nodeTypeMap[String(edge.sourceNodeId)] || "task";
     const isDecision = srcType === "decision" || srcType === "agent-decision";
-    const siblings = edgesBySource[String(edge.sourceNodeId)] || [edge];
-
-    const lbl = (edge.label || "").trim();
-    let sourceHandle = "bottom";
-    if (isDecision) {
-      const isNoEdge = /^(no|rejected|fail|invalid|incomplete|false|exceed|above|poor|flag|needs)/i.test(lbl);
-      const isYesEdge = /^(yes|approved|pass|valid|complete|true|within|below|stp|auto)/i.test(lbl);
-      if (isNoEdge) sourceHandle = "right";
-      else if (isYesEdge) sourceHandle = "left";
-      else if (siblings.length > 1) {
-        const idx = siblings.indexOf(edge);
-        sourceHandle = idx === 0 ? "left" : "right";
-      } else sourceHandle = "left";
-    }
-
-    const srcNode = nodeById[String(edge.sourceNodeId)];
-    const tgtNode = nodeById[String(edge.targetNodeId)];
-    const points = (srcNode && tgtNode) ? computeEdgePoints(srcNode, tgtNode, sourceHandle, cfg) : [];
 
     return {
       source: String(edge.sourceNodeId),
       target: String(edge.targetNodeId),
       label: edge.label || "",
-      points,
+      points: [],
       isDecisionSource: isDecision,
-      sourceHandle,
+      sourceHandle: "bottom",
     };
   });
 
-  fixDecisionHandlesPostLayout(layoutNodes, layoutEdges, nodeTypeMap, cfg);
+  assignDecisionHandles(layoutNodes, layoutEdges, nodeTypeMap, edgesBySource, cfg);
 
   for (const le of layoutEdges) {
-    if (le.isDecisionSource) {
-      const srcNode = nodeById[le.source];
-      const tgtNode = nodeById[le.target];
-      if (srcNode && tgtNode) {
-        le.points = computeEdgePoints(srcNode, tgtNode, le.sourceHandle, cfg);
-      }
+    const srcNode = nodeById[le.source];
+    const tgtNode = nodeById[le.target];
+    if (srcNode && tgtNode) {
+      le.points = computeEdgePoints(srcNode, tgtNode, le.sourceHandle, le.isDecisionSource || false, cfg, nodeById, layoutNodes);
     }
   }
 
   return { layoutNodes, layoutEdges };
 }
 
-function fixDecisionHandlesPostLayout(
+function assignDecisionHandles(
   layoutNodes: LayoutNode[],
   layoutEdges: LayoutEdge[],
   nodeTypeMap: Record<string, string>,
-  cfg: RenderConfig
+  _edgesBySource: Record<string, MapEdge[]>,
+  _cfg: RenderConfig,
 ): void {
-  const nodePositions: Record<string, { x: number; y: number; width: number; height: number }> = {};
+  const nodeCenter: Record<string, { x: number; y: number }> = {};
   layoutNodes.forEach((n) => {
-    nodePositions[n.id] = { x: n.x + n.width / 2, y: n.y + n.height / 2, width: n.width, height: n.height };
+    nodeCenter[n.id] = { x: n.x + n.width / 2, y: n.y + n.height / 2 };
   });
 
   const edgesBySource: Record<string, LayoutEdge[]> = {};
@@ -329,109 +324,171 @@ function fixDecisionHandlesPostLayout(
     const siblings = edgesBySource[sourceId];
     if (siblings.length !== 2) continue;
 
-    const srcPos = nodePositions[sourceId];
+    const srcPos = nodeCenter[sourceId];
     if (!srcPos) continue;
 
-    const tgt0 = nodePositions[siblings[0].target];
-    const tgt1 = nodePositions[siblings[1].target];
+    const tgt0 = nodeCenter[siblings[0].target];
+    const tgt1 = nodeCenter[siblings[1].target];
     if (!tgt0 || !tgt1) continue;
 
-    const halfW = cfg.decisionSize / 2;
-    const dx0 = Math.abs(tgt0.x - srcPos.x);
-    const dx1 = Math.abs(tgt1.x - srcPos.x);
-    const dy0 = tgt0.y - srcPos.y;
-    const dy1 = tgt1.y - srcPos.y;
-    const directlyBelow0 = dx0 < halfW && dy0 > 0;
-    const directlyBelow1 = dx1 < halfW && dy1 > 0;
+    const sem0 = getLabelSemanticSide(siblings[0].label);
+    const sem1 = getLabelSemanticSide(siblings[1].label);
 
-    let handle0: string;
-    let handle1: string;
-
-    if (directlyBelow0 && !directlyBelow1) {
-      handle0 = "bottom";
-      handle1 = tgt1.x > srcPos.x ? "right" : "left";
-    } else if (directlyBelow1 && !directlyBelow0) {
-      handle1 = "bottom";
-      handle0 = tgt0.x > srcPos.x ? "right" : "left";
+    if (tgt0.x < srcPos.x && tgt1.x > srcPos.x) {
+      siblings[0].sourceHandle = "left";
+      siblings[1].sourceHandle = "right";
+    } else if (tgt1.x < srcPos.x && tgt0.x > srcPos.x) {
+      siblings[0].sourceHandle = "right";
+      siblings[1].sourceHandle = "left";
+    } else if (tgt0.x < tgt1.x) {
+      siblings[0].sourceHandle = "left";
+      siblings[1].sourceHandle = "right";
+    } else if (tgt0.x > tgt1.x) {
+      siblings[0].sourceHandle = "right";
+      siblings[1].sourceHandle = "left";
     } else {
-      if (tgt0.x < tgt1.x) {
-        handle0 = "left";
-        handle1 = "right";
-      } else if (tgt0.x > tgt1.x) {
-        handle0 = "right";
-        handle1 = "left";
-      } else {
-        const sem0 = getLabelSemanticSide(siblings[0].label);
-        const sem1 = getLabelSemanticSide(siblings[1].label);
-        handle0 = sem0 || "left";
-        handle1 = sem1 || "right";
-        if (handle0 === handle1) {
-          handle0 = "left";
-          handle1 = "right";
-        }
-      }
-
-      const wouldCross =
-        (handle0 === "left" && handle1 === "right" && (tgt0.x > tgt1.x)) ||
-        (handle0 === "right" && handle1 === "left" && (tgt0.x < tgt1.x));
-      if (wouldCross) {
-        const tmp = handle0;
-        handle0 = handle1;
-        handle1 = tmp;
+      siblings[0].sourceHandle = sem0 === "right" ? "right" : "left";
+      siblings[1].sourceHandle = sem1 === "left" ? "left" : "right";
+      if (siblings[0].sourceHandle === siblings[1].sourceHandle) {
+        siblings[0].sourceHandle = "left";
+        siblings[1].sourceHandle = "right";
       }
     }
 
-    siblings[0].sourceHandle = handle0;
-    siblings[1].sourceHandle = handle1;
+    if (sem0 && sem1 && sem0 !== sem1) {
+      siblings[0].sourceHandle = sem0;
+      siblings[1].sourceHandle = sem1;
+    }
   }
 }
 
-function computeEdgePoints(srcNode: LayoutNode, tgtNode: LayoutNode, sourceHandle: string | undefined, cfg: RenderConfig): { x: number; y: number }[] {
+function computeEdgePoints(
+  srcNode: LayoutNode,
+  tgtNode: LayoutNode,
+  sourceHandle: string | undefined,
+  isDecisionSource: boolean,
+  cfg: RenderConfig,
+  _nodeById: Record<string, LayoutNode>,
+  _allNodes: LayoutNode[],
+): { x: number; y: number }[] {
   const cx = srcNode.x + srcNode.width / 2;
   const cy = srcNode.y + srcNode.height / 2;
   const tx = tgtNode.x + tgtNode.width / 2;
   const ty = tgtNode.y;
-  const diamondR = cfg.decisionSize / 2;
-  const clearance = cfg.clearance;
+  const tBottom = tgtNode.y + tgtNode.height;
+
+  if (!isDecisionSource) {
+    const sx = cx;
+    const sy = srcNode.y + srcNode.height;
+
+    if (ty < sy) {
+      const goRight = tx > cx;
+      const routeX = goRight
+        ? Math.max(srcNode.x + srcNode.width + 30, tgtNode.x + tgtNode.width + 30)
+        : Math.min(srcNode.x - 30, tgtNode.x - 30);
+      return [
+        { x: sx, y: sy },
+        { x: sx, y: sy + 15 },
+        { x: routeX, y: sy + 15 },
+        { x: routeX, y: ty - 15 },
+        { x: tx, y: ty - 15 },
+        { x: tx, y: ty },
+      ];
+    }
+
+    if (Math.abs(sx - tx) < 8) {
+      return [{ x: sx, y: sy }, { x: tx, y: ty }];
+    }
+
+    const midY = sy + (ty - sy) * 0.5;
+    return [
+      { x: sx, y: sy },
+      { x: sx, y: midY },
+      { x: tx, y: midY },
+      { x: tx, y: ty },
+    ];
+  }
+
+  const diamondR = cfg.decisionSize * 0.5 * Math.SQRT2 * 0.5;
 
   if (sourceHandle === "left") {
     const sx = cx - diamondR;
     const sy = cy;
-    const exitX = Math.min(sx - clearance, tx);
-    if (Math.abs(exitX - tx) < 10) {
-      return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: tx, y: ty }];
+    const targetIsBelow = ty > cy;
+    const targetIsLeft = tx < cx;
+
+    if (targetIsBelow && targetIsLeft) {
+      return [
+        { x: sx, y: sy },
+        { x: tx, y: sy },
+        { x: tx, y: ty },
+      ];
     }
-    return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: exitX, y: ty - 10 }, { x: tx, y: ty }];
+    if (targetIsBelow) {
+      const routeX = Math.min(sx - 25, tgtNode.x - 15);
+      return [
+        { x: sx, y: sy },
+        { x: routeX, y: sy },
+        { x: routeX, y: ty - 15 },
+        { x: tx, y: ty - 15 },
+        { x: tx, y: ty },
+      ];
+    }
+    const routeX = Math.min(sx - 25, tgtNode.x - 15);
+    return [
+      { x: sx, y: sy },
+      { x: routeX, y: sy },
+      { x: routeX, y: ty - 15 },
+      { x: tx, y: ty - 15 },
+      { x: tx, y: ty },
+    ];
   }
 
   if (sourceHandle === "right") {
     const sx = cx + diamondR;
     const sy = cy;
-    const exitX = Math.max(sx + clearance, tx);
-    if (Math.abs(exitX - tx) < 10) {
-      return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: tx, y: ty }];
+    const targetIsBelow = ty > cy;
+    const targetIsRight = tx > cx;
+
+    if (targetIsBelow && targetIsRight) {
+      return [
+        { x: sx, y: sy },
+        { x: tx, y: sy },
+        { x: tx, y: ty },
+      ];
     }
-    return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: exitX, y: ty - 10 }, { x: tx, y: ty }];
+    if (targetIsBelow) {
+      const routeX = Math.max(sx + 25, tgtNode.x + tgtNode.width + 15);
+      return [
+        { x: sx, y: sy },
+        { x: routeX, y: sy },
+        { x: routeX, y: ty - 15 },
+        { x: tx, y: ty - 15 },
+        { x: tx, y: ty },
+      ];
+    }
+    const routeX = Math.max(sx + 25, tgtNode.x + tgtNode.width + 15);
+    return [
+      { x: sx, y: sy },
+      { x: routeX, y: sy },
+      { x: routeX, y: ty - 15 },
+      { x: tx, y: ty - 15 },
+      { x: tx, y: ty },
+    ];
   }
 
-  if (sourceHandle === "bottom-left" || sourceHandle === "bottom-right") {
-    const offset = sourceHandle === "bottom-left" ? -diamondR * 0.5 : diamondR * 0.5;
-    const sx = cx + offset;
-    const sy = cy + diamondR;
-    if (Math.abs(sx - tx) < 10) {
-      return [{ x: sx, y: sy }, { x: tx, y: ty }];
-    }
-    const midY = sy + (ty - sy) * 0.3;
-    return [{ x: sx, y: sy }, { x: sx, y: midY }, { x: tx, y: midY }, { x: tx, y: ty }];
-  }
-
-  const sx = srcNode.x + srcNode.width / 2;
-  const sy = srcNode.y + srcNode.height;
-  if (Math.abs(sx - tx) < 10) {
+  const sx = cx;
+  const sy = cy + diamondR;
+  if (Math.abs(sx - tx) < 8) {
     return [{ x: sx, y: sy }, { x: tx, y: ty }];
   }
-  const midY = (sy + ty) / 2;
-  return [{ x: sx, y: sy }, { x: sx, y: midY }, { x: tx, y: midY }, { x: tx, y: ty }];
+  const midY = sy + (ty - sy) * 0.5;
+  return [
+    { x: sx, y: sy },
+    { x: sx, y: midY },
+    { x: tx, y: midY },
+    { x: tx, y: ty },
+  ];
 }
 
 function renderEdgePath(points: { x: number; y: number }[], r: number): string {
@@ -452,6 +509,10 @@ function renderEdgePath(points: { x: number; y: number }[], r: number): string {
     const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
     if (len1 < 1 || len2 < 1) {
       d += ` L ${curr.x} ${curr.y}`;
+      continue;
+    }
+    const isStraight = Math.abs(dx1 * dy2 - dy1 * dx2) < 0.01 * len1 * len2;
+    if (isStraight) {
       continue;
     }
     const clampR = Math.min(r, len1 / 2, len2 / 2);
@@ -503,8 +564,8 @@ function renderNodeSvg(node: LayoutNode, cfg: RenderConfig): string {
   if (nType === "decision" || nType === "agent-decision") {
     const cx = x + width / 2;
     const cy = y + height / 2;
-    const s = cfg.decisionSize / 2;
-    const nameLines = wrapText(data.name || "?", cfg.nameMaxChars - 10, cfg.nameMaxLines);
+    const s = cfg.decisionSize / 2 * 0.72;
+    const nameLines = wrapText(data.name || "?", Math.floor(cfg.decisionSize / (cfg.decisionFontSize * 0.55)), cfg.nameMaxLines);
     const lineHeight = cfg.decisionFontSize + 3;
     const totalTextH = nameLines.length * lineHeight;
     const startY = -totalTextH / 2 + cfg.decisionFontSize * 0.4;
@@ -541,7 +602,7 @@ function renderNodeSvg(node: LayoutNode, cfg: RenderConfig): string {
   const badgeY = y + height - cfg.badgeHeight - 6;
 
   if (roleText) {
-    let rw = Math.min(roleText.length * (cfg.badgeFontSize * 0.7) + 14, maxBadgeArea);
+    const rw = Math.min(roleText.length * (cfg.badgeFontSize * 0.7) + 14, maxBadgeArea);
     badgeSvg += `
       <rect x="${badgeX}" y="${badgeY}" width="${rw}" height="${cfg.badgeHeight}" rx="3" fill="#374151"/>
       <text x="${badgeX + rw / 2}" y="${badgeY + cfg.badgeHeight * 0.72}" text-anchor="middle" fill="#9ca3af" font-size="${cfg.badgeFontSize}" font-family="system-ui, sans-serif">${escapeXml(roleText)}</text>
@@ -551,10 +612,12 @@ function renderNodeSvg(node: LayoutNode, cfg: RenderConfig): string {
   if (systemText) {
     const remainingSpace = (x + width - 8) - badgeX;
     if (remainingSpace > 30) {
-      let sw = Math.min(systemText.length * (cfg.badgeFontSize * 0.7) + 14, remainingSpace);
+      const maxSysChars = Math.floor(remainingSpace / (cfg.badgeFontSize * 0.7));
+      const displaySys = truncate(systemText, maxSysChars);
+      const sw = Math.min(displaySys.length * (cfg.badgeFontSize * 0.7) + 14, remainingSpace);
       badgeSvg += `
         <rect x="${badgeX}" y="${badgeY}" width="${sw}" height="${cfg.badgeHeight}" rx="3" fill="#1e293b"/>
-        <text x="${badgeX + sw / 2}" y="${badgeY + cfg.badgeHeight * 0.72}" text-anchor="middle" fill="#64748b" font-size="${cfg.badgeFontSize}" font-family="system-ui, sans-serif">${escapeXml(truncate(systemText, Math.floor(remainingSpace / (cfg.badgeFontSize * 0.7))))}</text>
+        <text x="${badgeX + sw / 2}" y="${badgeY + cfg.badgeHeight * 0.72}" text-anchor="middle" fill="#64748b" font-size="${cfg.badgeFontSize}" font-family="system-ui, sans-serif">${escapeXml(displaySys)}</text>
       `;
     }
   }
@@ -566,13 +629,20 @@ function renderNodeSvg(node: LayoutNode, cfg: RenderConfig): string {
   `;
 }
 
-async function renderWithConfig(nodes: MapNode[], edges: MapEdge[], cfg: RenderConfig): Promise<{ svgContent: string; pngBuffer: Buffer; width: number; height: number }> {
+async function renderWithConfig(
+  nodes: MapNode[],
+  edges: MapEdge[],
+  cfg: RenderConfig,
+): Promise<{ svgContent: string; pngBuffer: Buffer; width: number; height: number }> {
   const { layoutNodes, layoutEdges } = computeLayout(nodes, edges, cfg);
 
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
   for (const n of layoutNodes) {
     const nType = (n.data.nodeType || "task").toLowerCase();
-    const extra = (nType === "decision" || nType === "agent-decision") ? cfg.decisionSize * 0.7 : 0;
+    const extra = nType === "decision" || nType === "agent-decision" ? cfg.decisionSize * 0.75 : 0;
     minX = Math.min(minX, n.x - extra);
     minY = Math.min(minY, n.y - extra);
     maxX = Math.max(maxX, n.x + n.width + extra);
@@ -580,14 +650,14 @@ async function renderWithConfig(nodes: MapNode[], edges: MapEdge[], cfg: RenderC
   }
   for (const e of layoutEdges) {
     for (const p of e.points) {
-      minX = Math.min(minX, p.x - 20);
-      minY = Math.min(minY, p.y - 20);
-      maxX = Math.max(maxX, p.x + 20);
-      maxY = Math.max(maxY, p.y + 20);
+      minX = Math.min(minX, p.x - 30);
+      minY = Math.min(minY, p.y - 30);
+      maxX = Math.max(maxX, p.x + 30);
+      maxY = Math.max(maxY, p.y + 30);
     }
   }
 
-  const padding = 60;
+  const padding = 70;
   const svgWidth = maxX - minX + padding * 2;
   const svgHeight = maxY - minY + padding * 2;
   const offsetX = -minX + padding;
@@ -610,20 +680,29 @@ async function renderWithConfig(nodes: MapNode[], edges: MapEdge[], cfg: RenderC
     const pathD = renderEdgePath(edge.points, cfg.edgeCornerRadius);
     if (!pathD) continue;
 
-    edgesSvg += `<path d="${pathD}" fill="none" stroke="${color}" stroke-width="${cfg.label === "IMPROVED" ? 2 : 1.5}" marker-end="url(#arrow-${color.replace("#", "")})" stroke-linejoin="round"/>`;
+    edgesSvg += `<path d="${pathD}" fill="none" stroke="${color}" stroke-width="${cfg.strokeWidth}" marker-end="url(#arrow-${color.replace("#", "")})" stroke-linejoin="round"/>`;
 
     if (edge.label) {
       let lx: number, ly: number;
       if (edge.isDecisionSource && edge.points.length >= 2) {
-        const srcPt = edge.points[0];
-        const isBottomHandle = edge.sourceHandle === "bottom-left" || edge.sourceHandle === "bottom-right";
-        const xDir = edge.sourceHandle === "left" ? -1 : edge.sourceHandle === "right" ? 1 : edge.sourceHandle === "bottom-left" ? -0.5 : 0.5;
-        lx = srcPt.x + xDir * (isBottomHandle ? 40 : 50);
-        ly = srcPt.y + (isBottomHandle ? 25 : 30);
+        const p0 = edge.points[0];
+        const p1 = edge.points[1];
+        lx = (p0.x + p1.x) / 2;
+        ly = (p0.y + p1.y) / 2;
+        if (Math.abs(p0.y - p1.y) < 3) {
+          ly -= cfg.edgeLabelFontSize + 4;
+        }
       } else {
         const midIdx = Math.floor(edge.points.length / 2);
-        lx = edge.points[midIdx]?.x || 0;
-        ly = edge.points[midIdx]?.y || 0;
+        const mp = edge.points[midIdx];
+        const mpPrev = edge.points[midIdx - 1] || mp;
+        lx = (mp.x + mpPrev.x) / 2;
+        ly = (mp.y + mpPrev.y) / 2;
+        if (Math.abs(mp.x - mpPrev.x) < 3) {
+          lx += cfg.edgeLabelFontSize * 2 + 8;
+        } else {
+          ly -= cfg.edgeLabelFontSize + 2;
+        }
       }
       const labelBgW = edge.label.length * (cfg.edgeLabelFontSize * 0.65) + 14;
       const labelBgH = cfg.edgeLabelFontSize + 8;
@@ -646,16 +725,15 @@ async function renderWithConfig(nodes: MapNode[], edges: MapEdge[], cfg: RenderC
   let markerDefs = "";
   for (const color of arrowColors) {
     const id = `arrow-${color.replace("#", "")}`;
-    const mSize = cfg.label === "IMPROVED" ? 10 : 8;
     markerDefs += `
-      <marker id="${id}" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="${mSize}" markerHeight="${mSize}" orient="auto-start-reverse">
+      <marker id="${id}" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="${cfg.arrowSize}" markerHeight="${cfg.arrowSize}" orient="auto-start-reverse">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/>
       </marker>
     `;
   }
 
-  const titleFontSize = cfg.label === "IMPROVED" ? 18 : 14;
-  const titleSvg = `<text x="${svgWidth / 2}" y="${30}" text-anchor="middle" fill="#71717a" font-size="${titleFontSize}" font-weight="700" font-family="system-ui, sans-serif">${cfg.label}: nodes ${cfg.taskWidth}×${cfg.taskHeight}, decisions ${cfg.decisionSize}×${cfg.decisionSize}, font ${cfg.nameFontSize}px, spacing ${cfg.nodesep}/${cfg.ranksep}, DPI ${cfg.density}</text>`;
+  const titleFontSize = cfg.label === "IMPROVED" ? 16 : 12;
+  const titleSvg = `<text x="${svgWidth / 2}" y="${30}" text-anchor="middle" fill="#71717a" font-size="${titleFontSize}" font-weight="700" font-family="system-ui, sans-serif">${cfg.label}: nodes ${cfg.taskWidth}\u00d7${cfg.taskHeight}, decisions ${cfg.decisionSize}\u00d7${cfg.decisionSize}, font ${cfg.nameFontSize}px, spacing ${cfg.nodesep}/${cfg.ranksep}, DPI ${cfg.density}</text>`;
 
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}">
@@ -670,7 +748,12 @@ async function renderWithConfig(nodes: MapNode[], edges: MapEdge[], cfg: RenderC
     .png()
     .toBuffer();
 
-  return { svgContent: svg, pngBuffer, width: Math.round(svgWidth), height: Math.round(svgHeight) };
+  return {
+    svgContent: svg,
+    pngBuffer,
+    width: Math.round(svgWidth),
+    height: Math.round(svgHeight),
+  };
 }
 
 async function main() {
@@ -681,25 +764,23 @@ async function main() {
   const current = await renderWithConfig(TEST_NODES, TEST_EDGES, CURRENT);
   fs.writeFileSync(path.join(outDir, "current.svg"), current.svgContent);
   fs.writeFileSync(path.join(outDir, "current.png"), current.pngBuffer);
-  console.log(`  CURRENT: SVG ${current.width}×${current.height}, PNG ${(current.pngBuffer.length / 1024).toFixed(0)}KB`);
+  console.log(`  CURRENT: SVG ${current.width}\u00d7${current.height}, PNG ${(current.pngBuffer.length / 1024).toFixed(0)}KB`);
 
   console.log("Rendering IMPROVED settings...");
   const improved = await renderWithConfig(TEST_NODES, TEST_EDGES, IMPROVED);
   fs.writeFileSync(path.join(outDir, "improved.svg"), improved.svgContent);
   fs.writeFileSync(path.join(outDir, "improved.png"), improved.pngBuffer);
-  console.log(`  IMPROVED: SVG ${improved.width}×${improved.height}, PNG ${(improved.pngBuffer.length / 1024).toFixed(0)}KB`);
+  console.log(`  IMPROVED: SVG ${improved.width}\u00d7${improved.height}, PNG ${(improved.pngBuffer.length / 1024).toFixed(0)}KB`);
 
   console.log(`\nComparison files saved to: ${outDir}/`);
-  console.log("  current.png  — existing renderer settings");
-  console.log("  improved.png — proposed improvements");
-  console.log("  current.svg  — SVG source (current)");
-  console.log("  improved.svg — SVG source (improved)");
+  console.log("  current.png  \u2014 existing renderer settings");
+  console.log("  improved.png \u2014 proposed improvements");
 
   const sizeRatio = (improved.pngBuffer.length / current.pngBuffer.length).toFixed(1);
   const areaRatio = ((improved.width * improved.height) / (current.width * current.height)).toFixed(1);
   console.log(`\nSize comparison:`);
-  console.log(`  PNG size ratio: ${sizeRatio}x (${(current.pngBuffer.length / 1024).toFixed(0)}KB → ${(improved.pngBuffer.length / 1024).toFixed(0)}KB)`);
-  console.log(`  Canvas area ratio: ${areaRatio}x (${current.width}×${current.height} → ${improved.width}×${improved.height})`);
+  console.log(`  PNG size ratio: ${sizeRatio}x (${(current.pngBuffer.length / 1024).toFixed(0)}KB \u2192 ${(improved.pngBuffer.length / 1024).toFixed(0)}KB)`);
+  console.log(`  Canvas area ratio: ${areaRatio}x (${current.width}\u00d7${current.height} \u2192 ${improved.width}\u00d7${improved.height})`);
 }
 
 main().catch(console.error);
