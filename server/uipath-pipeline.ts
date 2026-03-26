@@ -752,12 +752,17 @@ export async function compilePackageFromSpecs(
     const { metadataService: metaSvc } = await import("./catalog/metadata-service");
     const newerLines = await discoverNewerLines();
     if (newerLines.newerLineAvailable) {
-      pipelineWarnings.push({
-        code: "CATALOG_VERSION_BEHIND_STUDIO",
-        message: `Catalog targets Studio line ${metaSvc.getStudioTarget()?.line || "unknown"}, but newer line ${newerLines.newerLineAvailable} (v${newerLines.latestVersion}) is available on NuGet. The generated package may need version updates when opened in a newer Studio.`,
-        stage: "version-check",
-        recoverable: true,
-      });
+      const studioTarget = metaSvc.getStudioTarget();
+      const currentLine = studioTarget?.line || "unknown";
+      const LTS_LINES = new Set(["25.10", "24.10", "23.10"]);
+      if (!LTS_LINES.has(currentLine)) {
+        pipelineWarnings.push({
+          code: "CATALOG_VERSION_BEHIND_STUDIO",
+          message: `Catalog targets Studio line ${currentLine}, but newer line ${newerLines.newerLineAvailable} (v${newerLines.latestVersion}) is available on NuGet. The generated package may need version updates when opened in a newer Studio.`,
+          stage: "version-check",
+          recoverable: true,
+        });
+      }
     }
   } catch (err: any) {
     console.debug(`[Pipeline] Newer-line discovery skipped: ${err?.message || "unknown error"}`);

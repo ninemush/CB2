@@ -28,6 +28,7 @@ export interface CatalogActivity {
   browsable: boolean;
   processTypes: ProcessType[];
   properties: CatalogProperty[];
+  propertiesComplete?: boolean;
 }
 
 export interface CatalogPackage {
@@ -387,7 +388,7 @@ class CatalogService {
       "sap:VirtualizedContainerService.HintSize",
       "sap2010:VirtualizedContainerService.HintSize", "VirtualizedContainerService.HintSize",
       "Annotation.AnnotationText",
-      "Timeout", "DelayAfter", "DelayBefore",
+      "DelayAfter", "DelayBefore",
       "mc:Ignorable", "x:Class", "x:TypeArguments", "TypeArguments", "x:Name",
     ]);
 
@@ -402,21 +403,29 @@ class CatalogService {
 
     const knownPropertyNames = new Set(schema.activity.properties.map(p => p.name));
     const className = tag.includes(":") ? tag.split(":").pop()! : tag;
+    const isComplete = schema.activity.propertiesComplete === true;
 
-    for (const attrName of Object.keys(attributes)) {
-      if (attrName.startsWith("xmlns")) continue;
-      if (!knownPropertyNames.has(attrName) && !FRAMEWORK_ATTRIBUTES.has(attrName)) {
-        result.valid = false;
-        result.violations.push(`Unrecognized attribute "${attrName}" on ${tag} — not in catalog schema`);
+    if (isComplete) {
+      for (const attrName of Object.keys(attributes)) {
+        if (attrName.startsWith("xmlns")) continue;
+        if (!knownPropertyNames.has(attrName) && !FRAMEWORK_ATTRIBUTES.has(attrName)) {
+          result.valid = false;
+          result.violations.push(`Unrecognized attribute "${attrName}" on ${tag} — not in catalog schema`);
+          result.corrections.push({
+            type: "remove-attribute",
+            property: attrName,
+            detail: `Remove unrecognized attribute "${attrName}" from ${tag}`,
+          });
+        }
       }
-    }
 
-    for (const childName of children) {
-      const simpleName = childName.includes(".") ? childName.split(".").pop()! : childName;
-      if (FRAMEWORK_CHILD_ELEMENTS.has(simpleName) || FRAMEWORK_CHILD_ELEMENTS.has(childName)) continue;
-      if (!knownPropertyNames.has(simpleName) && !FRAMEWORK_ATTRIBUTES.has(simpleName)) {
-        result.valid = false;
-        result.violations.push(`Unrecognized child property "${childName}" on ${tag} — not in catalog schema`);
+      for (const childName of children) {
+        const simpleName = childName.includes(".") ? childName.split(".").pop()! : childName;
+        if (FRAMEWORK_CHILD_ELEMENTS.has(simpleName) || FRAMEWORK_CHILD_ELEMENTS.has(childName)) continue;
+        if (!knownPropertyNames.has(simpleName) && !FRAMEWORK_ATTRIBUTES.has(simpleName)) {
+          result.valid = false;
+          result.violations.push(`Unrecognized child property "${childName}" on ${tag} — not in catalog schema`);
+        }
       }
     }
 

@@ -80,7 +80,6 @@ const TARGET_COMPATIBLE_ACTIVITIES = new Set([
   "ui:ScrollTo",
   "ui:WaitElementVanish",
   "ui:Screenshot",
-  "ui:TakeScreenshot",
   "uweb:TypeInto",
   "uweb:Click",
   "uweb:GetText",

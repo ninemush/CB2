@@ -1708,7 +1708,12 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
         const validation = catalogService.validateEmittedActivity(fullTag, attrs, children);
         if (!validation.valid || validation.corrections.length > 0) {
+          const attrsToRemove: string[] = [];
           for (const correction of validation.corrections) {
+            if (correction.type === "remove-attribute") {
+              attrsToRemove.push(correction.property);
+              continue;
+            }
             if (correction.type === "move-to-child-element") {
               const propName = correction.property;
               if (className === "Assign" && (propName === "To" || propName === "Value")) {
@@ -1732,6 +1737,33 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
               } else if (openTagRegex.test(result)) {
                 result = result.replace(openTagRegex, `$1 $2\n          ${childElement}`);
                 reCorrections++;
+              }
+            }
+          }
+          if (attrsToRemove.length > 0) {
+            const escapedTag = fullTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const anchorAttrParts: string[] = [];
+            for (const propName of attrsToRemove) {
+              const propVal = attrs[propName];
+              if (propVal !== undefined) {
+                const escapedPropName = propName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const escapedPropVal = propVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                anchorAttrParts.push(`${escapedPropName}="${escapedPropVal}"`);
+              }
+            }
+            if (anchorAttrParts.length > 0) {
+              const anchorRegex = new RegExp(`(<${escapedTag}\\s)([^>]*?(?:${anchorAttrParts.join("|")})[^>]*?)(\\s*\\/?>)`);
+              const tagMatch = anchorRegex.exec(result);
+              if (tagMatch) {
+                let tagAttrs = tagMatch[2];
+                for (const propName of attrsToRemove) {
+                  const attrRegex = new RegExp(`\\s*${propName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}="[^"]*"`);
+                  tagAttrs = tagAttrs.replace(attrRegex, "");
+                }
+                result = result.slice(0, tagMatch.index) +
+                  tagMatch[1] + tagAttrs + tagMatch[3] +
+                  result.slice(tagMatch.index + tagMatch[0].length);
+                reCorrections += attrsToRemove.length;
               }
             }
           }
@@ -1998,6 +2030,36 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
         const killXaml = generateKillAllProcessesXaml(tf);
         deferredWrites.set(`${libPath}/KillAllProcesses.xaml`, compliancePass(killXaml, "KillAllProcesses.xaml"));
+
+        if (!deferredWrites.has(`${libPath}/Process.xaml`)) {
+          const infrastructureFiles = new Set(["main", "initallsettings", "closeallapplications", "gettransactiondata", "settransactionstatus", "killallprocesses", "process"]);
+          let processInvocations = "";
+          const invokedInProcess = new Set<string>();
+          if (enrichment?.decomposition?.length) {
+            for (const decomp of enrichment.decomposition) {
+              const wfName = decomp.name.replace(/\s+/g, "_");
+              if (infrastructureFiles.has(wfName.toLowerCase())) continue;
+              if (invokedInProcess.has(wfName)) continue;
+              invokedInProcess.add(wfName);
+              processInvocations += `
+        <ui:InvokeWorkflowFile DisplayName="Run ${escapeXml(decomp.name)}" WorkflowFileName="${wfName}.xaml" />`;
+            }
+          }
+          Array.from(generatedWorkflowNames).forEach(gwfName => {
+            if (infrastructureFiles.has(gwfName.toLowerCase())) return;
+            if (invokedInProcess.has(gwfName)) return;
+            invokedInProcess.add(gwfName);
+            processInvocations += `
+        <ui:InvokeWorkflowFile DisplayName="Run ${escapeXml(gwfName)}" WorkflowFileName="${gwfName}.xaml" />`;
+          });
+          if (!processInvocations) {
+            processInvocations = `
+        <ui:LogMessage DisplayName="Log Process Placeholder" Level="Info" Message="[&quot;Process transaction logic goes here&quot;]" />`;
+          }
+          const processXaml = buildXaml("Process", `${projectName} - Process Transaction`, processInvocations);
+          deferredWrites.set(`${libPath}/Process.xaml`, compliancePass(processXaml, "Process.xaml"));
+          console.log(`[UiPath] Generated Process.xaml wiring ${invokedInProcess.size} sub-workflow(s) for REFramework`);
+        }
       } catch (reframeworkErr: any) {
         console.error(`[UiPath] REFramework compliance failed, falling back to simple linear Main.xaml: ${reframeworkErr.message}`);
         const rolledBackXaml = xamlEntries.length - preRefXamlLen;

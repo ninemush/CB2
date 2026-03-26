@@ -36,13 +36,17 @@ function convertProperty(p: ActivityPropertyDef): CatalogProperty {
 }
 
 function convertActivity(a: ActivityDef): CatalogActivity {
-  return {
+  const result: CatalogActivity = {
     className: a.className,
     displayName: a.displayName,
     browsable: a.browsable,
     processTypes: a.processTypes,
     properties: a.properties.map(convertProperty),
   };
+  if (a.propertiesComplete) {
+    result.propertiesComplete = true;
+  }
+  return result;
 }
 
 function resolveVersion(

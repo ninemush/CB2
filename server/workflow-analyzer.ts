@@ -38,6 +38,9 @@ const VARIABLE_TYPE_PREFIXES: Record<string, string> = {
   "x:Object": "obj",
   "s:DateTime": "dt",
   "s:TimeSpan": "ts",
+  "s:Security.SecureString": "sec",
+  "scg:Dictionary(x:String, x:Object)": "dict",
+  "scg:Dictionary(x:String, x:String)": "dict",
   "scg2:DataTable": "dt",
   "scg2:DataRow": "drow",
   "ui:QueueItem": "qi",
@@ -78,7 +81,7 @@ export function enforceVariableName(name: string, type: string): string {
     return pascal || name;
   }
   const stripped = name
-    .replace(/^(str|int|bool|dbl|dec|obj|dt|ts|drow|qi|qid|arr|dict|list|jobj)_/i, "");
+    .replace(/^(str|int|bool|dbl|dec|obj|dt|ts|sec|drow|qi|qid|arr|dict|list|jobj)_/i, "");
   const pascal = toPascalCase(stripped);
   return `${prefix}_${pascal || stripped}`;
 }
@@ -388,6 +391,25 @@ function checkSecurity(xaml: string): AnalysisViolation[] {
   return violations;
 }
 
+function replaceVarInBracketExpressions(xaml: string, oldName: string, newName: string): string {
+  const escaped = oldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const wordBoundaryPattern = new RegExp(
+    `(\\[(?:[^\\[\\]]|\\[[^\\]]*\\])*)\\b${escaped}\\b((?:[^\\[\\]]|\\[[^\\]]*\\])*\\])`,
+    "g"
+  );
+  let result = xaml;
+  let prevResult = "";
+  let iterations = 0;
+  while (result !== prevResult && iterations < 20) {
+    prevResult = result;
+    result = result.replace(wordBoundaryPattern, (match, before, after) => {
+      return `${before}${newName}${after}`;
+    });
+    iterations++;
+  }
+  return result;
+}
+
 function autoFixNaming(xaml: string): { fixed: string; fixes: AnalysisViolation[] } {
   const fixes: AnalysisViolation[] = [];
   let fixed = xaml;
@@ -402,6 +424,7 @@ function autoFixNaming(xaml: string): { fixed: string; fixes: AnalysisViolation[
       fixed = fixed.replace(new RegExp(`\\[${nameEscaped}\\]`, "g"), `[${expected}]`);
       fixed = fixed.replace(new RegExp(`'\\+\\s*${nameEscaped}`, "g"), `'+ ${expected}`);
       fixed = fixed.replace(new RegExp(`${nameEscaped}\\.ToString`, "g"), `${expected}.ToString`);
+      fixed = replaceVarInBracketExpressions(fixed, v.name, expected);
       fixes.push({
         ruleId: "ST-NMG-001",
         ruleName: "Variable naming convention",
@@ -422,6 +445,7 @@ function autoFixNaming(xaml: string): { fixed: string; fixes: AnalysisViolation[
       const nameEscaped = a.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       fixed = fixed.replace(new RegExp(`Name="${nameEscaped}"`, "g"), `Name="${expected}"`);
       fixed = fixed.replace(new RegExp(`\\[${nameEscaped}\\]`, "g"), `[${expected}]`);
+      fixed = replaceVarInBracketExpressions(fixed, a.name, expected);
       fixes.push({
         ruleId: "ST-NMG-004",
         ruleName: "Argument naming convention",
@@ -840,6 +864,22 @@ export function analyzeXaml(xamlContent: string): AnalysisReport {
   };
 }
 
+function deduplicateVariableDeclarations(xaml: string): string {
+  const varsBlockPattern = /(<(?:Sequence|StateMachine)\.Variables>)([\s\S]*?)(<\/(?:Sequence|StateMachine)\.Variables>)/g;
+  return xaml.replace(varsBlockPattern, (match, openTag, content, closeTag) => {
+    const varPattern = /<Variable\s+[^>]*\bName="([^"]+)"[^>]*\/>/g;
+    const seen = new Set<string>();
+    const deduped = content.replace(varPattern, (varMatch: string, name: string) => {
+      if (seen.has(name)) {
+        return "";
+      }
+      seen.add(name);
+      return varMatch;
+    });
+    return `${openTag}${deduped}${closeTag}`;
+  });
+}
+
 export function analyzeAndFix(xamlContent: string): { fixed: string; report: AnalysisReport } {
   const allViolations: AnalysisViolation[] = [];
 
@@ -850,6 +890,8 @@ export function analyzeAndFix(xamlContent: string): { fixed: string; report: Ana
   const namingResult = autoFixNaming(fixed);
   fixed = namingResult.fixed;
   allViolations.push(...namingResult.fixes);
+
+  fixed = deduplicateVariableDeclarations(fixed);
 
   const catchResult = autoFixEmptyCatches(fixed);
   fixed = catchResult.fixed;

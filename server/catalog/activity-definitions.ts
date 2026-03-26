@@ -18,6 +18,7 @@ export interface ActivityDef {
   browsable: boolean;
   processTypes: ProcessType[];
   properties: ActivityPropertyDef[];
+  propertiesComplete?: boolean;
 }
 
 export interface PackageActivityDefs {
@@ -2012,7 +2013,341 @@ const BOX_ACTIVITIES: PackageActivityDefs = {
   ],
 };
 
+const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
+  packageId: "UiPath.System.Activities",
+  activities: [
+    {
+      className: "GetTransactionItem",
+      displayName: "Get Transaction Item",
+      browsable: true,
+      processTypes: ["orchestration"],
+      propertiesComplete: true,
+      properties: [
+        prop("QueueName", { required: false }),
+        prop("FilterContent"),
+        prop("Reference"),
+        childProp("TransactionItem", { dir: "Out", type: "UiPath.Core.QueueItem", wrapper: "OutArgument", typeArgs: "ui:QueueItem" }),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "SetTransactionStatus",
+      displayName: "Set Transaction Status",
+      browsable: true,
+      processTypes: ["orchestration"],
+      propertiesComplete: true,
+      properties: [
+        prop("TransactionItem", { type: "UiPath.Core.QueueItem" }),
+        prop("Status", { validValues: ["Successful", "Failed"] }),
+        prop("ErrorType", { validValues: ["Application", "Business"] }),
+        prop("Reason"),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "LogMessage",
+      displayName: "Log Message",
+      browsable: true,
+      processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
+      propertiesComplete: true,
+      properties: [
+        prop("Level", { validValues: ["Trace", "Info", "Warn", "Error", "Fatal"], default: "Info" }),
+        prop("Message", { required: true }),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "InvokeWorkflowFile",
+      displayName: "Invoke Workflow File",
+      browsable: true,
+      processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
+      propertiesComplete: true,
+      properties: [
+        prop("WorkflowFileName", { required: true }),
+        prop("Isolated", { type: "System.Boolean", default: "False" }),
+        prop("UnSafe", { type: "System.Boolean", default: "False" }),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "AddQueueItem",
+      displayName: "Add Queue Item",
+      browsable: true,
+      processTypes: ["orchestration", "general"],
+      propertiesComplete: true,
+      properties: [
+        prop("QueueName", { required: false }),
+        prop("Reference"),
+        prop("Priority", { validValues: ["Low", "Normal", "High"] }),
+        prop("DeferDate", { type: "System.DateTime" }),
+        prop("DueDate", { type: "System.DateTime" }),
+        prop("ItemInformation", { type: "System.Collections.Generic.Dictionary`2[System.String,System.Object]" }),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "GetCredential",
+      displayName: "Get Credential",
+      browsable: true,
+      processTypes: ["general", "orchestration"],
+      propertiesComplete: true,
+      properties: [
+        prop("AssetName", { required: true }),
+        childProp("Username", { dir: "Out", wrapper: "OutArgument", typeArgs: "x:String" }),
+        childProp("Password", { dir: "Out", type: "System.Security.SecureString", wrapper: "OutArgument", typeArgs: "s:SecureString" }),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "GetAsset",
+      displayName: "Get Asset",
+      browsable: true,
+      processTypes: ["general", "orchestration"],
+      propertiesComplete: true,
+      properties: [
+        prop("AssetName", { required: false }),
+        childProp("AssetValue", { dir: "Out", wrapper: "OutArgument", typeArgs: "x:String" }),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "AddLogFields",
+      displayName: "Add Log Fields",
+      browsable: true,
+      processTypes: ["general", "orchestration"],
+      propertiesComplete: true,
+      properties: [
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "ExcelApplicationScope",
+      displayName: "Excel Application Scope",
+      browsable: true,
+      processTypes: ["general", "document-processing"],
+      propertiesComplete: true,
+      properties: [
+        prop("WorkbookPath", { required: false }),
+        prop("Visible", { type: "System.Boolean", default: "True" }),
+        prop("CreateNewFile", { type: "System.Boolean", default: "False" }),
+        prop("AutoSave", { type: "System.Boolean", default: "False" }),
+        prop("ReadOnly", { type: "System.Boolean", default: "False" }),
+        prop("Password"),
+        prop("EditPassword"),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "ExcelReadRange",
+      displayName: "Read Range (Excel)",
+      browsable: true,
+      processTypes: ["general", "document-processing"],
+      propertiesComplete: true,
+      properties: [
+        prop("SheetName", { default: "Sheet1" }),
+        prop("Range"),
+        prop("DataTable", { type: "System.Data.DataTable" }),
+        prop("AddHeaders", { type: "System.Boolean", default: "True" }),
+        prop("PreserveFormat", { type: "System.Boolean", default: "False" }),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "ExcelWriteRange",
+      displayName: "Write Range (Excel)",
+      browsable: true,
+      processTypes: ["general", "document-processing"],
+      propertiesComplete: true,
+      properties: [
+        prop("SheetName", { default: "Sheet1" }),
+        prop("StartingCell", { default: "A1" }),
+        prop("DataTable", { type: "System.Data.DataTable", required: true }),
+        prop("AddHeaders", { type: "System.Boolean", default: "True" }),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+  ],
+};
+
+const UIAUTOMATION_ACTIVITIES_ENRICHED: PackageActivityDefs = {
+  packageId: "UiPath.UIAutomation.Activities",
+  activities: [
+    {
+      className: "TakeScreenshot",
+      displayName: "Take Screenshot",
+      browsable: true,
+      processTypes: ["attended-ui", "unattended-ui"],
+      propertiesComplete: true,
+      properties: [
+        childProp("Result", { dir: "Out", type: "System.Drawing.Image", wrapper: "OutArgument", typeArgs: "x:Object" }),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "Click",
+      displayName: "Click",
+      browsable: true,
+      processTypes: ["attended-ui", "unattended-ui"],
+      propertiesComplete: true,
+      properties: [
+        prop("ClickType", { validValues: ["CLICK_SINGLE", "CLICK_DOUBLE"], default: "CLICK_SINGLE" }),
+        prop("MouseButton", { validValues: ["BTN_LEFT", "BTN_RIGHT", "BTN_MIDDLE"], default: "BTN_LEFT" }),
+        prop("KeyModifiers", { validValues: ["None", "Alt", "Ctrl", "Shift", "Win"] }),
+        prop("SimulateClick", { type: "System.Boolean", default: "False" }),
+        prop("SendWindowMessages", { type: "System.Boolean", default: "False" }),
+        COMMON_TIMEOUT,
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "TypeInto",
+      displayName: "Type Into",
+      browsable: true,
+      processTypes: ["attended-ui", "unattended-ui"],
+      propertiesComplete: true,
+      properties: [
+        prop("Text", { required: true }),
+        prop("SimulateType", { type: "System.Boolean", default: "False" }),
+        prop("SendWindowMessages", { type: "System.Boolean", default: "False" }),
+        prop("EmptyField", { type: "System.Boolean", default: "False" }),
+        prop("ClickBeforeTyping", { type: "System.Boolean", default: "True" }),
+        COMMON_TIMEOUT,
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "GetText",
+      displayName: "Get Text",
+      browsable: true,
+      processTypes: ["attended-ui", "unattended-ui"],
+      propertiesComplete: true,
+      properties: [
+        childProp("Value", { dir: "Out", wrapper: "OutArgument", typeArgs: "x:String" }),
+        COMMON_TIMEOUT,
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "OpenBrowser",
+      displayName: "Open Browser",
+      browsable: true,
+      processTypes: ["attended-ui", "unattended-ui"],
+      propertiesComplete: true,
+      properties: [
+        prop("Url", { required: true }),
+        prop("BrowserType", { validValues: ["IE", "Firefox", "Chrome", "Edge"], default: "IE" }),
+        prop("Hidden", { type: "System.Boolean", default: "False" }),
+        prop("Private", { type: "System.Boolean", default: "False" }),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "CloseApplication",
+      displayName: "Close Application",
+      browsable: true,
+      processTypes: ["attended-ui", "unattended-ui"],
+      propertiesComplete: true,
+      properties: [
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "KillProcess",
+      displayName: "Kill Process",
+      browsable: true,
+      processTypes: ["attended-ui", "unattended-ui"],
+      propertiesComplete: true,
+      properties: [
+        prop("ProcessName", { required: true }),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "SendOutlookMailMessage",
+      displayName: "Send Outlook Mail Message",
+      browsable: true,
+      processTypes: ["general", "attended-ui", "unattended-ui"],
+      propertiesComplete: true,
+      properties: [
+        prop("To", { required: true }),
+        prop("Subject"),
+        prop("Body"),
+        prop("Cc"),
+        prop("Bcc"),
+        prop("IsBodyHtml", { type: "System.Boolean", default: "False" }),
+        prop("Account"),
+        prop("IsDraft", { type: "System.Boolean", default: "False" }),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+  ],
+};
+
+const SYSTEM_CORE_ACTIVITIES_ENRICHED: PackageActivityDefs = {
+  packageId: "System.Activities",
+  activities: [
+    {
+      className: "Assign",
+      displayName: "Assign",
+      browsable: true,
+      processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
+      propertiesComplete: true,
+      properties: [
+        childProp("To", { dir: "Out", type: "System.Object", wrapper: "OutArgument", typeArgs: "x:Object", required: true }),
+        childProp("Value", { type: "System.Object", wrapper: "InArgument", typeArgs: "x:Object", required: true }),
+      ],
+    },
+    {
+      className: "If",
+      displayName: "If",
+      browsable: true,
+      processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
+      propertiesComplete: true,
+      properties: [
+        prop("Condition", { type: "System.Boolean", required: true }),
+      ],
+    },
+    {
+      className: "Sequence",
+      displayName: "Sequence",
+      browsable: true,
+      processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
+      propertiesComplete: true,
+      properties: [],
+    },
+    {
+      className: "TryCatch",
+      displayName: "Try Catch",
+      browsable: true,
+      processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
+      propertiesComplete: true,
+      properties: [],
+    },
+    {
+      className: "Flowchart",
+      displayName: "Flowchart",
+      browsable: true,
+      processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
+      propertiesComplete: true,
+      properties: [],
+    },
+    {
+      className: "ForEach",
+      displayName: "For Each",
+      browsable: true,
+      processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
+      propertiesComplete: true,
+      properties: [
+        childProp("Values", { type: "System.Collections.IEnumerable", wrapper: "InArgument", required: true }),
+      ],
+    },
+  ],
+};
+
 export const ACTIVITY_DEFINITIONS_REGISTRY: PackageActivityDefs[] = [
+  SYSTEM_CORE_ACTIVITIES_ENRICHED,
+  SYSTEM_ACTIVITIES_ENRICHED,
+  UIAUTOMATION_ACTIVITIES_ENRICHED,
   PDF_ACTIVITIES,
   WORD_ACTIVITIES,
   GSUITE_ACTIVITIES,

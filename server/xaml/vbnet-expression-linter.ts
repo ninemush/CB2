@@ -558,6 +558,53 @@ export function lintExpression(expression: string): LintResult {
 
   validateFunctionCalls(corrected, issues);
 
+  {
+    const stripped = corrected.replace(/"(?:[^"\\]|\\.)*"/g, (m) => " ".repeat(m.length))
+      .replace(/&quot;[^&]*&quot;/g, (m) => " ".repeat(m.length));
+    const bareWordPattern = /(?<![."&\w])([A-Z][a-z]+)(?!\s*[.(]|[A-Za-z])/g;
+    let bm;
+    while ((bm = bareWordPattern.exec(stripped)) !== null) {
+      const word = bm[1];
+      if (VB_KEYWORDS.has(word)) continue;
+      if (VB_BUILTIN_TYPES.has(word)) continue;
+      if (VB_BUILTIN_FUNCTIONS.has(word)) continue;
+      if (/^(True|False|Nothing|Empty)$/.test(word)) continue;
+      if (bm.index > 0 && stripped[bm.index - 1] === "_") continue;
+      const afterIdx = bm.index + word.length;
+      if (afterIdx < stripped.length && /[A-Za-z0-9_]/.test(stripped[afterIdx])) continue;
+      if (stripped.includes(`${word}.`) || stripped.includes(`${word}(`)) continue;
+      const hasPrefix = /^(str|int|bool|dbl|dec|obj|dt|ts|drow|qi|qid|arr|dict|list|jobj|sec)_/i.test(word);
+      if (hasPrefix) continue;
+      if (/[=<>&|,+\-*/^]/.test(stripped.substring(Math.max(0, bm.index - 3), bm.index))) continue;
+      const looksLikeStandaloneWord = /^\s*$/.test(stripped.substring(0, bm.index)) &&
+        /^\s*$/.test(stripped.substring(afterIdx));
+      if (looksLikeStandaloneWord) {
+        reportOnly("BARE_WORD_REFERENCE", `Standalone word "${word}" may be an undeclared variable — should it be a string literal "${word}"?`);
+      }
+    }
+  }
+
+  {
+    const stripped = corrected.replace(/"(?:[^"\\]|\\.)*"/g, (m) => " ".repeat(m.length))
+      .replace(/&quot;[^&]*&quot;/g, (m) => " ".repeat(m.length));
+    if (/\)\s*[A-Za-z_]\w*\s*\(/.test(stripped)) {
+      const missingCommaMatch = stripped.match(/\)\s*([A-Za-z_]\w*)\s*\(/);
+      if (missingCommaMatch) {
+        reportOnly("MISSING_COMMA_OR_OPERATOR", `Possible missing comma or operator between ")" and "${missingCommaMatch[1]}(" — check expression syntax`);
+      }
+    }
+    if (/[A-Za-z_]\w*\s+[A-Za-z_]\w*\s*\(/.test(stripped)) {
+      const adjacentMatch = stripped.match(/([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*\(/);
+      if (adjacentMatch) {
+        const w1 = adjacentMatch[1];
+        const w2 = adjacentMatch[2];
+        if (!VB_KEYWORDS.has(w1) && !VB_KEYWORDS.has(w2) && !/^(Of|To|As|In|Is|IsNot|And|Or|Not|AndAlso|OrElse|Mod|Xor|Like|New|TypeOf)$/i.test(w1)) {
+          reportOnly("ADJACENT_IDENTIFIERS", `Adjacent identifiers "${w1} ${w2}(" — possible missing operator or comma`);
+        }
+      }
+    }
+  }
+
   if (/\.length\b/.test(corrected)) {
     applyFix("CSHARP_LENGTH", "C# '.length' should be VB.NET '.Length'", /\.length\b/g, ".Length");
   }
