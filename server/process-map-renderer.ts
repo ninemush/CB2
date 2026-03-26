@@ -246,11 +246,56 @@ function computeDagreLayoutNodes(nodes: MapNode[], edges: MapEdge[]): { layoutNo
   return { layoutNodes, dagreGraph: g };
 }
 
-function computeEdgePoints(srcNode: LayoutNode, tgtNode: LayoutNode): { x: number; y: number }[] {
-  const sx = srcNode.x + srcNode.width / 2;
-  const sy = srcNode.y + srcNode.height;
+function computeEdgePoints(srcNode: LayoutNode, tgtNode: LayoutNode, sourceHandle?: string): { x: number; y: number }[] {
+  const cx = srcNode.x + srcNode.width / 2;
+  const cy = srcNode.y + srcNode.height / 2;
   const tx = tgtNode.x + tgtNode.width / 2;
   const ty = tgtNode.y;
+  const diamondR = 24;
+  const clearance = 40;
+
+  if (sourceHandle === "left") {
+    const sx = cx - diamondR;
+    const sy = cy;
+    const exitX = sx - clearance;
+    if (Math.abs(exitX - tx) < 5) {
+      return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: tx, y: ty }];
+    }
+    return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: exitX, y: ty - 10 }, { x: tx, y: ty }];
+  }
+
+  if (sourceHandle === "right") {
+    const sx = cx + diamondR;
+    const sy = cy;
+    const exitX = sx + clearance;
+    if (Math.abs(exitX - tx) < 5) {
+      return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: tx, y: ty }];
+    }
+    return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: exitX, y: ty - 10 }, { x: tx, y: ty }];
+  }
+
+  if (sourceHandle === "bottom-left") {
+    const sx = cx - diamondR * 0.5;
+    const sy = cy + diamondR;
+    if (Math.abs(sx - tx) < 5) {
+      return [{ x: sx, y: sy }, { x: tx, y: ty }];
+    }
+    const midY = sy + (ty - sy) * 0.3;
+    return [{ x: sx, y: sy }, { x: sx, y: midY }, { x: tx, y: midY }, { x: tx, y: ty }];
+  }
+
+  if (sourceHandle === "bottom-right") {
+    const sx = cx + diamondR * 0.5;
+    const sy = cy + diamondR;
+    if (Math.abs(sx - tx) < 5) {
+      return [{ x: sx, y: sy }, { x: tx, y: ty }];
+    }
+    const midY = sy + (ty - sy) * 0.3;
+    return [{ x: sx, y: sy }, { x: sx, y: midY }, { x: tx, y: midY }, { x: tx, y: ty }];
+  }
+
+  const sx = srcNode.x + srcNode.width / 2;
+  const sy = srcNode.y + srcNode.height;
   if (Math.abs(sx - tx) < 5) {
     return [{ x: sx, y: sy }, { x: tx, y: ty }];
   }
@@ -313,7 +358,12 @@ function computeLayout(nodes: MapNode[], edges: MapEdge[]): { layoutNodes: Layou
     edgesBySource[key].push(edge);
   }
 
-  const layoutEdges: LayoutEdge[] = edges.map((edge) => {
+  const initialEdges: LayoutEdge[] = edges.map((edge) => {
+    const srcType = nodeTypeMap[String(edge.sourceNodeId)] || "task";
+    const isDecision = srcType === "decision" || srcType === "agent-decision";
+    const siblings = edgesBySource[String(edge.sourceNodeId)] || [edge];
+    const sourceHandle = getEdgeSourceHandle(isDecision, edge.label, siblings, edge);
+
     let points: { x: number; y: number }[];
     if (dagreGraph) {
       const edgeData = dagreGraph.edge(String(edge.sourceNodeId), String(edge.targetNodeId), String(edge.id));
@@ -321,12 +371,8 @@ function computeLayout(nodes: MapNode[], edges: MapEdge[]): { layoutNodes: Layou
     } else {
       const srcNode = nodeById[String(edge.sourceNodeId)];
       const tgtNode = nodeById[String(edge.targetNodeId)];
-      points = (srcNode && tgtNode) ? computeEdgePoints(srcNode, tgtNode) : [];
+      points = (srcNode && tgtNode) ? computeEdgePoints(srcNode, tgtNode, sourceHandle) : [];
     }
-    const srcType = nodeTypeMap[String(edge.sourceNodeId)] || "task";
-    const isDecision = srcType === "decision" || srcType === "agent-decision";
-    const siblings = edgesBySource[String(edge.sourceNodeId)] || [edge];
-    const sourceHandle = getEdgeSourceHandle(isDecision, edge.label, siblings, edge);
 
     return {
       source: String(edge.sourceNodeId),
@@ -338,39 +384,52 @@ function computeLayout(nodes: MapNode[], edges: MapEdge[]): { layoutNodes: Layou
     };
   });
 
-  fixDecisionHandlesPostLayout(layoutNodes, layoutEdges, nodeTypeMap);
+  fixDecisionHandlesPostLayout(layoutNodes, initialEdges, nodeTypeMap);
 
-  for (const le of layoutEdges) {
-    if (le.isDecisionSource && le.points.length >= 1) {
-      const srcNode = layoutNodes.find(n => n.id === le.source);
-      if (srcNode) {
-        const cx = srcNode.x + srcNode.width / 2;
-        const cy = srcNode.y + srcNode.height / 2;
-        const diamondR = 24;
-        if (le.sourceHandle === "left") {
-          le.points[0] = { x: cx - diamondR, y: cy };
-        } else if (le.sourceHandle === "right") {
-          le.points[0] = { x: cx + diamondR, y: cy };
-        } else if (le.sourceHandle === "bottom-left") {
-          le.points[0] = { x: cx - diamondR * 0.5, y: cy + diamondR };
-        } else if (le.sourceHandle === "bottom-right") {
-          le.points[0] = { x: cx + diamondR * 0.5, y: cy + diamondR };
-        } else {
-          le.points[0] = { x: cx, y: cy + diamondR };
-        }
+  const layoutEdges: LayoutEdge[] = initialEdges.map((le) => {
+    if (!dagreGraph && le.isDecisionSource) {
+      const srcNode = nodeById[le.source];
+      const tgtNode = nodeById[le.target];
+      if (srcNode && tgtNode) {
+        le.points = computeEdgePoints(srcNode, tgtNode, le.sourceHandle);
       }
     }
-  }
+    return le;
+  });
 
   return { layoutNodes, layoutEdges };
 }
 
 function renderEdgePath(points: { x: number; y: number }[]): string {
   if (points.length < 2) return "";
-  let d = `M ${points[0].x} ${points[0].y}`;
-  for (let i = 1; i < points.length; i++) {
-    d += ` L ${points[i].x} ${points[i].y}`;
+  if (points.length === 2) {
+    return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
   }
+  const r = 8;
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const next = points[i + 1];
+    const dx1 = curr.x - prev.x;
+    const dy1 = curr.y - prev.y;
+    const dx2 = next.x - curr.x;
+    const dy2 = next.y - curr.y;
+    const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+    const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+    if (len1 < 1 || len2 < 1) {
+      d += ` L ${curr.x} ${curr.y}`;
+      continue;
+    }
+    const clampR = Math.min(r, len1 / 2, len2 / 2);
+    const ax = curr.x - (dx1 / len1) * clampR;
+    const ay = curr.y - (dy1 / len1) * clampR;
+    const bx = curr.x + (dx2 / len2) * clampR;
+    const by = curr.y + (dy2 / len2) * clampR;
+    d += ` L ${ax} ${ay} Q ${curr.x} ${curr.y} ${bx} ${by}`;
+  }
+  const last = points[points.length - 1];
+  d += ` L ${last.x} ${last.y}`;
   return d;
 }
 

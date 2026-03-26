@@ -153,6 +153,56 @@ export function computeProcessAwareLayout(
   }
   const branchQueue: BranchWork[] = [];
 
+  const branchReconnections = new Map<string, { decisionId: string; reconnectTrunkIdx: number; side: "right" | "left" }[]>();
+  for (const trunkNodeId of trunk) {
+    const outs = outEdges.get(trunkNodeId) || [];
+    if (outs.length < 2) continue;
+    const node = nodeMap.get(trunkNodeId);
+    const isDecision = node && (node.nodeType === "decision" || node.nodeType === "agent-decision");
+    if (!isDecision) continue;
+
+    for (const edge of outs) {
+      if (!trunkSet.has(edge.target)) {
+        const queue = [edge.target];
+        const visited2 = new Set<string>();
+        const isNo = isNoLabel(edge.label);
+        const side: "right" | "left" = isNo ? "right" : "left";
+        while (queue.length > 0) {
+          const nId = queue.shift()!;
+          if (visited2.has(nId)) continue;
+          visited2.add(nId);
+          const nOuts = outEdges.get(nId) || [];
+          for (const ne of nOuts) {
+            if (trunkSet.has(ne.target)) {
+              const reconnIdx = trunk.indexOf(ne.target);
+              if (reconnIdx >= 0) {
+                if (!branchReconnections.has(trunkNodeId)) branchReconnections.set(trunkNodeId, []);
+                branchReconnections.get(trunkNodeId)!.push({ decisionId: trunkNodeId, reconnectTrunkIdx: reconnIdx, side });
+              }
+            } else if (!visited2.has(ne.target)) {
+              queue.push(ne.target);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const occupiedTrunkSegments = new Map<string, Set<"right" | "left">>();
+  for (const [decisionId, reconns] of branchReconnections) {
+    const decisionIdx = trunk.indexOf(decisionId);
+    for (const reconn of reconns) {
+      for (let i = decisionIdx; i < reconn.reconnectTrunkIdx; i++) {
+        const segKey = `${trunk[i]}-${trunk[i + 1]}`;
+        if (!occupiedTrunkSegments.has(segKey)) occupiedTrunkSegments.set(segKey, new Set());
+        occupiedTrunkSegments.get(segKey)!.add(reconn.side);
+      }
+    }
+  }
+
+  let cumulativeRightOffset = 0;
+  let cumulativeLeftOffset = 0;
+
   for (const trunkNodeId of trunk) {
     const outs = outEdges.get(trunkNodeId) || [];
     if (outs.length < 2) continue;
@@ -168,6 +218,22 @@ export function computeProcessAwareLayout(
     let rightBranchCount = 0;
     let leftBranchCount = 0;
 
+    const decisionIdx = trunk.indexOf(trunkNodeId);
+    const reconns = branchReconnections.get(trunkNodeId) || [];
+    let rightCrossings = 0;
+    let leftCrossings = 0;
+    for (const reconn of reconns) {
+      for (let i = decisionIdx; i < reconn.reconnectTrunkIdx; i++) {
+        const segKey = `${trunk[i]}-${trunk[i + 1]}`;
+        const occupied = occupiedTrunkSegments.get(segKey);
+        if (occupied && occupied.size > 1 && reconn.side === "right") rightCrossings++;
+        if (occupied && occupied.size > 1 && reconn.side === "left") leftCrossings++;
+      }
+    }
+
+    const rightSpacingBonus = rightCrossings > 0 ? branchXOffset * 0.3 : 0;
+    const leftSpacingBonus = leftCrossings > 0 ? branchXOffset * 0.3 : 0;
+
     for (const edge of outs) {
       if (trunkSet.has(edge.target)) continue;
       if (positions.has(edge.target)) continue;
@@ -178,8 +244,8 @@ export function computeProcessAwareLayout(
       else leftBranchCount++;
 
       const xOff = side === "right"
-        ? branchXOffset * rightBranchCount
-        : -branchXOffset * leftBranchCount;
+        ? branchXOffset * rightBranchCount + cumulativeRightOffset + rightSpacingBonus
+        : -(branchXOffset * leftBranchCount + cumulativeLeftOffset + leftSpacingBonus);
 
       branchQueue.push({
         nodeId: edge.target,
@@ -189,6 +255,9 @@ export function computeProcessAwareLayout(
         xOffset: xOff,
       });
     }
+
+    cumulativeRightOffset += rightBranchCount > 0 ? branchXOffset * 0.15 : 0;
+    cumulativeLeftOffset += leftBranchCount > 0 ? branchXOffset * 0.15 : 0;
   }
 
   const processedBranches = new Set<string>();

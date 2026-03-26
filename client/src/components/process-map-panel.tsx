@@ -610,16 +610,35 @@ function getLabelSemanticSide(label: string | null | undefined): "left" | "right
 function computeTargetHandle(
   sourceHandle: string,
   srcPos: { x: number; y: number },
-  tgtPos: { x: number; y: number }
+  tgtPos: { x: number; y: number },
+  allEdgesForTarget?: { sourceHandle: string; srcPos: { x: number; y: number } }[]
 ): string {
   if (sourceHandle === "left" || sourceHandle === "right") {
     const dy = tgtPos.y - srcPos.y;
     const dx = Math.abs(tgtPos.x - srcPos.x);
     if (dy > dx * 0.5) {
+      if (allEdgesForTarget && allEdgesForTarget.length > 1) {
+        const topCount = allEdgesForTarget.filter(e => {
+          const edy = tgtPos.y - e.srcPos.y;
+          const edx = Math.abs(tgtPos.x - e.srcPos.x);
+          return edy > edx * 0.5;
+        }).length;
+        if (topCount > 1 && srcPos.x < tgtPos.x) return "left";
+        if (topCount > 1 && srcPos.x > tgtPos.x) return "right";
+      }
       return "top";
     }
     if (sourceHandle === "left") return "right";
     return "left";
+  }
+  if (allEdgesForTarget && allEdgesForTarget.length > 1) {
+    const topEntries = allEdgesForTarget.filter(e => {
+      return e.sourceHandle !== "left" && e.sourceHandle !== "right";
+    });
+    if (topEntries.length > 1) {
+      if (srcPos.x < tgtPos.x - 30) return "left";
+      if (srcPos.x > tgtPos.x + 30) return "right";
+    }
   }
   return "top";
 }
@@ -642,12 +661,17 @@ function fixDecisionHandlesPostLayout(
   });
 
   const edgesBySource: Record<string, Edge[]> = {};
+  const edgesByTarget: Record<string, Edge[]> = {};
   edges.forEach((e) => {
     if (!edgesBySource[e.source]) edgesBySource[e.source] = [];
     edgesBySource[e.source].push(e);
+    if (!edgesByTarget[e.target]) edgesByTarget[e.target] = [];
+    edgesByTarget[e.target].push(e);
   });
 
   const updatedEdges = [...edges];
+
+  const resolvedHandles: Record<string, string> = {};
 
   for (const sourceId of Object.keys(edgesBySource)) {
     const srcType = nodeTypeMap[sourceId] || "task";
@@ -660,13 +684,12 @@ function fixDecisionHandlesPostLayout(
 
     if (siblings.length === 1) {
       const edge = siblings[0];
-      const tgtPos = nodePositions[edge.target];
       const currentHandle = edge.sourceHandle || "left";
       const handle = (currentHandle === "left" || currentHandle === "right") ? currentHandle : "left";
+      resolvedHandles[edge.id] = handle;
       const idx = updatedEdges.findIndex((e) => e.id === edge.id);
       if (idx >= 0) {
-        const targetHandle = tgtPos ? computeTargetHandle(handle, srcPos, tgtPos) : "top";
-        updatedEdges[idx] = { ...updatedEdges[idx], sourceHandle: handle, targetHandle };
+        updatedEdges[idx] = { ...updatedEdges[idx], sourceHandle: handle };
       }
       continue;
     }
@@ -727,24 +750,21 @@ function fixDecisionHandlesPostLayout(
         }
       }
 
+      resolvedHandles[edge0.id] = handle0;
+      resolvedHandles[edge1.id] = handle1;
       const idx0 = updatedEdges.findIndex((e) => e.id === edge0.id);
       const idx1 = updatedEdges.findIndex((e) => e.id === edge1.id);
       if (idx0 >= 0) {
-        const targetHandle0 = computeTargetHandle(handle0, srcPos, tgt0);
-        updatedEdges[idx0] = { ...updatedEdges[idx0], sourceHandle: handle0, targetHandle: targetHandle0 };
+        updatedEdges[idx0] = { ...updatedEdges[idx0], sourceHandle: handle0 };
       }
       if (idx1 >= 0) {
-        const targetHandle1 = computeTargetHandle(handle1, srcPos, tgt1);
-        updatedEdges[idx1] = { ...updatedEdges[idx1], sourceHandle: handle1, targetHandle: targetHandle1 };
+        updatedEdges[idx1] = { ...updatedEdges[idx1], sourceHandle: handle1 };
       }
       continue;
     }
 
     for (let i = 0; i < siblings.length; i++) {
       const edge = siblings[i];
-      const tgtPos = nodePositions[edge.target];
-      if (!tgtPos) continue;
-
       const sem = getLabelSemanticSide((edge.data as any)?.label);
       let handle: string;
       if (sem) {
@@ -756,11 +776,32 @@ function fixDecisionHandlesPostLayout(
       } else {
         handle = "bottom";
       }
-
+      resolvedHandles[edge.id] = handle;
       const idx = updatedEdges.findIndex((e) => e.id === edge.id);
       if (idx >= 0) {
-        const targetHandle = computeTargetHandle(handle, srcPos, tgtPos);
-        updatedEdges[idx] = { ...updatedEdges[idx], sourceHandle: handle, targetHandle };
+        updatedEdges[idx] = { ...updatedEdges[idx], sourceHandle: handle };
+      }
+    }
+  }
+
+  for (const targetId of Object.keys(edgesByTarget)) {
+    const tgtPos = nodePositions[targetId];
+    if (!tgtPos) continue;
+    const convergent = edgesByTarget[targetId];
+    const convergentInfo = convergent.map(e => {
+      const sp = nodePositions[e.source];
+      return {
+        sourceHandle: resolvedHandles[e.id] || e.sourceHandle || "bottom",
+        srcPos: sp || { x: 0, y: 0 },
+        edgeId: e.id,
+      };
+    });
+
+    for (const info of convergentInfo) {
+      const idx = updatedEdges.findIndex(e => e.id === info.edgeId);
+      if (idx >= 0) {
+        const targetHandle = computeTargetHandle(info.sourceHandle, info.srcPos, tgtPos, convergentInfo);
+        updatedEdges[idx] = { ...updatedEdges[idx], targetHandle };
       }
     }
   }
@@ -1560,13 +1601,15 @@ function CustomEdge({
   let labelX: number;
   let labelY: number;
 
-  if (isEndTarget && targetSiblings > 1 && !simplified) {
+  const isConvergent = targetSiblings > 1 && !simplified;
+  if (isConvergent) {
     const sx = sourceX + sourceOffset;
     const sy = sourceY;
     const tx = targetX;
     const ty = targetY;
     const dy = ty - sy;
-    const fanSpread = (targetIndex - (targetSiblings - 1) / 2) * Math.min(35, 180 / targetSiblings);
+    const maxSpread = isEndTarget ? 35 : 25;
+    const fanSpread = (targetIndex - (targetSiblings - 1) / 2) * Math.min(maxSpread, 180 / targetSiblings);
     const cx1 = sx;
     const cy1 = sy + dy * 0.4;
     const cx2 = tx + fanSpread;
