@@ -452,10 +452,20 @@ async function getResourceToken(resource: ResourceType): Promise<string> {
     throw new UiPathAuthError("UiPath is not configured. Set credentials in Admin > Integrations.");
   }
 
-  if (resource !== "OR") {
+  if (resource !== "OR" && resource !== "PIMS") {
     const serviceType = (TOKEN_RESOURCE_TO_SERVICE[resource] || resource) as ServiceResourceType;
     if (!metadataService.hasOidcScopeFamily(serviceType)) {
       throw new UiPathAuthError(`No OIDC scope family for ${resource} — dedicated token acquisition is not available`);
+    }
+  }
+  if (resource === "PIMS" && !metadataService.hasOidcScopeFamily("PIMS" as ServiceResourceType)) {
+    console.log(`[UiPath Auth] PIMS not in OIDC discovery — attempting token acquisition using configured External App scopes`);
+    const pimsScopes = metadataService.getScopeCandidatesForService("PIMS" as ServiceResourceType, config.scopes);
+    if (pimsScopes.length === 0) {
+      const configuredPimsScopes = config.scopes.split(/\s+/).filter(s => s.startsWith("PIMS."));
+      if (configuredPimsScopes.length === 0) {
+        throw new UiPathAuthError(`No PIMS scopes found in OIDC discovery or External App configuration — Maestro token acquisition is not available`);
+      }
     }
   }
 

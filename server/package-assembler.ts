@@ -3246,6 +3246,31 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     archive.append(dhg, { name: `${libPath}/DeveloperHandoffGuide.md` });
     console.log(`[UiPath] Generated Developer Handoff Guide: ${allGaps.length} gaps, ~${(allGaps.reduce((s: number, g: XamlGap) => s + g.estimatedMinutes, 0) / 60).toFixed(1)}h effort, REFramework=${useReFramework}`);
 
+    if (orchestratorArtifacts?.agents?.length > 0) {
+      for (const agent of orchestratorArtifacts.agents) {
+        const agentFileName = `Agent_${(agent.name || "Unnamed").replace(/\s+/g, "_")}.json`;
+        const agentConfig = JSON.stringify({
+          name: agent.name,
+          agentType: agent.agentType || "autonomous",
+          description: agent.description || "",
+          systemPrompt: agent.systemPrompt || "",
+          tools: agent.tools || [],
+          contextGrounding: agent.contextGrounding || undefined,
+          knowledgeBases: agent.knowledgeBases || [],
+          guardrails: agent.guardrails || [],
+          escalationRules: agent.escalationRules || [],
+          inputSchema: agent.inputSchema || undefined,
+          outputSchema: agent.outputSchema || undefined,
+          maxIterations: agent.maxIterations || 10,
+          temperature: agent.temperature ?? 0.3,
+          provisionedBy: "CannonBall",
+          provisionedAt: new Date().toISOString(),
+        }, null, 2);
+        archive.append(agentConfig, { name: `${libPath}/Agents/${agentFileName}` });
+        console.log(`[UiPath] Included agent config "${agentFileName}" in package for Agent Builder import`);
+      }
+    }
+
     const finalValidation = validateXamlContent(xamlEntries);
     const malformedQuotes = finalValidation.filter(v => v.check === "malformed-quote");
     const pseudoXaml = finalValidation.filter(v => v.check === "pseudo-xaml");

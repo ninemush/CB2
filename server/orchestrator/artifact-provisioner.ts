@@ -3823,96 +3823,33 @@ async function provisionAgentArtifacts(
   }
 
   for (const agent of (agents || [])) {
-    const assetName = `Agent_${agent.name.replace(/\s+/g, "_")}`;
+    const agentFileName = `Agent_${agent.name.replace(/\s+/g, "_")}.json`;
 
-    const { resolvedTools, resolvedEscalation, resolvedContextGrounding, unresolvedRefs } = resolveAgentCrossReferences(agent, priorResults || []);
+    const { resolvedTools, resolvedEscalation, unresolvedRefs } = resolveAgentCrossReferences(agent, priorResults || []);
     if (unresolvedRefs.length > 0) {
       console.warn(`[UiPath Deploy] Agent "${agent.name}" has ${unresolvedRefs.length} unresolved reference(s): ${unresolvedRefs.join("; ")}`);
     }
 
-    const agentConfig = JSON.stringify({
+    console.log(`[UiPath Deploy] Agent "${agent.name}" exported as package file "${agentFileName}" for Agent Builder import`);
+
+    const manualSteps = [
+      `Import agent configuration file "${agentFileName}" into UiPath Agent Builder — type: ${agent.agentType || "autonomous"}`,
+      `Review and tune the system prompt for production use`,
+      ...(agent.contextGrounding?.storageBucket ? [`Populate context grounding data in storage bucket "${agent.contextGrounding.storageBucket}"`] : []),
+      ...(agent.contextGrounding?.documentSources?.map(src => `Upload context grounding documents: ${src}`) || []),
+      ...(agent.guardrails?.map(g => `Verify guardrail: ${g}`) || []),
+      ...(agent.escalationRules?.map(r => `Verify escalation: ${r.condition} → ${r.target}${r.actionCenterCatalog ? ` (Action Center: ${r.actionCenterCatalog})` : ""}`) || []),
+      ...(agent.knowledgeBases?.map(kb => `Connect knowledge base: ${kb}`) || []),
+      ...(unresolvedRefs.length > 0 ? [`Resolve ${unresolvedRefs.length} unresolved cross-reference(s) manually`] : []),
+    ];
+
+    results.push({
+      artifact: "Agent",
       name: agent.name,
-      agentType: agent.agentType || "autonomous",
-      description: agent.description || "",
-      systemPrompt: agent.systemPrompt || "",
-      tools: resolvedTools,
-      contextGrounding: resolvedContextGrounding || agent.contextGrounding || undefined,
-      knowledgeBases: agent.knowledgeBases || [],
-      guardrails: agent.guardrails || [],
-      escalationRules: resolvedEscalation,
-      inputSchema: agent.inputSchema || undefined,
-      outputSchema: agent.outputSchema || undefined,
-      maxIterations: agent.maxIterations || 10,
-      temperature: agent.temperature ?? 0.3,
-      provisionedBy: "CannonBall",
-      provisionedAt: new Date().toISOString(),
-      crossReferences: {
-        resolved: unresolvedRefs.length === 0,
-        unresolvedCount: unresolvedRefs.length,
-        unresolvedDetails: unresolvedRefs.length > 0 ? unresolvedRefs : undefined,
-      },
+      status: "in_package",
+      message: `${agent.agentType || "autonomous"} agent configuration exported as "${agentFileName}" in deployment package for Agent Builder import. ${resolvedTools.length} tool(s), ${resolvedEscalation.length} escalation rule(s). Cross-refs: ${unresolvedRefs.length === 0 ? "all resolved" : `${unresolvedRefs.length} unresolved`}`,
+      manualSteps,
     });
-
-    try {
-      const checkRes = await uipathFetch(`${base}/odata/Assets?$filter=Name eq '${odataEscape(assetName)}'`, { method: "GET", headers: hdrs });
-      const existing = isGenuineApiResponse(checkRes.text) ? JSON.parse(checkRes.text) : null;
-      const existingId = existing?.value?.[0]?.Id;
-
-      let shouldCreateAgent = !existingId;
-
-      if (existingId) {
-        try {
-          const putRes = await uipathFetch(`${base}/odata/Assets(${existingId})`, {
-            method: "PUT",
-            headers: { ...hdrs, "Content-Type": "application/json" },
-            body: JSON.stringify({ Name: assetName, ValueType: "Text", StringValue: agentConfig, Description: truncDesc(agent.description) }),
-          });
-          if (putRes.status >= 200 && putRes.status < 300) {
-            results.push({ artifact: "Agent", name: agent.name, status: "updated", message: `Updated ${agent.agentType || "autonomous"} agent config asset "${assetName}" (ID: ${existingId}). Cross-refs: ${unresolvedRefs.length === 0 ? "all resolved" : `${unresolvedRefs.length} unresolved`}`, id: existingId });
-          } else if (putRes.status === 404 || putRes.text.toLowerCase().includes("does not exist")) {
-            console.log(`[UiPath Deploy] Agent "${agent.name}" PUT returned 404 (ID ${existingId} likely in different folder) — falling back to create in current folder`);
-            shouldCreateAgent = true;
-          } else {
-            results.push({ artifact: "Agent", name: agent.name, status: "failed", message: `Update failed (${putRes.status}): ${putRes.text.slice(0, 200)}`, id: existingId });
-          }
-        } catch (putErr: any) {
-          results.push({ artifact: "Agent", name: agent.name, status: "failed", message: `Update error: ${putErr.message}`, id: existingId });
-        }
-      }
-
-      if (shouldCreateAgent) {
-        const createRes = await uipathFetch(`${base}/odata/Assets`, {
-          method: "POST",
-          headers: { ...hdrs, "Content-Type": "application/json" },
-          body: JSON.stringify({ Name: assetName, ValueType: "Text", StringValue: agentConfig, Description: truncDesc(agent.description) }),
-        });
-        if (createRes.status >= 200 && createRes.status < 300) {
-          const creation = isValidCreation(createRes.text);
-          const manualSteps = [
-            `Import agent config in UiPath Agent Builder from asset "${assetName}" — type: ${agent.agentType || "autonomous"}`,
-            `Review and tune the system prompt for production use`,
-            ...(agent.contextGrounding?.storageBucket ? [`Populate context grounding data in storage bucket "${agent.contextGrounding.storageBucket}"`] : []),
-            ...(agent.contextGrounding?.documentSources?.map(src => `Upload context grounding documents: ${src}`) || []),
-            ...(agent.guardrails?.map(g => `Verify guardrail: ${g}`) || []),
-            ...(agent.escalationRules?.map(r => `Verify escalation: ${r.condition} → ${r.target}${r.actionCenterCatalog ? ` (Action Center: ${r.actionCenterCatalog})` : ""}`) || []),
-            ...(agent.knowledgeBases?.map(kb => `Connect knowledge base: ${kb}`) || []),
-            ...(unresolvedRefs.length > 0 ? [`Resolve ${unresolvedRefs.length} unresolved cross-reference(s) manually`] : []),
-          ];
-          results.push({
-            artifact: "Agent",
-            name: agent.name,
-            status: "in_package",
-            message: `${agent.agentType || "autonomous"} agent config asset "${assetName}" created (ID: ${creation.data?.Id || "unknown"}). ${resolvedTools.length} tool(s), ${resolvedEscalation.length} escalation rule(s). Cross-refs: ${unresolvedRefs.length === 0 ? "all resolved" : `${unresolvedRefs.length} unresolved`}`,
-            id: creation.data?.Id,
-            manualSteps,
-          });
-        } else {
-          results.push({ artifact: "Agent", name: agent.name, status: "failed", message: `Creation failed (${createRes.status}): ${createRes.text.slice(0, 200)}` });
-        }
-      }
-    } catch (err: any) {
-      results.push({ artifact: "Agent", name: agent.name, status: "failed", message: `Error: ${err.message}` });
-    }
   }
 
   return results;
@@ -3975,8 +3912,24 @@ async function provisionMaestroProcesses(
     const { getMaestroToken } = await import("../uipath-auth");
     maestroToken = await getMaestroToken();
   } catch (err: any) {
+    console.warn(`[UiPath Deploy] PIMS token acquisition failed: ${err.message} — falling back to in_package with manual import instructions`);
     for (const mp of maestroProcesses) {
-      results.push({ artifact: "Maestro Process", name: mp.name, status: "failed", message: `PIMS token acquisition failed: ${err.message}` });
+      const crossRefSummary = (mp.crossReferences || []).map(cr => `${cr.artifactType}:${cr.artifactName}`).join(", ");
+      const taskSummary = (mp.tasks || []).map(t => `${t.type}:${t.name}`).join(", ");
+      const manualSteps = [
+        `Import this Maestro process definition in UiPath Maestro: "${mp.name}"`,
+        ...(mp.tasks || []).filter(t => t.type === "serviceTask" && t.processReference).map(t => `Wire service task "${t.name}" to Orchestrator process "${t.processReference}"`),
+        ...(mp.tasks || []).filter(t => t.type === "userTask" && t.actionCenterCatalog).map(t => `Connect user task "${t.name}" to Action Center catalog "${t.actionCenterCatalog}"`),
+        ...(mp.gateways || []).filter(g => g.conditions?.length).map(g => `Configure gateway "${g.name}" conditions: ${g.conditions!.map(c => c.expression).join(", ")}`),
+        `Review and validate BPMN flow sequence and condition expressions before publishing`,
+      ];
+      results.push({
+        artifact: "Maestro Process",
+        name: mp.name,
+        status: "in_package",
+        message: `PIMS token not available (${err.message}). Process definition generated with ${(mp.tasks || []).length} tasks, ${(mp.gateways || []).length} gateways, ${(mp.events || []).length} events.${crossRefSummary ? ` Cross-references: ${crossRefSummary}.` : ""} ${taskSummary ? `Tasks: ${taskSummary}.` : ""} See Developer Handoff Guide for manual import steps.`,
+        manualSteps,
+      });
     }
     return results;
   }
@@ -4436,8 +4389,25 @@ export async function deployAllArtifacts(
         agents: "Agents", maestro: "Maestro", integrationService: "Integration Service",
         aiCenter: "AI Center", apps: "Apps",
       };
+      const SERVICE_TO_ARTIFACT_CHECK: Record<string, () => boolean> = {
+        orchestrator: () => true,
+        actionCenter: () => (artifacts.actionCenter?.length || 0) > 0,
+        testManager: () => (artifacts.testCases?.length || 0) > 0 || (artifacts.testSets?.length || 0) > 0 || (artifacts.requirements?.length || 0) > 0,
+        documentUnderstanding: () => (artifacts.documentUnderstanding?.length || 0) > 0,
+        generativeExtraction: () => (artifacts.documentUnderstanding?.length || 0) > 0,
+        communicationsMining: () => (artifacts.communicationsMining?.length || 0) > 0,
+        dataService: () => (artifacts.dataFabricEntities?.length || 0) > 0,
+        agents: () => (artifacts.agents?.length || 0) > 0,
+        maestro: () => (artifacts.maestroProcesses?.length || 0) > 0,
+        integrationService: () => false,
+        aiCenter: () => false,
+        apps: () => (artifacts.apps?.length || 0) > 0,
+      };
       for (const [key, detail] of Object.entries(svcAvail.serviceDetails)) {
         if (detail.status === "limited" || detail.status === "unavailable" || detail.status === "unknown") {
+          const hasArtifacts = SERVICE_TO_ARTIFACT_CHECK[key];
+          if (hasArtifacts !== undefined && !hasArtifacts()) continue;
+          if (hasArtifacts === undefined) continue;
           const label = SERVICE_LABELS[key] || key;
           serviceLimitations.push({
             service: label,

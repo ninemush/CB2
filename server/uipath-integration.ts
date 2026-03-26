@@ -2120,11 +2120,14 @@ async function probeAllServices(): Promise<UnifiedProbeResult> {
     }
 
     const pimsHasScopes = metadataService.hasOidcScopeFamily("PIMS" as import("./catalog/metadata-schemas").ServiceResourceType);
-    const pimsResult = pimsHasScopes
+    const pimsHasConfiguredScopes = !pimsHasScopes && config?.scopes?.split(/\s+/).some(s => s.startsWith("PIMS."));
+    const pimsResult = (pimsHasScopes || pimsHasConfiguredScopes)
       ? await tryAcquireResourceToken("PIMS").catch(() => ({ ok: false, scopes: [] as string[] }))
       : { ok: false, scopes: [] as string[] };
-    if (!pimsHasScopes) {
-      console.log("[UiPath Probe] PIMS: no OIDC scope family — skipping token acquisition");
+    if (!pimsHasScopes && !pimsHasConfiguredScopes) {
+      console.log("[UiPath Probe] PIMS: no OIDC scope family and no configured PIMS scopes — skipping token acquisition");
+    } else if (!pimsHasScopes && pimsHasConfiguredScopes) {
+      console.log("[UiPath Probe] PIMS: not in OIDC discovery but configured PIMS scopes found — attempting token acquisition");
     }
     const maestroAvailable = (probeFlags["maestro"] ?? false) || pimsResult.ok;
     const isResAvail = parentApiResults["integrationService"];
