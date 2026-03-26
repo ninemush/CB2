@@ -34,6 +34,7 @@ export type QualityGateViolation = {
   check: string;
   file: string;
   detail: string;
+  businessContext?: string;
 };
 
 export type PositiveEvidence = {

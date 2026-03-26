@@ -872,6 +872,7 @@ function classifyUI(ctx: ActivityContext, combined: string): ReturnType<typeof c
   if (combined.includes("type") || combined.includes("enter") || combined.includes("input") || combined.includes("fill")) {
     const fieldHint = extractFieldHint(combined);
     const selectorAttr = fieldHint ? `name='${escapeXml(fieldHint)}'` : "name='TODO_field_name'";
+    const targetSelector = `${selectorBase}<webctrl tag='INPUT' ${selectorAttr} />`;
     const isPlaceholder = !fieldHint;
     if (isPlaceholder) {
       gaps.push({
@@ -882,15 +883,19 @@ function classifyUI(ctx: ActivityContext, combined: string): ReturnType<typeof c
         estimatedMinutes: 15,
       });
     }
+    const typeProps: Record<string, string> = {
+      Text: "TODO: Set text to type",
+      ...autopilotProps,
+      ...resilienceProps,
+    };
+    if (useModern) {
+      typeProps["Target.Selector"] = targetSelector;
+    }
     return {
       activityType: "ui:TypeInto",
       activityPackage: "UiPath.UIAutomation.Activities",
-      properties: {
-        Text: "TODO: Set text to type",
-        ...autopilotProps,
-        ...resilienceProps,
-      },
-      selectorHint: `${selectorBase}<webctrl tag='INPUT' ${selectorAttr} />`,
+      properties: typeProps,
+      selectorHint: targetSelector,
       errorHandling: "retry",
       variables,
       gaps,
@@ -900,6 +905,7 @@ function classifyUI(ctx: ActivityContext, combined: string): ReturnType<typeof c
   if (combined.includes("click") || combined.includes("press") || combined.includes("button") || combined.includes("submit") || combined.includes("select")) {
     const buttonHint = extractButtonHint(combined);
     const selectorAttr = buttonHint ? `aaname='${escapeXml(buttonHint)}'` : "name='TODO_button_name'";
+    const targetSelector = `${selectorBase}<webctrl tag='BUTTON' ${selectorAttr} />`;
     const isPlaceholder = !buttonHint;
     if (isPlaceholder) {
       gaps.push({
@@ -910,11 +916,15 @@ function classifyUI(ctx: ActivityContext, combined: string): ReturnType<typeof c
         estimatedMinutes: 15,
       });
     }
+    const clickProps: Record<string, string> = { ...autopilotProps, ...resilienceProps };
+    if (useModern) {
+      clickProps["Target.Selector"] = targetSelector;
+    }
     return {
       activityType: "ui:Click",
       activityPackage: "UiPath.UIAutomation.Activities",
-      properties: { ...autopilotProps, ...resilienceProps },
-      selectorHint: `${selectorBase}<webctrl tag='BUTTON' ${selectorAttr} />`,
+      properties: clickProps,
+      selectorHint: targetSelector,
       errorHandling: "retry",
       variables,
       gaps,
@@ -923,6 +933,7 @@ function classifyUI(ctx: ActivityContext, combined: string): ReturnType<typeof c
 
   if (combined.includes("get text") || combined.includes("extract") || combined.includes("scrape") || combined.includes("read") || combined.includes("copy")) {
     variables.push({ name: "str_ExtractedText", type: "String", defaultValue: '""' });
+    const targetSelector = `${selectorBase}<webctrl tag='SPAN' id='TODO_element_id' />`;
     gaps.push({
       category: "selector",
       activity: useModern ? "GetText (Modern)" : "GetText",
@@ -930,11 +941,15 @@ function classifyUI(ctx: ActivityContext, combined: string): ReturnType<typeof c
       placeholder: `<webctrl tag='SPAN' id='TODO' />`,
       estimatedMinutes: 15,
     });
+    const getTextProps: Record<string, string> = { ...autopilotProps, ...resilienceProps };
+    if (useModern) {
+      getTextProps["Target.Selector"] = targetSelector;
+    }
     return {
       activityType: "ui:GetText",
       activityPackage: "UiPath.UIAutomation.Activities",
-      properties: { ...autopilotProps, ...resilienceProps },
-      selectorHint: `${selectorBase}<webctrl tag='SPAN' id='TODO_element_id' />`,
+      properties: getTextProps,
+      selectorHint: targetSelector,
       errorHandling: "retry",
       variables,
       gaps,
@@ -943,6 +958,7 @@ function classifyUI(ctx: ActivityContext, combined: string): ReturnType<typeof c
 
   const elementHint = extractButtonHint(combined) || extractFieldHint(combined);
   const fallbackAttr = elementHint ? `aaname='${escapeXml(elementHint)}'` : "aaname='TODO_element'";
+  const targetSelector = `${selectorBase}<webctrl tag='*' ${fallbackAttr} />`;
   const isPlaceholder = !elementHint;
   if (isPlaceholder) {
     gaps.push({
@@ -953,11 +969,15 @@ function classifyUI(ctx: ActivityContext, combined: string): ReturnType<typeof c
       estimatedMinutes: 15,
     });
   }
+  const fallbackProps: Record<string, string> = { ...autopilotProps, ...resilienceProps };
+  if (useModern) {
+    fallbackProps["Target.Selector"] = targetSelector;
+  }
   return {
     activityType: "ui:Click",
     activityPackage: "UiPath.UIAutomation.Activities",
-    properties: { ...autopilotProps, ...resilienceProps },
-    selectorHint: `${selectorBase}<webctrl tag='*' ${fallbackAttr} />`,
+    properties: fallbackProps,
+    selectorHint: targetSelector,
     errorHandling: "retry",
     variables,
     gaps,
