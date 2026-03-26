@@ -647,10 +647,20 @@ export function extractDeclaredVariables(xamlContent: string): Set<string> {
   return declared;
 }
 
+function decodeXmlEntities(s: string): string {
+  return s
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&apos;/g, "'");
+}
+
 export function findUndeclaredVariables(expression: string, declaredVars: Set<string>): string[] {
   const undeclared: string[] = [];
+  const decoded = decodeXmlEntities(expression);
   const stringPattern = /"(?:[^"\\]|\\.)*"/g;
-  const exprWithoutStrings = expression.replace(stringPattern, (m) => " ".repeat(m.length));
+  const exprWithoutStrings = decoded.replace(stringPattern, (m) => " ".repeat(m.length));
 
   const memberAccessTokens = new Set<string>();
   const memberPattern = /\.([a-zA-Z_]\w*)/g;

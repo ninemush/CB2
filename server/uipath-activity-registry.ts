@@ -448,6 +448,75 @@ const FALLBACK_REGISTRY: Record<string, ActivityRegistryEntry> = {
       optional: [],
     },
   },
+  "TryCatch": {
+    package: "System.Activities",
+    properties: {
+      optional: ["Try", "Catches", "Finally"],
+    },
+  },
+  "ForEach": {
+    package: "System.Activities",
+    properties: {
+      optional: ["Values", "Body", "x:TypeArguments"],
+    },
+  },
+  "ParallelForEach": {
+    package: "System.Activities",
+    properties: {
+      optional: ["Values", "Body", "CompletionCondition", "x:TypeArguments"],
+    },
+  },
+  "If": {
+    package: "System.Activities",
+    properties: {
+      required: ["Condition"],
+      optional: ["Then", "Else"],
+    },
+  },
+  "Switch": {
+    package: "System.Activities",
+    properties: {
+      optional: ["Expression", "Default", "x:TypeArguments"],
+    },
+  },
+  "While": {
+    package: "System.Activities",
+    properties: {
+      required: ["Condition"],
+      optional: ["Body"],
+    },
+  },
+  "DoWhile": {
+    package: "System.Activities",
+    properties: {
+      required: ["Condition"],
+      optional: ["Body"],
+    },
+  },
+  "Sequence": {
+    package: "System.Activities",
+    properties: {
+      optional: [],
+    },
+  },
+  "Assign": {
+    package: "System.Activities",
+    properties: {
+      optional: ["To", "Value", "x:TypeArguments"],
+    },
+  },
+  "Delay": {
+    package: "System.Activities",
+    properties: {
+      optional: ["Duration"],
+    },
+  },
+  "Throw": {
+    package: "System.Activities",
+    properties: {
+      optional: ["Exception"],
+    },
+  },
 };
 
 function buildRegistryFromCatalog(): Record<string, ActivityRegistryEntry> {

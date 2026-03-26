@@ -1537,6 +1537,26 @@ export function renderActivity(
 
   const enforced = enforceDisplayName(activityType, displayName);
   const isCrossPlatform = targetFramework === "Portable";
+
+  const LOGMESSAGE_KNOWN_PROPS = new Set(["Level", "Message", "DisplayName"]);
+  if (activityType === "ui:LogMessage") {
+    const hasMessage = "Message" in properties;
+    if (!hasMessage) {
+      for (const [key, value] of Object.entries(properties)) {
+        if (!LOGMESSAGE_KNOWN_PROPS.has(key) && !PSEUDO_XAML_ATTR_KEYS.has(key)) {
+          properties["Message"] = value;
+          delete properties[key];
+          break;
+        }
+      }
+    }
+    for (const key of Object.keys(properties)) {
+      if (!LOGMESSAGE_KNOWN_PROPS.has(key) && !PSEUDO_XAML_ATTR_KEYS.has(key) && key !== "sap2010:Annotation.AnnotationText") {
+        delete properties[key];
+      }
+    }
+  }
+
   let propAttrs = "";
   for (const [key, value] of Object.entries(properties)) {
     if (PSEUDO_XAML_ATTR_KEYS.has(key)) continue;

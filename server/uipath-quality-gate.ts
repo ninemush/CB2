@@ -15,6 +15,7 @@ import { metadataService } from "./catalog/metadata-service";
 import { lintXamlExpressions } from "./xaml/vbnet-expression-linter";
 import { validateTypeCompatibility } from "./xaml/type-compatibility-validator";
 import { scoreSelectorQuality, generateSelectorWarnings, injectResilienceDefaults } from "./xaml/selector-quality-scorer";
+import { XAML_INFRASTRUCTURE_TYPE_ARGUMENTS } from "./xaml/xaml-compliance";
 
 const KNOWN_ACTIVITIES = ACTIVITY_REGISTRY;
 
@@ -122,12 +123,14 @@ const VALID_TYPE_ARGUMENTS = new Set([
   "s:DateTime", "s:TimeSpan",
   "scg2:DataTable", "scg2:DataRow",
   "s:Security.SecureString", "s:Net.Mail.MailMessage",
+  "s:Exception",
   "ui:QueueItem", "ui:QueueItemData",
   "System.String", "System.Int32", "System.Int64", "System.Boolean",
   "System.Double", "System.Decimal", "System.Object",
   "System.DateTime", "System.TimeSpan",
   "System.Data.DataTable", "System.Data.DataRow",
   "System.Exception",
+  ...XAML_INFRASTRUCTURE_TYPE_ARGUMENTS,
 ]);
 
 const CREDENTIAL_PATTERNS = [
@@ -221,7 +224,7 @@ function scanBlockedPatterns(input: QualityGateInput): QualityGateViolation[] {
       }
     }
 
-    const pseudoXamlPattern = /\b(Then|Else|Cases|Body|Finally|Try)="([^"]*)"/g;
+    const pseudoXamlPattern = /\b(Then|Else|Cases|Body|Finally|Try|Catches)="([^"]*)"/g;
     let match;
     while ((match = pseudoXamlPattern.exec(content)) !== null) {
       const attrName = match[1];
@@ -232,7 +235,8 @@ function scanBlockedPatterns(input: QualityGateInput): QualityGateViolation[] {
         contextBefore.includes(`<Switch.${attrName}`) ||
         contextBefore.includes(`<TryCatch.${attrName}`) ||
         contextBefore.includes(`<ForEach.${attrName}`) ||
-        contextBefore.includes(`<Sequence.${attrName}`);
+        contextBefore.includes(`<Sequence.${attrName}`) ||
+        contextBefore.includes(`<ParallelForEach.${attrName}`);
       if (isInChildElement) continue;
       const isPartOfDisplayName = /DisplayName="[^"]*$/.test(contextBefore);
       if (isPartOfDisplayName) continue;
@@ -660,8 +664,13 @@ function extractDeclaredSymbols(content: string): { variables: Map<string, strin
   return { variables, arguments: arguments_ };
 }
 
+const STANDARD_ACTIVITY_TYPES = new Set([
+  "TryCatch", "ForEach", "ParallelForEach", "If", "Switch",
+  "While", "DoWhile", "Sequence", "Assign", "Delay", "Throw",
+]);
+
 function checkActivityProperties(content: string, shortName: string, violations: QualityGateViolation[]): void {
-  const activityBlockPattern = /<(ui:[A-Za-z]+)\s+([^>]*?)(\s*\/?>)/g;
+  const activityBlockPattern = /<(ui:[A-Za-z]+|TryCatch|ForEach|ParallelForEach|If|Switch|While|DoWhile|Sequence|Assign|Delay|Throw)\s+([^>]*?)(\s*\/?>)/g;
   let match;
   while ((match = activityBlockPattern.exec(content)) !== null) {
     const activityName = match[1];
@@ -725,13 +734,23 @@ function checkVariableArgumentDeclarations(input: QualityGateInput, violations: 
     const exprPattern = /\[([^\[\]]+)\]/g;
     let match;
     while ((match = exprPattern.exec(content)) !== null) {
-      const expr = match[1];
-      if (expr.startsWith("&quot;") || expr.startsWith("\"") || expr.startsWith("'")) continue;
-      if (/^\d+$/.test(expr)) continue;
+      const rawExpr = match[1];
+      if (rawExpr.startsWith("&quot;") || rawExpr.startsWith("\"") || rawExpr.startsWith("'")) continue;
+      if (/^\d+$/.test(rawExpr)) continue;
+
+      const expr = rawExpr
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&apos;/g, "'");
+
+      const stringPattern = /"(?:[^"\\]|\\.)*"/g;
+      const exprWithoutStrings = expr.replace(stringPattern, (m) => " ".repeat(m.length));
 
       const identPattern = /\b([a-zA-Z_]\w*)\b/g;
       let idMatch;
-      while ((idMatch = identPattern.exec(expr)) !== null) {
+      while ((idMatch = identPattern.exec(exprWithoutStrings)) !== null) {
         const ident = idMatch[1];
         if (keywords.has(ident)) continue;
         if (/^[A-Z][a-z]/.test(ident) && expr.includes(`${ident}.`) && !allDeclared.has(ident)) continue;

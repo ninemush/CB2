@@ -6,6 +6,11 @@ import { QualityGateError } from "../uipath-shared";
 
 export type TargetFramework = "Windows" | "Portable";
 
+export const XAML_INFRASTRUCTURE_TYPE_ARGUMENTS = new Set([
+  "AssemblyReference",
+]);
+
+
 export interface PackageNamespaceInfo {
   prefix: string;
   xmlns: string;

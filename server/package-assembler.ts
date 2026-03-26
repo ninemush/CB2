@@ -2006,6 +2006,34 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       if (unusedDeps.length > 0) {
         console.log(`[Dependency Alignment] Removed ${unusedDeps.length} unused dependenc(ies): ${unusedDeps.join(", ")}${proactiveRemovals.length > 0 ? ` (${proactiveRemovals.length} silently from proactive resolution)` : ""}`);
       }
+
+      const BASELINE_PACKAGES: Record<string, boolean> = {
+        "UiPath.System.Activities": true,
+        "UiPath.Excel.Activities": true,
+      };
+      if (tf === "Windows") {
+        BASELINE_PACKAGES["UiPath.UIAutomation.Activities"] = true;
+      }
+      for (const baselinePkg of Object.keys(BASELINE_PACKAGES)) {
+        if (!deps[baselinePkg]) {
+          let version: string | null = null;
+          const preferred = getPreferredVersionFromMeta(baselinePkg);
+          if (preferred) {
+            version = preferred;
+          } else if (catalogService.isLoaded()) {
+            const catalogVersion = catalogService.getPreferredVersion(baselinePkg);
+            if (catalogVersion) version = catalogVersion;
+          }
+          if (!version) {
+            const fallback = getBaselineFallbackVersion(baselinePkg, tf as "Windows" | "Portable");
+            if (fallback) version = fallback;
+          }
+          if (version) {
+            deps[baselinePkg] = version;
+            console.log(`[Dependency Enforcement] Re-added baseline package ${baselinePkg}@${version} after alignment pruned it`);
+          }
+        }
+      }
     }
     for (const rawPkgName of scannedPackages) {
       const pkgName = normalizePackageName(rawPkgName);
@@ -2323,6 +2351,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       ...Array.from(deferredWrites.keys()),
       projectJsonPath,
       nuspecPath,
+      `${libPath}/DeveloperHandoffGuide.md`,
     ];
 
     const autoFixSummary: string[] = [];
