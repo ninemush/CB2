@@ -98,19 +98,19 @@ const IMPROVED: RenderConfig = {
   decisionSize: 90,
   nameFontSize: 14,
   badgeFontSize: 11,
-  edgeLabelFontSize: 10,
+  edgeLabelFontSize: 11,
   decisionFontSize: 11,
   nameMaxChars: 40,
   nameMaxLines: 2,
   nodesep: 120,
   ranksep: 140,
-  density: 144,
-  edgeCornerRadius: 12,
+  density: 200,
+  edgeCornerRadius: 14,
   badgeHeight: 18,
   nameTruncate: 40,
   edgesep: 80,
-  strokeWidth: 2,
-  arrowSize: 10,
+  strokeWidth: 2.5,
+  arrowSize: 11,
 };
 
 const TEST_NODES: MapNode[] = [
@@ -534,10 +534,10 @@ function renderEdgePath(points: { x: number; y: number }[], r: number): string {
 
 function getEdgeColor(label: string): string {
   const l = label.toLowerCase();
-  if (l === "yes" || l === "true" || l === "approved") return "#22c55e";
-  if (l === "no" || l === "false" || l === "rejected") return "#ef4444";
-  if (l === "needs review") return "#f59e0b";
-  return "#2dd4bf";
+  if (l === "yes" || l === "true" || l === "approved") return "#4ade80";
+  if (l === "no" || l === "false" || l === "rejected") return "#f87171";
+  if (l === "needs review") return "#fbbf24";
+  return "#5eead4";
 }
 
 function renderNodeSvg(node: LayoutNode, cfg: RenderConfig): string {
@@ -550,7 +550,7 @@ function renderNodeSvg(node: LayoutNode, cfg: RenderConfig): string {
     const r = width * 0.41;
     const pr = r * 0.35;
     return `
-      <circle cx="${cx}" cy="${cy}" r="${r}" fill="#059669" stroke="#34d399" stroke-width="2"/>
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="#059669" stroke="#34d399" stroke-width="2.5"/>
       <polygon points="${cx - pr * 0.7},${cy - pr} ${cx - pr * 0.7},${cy + pr} ${cx + pr},${cy}" fill="white"/>
     `;
   }
@@ -561,7 +561,7 @@ function renderNodeSvg(node: LayoutNode, cfg: RenderConfig): string {
     const r = width * 0.41;
     const sq = r * 0.45;
     return `
-      <circle cx="${cx}" cy="${cy}" r="${r}" fill="#dc2626" stroke="#f87171" stroke-width="2"/>
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="#dc2626" stroke="#f87171" stroke-width="2.5"/>
       <rect x="${cx - sq}" y="${cy - sq}" width="${sq * 2}" height="${sq * 2}" rx="2" fill="white"/>
     `;
   }
@@ -582,14 +582,14 @@ function renderNodeSvg(node: LayoutNode, cfg: RenderConfig): string {
     });
     return `
       <g transform="translate(${cx}, ${cy})">
-        <rect x="${-s}" y="${-s}" width="${s * 2}" height="${s * 2}" rx="4" transform="rotate(45)" fill="${fillColor}" stroke="${strokeColor}" stroke-width="1.5"/>
+        <rect x="${-s}" y="${-s}" width="${s * 2}" height="${s * 2}" rx="4" transform="rotate(45)" fill="${fillColor}" stroke="${strokeColor}" stroke-width="2"/>
         ${textSvg}
       </g>
     `;
   }
 
-  const borderColor = "#2dd4bf";
-  const painPointBorder = data.isPainPoint ? "#ef4444" : borderColor;
+  const borderColor = "#5eead4";
+  const painPointBorder = data.isPainPoint ? "#f87171" : borderColor;
   const nameLines = wrapText(data.name || "Unnamed", cfg.nameMaxChars, cfg.nameMaxLines);
   const roleText = data.role ? truncate(data.role, cfg.nameMaxChars - 8) : "";
   const systemText = data.system ? truncate(data.system, cfg.nameMaxChars - 8) : "";
@@ -598,7 +598,7 @@ function renderNodeSvg(node: LayoutNode, cfg: RenderConfig): string {
   const nameStartY = y + 8 + cfg.nameFontSize;
   let nameTextSvg = "";
   nameLines.forEach((line, i) => {
-    nameTextSvg += `<text x="${x + width / 2}" y="${nameStartY + i * lineHeight}" text-anchor="middle" fill="#e4e4e7" font-size="${cfg.nameFontSize}" font-weight="600" font-family="system-ui, sans-serif">${escapeXml(line)}</text>`;
+    nameTextSvg += `<text x="${x + width / 2}" y="${nameStartY + i * lineHeight}" text-anchor="middle" fill="#f4f4f5" font-size="${cfg.nameFontSize}" font-weight="600" font-family="system-ui, sans-serif">${escapeXml(line)}</text>`;
   });
 
   const maxBadgeArea = width - 16;
@@ -609,8 +609,8 @@ function renderNodeSvg(node: LayoutNode, cfg: RenderConfig): string {
   if (roleText) {
     const rw = Math.min(roleText.length * (cfg.badgeFontSize * 0.7) + 14, maxBadgeArea);
     badgeSvg += `
-      <rect x="${badgeX}" y="${badgeY}" width="${rw}" height="${cfg.badgeHeight}" rx="3" fill="#374151"/>
-      <text x="${badgeX + rw / 2}" y="${badgeY + cfg.badgeHeight * 0.72}" text-anchor="middle" fill="#9ca3af" font-size="${cfg.badgeFontSize}" font-family="system-ui, sans-serif">${escapeXml(roleText)}</text>
+      <rect x="${badgeX}" y="${badgeY}" width="${rw}" height="${cfg.badgeHeight}" rx="4" fill="#374151"/>
+      <text x="${badgeX + rw / 2}" y="${badgeY + cfg.badgeHeight * 0.72}" text-anchor="middle" fill="#d1d5db" font-size="${cfg.badgeFontSize}" font-family="system-ui, sans-serif">${escapeXml(roleText)}</text>
     `;
     badgeX += rw + 4;
   }
@@ -621,14 +621,14 @@ function renderNodeSvg(node: LayoutNode, cfg: RenderConfig): string {
       const displaySys = truncate(systemText, maxSysChars);
       const sw = Math.min(displaySys.length * (cfg.badgeFontSize * 0.7) + 14, remainingSpace);
       badgeSvg += `
-        <rect x="${badgeX}" y="${badgeY}" width="${sw}" height="${cfg.badgeHeight}" rx="3" fill="#1e293b"/>
-        <text x="${badgeX + sw / 2}" y="${badgeY + cfg.badgeHeight * 0.72}" text-anchor="middle" fill="#64748b" font-size="${cfg.badgeFontSize}" font-family="system-ui, sans-serif">${escapeXml(displaySys)}</text>
+        <rect x="${badgeX}" y="${badgeY}" width="${sw}" height="${cfg.badgeHeight}" rx="4" fill="#1e293b" stroke="#334155" stroke-width="0.5"/>
+        <text x="${badgeX + sw / 2}" y="${badgeY + cfg.badgeHeight * 0.72}" text-anchor="middle" fill="#94a3b8" font-size="${cfg.badgeFontSize}" font-family="system-ui, sans-serif">${escapeXml(displaySys)}</text>
       `;
     }
   }
 
   return `
-    <rect x="${x}" y="${y}" width="${width}" height="${height}" rx="8" fill="#1e1e2e" stroke="${painPointBorder}" stroke-width="1.5"/>
+    <rect x="${x}" y="${y}" width="${width}" height="${height}" rx="10" fill="#1e1e2e" stroke="${painPointBorder}" stroke-width="2"/>
     ${nameTextSvg}
     ${badgeSvg}
   `;
@@ -741,7 +741,7 @@ async function renderWithConfig(
   const titleSvg = `<text x="${svgWidth / 2}" y="${30}" text-anchor="middle" fill="#71717a" font-size="${titleFontSize}" font-weight="700" font-family="system-ui, sans-serif">${cfg.label}: nodes ${cfg.taskWidth}\u00d7${cfg.taskHeight}, decisions ${cfg.decisionSize}\u00d7${cfg.decisionSize}, font ${cfg.nameFontSize}px, spacing ${cfg.nodesep}/${cfg.ranksep}, DPI ${cfg.density}</text>`;
 
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}">
+<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" shape-rendering="geometricPrecision" text-rendering="optimizeLegibility">
   <defs>${markerDefs}</defs>
   <rect width="100%" height="100%" fill="#0a0a0f"/>
   ${titleSvg}
@@ -750,7 +750,8 @@ async function renderWithConfig(
 </svg>`;
 
   const pngBuffer = await sharp(Buffer.from(svg), { density: cfg.density })
-    .png()
+    .png({ compressionLevel: 6 })
+    .sharpen({ sigma: 0.3 })
     .toBuffer();
 
   return {

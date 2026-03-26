@@ -17,4 +17,10 @@ title = "CURRENT renderer"
 id = "bfDmc5D_I7ebE4P1ZwB07"
 uri = "file://scripts/renderer-comparison/improved.png"
 type = "image"
-title = "IMPROVED renderer (clean routing v2)"
+title = "IMPROVED PNG (200 DPI, 1.5MB)"
+
+[[outputs]]
+id = "xpVha3XKDuJdo7MBeRGsz"
+uri = "file://scripts/renderer-comparison/improved.svg"
+type = "image"
+title = "IMPROVED SVG (vector)"
