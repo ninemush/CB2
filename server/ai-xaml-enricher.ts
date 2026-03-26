@@ -281,27 +281,34 @@ Generate the enriched workflow specification. For each node, provide the specifi
 
     const systemPrompt = SECTION_1_ROLE + section2Block + "\n\n" + SECTION_3_VARIABLES + "\n\n" + SECTION_4_OUTPUT + uiContextBlock;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      console.log(`[AI XAML Enricher] Requesting enrichment for ${nodeDescriptions.length} nodes...`);
-      const response = await getCodeLLM().create({
+      console.log(`[AI XAML Enricher] Requesting enrichment for ${nodeDescriptions.length} nodes (streaming)...`);
+      const stream = getCodeLLM().stream({
         maxTokens: 8192,
         system: systemPrompt,
         messages: [{ role: "user", content: userMessage }],
         timeoutMs,
-        abortSignal: controller.signal,
       });
 
-      clearTimeout(timeout);
+      const timeoutHandle = setTimeout(() => stream.abort(), timeoutMs);
 
-      if (!response.text) {
+      let accumulated = "";
+      try {
+        for await (const event of stream) {
+          if (event.type === "text_delta" && event.text) {
+            accumulated += event.text;
+          }
+        }
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
+
+      const responseText = accumulated.trim();
+      if (!responseText) {
         console.log("[AI XAML Enricher] Empty response received");
         return null;
       }
 
-      const jsonText = stripCodeFences(response.text.trim());
+      const jsonText = stripCodeFences(responseText);
       const sanitized = sanitizeJsonString(jsonText);
 
       let parsed: EnrichmentResult;
@@ -433,9 +440,6 @@ Generate the enriched workflow specification. For each node, provide the specifi
 
       console.log(`[AI XAML Enricher] Successfully enriched ${parsed.nodes.length} nodes, REFramework=${parsed.useReFramework}, ${parsed.decomposition?.length || 0} sub-workflows`);
       return parsed;
-    } finally {
-      clearTimeout(timeout);
-    }
   } catch (err: any) {
     if (err.name === "AbortError") {
       console.log("[AI XAML Enricher] Timed out — falling back to keyword classification");
@@ -604,21 +608,26 @@ Generate the hierarchical WorkflowSpec JSON tree. Use tryCatch nodes to wrap act
         { role: "user", content: extraContext ? userMessage + "\n\n" + extraContext : userMessage },
       ];
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      const stream = getCodeLLM().stream({
+        maxTokens: 16384,
+        system: systemPrompt,
+        messages,
+        timeoutMs,
+      });
+
+      const timeoutHandle = setTimeout(() => stream.abort(), timeoutMs);
 
       try {
-        const response = await getCodeLLM().create({
-          maxTokens: 16384,
-          system: systemPrompt,
-          messages,
-          timeoutMs,
-          abortSignal: controller.signal,
-        });
+        let accumulated = "";
+        for await (const event of stream) {
+          if (event.type === "text_delta" && event.text) {
+            accumulated += event.text;
+          }
+        }
+        clearTimeout(timeoutHandle);
 
-        clearTimeout(timeout);
-
-        if (!response.text) {
+        const responseText = accumulated.trim();
+        if (!responseText) {
           console.log("[AI XAML Enricher Tree] Empty response received");
           lastParseError = "Empty response from LLM";
           return null;
@@ -626,7 +635,7 @@ Generate the hierarchical WorkflowSpec JSON tree. Use tryCatch nodes to wrap act
 
         let parsed: any;
         try {
-          const jsonText = stripCodeFences(response.text.trim());
+          const jsonText = stripCodeFences(responseText);
           const sanitized = sanitizeJsonString(jsonText);
           parsed = JSON.parse(sanitized);
         } catch (parseErr: any) {
@@ -657,7 +666,7 @@ Generate the hierarchical WorkflowSpec JSON tree. Use tryCatch nodes to wrap act
 
         return validation.data;
       } finally {
-        clearTimeout(timeout);
+        clearTimeout(timeoutHandle);
       }
     };
 
