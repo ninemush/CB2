@@ -6,3 +6,15 @@ id = "GGcXOfPEFHI0gE4mQFjyE"
 uri = "file://cannonball-codebase.zip"
 type = "unspecified"
 title = "Cannonball Full Codebase"
+
+[[outputs]]
+id = "NbsU6VSaDHk-KORNIiAn2"
+uri = "file://scripts/renderer-comparison/current.png"
+type = "image"
+title = "CURRENT renderer settings"
+
+[[outputs]]
+id = "bfDmc5D_I7ebE4P1ZwB07"
+uri = "file://scripts/renderer-comparison/improved.png"
+type = "image"
+title = "IMPROVED renderer settings"
