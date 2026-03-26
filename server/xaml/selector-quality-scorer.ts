@@ -312,7 +312,9 @@ export function scoreSelectorQuality(
       const activityTag = tagMatch[1];
       const attrBlock = tagMatch[2];
 
-      const selectorAttrMatch = attrBlock.match(/Selector="([^"]+)"/);
+      const classicMatch = attrBlock.match(/Selector="([^"]+)"/);
+      const modernMatch = attrBlock.match(/Target\.Selector="([^"]+)"/);
+      const selectorAttrMatch = classicMatch || modernMatch;
       if (!selectorAttrMatch) continue;
 
       const selector = selectorAttrMatch[1];

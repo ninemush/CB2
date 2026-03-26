@@ -281,6 +281,32 @@ describe("scoreSelectorQuality", () => {
     expect(scores[0].displayName).toBe("Click Submit");
   });
 
+  it("scores modern Target.Selector attributes", () => {
+    const entries = [
+      {
+        name: "Main.xaml",
+        content: `<ui:Click DisplayName="Click Submit" Target.Selector="&lt;webctrl tag='BUTTON' aaname='Submit' /&gt;" />`,
+      },
+    ];
+    const scores = scoreSelectorQuality(entries);
+    expect(scores.length).toBeGreaterThan(0);
+    expect(scores[0].activityTag).toContain("Click");
+    expect(scores[0].score).toBeGreaterThan(0);
+    expect(scores[0].displayName).toBe("Click Submit");
+  });
+
+  it("detects placeholder in modern Target.Selector", () => {
+    const entries = [
+      {
+        name: "Main.xaml",
+        content: `<ui:TypeInto DisplayName="Type TODO" Target.Selector="&lt;webctrl name='TODO_field' /&gt;" Target.WaitForReady="INTERACTIVE" />`,
+      },
+    ];
+    const scores = scoreSelectorQuality(entries);
+    expect(scores.length).toBeGreaterThan(0);
+    expect(scores[0].isPlaceholder).toBe(true);
+  });
+
   it("handles multiline tags with Selector before DisplayName", () => {
     const entries = [
       {
