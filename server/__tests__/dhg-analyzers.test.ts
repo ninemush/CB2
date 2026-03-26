@@ -12,6 +12,7 @@ import {
   type ExceptionCoverageResult,
   type QueueManagementResult,
   type EnvironmentRequirements,
+  type DecisionBranch,
 } from "../xaml/dhg-analyzers";
 import { generateDhgFromOutcomeReport, type DhgContext } from "../dhg-generator";
 import type { PipelineOutcomeReport } from "../uipath-pipeline";
@@ -1225,6 +1226,14 @@ describe("DHG generator - structured upstream context", () => {
   });
 });
 
+function makeMinimalOutcomeReport(): PipelineOutcomeReport {
+  return {
+    remediations: [], propertyRemediations: [], autoRepairs: [],
+    downgradeEvents: [], qualityWarnings: [], fullyGeneratedFiles: ["Main.xaml"],
+    totalEstimatedEffortMinutes: 0,
+  } as PipelineOutcomeReport;
+}
+
 describe("Edge Cases (Code Review Fixes)", () => {
   it("normalizes SDD trigger types case-insensitively", () => {
     const sddTriggers = [
@@ -1236,7 +1245,14 @@ describe("Edge Cases (Code Review Fixes)", () => {
       { name: "T6", type: "webhook" },
       { name: "T7", type: "cron", cron: "0 6 * * 1" },
     ];
-    const result = suggestTriggers(makeXaml(`<ui:LogMessage Text="Hi" />`), false, [], sddTriggers);
+    const queueResult = makeQueueResult();
+    const envResult: EnvironmentRequirements = {
+      targetFramework: "Windows",
+      robotType: "Unattended",
+      requiresBrowserExtension: false,
+      nugetDependencies: [],
+    };
+    const result = suggestTriggers(queueResult, envResult, undefined, sddTriggers);
     expect(result[0].triggerType).toBe("Queue");
     expect(result[1].triggerType).toBe("Schedule");
     expect(result[2].triggerType).toBe("API/Webhook");
@@ -1286,15 +1302,43 @@ describe("Edge Cases (Code Review Fixes)", () => {
       ]}
     );
     const context: DhgContext = { projectName: "TestProject", workflowNames: ["Main"], analysis };
-    const report: PipelineOutcomeReport = {
-      remediations: [], propertyRemediations: [], autoRepairs: [],
-      downgradeEvents: [], qualityWarnings: [], fullyGeneratedFiles: ["Main.xaml"],
-      totalEstimatedEffortMinutes: 0,
-    } as any;
-    const md = generateDhgFromOutcomeReport(report, context);
+    const md = generateDhgFromOutcomeReport(makeMinimalOutcomeReport(), context);
     expect(md).toContain("SDD-Defined Queues (Not Yet in XAML)");
     expect(md).toContain("RefundQueue");
     expect(md).toContain("5x");
     expect(md).toContain("2h");
+  });
+
+  it("renders decision branch topology from processEdges", () => {
+    const analysis = runDhgAnalysis(
+      [{ name: "Main.xaml", content: makeXaml(`<ui:LogMessage Text="Hi" />`) }],
+      undefined, 0, 0, undefined,
+      {
+        processSteps: [
+          { name: "Start", role: "", system: "", nodeType: "start", isPainPoint: false, description: "" },
+          { name: "Validate Input", role: "Clerk", system: "SAP", nodeType: "task", isPainPoint: false, description: "" },
+          { name: "Amount > 1000?", role: "", system: "", nodeType: "decision", isPainPoint: false, description: "Threshold check" },
+          { name: "Manager Approval", role: "Manager", system: "Email", nodeType: "task", isPainPoint: false, description: "" },
+          { name: "Auto Approve", role: "", system: "SAP", nodeType: "task", isPainPoint: false, description: "" },
+        ],
+        decisionBranches: [
+          {
+            decisionNodeName: "Amount > 1000?",
+            branches: [
+              { label: "Yes", targetNodeName: "Manager Approval" },
+              { label: "No", targetNodeName: "Auto Approve" },
+            ],
+          },
+        ],
+      },
+    );
+    const context: DhgContext = { projectName: "TestProject", workflowNames: ["Main"], analysis };
+    const md = generateDhgFromOutcomeReport(makeMinimalOutcomeReport(), context);
+    expect(md).toContain("Decision Points (Process Map Topology)");
+    expect(md).toContain("Amount > 1000?");
+    expect(md).toContain("[Yes]");
+    expect(md).toContain("Manager Approval");
+    expect(md).toContain("[No]");
+    expect(md).toContain("Auto Approve");
   });
 });

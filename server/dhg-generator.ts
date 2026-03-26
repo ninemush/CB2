@@ -697,6 +697,17 @@ function generateBusinessProcessOverviewSection(analysis: DhgAnalysisResult, sec
     md += `\n`;
   }
 
+  if (ctx.decisionBranches && ctx.decisionBranches.length > 0) {
+    md += `### Decision Points (Process Map Topology)\n\n`;
+    for (const db of ctx.decisionBranches) {
+      md += `**${db.decisionNodeName}**\n`;
+      for (const branch of db.branches) {
+        md += `  - [${branch.label}] → ${branch.targetNodeName}\n`;
+      }
+      md += `\n`;
+    }
+  }
+
   return md;
 }
 

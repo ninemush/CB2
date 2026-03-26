@@ -546,6 +546,32 @@ function buildDhgFromBuildResult(
           .filter((r: string) => r.length > 0),
       )] as string[];
       if (uniqueRoles.length > 0) upstreamContext.roles = uniqueRoles;
+
+      if (ctx.processEdges && ctx.processEdges.length > 0) {
+        const nodeById = new Map<number, any>();
+        for (const n of ctx.mapNodes) nodeById.set(n.id, n);
+
+        const decisionNodes = ctx.mapNodes.filter((n: any) =>
+          (n.nodeType || "").toLowerCase() === "decision" || (n.nodeType || "").toLowerCase() === "gateway"
+        );
+
+        if (decisionNodes.length > 0) {
+          const decisionBranches: Array<{ decisionNodeName: string; branches: Array<{ label: string; targetNodeName: string }> }> = [];
+          for (const dn of decisionNodes) {
+            const outgoing = ctx.processEdges.filter((e: any) => e.sourceNodeId === dn.id);
+            if (outgoing.length > 0) {
+              decisionBranches.push({
+                decisionNodeName: dn.name || "Decision",
+                branches: outgoing.map((e: any) => ({
+                  label: e.label || "→",
+                  targetNodeName: nodeById.get(e.targetNodeId)?.name || `Node ${e.targetNodeId}`,
+                })),
+              });
+            }
+          }
+          if (decisionBranches.length > 0) upstreamContext.decisionBranches = decisionBranches;
+        }
+      }
     }
 
     let sddArtifacts: Record<string, any> | null = null;

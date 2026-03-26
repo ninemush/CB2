@@ -757,6 +757,11 @@ export interface ProcessStepSummary {
   description: string;
 }
 
+export interface DecisionBranch {
+  decisionNodeName: string;
+  branches: Array<{ label: string; targetNodeName: string }>;
+}
+
 export interface UpstreamContext {
   ideaDescription?: string;
   pddSummary?: string;
@@ -771,6 +776,7 @@ export interface UpstreamContext {
   painPoints?: string[];
   systems?: string[];
   roles?: string[];
+  decisionBranches?: DecisionBranch[];
 }
 
 export type ArtifactReconciliationStatus = "aligned" | "sdd-only" | "xaml-only";
