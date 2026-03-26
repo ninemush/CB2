@@ -131,7 +131,7 @@ const CONVERSION_MAP: Record<string, Record<string, ConversionInfo>> = {
     "System.Int32": { kind: "wrap", wrapper: "CInt", detail: "Wrap in CInt([var]) to convert Boolean→Int32" },
   },
   "System.DateTime": {
-    "System.String": { kind: "wrap", wrapper: ".ToString(\"yyyy-MM-dd\")", detail: "Append .ToString(\"yyyy-MM-dd\") to convert DateTime→String" },
+    "System.String": { kind: "wrap", wrapper: "CStr", detail: "Wrap in CStr([var]) to convert DateTime→String" },
     "System.Int32": { kind: "unrepairable", detail: "Cannot convert DateTime to Int32 directly" },
   },
   "System.Data.DataTable": {
@@ -380,7 +380,7 @@ export function validateTypeCompatibility(
           const varInfo = varMap.get(binding.boundVariable);
           if (!varInfo) continue;
 
-          if (areTypesCompatible(varInfo.fullClrType, normalizeClrType(binding.expectedClrType))) continue;
+          if (areTypesCompatible(normalizeClrType(binding.expectedClrType), varInfo.fullClrType)) continue;
 
           const targetTypeArg = clrTypeToXamlTypeArg(normalizeClrType(binding.expectedClrType));
           const oldType = varInfo.type;

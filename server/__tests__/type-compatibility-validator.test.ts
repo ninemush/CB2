@@ -84,6 +84,13 @@ describe("getConversion", () => {
     expect(conv.wrapper).toBe("DateTime.Parse");
   });
 
+  it("DateTime→String returns CStr wrap (XML-safe)", () => {
+    const conv = getConversion("System.DateTime", "System.String")!;
+    expect(conv.kind).toBe("wrap");
+    expect(conv.wrapper).toBe("CStr");
+    expect(conv.wrapper).not.toContain('"');
+  });
+
   it("DataTable→String is unrepairable", () => {
     const conv = getConversion("System.Data.DataTable", "System.String")!;
     expect(conv.kind).toBe("unrepairable");
@@ -220,6 +227,37 @@ describe("validateTypeCompatibility", () => {
     const result = validateTypeCompatibility([{ name: "Main.xaml", content: xaml }]);
     expect(result.violations).toHaveLength(0);
     expect(result.repairs).toHaveLength(0);
+  });
+
+  it("does NOT flag Out property bound to Object variable (Any→Object allowed)", () => {
+    const xaml = `<Activity xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <Sequence.Variables>
+      <Variable x:TypeArguments="x:Object" Name="obj_Item" />
+    </Sequence.Variables>
+    <ui:GetTransactionItem TransactionItem="[obj_Item]" QueueName="TestQueue" DisplayName="Get Transaction Item" />
+  </Sequence>
+</Activity>`;
+    const result = validateTypeCompatibility([{ name: "Main.xaml", content: xaml }]);
+    expect(result.violations.filter(v => v.check === "TYPE_MISMATCH")).toHaveLength(0);
+    expect(result.repairs).toHaveLength(0);
+    expect(result.correctedEntries).toHaveLength(0);
+  });
+
+  it("flags Out binding when variable type is incompatible with output (String for QueueItem)", () => {
+    const xaml = `<Activity xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <Sequence.Variables>
+      <Variable x:TypeArguments="x:String" Name="str_Item" />
+    </Sequence.Variables>
+    <ui:GetTransactionItem TransactionItem="[str_Item]" QueueName="TestQueue" DisplayName="Get Transaction Item" />
+  </Sequence>
+</Activity>`;
+    const result = validateTypeCompatibility([{ name: "Main.xaml", content: xaml }]);
+    const typeViolations = result.violations.filter(v => v.check === "TYPE_MISMATCH");
+    expect(typeViolations.length).toBeGreaterThanOrEqual(1);
+    const outViolation = typeViolations.find(v => v.detail.includes("str_Item"));
+    expect(outViolation).toBeDefined();
   });
 
   it("skips expressions with function calls or concatenation (not simple variable refs)", () => {
