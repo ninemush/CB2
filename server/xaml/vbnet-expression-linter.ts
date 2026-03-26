@@ -153,6 +153,94 @@ export function extractExpressions(xamlContent: string, fileName: string): Expre
   return results;
 }
 
+const FUNCTION_SIGNATURES: Record<string, { minArgs: number; maxArgs: number }> = {
+  "CType": { minArgs: 2, maxArgs: 2 },
+  "CStr": { minArgs: 1, maxArgs: 1 },
+  "CInt": { minArgs: 1, maxArgs: 1 },
+  "CDbl": { minArgs: 1, maxArgs: 1 },
+  "CDec": { minArgs: 1, maxArgs: 1 },
+  "CBool": { minArgs: 1, maxArgs: 1 },
+  "CLng": { minArgs: 1, maxArgs: 1 },
+  "CDate": { minArgs: 1, maxArgs: 1 },
+  "CObj": { minArgs: 1, maxArgs: 1 },
+  "DirectCast": { minArgs: 2, maxArgs: 2 },
+  "TryCast": { minArgs: 2, maxArgs: 2 },
+};
+
+function countFunctionArgs(body: string): number {
+  if (!body.trim()) return 0;
+  let depth = 0;
+  let count = 1;
+  for (const ch of body) {
+    if (ch === "(" || ch === "[") depth++;
+    else if (ch === ")" || ch === "]") depth--;
+    else if (ch === "," && depth === 0) count++;
+  }
+  return count;
+}
+
+function validateFunctionCalls(expression: string, issues: LintIssue[]): void {
+  const funcCallPattern = /\b([A-Za-z_]\w*)\s*\(/g;
+  let m;
+  while ((m = funcCallPattern.exec(expression)) !== null) {
+    const funcName = m[1];
+    const sig = FUNCTION_SIGNATURES[funcName];
+    if (!sig) continue;
+
+    const startIdx = m.index + m[0].length;
+    let depth = 1;
+    let endIdx = startIdx;
+    for (let i = startIdx; i < expression.length && depth > 0; i++) {
+      if (expression[i] === "(") depth++;
+      else if (expression[i] === ")") depth--;
+      if (depth === 0) { endIdx = i; break; }
+    }
+
+    if (depth !== 0) {
+      issues.push({
+        code: "FUNC_UNBALANCED",
+        message: `${funcName}() has unbalanced parentheses`,
+        autoFixed: false,
+      });
+      continue;
+    }
+
+    const body = expression.substring(startIdx, endIdx);
+    const argCount = countFunctionArgs(body);
+
+    if (argCount < sig.minArgs || argCount > sig.maxArgs) {
+      const expected = sig.minArgs === sig.maxArgs
+        ? `${sig.minArgs}`
+        : `${sig.minArgs}-${sig.maxArgs}`;
+      issues.push({
+        code: "FUNC_ARG_COUNT",
+        message: `${funcName}() expects ${expected} argument(s) but got ${argCount}`,
+        autoFixed: false,
+      });
+    }
+  }
+
+  const methodPattern = /\.(\w+)\s*\(/g;
+  while ((m = methodPattern.exec(expression)) !== null) {
+    const methodName = m[1];
+    const startIdx = m.index + m[0].length;
+    let depth = 1;
+    let endIdx = startIdx;
+    for (let i = startIdx; i < expression.length && depth > 0; i++) {
+      if (expression[i] === "(") depth++;
+      else if (expression[i] === ")") depth--;
+      if (depth === 0) { endIdx = i; break; }
+    }
+    if (depth !== 0) {
+      issues.push({
+        code: "METHOD_UNBALANCED",
+        message: `.${methodName}() has unbalanced parentheses`,
+        autoFixed: false,
+      });
+    }
+  }
+}
+
 export function lintExpression(expression: string): LintResult {
   const issues: LintIssue[] = [];
   let corrected = expression;
@@ -315,6 +403,20 @@ export function lintExpression(expression: string): LintResult {
     reportOnly("DOUBLE_BRACKET", "Expression has double-bracket wrapping [[expr]] — outer brackets will be added by the framework");
   }
 
+  {
+    const strippedForAngle = replaceOutsideStrings(corrected, /"[^"]*"/g, '""');
+    const withoutEscaped = strippedForAngle.replace(/&lt;/g, "  ").replace(/&gt;/g, "  ");
+    const withoutVbOps = withoutEscaped.replace(/<>/g, "  ").replace(/<=/g, "  ").replace(/>=/g, "  ");
+    if (/</.test(withoutVbOps)) {
+      reportOnly("BARE_ANGLE_BRACKET", "Bare '<' operator in expression — should be XML-escaped as '&lt;' in XAML attributes");
+    }
+    if (/>/.test(withoutVbOps)) {
+      reportOnly("BARE_ANGLE_BRACKET", "Bare '>' operator in expression — should be XML-escaped as '&gt;' in XAML attributes");
+    }
+  }
+
+  validateFunctionCalls(corrected, issues);
+
   if (/\.length\b/.test(corrected)) {
     applyFix("CSHARP_LENGTH", "C# '.length' should be VB.NET '.Length'", /\.length\b/g, ".Length");
   }
@@ -430,8 +532,6 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
 
     if (/^(x|s|ui|scg|scg2|mva|sap|sap2010|mc|sads|local|p)$/.test(ident)) continue;
 
-    if (/^(item|value|key|index|result|row|col|cell|dt|str|obj|arr|args|sender|e)$/i.test(ident)) continue;
-
     undeclared.push(ident);
   }
 
@@ -444,6 +544,7 @@ export interface ExpressionLintSummary {
   autoFixed: number;
   unfixable: number;
   violations: QualityGateViolation[];
+  correctedEntries: { name: string; content: string }[];
   corrections: Array<{
     file: string;
     line: number;
@@ -458,6 +559,7 @@ export function lintXamlExpressions(
 ): ExpressionLintSummary {
   const violations: QualityGateViolation[] = [];
   const corrections: ExpressionLintSummary["corrections"] = [];
+  const correctedEntries: { name: string; content: string }[] = [];
   let totalExpressions = 0;
   let totalIssues = 0;
   let autoFixed = 0;
@@ -467,6 +569,7 @@ export function lintXamlExpressions(
     const shortName = entry.name.split("/").pop() || entry.name;
     const expressions = extractExpressions(entry.content, shortName);
     const declaredVars = extractDeclaredVariables(entry.content);
+    let patchedContent = entry.content;
 
     totalExpressions += expressions.length;
 
@@ -489,6 +592,11 @@ export function lintXamlExpressions(
             corrected: result.corrected,
             issues: result.issues,
           });
+
+          patchedContent = patchedContent.replace(
+            `[${loc.expression}]`,
+            `[${result.corrected}]`
+          );
         }
 
         for (const issue of result.issues) {
@@ -515,6 +623,8 @@ export function lintXamlExpressions(
         totalIssues++;
       }
     }
+
+    correctedEntries.push({ name: entry.name, content: patchedContent });
   }
 
   return {
@@ -523,6 +633,7 @@ export function lintXamlExpressions(
     autoFixed,
     unfixable,
     violations,
+    correctedEntries,
     corrections,
   };
 }

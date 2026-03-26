@@ -1877,6 +1877,17 @@ export function runQualityGate(input: QualityGateInput): QualityGateResult {
   const expressionLintResult = lintXamlExpressions(input.xamlEntries);
   const positiveEvidence = collectPositiveEvidence(input);
 
+  if (expressionLintResult.correctedEntries.length > 0) {
+    for (let i = 0; i < input.xamlEntries.length; i++) {
+      const corrected = expressionLintResult.correctedEntries.find(
+        ce => ce.name === input.xamlEntries[i].name
+      );
+      if (corrected) {
+        input.xamlEntries[i] = corrected;
+      }
+    }
+  }
+
   const allViolations = [
     ...blockedViolations,
     ...completenessViolations,

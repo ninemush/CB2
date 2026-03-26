@@ -356,4 +356,61 @@ describe("VB.NET Expression Linter", () => {
       expect(result.corrected).toContain("String.IsNullOrEmpty");
     });
   });
+
+  describe("bare angle bracket detection", () => {
+    it("detects bare < operator needing XML escaping", () => {
+      const result = lintExpression("int_count < 10");
+      expect(result.issues.some(i => i.code === "BARE_ANGLE_BRACKET")).toBe(true);
+    });
+
+    it("does not flag already-escaped &lt;", () => {
+      const result = lintExpression("int_count &lt; 10");
+      expect(result.issues.filter(i => i.code === "BARE_ANGLE_BRACKET")).toHaveLength(0);
+    });
+  });
+
+  describe("function-call validation", () => {
+    it("detects CType with wrong argument count", () => {
+      const result = lintExpression("CType(str_value)");
+      expect(result.issues.some(i => i.code === "FUNC_ARG_COUNT" && i.message.includes("CType"))).toBe(true);
+    });
+
+    it("accepts CType with correct argument count", () => {
+      const result = lintExpression("CType(obj_row, DataRow)");
+      expect(result.issues.filter(i => i.code === "FUNC_ARG_COUNT")).toHaveLength(0);
+    });
+
+    it("detects CStr with too many arguments", () => {
+      const result = lintExpression("CStr(str_a, str_b)");
+      expect(result.issues.some(i => i.code === "FUNC_ARG_COUNT" && i.message.includes("CStr"))).toBe(true);
+    });
+
+    it("accepts CStr with one argument", () => {
+      const result = lintExpression("CStr(int_value)");
+      expect(result.issues.filter(i => i.code === "FUNC_ARG_COUNT")).toHaveLength(0);
+    });
+
+    it("detects unbalanced method call parentheses", () => {
+      const result = lintExpression("str_val.ToString(");
+      expect(result.issues.some(i => i.code === "METHOD_UNBALANCED" || i.code === "UNBALANCED_PARENS")).toBe(true);
+    });
+  });
+
+  describe("XAML content patching", () => {
+    it("applies corrections back to XAML content", () => {
+      const entries = [{
+        name: "Main.xaml",
+        content: `<Sequence>
+  <Variable x:TypeArguments="x:String" Name="str_result" />
+  <If Condition="[str_result != null]" DisplayName="Check" />
+</Sequence>`,
+      }];
+      const result = lintXamlExpressions(entries);
+      expect(result.corrections.length).toBeGreaterThan(0);
+      expect(result.correctedEntries).toHaveLength(1);
+      expect(result.correctedEntries[0].content).toContain("Nothing");
+      expect(result.correctedEntries[0].content).toContain("<>");
+      expect(result.correctedEntries[0].content).not.toContain("!= null");
+    });
+  });
 });
