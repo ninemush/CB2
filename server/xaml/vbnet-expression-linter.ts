@@ -150,6 +150,55 @@ export function extractExpressions(xamlContent: string, fileName: string): Expre
     }
   }
 
+  const vbValuePattern = /<mva:VisualBasicValue[^>]*Expression(?:Text)?="([^"]+)"/g;
+  while ((mm = vbValuePattern.exec(xamlContent)) !== null) {
+    const expr = mm[1];
+    if (!expr) continue;
+    const lineNum = xamlContent.substring(0, mm.index).split("\n").length;
+    const alreadyFound = results.some(r => r.expression === expr && Math.abs(r.line - lineNum) <= 2);
+    if (!alreadyFound) {
+      results.push({
+        file: fileName,
+        line: lineNum,
+        expression: expr,
+        context: expr.substring(0, 120),
+      });
+    }
+  }
+
+  const vbRefPattern = /<mva:VisualBasicReference[^>]*Expression(?:Text)?="([^"]+)"/g;
+  while ((mm = vbRefPattern.exec(xamlContent)) !== null) {
+    const expr = mm[1];
+    if (!expr) continue;
+    const lineNum = xamlContent.substring(0, mm.index).split("\n").length;
+    const alreadyFound = results.some(r => r.expression === expr && Math.abs(r.line - lineNum) <= 2);
+    if (!alreadyFound) {
+      results.push({
+        file: fileName,
+        line: lineNum,
+        expression: expr,
+        context: expr.substring(0, 120),
+      });
+    }
+  }
+
+  const genericBracketPattern = />(\s*)\[([^\]]+(?:\[[^\]]*\][^\]]*)*)\](\s*)</g;
+  while ((mm = genericBracketPattern.exec(xamlContent)) !== null) {
+    const expr = mm[2];
+    if (!expr) continue;
+    if (expr.startsWith("&quot;") || expr.startsWith("\"")) continue;
+    const lineNum = xamlContent.substring(0, mm.index).split("\n").length;
+    const alreadyFound = results.some(r => r.expression === expr && Math.abs(r.line - lineNum) <= 2);
+    if (!alreadyFound) {
+      results.push({
+        file: fileName,
+        line: lineNum,
+        expression: expr,
+        context: expr.substring(0, 120),
+      });
+    }
+  }
+
   return results;
 }
 
@@ -220,6 +269,80 @@ function validateFunctionCalls(expression: string, issues: LintIssue[]): void {
     }
   }
 
+  const METHOD_SIGNATURES: Record<string, { minArgs: number; maxArgs: number }> = {
+    "ToString": { minArgs: 0, maxArgs: 1 },
+    "Trim": { minArgs: 0, maxArgs: 1 },
+    "Split": { minArgs: 1, maxArgs: 3 },
+    "Substring": { minArgs: 1, maxArgs: 2 },
+    "Replace": { minArgs: 2, maxArgs: 2 },
+    "Contains": { minArgs: 1, maxArgs: 1 },
+    "StartsWith": { minArgs: 1, maxArgs: 2 },
+    "EndsWith": { minArgs: 1, maxArgs: 2 },
+    "IndexOf": { minArgs: 1, maxArgs: 3 },
+    "ToUpper": { minArgs: 0, maxArgs: 0 },
+    "ToLower": { minArgs: 0, maxArgs: 0 },
+    "PadLeft": { minArgs: 1, maxArgs: 2 },
+    "PadRight": { minArgs: 1, maxArgs: 2 },
+  };
+
+  const STATIC_METHOD_SIGNATURES: Record<string, { minArgs: number; maxArgs: number }> = {
+    "String.Format": { minArgs: 2, maxArgs: 10 },
+    "String.IsNullOrEmpty": { minArgs: 1, maxArgs: 1 },
+    "String.IsNullOrWhiteSpace": { minArgs: 1, maxArgs: 1 },
+    "String.Concat": { minArgs: 2, maxArgs: 10 },
+    "String.Join": { minArgs: 2, maxArgs: 2 },
+    "Convert.ToInt32": { minArgs: 1, maxArgs: 1 },
+    "Convert.ToInt64": { minArgs: 1, maxArgs: 1 },
+    "Convert.ToDouble": { minArgs: 1, maxArgs: 1 },
+    "Convert.ToDecimal": { minArgs: 1, maxArgs: 1 },
+    "Convert.ToBoolean": { minArgs: 1, maxArgs: 1 },
+    "Convert.ToString": { minArgs: 1, maxArgs: 1 },
+    "Convert.ToDateTime": { minArgs: 1, maxArgs: 1 },
+    "Math.Abs": { minArgs: 1, maxArgs: 1 },
+    "Math.Round": { minArgs: 1, maxArgs: 2 },
+    "Math.Max": { minArgs: 2, maxArgs: 2 },
+    "Math.Min": { minArgs: 2, maxArgs: 2 },
+  };
+
+  const staticPattern = /\b([A-Z]\w+\.\w+)\s*\(/g;
+  while ((m = staticPattern.exec(expression)) !== null) {
+    const fullName = m[1];
+    const sig = STATIC_METHOD_SIGNATURES[fullName];
+    if (!sig) continue;
+
+    const startIdx = m.index + m[0].length;
+    let depth = 1;
+    let endIdx = startIdx;
+    for (let i = startIdx; i < expression.length && depth > 0; i++) {
+      if (expression[i] === "(") depth++;
+      else if (expression[i] === ")") depth--;
+      if (depth === 0) { endIdx = i; break; }
+    }
+
+    if (depth !== 0) {
+      issues.push({
+        code: "FUNC_UNBALANCED",
+        message: `${fullName}() has unbalanced parentheses`,
+        autoFixed: false,
+      });
+      continue;
+    }
+
+    const body = expression.substring(startIdx, endIdx);
+    const argCount = countFunctionArgs(body);
+
+    if (argCount < sig.minArgs || argCount > sig.maxArgs) {
+      const expected = sig.minArgs === sig.maxArgs
+        ? `${sig.minArgs}`
+        : `${sig.minArgs}-${sig.maxArgs}`;
+      issues.push({
+        code: "FUNC_ARG_COUNT",
+        message: `${fullName}() expects ${expected} argument(s) but got ${argCount}`,
+        autoFixed: false,
+      });
+    }
+  }
+
   const methodPattern = /\.(\w+)\s*\(/g;
   while ((m = methodPattern.exec(expression)) !== null) {
     const methodName = m[1];
@@ -237,6 +360,23 @@ function validateFunctionCalls(expression: string, issues: LintIssue[]): void {
         message: `.${methodName}() has unbalanced parentheses`,
         autoFixed: false,
       });
+      continue;
+    }
+
+    const methSig = METHOD_SIGNATURES[methodName];
+    if (methSig) {
+      const body = expression.substring(startIdx, endIdx);
+      const argCount = countFunctionArgs(body);
+      if (argCount < methSig.minArgs || argCount > methSig.maxArgs) {
+        const expected = methSig.minArgs === methSig.maxArgs
+          ? `${methSig.minArgs}`
+          : `${methSig.minArgs}-${methSig.maxArgs}`;
+        issues.push({
+          code: "FUNC_ARG_COUNT",
+          message: `.${methodName}() expects ${expected} argument(s) but got ${argCount}`,
+          autoFixed: false,
+        });
+      }
     }
   }
 }
@@ -511,6 +651,20 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
   const undeclared: string[] = [];
   const stringPattern = /"(?:[^"\\]|\\.)*"/g;
   const exprWithoutStrings = expression.replace(stringPattern, (m) => " ".repeat(m.length));
+
+  const memberAccessTokens = new Set<string>();
+  const memberPattern = /\.([a-zA-Z_]\w*)/g;
+  let mm;
+  while ((mm = memberPattern.exec(exprWithoutStrings)) !== null) {
+    memberAccessTokens.add(mm[1]);
+  }
+
+  const invokedTokens = new Set<string>();
+  const invokePattern = /\b([a-zA-Z_]\w*)\s*\(/g;
+  while ((mm = invokePattern.exec(exprWithoutStrings)) !== null) {
+    invokedTokens.add(mm[1]);
+  }
+
   const identPattern = /\b([a-zA-Z_]\w*)\b/g;
   let m;
   const seen = new Set<string>();
@@ -525,12 +679,19 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
     if (VB_BUILTIN_FUNCTIONS.has(ident)) continue;
     if (declaredVars.has(ident)) continue;
 
+    const charBefore = m.index > 0 ? exprWithoutStrings[m.index - 1] : "";
+    if (charBefore === ".") continue;
+
     if (/^[A-Z][a-z]/.test(ident) && expression.includes(`${ident}.`)) continue;
     if (/^[A-Z][a-z]/.test(ident) && expression.includes(`${ident}(`)) continue;
 
     if (/^[A-Z]{2,}$/.test(ident)) continue;
 
     if (/^(x|s|ui|scg|scg2|mva|sap|sap2010|mc|sads|local|p)$/.test(ident)) continue;
+
+    if (invokedTokens.has(ident) && !declaredVars.has(ident)) {
+      if (/^[A-Z]/.test(ident)) continue;
+    }
 
     undeclared.push(ident);
   }

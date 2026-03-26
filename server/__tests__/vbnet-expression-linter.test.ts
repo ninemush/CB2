@@ -218,6 +218,20 @@ describe("VB.NET Expression Linter", () => {
       const undeclared = findUndeclaredVariables("CStr(CInt(42))", declared);
       expect(undeclared).toHaveLength(0);
     });
+
+    it("does not flag member-access identifiers as undeclared", () => {
+      const declared = new Set(["obj_row"]);
+      const undeclared = findUndeclaredVariables('obj_row.Name.ToString()', declared);
+      expect(undeclared).not.toContain("Name");
+      expect(undeclared).not.toContain("ToString");
+    });
+
+    it("does not flag property chains as undeclared", () => {
+      const declared = new Set(["dt_result"]);
+      const undeclared = findUndeclaredVariables('dt_result.Rows.Count', declared);
+      expect(undeclared).not.toContain("Rows");
+      expect(undeclared).not.toContain("Count");
+    });
   });
 
   describe("lintXamlExpressions - full pipeline", () => {
@@ -325,7 +339,7 @@ describe("VB.NET Expression Linter", () => {
     });
   });
 
-  describe("multiline extraction", () => {
+  describe("multiline and VisualBasicValue extraction", () => {
     it("extracts expressions from multiline InArgument bodies", () => {
       const xaml = `<Assign.Value>
   <InArgument x:TypeArguments="x:String">
@@ -334,6 +348,20 @@ describe("VB.NET Expression Linter", () => {
       const results = extractExpressions(xaml, "Main.xaml");
       expect(results.length).toBeGreaterThan(0);
       expect(results.some(r => r.expression.includes("str_value"))).toBe(true);
+    });
+
+    it("extracts expressions from VisualBasicValue elements", () => {
+      const xaml = `<mva:VisualBasicValue x:TypeArguments="x:String" ExpressionText="str_name &amp; &quot; World&quot;" />`;
+      const results = extractExpressions(xaml, "Main.xaml");
+      expect(results.length).toBeGreaterThan(0);
+    });
+
+    it("extracts expressions from generic child-element bracket bodies", () => {
+      const xaml = `<SomeElement>
+>[str_status <> Nothing]<
+</SomeElement>`;
+      const results = extractExpressions(xaml, "Main.xaml");
+      expect(results.some(r => r.expression.includes("str_status"))).toBe(true);
     });
   });
 
@@ -393,6 +421,31 @@ describe("VB.NET Expression Linter", () => {
     it("detects unbalanced method call parentheses", () => {
       const result = lintExpression("str_val.ToString(");
       expect(result.issues.some(i => i.code === "METHOD_UNBALANCED" || i.code === "UNBALANCED_PARENS")).toBe(true);
+    });
+
+    it("validates String.Format argument count", () => {
+      const result = lintExpression('String.Format("{0}")');
+      expect(result.issues.some(i => i.code === "FUNC_ARG_COUNT" && i.message.includes("String.Format"))).toBe(true);
+    });
+
+    it("accepts String.Format with correct args", () => {
+      const result = lintExpression('String.Format("{0}", str_name)');
+      expect(result.issues.filter(i => i.code === "FUNC_ARG_COUNT" && i.message.includes("String.Format"))).toHaveLength(0);
+    });
+
+    it("validates Convert.ToInt32 argument count", () => {
+      const result = lintExpression("Convert.ToInt32(str_a, str_b)");
+      expect(result.issues.some(i => i.code === "FUNC_ARG_COUNT" && i.message.includes("Convert.ToInt32"))).toBe(true);
+    });
+
+    it("validates .Replace needs 2 args", () => {
+      const result = lintExpression('str_val.Replace("a")');
+      expect(result.issues.some(i => i.code === "FUNC_ARG_COUNT" && i.message.includes("Replace"))).toBe(true);
+    });
+
+    it("validates .ToUpper takes no args", () => {
+      const result = lintExpression('str_val.ToUpper("en")');
+      expect(result.issues.some(i => i.code === "FUNC_ARG_COUNT" && i.message.includes("ToUpper"))).toBe(true);
     });
   });
 
