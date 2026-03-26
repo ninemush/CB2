@@ -15,6 +15,7 @@ export interface TypeRepairAction {
   expectedType: string;
   actualType: string;
   repairKind: "conversion-wrap" | "variable-type-change" | "unrepairable";
+  boundVariable?: string;
   detail: string;
 }
 
@@ -281,24 +282,24 @@ function applyConversionWrap(
   varName: string,
   wrapper: string,
   propertyContext: string,
+  activityTag: string,
 ): string {
   const varEscaped = varName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const propEscaped = propertyContext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  if (wrapper.startsWith(".")) {
-    const wrapExpr = `${varName}${wrapper}`;
-    const attrPattern = new RegExp(`(${propertyContext}=")\\[${varEscaped}\\](")`,"g");
-    xamlContent = xamlContent.replace(attrPattern, `$1[${wrapExpr}]$2`);
+  const wrapExpr = wrapper.startsWith(".")
+    ? `${varName}${wrapper}`
+    : `${wrapper}(${varName})`;
 
-    const bodyPattern = new RegExp(`(>\\s*)\\[${varEscaped}\\](\\s*<)`, "g");
-    xamlContent = xamlContent.replace(bodyPattern, `$1[${wrapExpr}]$2`);
-  } else {
-    const wrapExpr = `${wrapper}(${varName})`;
-    const attrPattern = new RegExp(`(${propertyContext}=")\\[${varEscaped}\\](")`,"g");
-    xamlContent = xamlContent.replace(attrPattern, `$1[${wrapExpr}]$2`);
+  const attrPattern = new RegExp(`(${propEscaped}=")\\[${varEscaped}\\](")`,"g");
+  xamlContent = xamlContent.replace(attrPattern, `$1[${wrapExpr}]$2`);
 
-    const bodyPattern = new RegExp(`(>\\s*)\\[${varEscaped}\\](\\s*<)`, "g");
-    xamlContent = xamlContent.replace(bodyPattern, `$1[${wrapExpr}]$2`);
-  }
+  const actTagEscaped = activityTag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const childPropPattern = new RegExp(
+    `(<${actTagEscaped}\\.${propEscaped}>\\s*<(?:In|InOut)Argument[^>]*>\\s*)\\[${varEscaped}\\](\\s*<\\/(?:In|InOut)Argument>)`,
+    "g"
+  );
+  xamlContent = xamlContent.replace(childPropPattern, `$1[${wrapExpr}]$2`);
 
   return xamlContent;
 }
@@ -359,106 +360,139 @@ export function validateTypeCompatibility(
 
   for (const entry of xamlEntries) {
     const shortName = entry.name.split("/").pop() || entry.name;
-    const variables = extractVariableDeclarations(entry.content);
-    const bindings = extractPropertyBindings(entry.content, shortName);
     let patchedContent = entry.content;
     let changed = false;
+    const MAX_PASSES = 3;
 
-    const varMap = new Map<string, VariableInfo>();
-    for (const v of variables) {
-      varMap.set(v.name, v);
-    }
+    for (let pass = 0; pass < MAX_PASSES; pass++) {
+      const variables = extractVariableDeclarations(patchedContent);
+      const bindings = extractPropertyBindings(patchedContent, shortName);
 
-    for (const binding of bindings) {
-      const varInfo = varMap.get(binding.boundVariable);
-      if (!varInfo) continue;
-
-      if (areTypesCompatible(varInfo.fullClrType, normalizeClrType(binding.expectedClrType))) {
-        continue;
+      const varMap = new Map<string, VariableInfo>();
+      for (const v of variables) {
+        varMap.set(v.name, v);
       }
 
-      const conversion = getConversion(varInfo.fullClrType, normalizeClrType(binding.expectedClrType));
-      if (!conversion) continue;
+      let madeChangesThisPass = false;
 
-      if (binding.direction === "Out" || binding.direction === "InOut") {
-        const targetTypeArg = clrTypeToXamlTypeArg(normalizeClrType(binding.expectedClrType));
-        patchedContent = changeVariableType(patchedContent, binding.boundVariable, targetTypeArg);
-        changed = true;
+      if (pass === 0) {
+        for (const binding of bindings) {
+          if (binding.direction !== "Out" && binding.direction !== "InOut") continue;
+          const varInfo = varMap.get(binding.boundVariable);
+          if (!varInfo) continue;
 
-        const updatedVar = varMap.get(binding.boundVariable);
-        if (updatedVar) {
-          updatedVar.type = targetTypeArg;
-          updatedVar.fullClrType = normalizeClrType(binding.expectedClrType);
+          if (areTypesCompatible(varInfo.fullClrType, normalizeClrType(binding.expectedClrType))) continue;
+
+          const targetTypeArg = clrTypeToXamlTypeArg(normalizeClrType(binding.expectedClrType));
+          const oldType = varInfo.type;
+          const oldClrType = varInfo.fullClrType;
+          patchedContent = changeVariableType(patchedContent, binding.boundVariable, targetTypeArg);
+          changed = true;
+          madeChangesThisPass = true;
+
+          repairs.push({
+            file: shortName,
+            line: binding.line,
+            activity: binding.activityTag,
+            property: binding.propertyName,
+            expectedType: binding.expectedClrType,
+            actualType: oldClrType,
+            repairKind: "variable-type-change",
+            detail: `Changed variable "${binding.boundVariable}" type from ${oldType} to ${targetTypeArg} to match ${binding.activityTag}.${binding.propertyName} output type`,
+          });
+
+          violations.push({
+            category: "accuracy",
+            severity: "warning",
+            check: "TYPE_MISMATCH",
+            file: shortName,
+            detail: `Line ${binding.line}: Auto-repaired — changed variable "${binding.boundVariable}" type from ${oldType} to ${targetTypeArg} to match ${binding.activityTag}.${binding.propertyName} (${binding.expectedClrType})`,
+          });
         }
-
-        repairs.push({
-          file: shortName,
-          line: binding.line,
-          activity: binding.activityTag,
-          property: binding.propertyName,
-          expectedType: binding.expectedClrType,
-          actualType: varInfo.fullClrType,
-          repairKind: "variable-type-change",
-          detail: `Changed variable "${binding.boundVariable}" type from ${varInfo.type} to ${targetTypeArg} to match ${binding.activityTag}.${binding.propertyName} output type`,
-        });
-
-        violations.push({
-          category: "accuracy",
-          severity: "warning",
-          check: "TYPE_MISMATCH",
-          file: shortName,
-          detail: `Line ${binding.line}: Auto-repaired — changed variable "${binding.boundVariable}" type from ${varInfo.type} to ${targetTypeArg} to match ${binding.activityTag}.${binding.propertyName} (${binding.expectedClrType})`,
-        });
-        continue;
       }
 
-      if (conversion.kind === "wrap" && conversion.wrapper) {
-        patchedContent = applyConversionWrap(
-          patchedContent,
-          binding.boundVariable,
-          conversion.wrapper,
-          binding.propertyName,
+      const refreshedVars = extractVariableDeclarations(patchedContent);
+      const refreshedVarMap = new Map<string, VariableInfo>();
+      for (const v of refreshedVars) {
+        refreshedVarMap.set(v.name, v);
+      }
+
+      const refreshedBindings = pass === 0 && madeChangesThisPass
+        ? extractPropertyBindings(patchedContent, shortName)
+        : bindings;
+
+      for (const binding of refreshedBindings) {
+        if (binding.direction === "Out" || binding.direction === "InOut") continue;
+        const varInfo = refreshedVarMap.get(binding.boundVariable);
+        if (!varInfo) continue;
+
+        if (areTypesCompatible(varInfo.fullClrType, normalizeClrType(binding.expectedClrType))) continue;
+
+        const conversion = getConversion(varInfo.fullClrType, normalizeClrType(binding.expectedClrType));
+        if (!conversion) continue;
+
+        const alreadyRepaired = repairs.some(r =>
+          r.file === shortName &&
+          r.property === binding.propertyName &&
+          r.boundVariable === binding.boundVariable &&
+          r.activity === binding.activityTag
         );
-        changed = true;
+        if (alreadyRepaired) continue;
 
-        repairs.push({
-          file: shortName,
-          line: binding.line,
-          activity: binding.activityTag,
-          property: binding.propertyName,
-          expectedType: binding.expectedClrType,
-          actualType: varInfo.fullClrType,
-          repairKind: "conversion-wrap",
-          detail: conversion.detail.replace("[var]", binding.boundVariable),
-        });
+        if (conversion.kind === "wrap" && conversion.wrapper) {
+          patchedContent = applyConversionWrap(
+            patchedContent,
+            binding.boundVariable,
+            conversion.wrapper,
+            binding.propertyName,
+            binding.activityTag,
+          );
+          changed = true;
+          madeChangesThisPass = true;
 
-        violations.push({
-          category: "accuracy",
-          severity: "warning",
-          check: "TYPE_MISMATCH",
-          file: shortName,
-          detail: `Line ${binding.line}: Auto-repaired — ${conversion.detail.replace("[var]", binding.boundVariable)} for ${binding.activityTag}.${binding.propertyName}`,
-        });
-      } else {
-        repairs.push({
-          file: shortName,
-          line: binding.line,
-          activity: binding.activityTag,
-          property: binding.propertyName,
-          expectedType: binding.expectedClrType,
-          actualType: varInfo.fullClrType,
-          repairKind: "unrepairable",
-          detail: conversion.detail,
-        });
+          repairs.push({
+            file: shortName,
+            line: binding.line,
+            activity: binding.activityTag,
+            property: binding.propertyName,
+            expectedType: binding.expectedClrType,
+            actualType: varInfo.fullClrType,
+            repairKind: "conversion-wrap",
+            boundVariable: binding.boundVariable,
+            detail: conversion.detail.replace("[var]", binding.boundVariable),
+          });
 
-        violations.push({
-          category: "accuracy",
-          severity: "warning",
-          check: "TYPE_MISMATCH",
-          file: shortName,
-          detail: `Line ${binding.line}: Type mismatch — variable "${binding.boundVariable}" (${varInfo.fullClrType}) bound to ${binding.activityTag}.${binding.propertyName} (expects ${binding.expectedClrType}). ${conversion.detail}`,
-        });
+          violations.push({
+            category: "accuracy",
+            severity: "warning",
+            check: "TYPE_MISMATCH",
+            file: shortName,
+            detail: `Line ${binding.line}: Auto-repaired — ${conversion.detail.replace("[var]", binding.boundVariable)} for ${binding.activityTag}.${binding.propertyName}`,
+          });
+        } else {
+          repairs.push({
+            file: shortName,
+            line: binding.line,
+            activity: binding.activityTag,
+            property: binding.propertyName,
+            expectedType: binding.expectedClrType,
+            actualType: varInfo.fullClrType,
+            repairKind: "unrepairable",
+            boundVariable: binding.boundVariable,
+            detail: conversion.detail,
+          });
+
+          violations.push({
+            category: "accuracy",
+            severity: "warning",
+            check: "TYPE_MISMATCH",
+            file: shortName,
+            detail: `Line ${binding.line}: Type mismatch — variable "${binding.boundVariable}" (${varInfo.fullClrType}) bound to ${binding.activityTag}.${binding.propertyName} (expects ${binding.expectedClrType}). ${conversion.detail}`,
+          });
+        }
       }
+
+      if (!madeChangesThisPass) break;
     }
 
     if (changed) {

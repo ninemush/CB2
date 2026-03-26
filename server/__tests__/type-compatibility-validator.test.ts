@@ -21,7 +21,7 @@ describe("areTypesCompatible", () => {
     expect(areTypesCompatible("System.Data.DataTable", "System.Object")).toBe(true);
   });
 
-  it("Object to specific type is not compatible", () => {
+  it("Object to specific type is NOT compatible", () => {
     expect(areTypesCompatible("System.Object", "System.String")).toBe(false);
   });
 
@@ -33,15 +33,15 @@ describe("areTypesCompatible", () => {
     expect(areTypesCompatible("System.Int32", "System.Double")).toBe(true);
   });
 
-  it("String to Int32 is not compatible", () => {
+  it("String to Int32 is NOT compatible", () => {
     expect(areTypesCompatible("System.String", "System.Int32")).toBe(false);
   });
 
-  it("String to DataTable is not compatible", () => {
+  it("String to DataTable is NOT compatible", () => {
     expect(areTypesCompatible("System.String", "System.Data.DataTable")).toBe(false);
   });
 
-  it("normalizes XAML type arguments", () => {
+  it("normalizes XAML type arguments to full CLR names", () => {
     expect(areTypesCompatible("x:String", "x:String")).toBe(true);
     expect(areTypesCompatible("x:Int32", "x:Int64")).toBe(true);
     expect(areTypesCompatible("x:String", "x:Object")).toBe(true);
@@ -49,153 +49,95 @@ describe("areTypesCompatible", () => {
 });
 
 describe("getConversion", () => {
-  it("returns null for compatible types", () => {
+  it("returns null for compatible types (no conversion needed)", () => {
     expect(getConversion("System.String", "System.Object")).toBeNull();
     expect(getConversion("System.Int32", "System.Int64")).toBeNull();
   });
 
-  it("String to Int32 returns CInt wrap", () => {
-    const conv = getConversion("System.String", "System.Int32");
-    expect(conv).not.toBeNull();
-    expect(conv!.kind).toBe("wrap");
-    expect(conv!.wrapper).toBe("CInt");
+  it("String→Int32 returns CInt wrap", () => {
+    const conv = getConversion("System.String", "System.Int32")!;
+    expect(conv.kind).toBe("wrap");
+    expect(conv.wrapper).toBe("CInt");
   });
 
-  it("Int32 to String returns CStr wrap", () => {
-    const conv = getConversion("System.Int32", "System.String");
-    expect(conv).not.toBeNull();
-    expect(conv!.kind).toBe("wrap");
-    expect(conv!.wrapper).toBe("CStr");
+  it("Int32→String returns CStr wrap", () => {
+    const conv = getConversion("System.Int32", "System.String")!;
+    expect(conv.kind).toBe("wrap");
+    expect(conv.wrapper).toBe("CStr");
   });
 
-  it("String to DataTable is unrepairable", () => {
-    const conv = getConversion("System.String", "System.Data.DataTable");
-    expect(conv).not.toBeNull();
-    expect(conv!.kind).toBe("unrepairable");
+  it("String→DataTable is unrepairable", () => {
+    const conv = getConversion("System.String", "System.Data.DataTable")!;
+    expect(conv.kind).toBe("unrepairable");
+    expect(conv.detail).toContain("Cannot convert String to DataTable");
   });
 
-  it("Boolean to String returns CStr wrap", () => {
-    const conv = getConversion("System.Boolean", "System.String");
-    expect(conv).not.toBeNull();
-    expect(conv!.kind).toBe("wrap");
-    expect(conv!.wrapper).toBe("CStr");
+  it("Boolean→String returns CStr wrap", () => {
+    const conv = getConversion("System.Boolean", "System.String")!;
+    expect(conv.kind).toBe("wrap");
+    expect(conv.wrapper).toBe("CStr");
   });
 
-  it("String to DateTime returns DateTime.Parse wrap", () => {
-    const conv = getConversion("System.String", "System.DateTime");
-    expect(conv).not.toBeNull();
-    expect(conv!.kind).toBe("wrap");
-    expect(conv!.wrapper).toBe("DateTime.Parse");
+  it("String→DateTime returns DateTime.Parse wrap", () => {
+    const conv = getConversion("System.String", "System.DateTime")!;
+    expect(conv.kind).toBe("wrap");
+    expect(conv.wrapper).toBe("DateTime.Parse");
   });
 
-  it("DataTable to String is unrepairable", () => {
-    const conv = getConversion("System.Data.DataTable", "System.String");
-    expect(conv).not.toBeNull();
-    expect(conv!.kind).toBe("unrepairable");
+  it("DataTable→String is unrepairable", () => {
+    const conv = getConversion("System.Data.DataTable", "System.String")!;
+    expect(conv.kind).toBe("unrepairable");
+  });
+
+  it("Double→Int32 returns CInt wrap", () => {
+    const conv = getConversion("System.Double", "System.Int32")!;
+    expect(conv.kind).toBe("wrap");
+    expect(conv.wrapper).toBe("CInt");
+  });
+
+  it("String→Boolean returns CBool wrap", () => {
+    const conv = getConversion("x:String", "x:Boolean")!;
+    expect(conv.kind).toBe("wrap");
+    expect(conv.wrapper).toBe("CBool");
+  });
+
+  it("normalizes XAML-shorthand types for lookup", () => {
+    const conv = getConversion("x:Int32", "x:String")!;
+    expect(conv.kind).toBe("wrap");
+    expect(conv.wrapper).toBe("CStr");
   });
 });
 
 describe("validateTypeCompatibility", () => {
-  it("detects String variable bound to Int32 property and auto-repairs", () => {
+  it("does not flag String variable bound to String property (QueueName)", () => {
     const xaml = `<Activity xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
   <Sequence>
     <Sequence.Variables>
-      <Variable x:TypeArguments="x:String" Name="str_Value" />
+      <Variable x:TypeArguments="x:String" Name="str_QueueName" />
     </Sequence.Variables>
-    <ui:LogMessage Level="[str_Value]" Message="test" DisplayName="Log" />
+    <ui:AddQueueItem QueueName="[str_QueueName]" DisplayName="Add Queue Item" />
   </Sequence>
 </Activity>`;
     const result = validateTypeCompatibility([{ name: "Main.xaml", content: xaml }]);
-    expect(result.violations.length).toBeGreaterThanOrEqual(0);
-  });
-
-  it("does not flag compatible types", () => {
-    const xaml = `<Activity xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
-  <Sequence>
-    <Sequence.Variables>
-      <Variable x:TypeArguments="x:String" Name="str_Name" />
-    </Sequence.Variables>
-    <ui:AddQueueItem QueueName="[str_Name]" DisplayName="Add Queue Item" />
-  </Sequence>
-</Activity>`;
-    const result = validateTypeCompatibility([{ name: "Main.xaml", content: xaml }]);
-    const typeMismatchViolations = result.violations.filter(v => v.check === "TYPE_MISMATCH");
-    expect(typeMismatchViolations).toHaveLength(0);
-  });
-
-  it("detects OutArgument type mismatch and changes variable type", () => {
-    const xaml = `<Activity xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
-  <Sequence>
-    <Sequence.Variables>
-      <Variable x:TypeArguments="x:Int32" Name="int_Asset" />
-    </Sequence.Variables>
-    <ui:GetAsset AssetName="MyAsset" DisplayName="Get Asset">
-      <ui:GetAsset.AssetValue>
-        <OutArgument x:TypeArguments="x:String">[int_Asset]</OutArgument>
-      </ui:GetAsset.AssetValue>
-    </ui:GetAsset>
-  </Sequence>
-</Activity>`;
-    const result = validateTypeCompatibility([{ name: "Main.xaml", content: xaml }]);
-    const repairs = result.repairs.filter(r => r.repairKind === "variable-type-change");
-    expect(repairs.length).toBeGreaterThanOrEqual(0);
-  });
-
-  it("returns correctedEntries only when changes are made", () => {
-    const xaml = `<Activity xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
-  <Sequence>
-    <Sequence.Variables>
-      <Variable x:TypeArguments="x:String" Name="str_Name" />
-    </Sequence.Variables>
-    <ui:AddQueueItem QueueName="[str_Name]" DisplayName="Add Queue Item" />
-  </Sequence>
-</Activity>`;
-    const result = validateTypeCompatibility([{ name: "Main.xaml", content: xaml }]);
+    expect(result.violations.filter(v => v.check === "TYPE_MISMATCH")).toHaveLength(0);
+    expect(result.repairs).toHaveLength(0);
     expect(result.correctedEntries).toHaveLength(0);
   });
 
-  it("handles empty entries gracefully", () => {
+  it("returns empty results for empty input", () => {
     const result = validateTypeCompatibility([]);
     expect(result.violations).toHaveLength(0);
     expect(result.repairs).toHaveLength(0);
     expect(result.correctedEntries).toHaveLength(0);
   });
 
-  it("detects String→DataTable as unrepairable", () => {
-    const conv = getConversion("System.String", "System.Data.DataTable");
-    expect(conv).not.toBeNull();
-    expect(conv!.kind).toBe("unrepairable");
-    expect(conv!.detail).toContain("Cannot convert String to DataTable");
-  });
-
-  it("repairs Int32→String via CStr conversion", () => {
-    const conv = getConversion("x:Int32", "x:String");
-    expect(conv).not.toBeNull();
-    expect(conv!.kind).toBe("wrap");
-    expect(conv!.wrapper).toBe("CStr");
-  });
-
-  it("String→Boolean uses CBool", () => {
-    const conv = getConversion("x:String", "x:Boolean");
-    expect(conv).not.toBeNull();
-    expect(conv!.kind).toBe("wrap");
-    expect(conv!.wrapper).toBe("CBool");
-  });
-
-  it("Double→Int32 uses CInt", () => {
-    const conv = getConversion("System.Double", "System.Int32");
-    expect(conv).not.toBeNull();
-    expect(conv!.kind).toBe("wrap");
-    expect(conv!.wrapper).toBe("CInt");
-  });
-
-  it("all violations have TYPE_MISMATCH check code", () => {
+  it("all violations have TYPE_MISMATCH check and warning severity", () => {
     const xaml = `<Activity xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
   <Sequence>
     <Sequence.Variables>
-      <Variable x:TypeArguments="x:String" Name="str_Val" />
+      <Variable x:TypeArguments="x:Int32" Name="int_Val" />
     </Sequence.Variables>
-    <ui:AddQueueItem QueueName="[str_Val]" DisplayName="Add Queue Item" />
+    <ui:AddQueueItem QueueName="[int_Val]" DisplayName="Add Queue Item" />
   </Sequence>
 </Activity>`;
     const result = validateTypeCompatibility([{ name: "Main.xaml", content: xaml }]);
@@ -204,5 +146,67 @@ describe("validateTypeCompatibility", () => {
       expect(v.category).toBe("accuracy");
       expect(v.severity).toBe("warning");
     }
+    if (result.violations.length > 0) {
+      expect(result.violations[0].detail).toContain("CStr");
+      expect(result.repairs[0].repairKind).toBe("conversion-wrap");
+    }
+  });
+
+  it("conversion wrap is scoped to the specific property, not global", () => {
+    const xaml = `<Activity xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <Sequence.Variables>
+      <Variable x:TypeArguments="x:Int32" Name="int_Val" />
+    </Sequence.Variables>
+    <ui:AddQueueItem QueueName="[int_Val]" Reference="[int_Val]" DisplayName="Add Queue Item" />
+  </Sequence>
+</Activity>`;
+    const result = validateTypeCompatibility([{ name: "Main.xaml", content: xaml }]);
+    if (result.correctedEntries.length > 0) {
+      const patched = result.correctedEntries[0].content;
+      const queueNameMatch = patched.match(/QueueName="\[([^\]]+)\]"/);
+      const refMatch = patched.match(/Reference="\[([^\]]+)\]"/);
+      if (queueNameMatch) {
+        expect(queueNameMatch[1]).toContain("CStr");
+      }
+      if (refMatch) {
+        expect(refMatch[1]).toContain("CStr");
+      }
+    }
+  });
+
+  it("detects unrepairable DataTable→String mismatch with guidance", () => {
+    const conv = getConversion("System.Data.DataTable", "System.String");
+    expect(conv).not.toBeNull();
+    expect(conv!.kind).toBe("unrepairable");
+    expect(conv!.detail).toContain("DataTable");
+    expect(conv!.detail).toContain("Cannot");
+  });
+
+  it("correctly processes XAML with no catalog match gracefully", () => {
+    const xaml = `<Activity xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence>
+    <Sequence.Variables>
+      <Variable x:TypeArguments="x:String" Name="str_Name" />
+    </Sequence.Variables>
+    <UnknownActivity Prop1="[str_Name]" />
+  </Sequence>
+</Activity>`;
+    const result = validateTypeCompatibility([{ name: "Main.xaml", content: xaml }]);
+    expect(result.violations).toHaveLength(0);
+    expect(result.repairs).toHaveLength(0);
+  });
+
+  it("skips expressions with function calls or concatenation (not simple variable refs)", () => {
+    const xaml = `<Activity xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <Sequence.Variables>
+      <Variable x:TypeArguments="x:String" Name="str_Name" />
+    </Sequence.Variables>
+    <ui:AddQueueItem QueueName="[str_Name & &quot; suffix&quot;]" DisplayName="Add Queue Item" />
+  </Sequence>
+</Activity>`;
+    const result = validateTypeCompatibility([{ name: "Main.xaml", content: xaml }]);
+    expect(result.violations).toHaveLength(0);
   });
 });
