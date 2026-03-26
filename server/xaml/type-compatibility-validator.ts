@@ -298,7 +298,8 @@ function applyConversionWrapAtPosition(
     : `${wrapper}(${varName})`;
 
   const segment = xamlContent.substring(matchStart, matchEnd);
-  const replaced = segment.replace(`[${varName}]`, `[${wrapExpr}]`);
+  const wsPattern = new RegExp(`\\[\\s*${varName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\]`);
+  const replaced = segment.replace(wsPattern, `[${wrapExpr}]`);
 
   return xamlContent.substring(0, matchStart) + replaced + xamlContent.substring(matchEnd);
 }
@@ -375,12 +376,55 @@ export function validateTypeCompatibility(
       let madeChangesThisPass = false;
 
       if (pass === 0) {
+        const outTargetsByVar = new Map<string, Set<string>>();
+        for (const binding of bindings) {
+          if (binding.direction !== "Out" && binding.direction !== "InOut") continue;
+          const varInfo = varMap.get(binding.boundVariable);
+          if (!varInfo) continue;
+          if (areTypesCompatible(normalizeClrType(binding.expectedClrType), varInfo.fullClrType)) continue;
+          const normalized = normalizeClrType(binding.expectedClrType);
+          if (!outTargetsByVar.has(binding.boundVariable)) {
+            outTargetsByVar.set(binding.boundVariable, new Set());
+          }
+          outTargetsByVar.get(binding.boundVariable)!.add(normalized);
+        }
+
         for (const binding of bindings) {
           if (binding.direction !== "Out" && binding.direction !== "InOut") continue;
           const varInfo = varMap.get(binding.boundVariable);
           if (!varInfo) continue;
 
           if (areTypesCompatible(normalizeClrType(binding.expectedClrType), varInfo.fullClrType)) continue;
+
+          const conflictingTargets = outTargetsByVar.get(binding.boundVariable);
+          if (conflictingTargets && conflictingTargets.size > 1) {
+            violations.push({
+              category: "accuracy",
+              severity: "warning",
+              check: "TYPE_MISMATCH",
+              file: shortName,
+              detail: `Line ${binding.line}: Variable "${binding.boundVariable}" is bound to multiple Out properties with conflicting types (${Array.from(conflictingTargets).join(", ")}). Manual resolution required.`,
+            });
+            repairs.push({
+              file: shortName,
+              line: binding.line,
+              activity: binding.activityTag,
+              property: binding.propertyName,
+              expectedType: binding.expectedClrType,
+              actualType: varInfo.fullClrType,
+              repairKind: "unrepairable",
+              boundVariable: binding.boundVariable,
+              detail: `Conflicting Out types for variable "${binding.boundVariable}": ${Array.from(conflictingTargets).join(", ")}`,
+            });
+            continue;
+          }
+
+          const alreadyRepaired = repairs.some(r =>
+            r.file === shortName &&
+            r.boundVariable === binding.boundVariable &&
+            r.repairKind === "variable-type-change"
+          );
+          if (alreadyRepaired) continue;
 
           const targetTypeArg = clrTypeToXamlTypeArg(normalizeClrType(binding.expectedClrType));
           const oldType = varInfo.type;
