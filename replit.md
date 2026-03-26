@@ -43,6 +43,7 @@ The application uses a modern web stack for scalability and an intuitive user ex
 - **Regression Test Suite**: Server-side vitest tests cover 34+ regression scenarios for stub validity, activity policy, XAML validation, quality gate, dependency management, and hierarchical tree assembly.
 - **Automation Pattern Classification**: Classifies automation (simple-linear, API/data-driven, UI, transactional/queue-based, hybrid) to determine appropriate REFramework usage and scaffold generation.
 - **Demand-Driven Dependencies**: Dynamically determines and includes necessary UiPath package dependencies based on emitted activities.
+- **VB.NET Expression Linter**: Deterministic linter (`server/xaml/vbnet-expression-linter.ts`) scans all bracketed VB.NET expressions in generated XAML, detecting C#→VB.NET syntax leaks (null→Nothing, !=→<>, &&→AndAlso, ||→OrElse, lambdas, string interpolation), unbalanced parentheses/quotes, and undeclared variables. Auto-corrects fixable issues (warnings) and blocks on unfixable ones (EXPRESSION_SYNTAX_UNFIXABLE). String-literal-safe replacements prevent false positives inside quoted strings. Integrated into the quality gate pipeline.
 - **Workflow Analyzer Compliance Engine**: Static analysis for 11+ Workflow Analyzer rules with auto-correction, reporting, and dynamic governance policy integration.
 - **UiPath Naming Convention Enforcement**: Standardized naming conventions for variables and arguments enforced during XAML generation.
 - **Argument Validation**: Automated argument validation at workflow entry points.

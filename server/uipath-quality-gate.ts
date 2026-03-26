@@ -12,6 +12,7 @@ import { getBlockedActivities } from "./uipath-activity-policy";
 import { catalogService } from "./catalog/catalog-service";
 import type { StudioProfile } from "./catalog/metadata-service";
 import { metadataService } from "./catalog/metadata-service";
+import { lintXamlExpressions } from "./xaml/vbnet-expression-linter";
 
 const KNOWN_ACTIVITIES = ACTIVITY_REGISTRY;
 
@@ -1873,6 +1874,7 @@ export function runQualityGate(input: QualityGateInput): QualityGateResult {
   const runtimeSafetyViolations = checkRuntimeSafety(input);
   const logicLocationViolations = checkLogicLocation(input);
   const archiveParityViolations = checkArchiveParity(input);
+  const expressionLintResult = lintXamlExpressions(input.xamlEntries);
   const positiveEvidence = collectPositiveEvidence(input);
 
   const allViolations = [
@@ -1882,6 +1884,7 @@ export function runQualityGate(input: QualityGateInput): QualityGateResult {
     ...runtimeSafetyViolations,
     ...logicLocationViolations,
     ...archiveParityViolations,
+    ...expressionLintResult.violations,
   ];
 
   const hasErrors = allViolations.some(v => v.severity === "error");
@@ -1941,6 +1944,7 @@ const BLOCKING_CHECKS = new Set([
   "archive-content-parity",
   "ENUM_VIOLATION",
   "CATALOG_STRUCTURAL_VIOLATION",
+  "EXPRESSION_SYNTAX_UNFIXABLE",
 ]);
 
 const WARNING_CHECKS = new Set([
@@ -1974,6 +1978,7 @@ const WARNING_CHECKS = new Set([
   "duplicate-file",
   "empty-http-endpoint",
   "unassigned-decision-variable",
+  "EXPRESSION_SYNTAX",
 ]);
 
 export function classifyQualityIssues(result: QualityGateResult): ClassifiedIssue[] {
