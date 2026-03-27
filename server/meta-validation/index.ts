@@ -23,6 +23,15 @@ export {
 } from "./correction-applier";
 
 export {
+  runDeterministicValidation,
+  validateEnumViolations,
+  validateLiteralExpressions,
+  validateNestedArguments,
+  validateMissingProperties,
+  validateUndeclaredVariables,
+} from "./deterministic-validators";
+
+export {
   calculateEstimatedCost,
   recordGenerationMetrics,
   getMetricsSummary,

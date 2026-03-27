@@ -31,6 +31,7 @@ import {
   calculateConfidenceScore,
   runMetaValidation,
   applyCorrections,
+  runDeterministicValidation,
   calculateEstimatedCost,
   recordGenerationMetrics,
   type MetaValidationMode,
@@ -995,17 +996,58 @@ export async function compilePackageFromSpecs(
 
           options?.onMetaValidation?.({ status: "started" });
 
-          const correctionSet = await runMetaValidation(
-            buildResult.xamlEntries,
-            confidenceResult.triggeredCategories,
-            options?.onProgress,
-          );
+          const useLlmMetaValidation = process.env.LLM_META_VALIDATION === "true";
+          let correctionSet;
+          if (useLlmMetaValidation) {
+            console.log(`[Pipeline] LLM_META_VALIDATION=true — using LLM-based meta-validation`);
+            correctionSet = await runMetaValidation(
+              buildResult.xamlEntries,
+              confidenceResult.triggeredCategories,
+              options?.onProgress,
+            );
+          } else {
+            console.log(`[Pipeline] Using deterministic meta-validators (${confidenceResult.triggeredCategories.join(",")})`);
+            correctionSet = runDeterministicValidation(
+              buildResult.xamlEntries,
+              confidenceResult.triggeredCategories,
+              options?.onProgress,
+            );
+          }
 
           mvInputTokens = correctionSet.inputTokens;
           mvOutputTokens = correctionSet.outputTokens;
 
           const applicationResult = applyCorrections(buildResult.xamlEntries, correctionSet);
           finalXamlEntries = applicationResult.updatedXamlEntries;
+
+          if (applicationResult.applied > 0) {
+            const preCorrectionEntries = buildResult.xamlEntries.map(e => ({ ...e }));
+            let revertedCount = 0;
+            for (let i = 0; i < finalXamlEntries.length; i++) {
+              const entry = finalXamlEntries[i];
+              try {
+                const { XMLParser } = await import("fast-xml-parser");
+                const parser = new XMLParser({ ignoreAttributes: false, allowBooleanAttributes: true });
+                parser.parse(entry.content);
+              } catch (xmlErr: any) {
+                const original = preCorrectionEntries.find(e => e.name === entry.name);
+                if (original) {
+                  console.warn(`[Pipeline] Well-formedness check failed for ${entry.name} after corrections: ${xmlErr.message} — reverting to pre-correction version`);
+                  finalXamlEntries[i] = { ...original };
+                  revertedCount++;
+                  pipelineWarnings.push({
+                    code: "POST_MV_WELLFORMEDNESS_REVERT",
+                    message: `[Post-MV] Reverted ${entry.name} to pre-correction version due to XML well-formedness failure: ${xmlErr.message}`,
+                    stage: "remediating",
+                    recoverable: true,
+                  });
+                }
+              }
+            }
+            if (revertedCount > 0) {
+              console.log(`[Pipeline] Reverted ${revertedCount} XAML file(s) to pre-correction versions due to well-formedness failures`);
+            }
+          }
 
           if (applicationResult.applied > 0 && buildResult.buffer.length > 0) {
             const rebuilt = await rebuildNupkgWithEntries(buildResult.buffer, finalXamlEntries, buildResult.archiveManifest);

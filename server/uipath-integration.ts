@@ -51,7 +51,7 @@ export {
 import { buildNuGetPackage, type BuildResult, isValidNuGetVersion, uploadNupkgBuffer } from "./package-assembler";
 
 import type { XamlGenerationContext, UiPathPackage } from "./types/uipath-package";
-import { enrichWithAI, enrichWithAITree, type EnrichmentResult, type TreeEnrichmentResult } from "./ai-xaml-enricher";
+import { enrichWithAITree, type EnrichmentResult, type TreeEnrichmentResult } from "./ai-xaml-enricher";
 import { assembleWorkflowFromSpec } from "./workflow-tree-assembler";
 import type { WorkflowSpec as TreeWorkflowSpec } from "./workflow-spec-types";
 import { analyzeAndFix, setGovernancePolicies, type AnalysisReport } from "./workflow-analyzer";
