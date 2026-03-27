@@ -1,6 +1,7 @@
 import type {
   PipelineOutcomeReport,
   RemediationEntry,
+  PerWorkflowStudioCompatibility,
 } from "./uipath-pipeline";
 import type { DhgAnalysisResult, SddArtifactCrossReference } from "./xaml/dhg-analyzers";
 
@@ -80,6 +81,31 @@ export function generateDhgFromOutcomeReport(
       md += `| ${i + 1} | \`${wf}.xaml\` | ${status} |\n`;
     });
     md += `\n`;
+  }
+
+  if (report.studioCompatibility && report.studioCompatibility.length > 0) {
+    md += `### Studio Compatibility\n\n`;
+    md += `| # | Workflow | Compatibility | Blockers |\n`;
+    md += `|---|----------|--------------|----------|\n`;
+    report.studioCompatibility.forEach((sc, i) => {
+      const levelLabel = sc.level === "studio-clean"
+        ? "Studio-openable"
+        : sc.level === "studio-warnings"
+          ? "Openable with warnings"
+          : "Structurally invalid — requires fixes";
+      const blockerSummary = sc.blockers.length > 0
+        ? sc.blockers.slice(0, 3).map(b => b.length > 80 ? b.slice(0, 77) + "..." : b).join("; ").replace(/\|/g, "\\|")
+        : "—";
+      md += `| ${i + 1} | \`${sc.file}\` | ${levelLabel} | ${blockerSummary} |\n`;
+    });
+    const blocked = report.studioCompatibility.filter(sc => sc.level === "studio-blocked");
+    const warnings = report.studioCompatibility.filter(sc => sc.level === "studio-warnings");
+    const clean = report.studioCompatibility.filter(sc => sc.level === "studio-clean");
+    md += `\n`;
+    md += `**Summary:** ${clean.length} clean, ${warnings.length} with warnings, ${blocked.length} blocked\n\n`;
+    if (blocked.length > 0) {
+      md += `> **⚠ ${blocked.length} workflow(s) have structural defects that will prevent Studio from loading or executing them.** Address the blockers listed above before importing into Studio.\n\n`;
+    }
   }
 
   sectionNum++;

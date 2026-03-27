@@ -1921,11 +1921,21 @@ function computeCompletenessLevel(violations: QualityGateViolation[]): Completen
   const hasEmptyEndpoint = violations.some(v => v.check === "empty-http-endpoint");
   const hasUnassignedDecision = violations.some(v => v.check === "unassigned-decision-variable");
   const hasPlaceholder = violations.some(v => v.check === "placeholder-value");
+  const hasEmptyContainer = violations.some(v => v.check === "empty-container" && v.severity === "error");
+  const hasBlockedPattern = violations.some(v => v.category === "blocked-pattern" && v.severity === "error");
 
-  if (hasEmptyEndpoint || hasUnassignedDecision) {
+  if (hasEmptyEndpoint || hasUnassignedDecision || hasEmptyContainer) {
     return "incomplete";
   }
-  if (hasPlaceholder) {
+
+  const hasExpressionError = violations.some(v =>
+    (v.check === "EXPRESSION_SYNTAX" || v.check === "EXPRESSION_SYNTAX_UNFIXABLE" || v.check === "expression-syntax-mismatch") && v.severity === "error"
+  );
+  const hasTypeError = violations.some(v =>
+    (v.check === "TYPE_MISMATCH" || v.check === "FOREACH_TYPE_MISMATCH" || v.check === "invoke-arg-type-mismatch" || v.check === "invalid-type-argument") && v.severity === "error"
+  );
+
+  if (hasPlaceholder || hasExpressionError || hasTypeError || hasBlockedPattern) {
     return "structural";
   }
   return "functional";

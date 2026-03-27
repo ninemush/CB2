@@ -240,6 +240,14 @@ export interface StructuralPreservationMetrics {
   preservedStructures: string[];
 }
 
+export type StudioCompatibilityLevel = "studio-clean" | "studio-warnings" | "studio-blocked";
+
+export interface PerWorkflowStudioCompatibility {
+  file: string;
+  level: StudioCompatibilityLevel;
+  blockers: string[];
+}
+
 export interface PipelineOutcomeReport {
   remediations: RemediationEntry[];
   propertyRemediations: RemediationEntry[];
@@ -249,6 +257,7 @@ export interface PipelineOutcomeReport {
   fullyGeneratedFiles: string[];
   totalEstimatedEffortMinutes: number;
   structuralPreservationMetrics?: StructuralPreservationMetrics[];
+  studioCompatibility?: PerWorkflowStudioCompatibility[];
   preEmissionValidation?: {
     totalActivities: number;
     validActivities: number;
@@ -1287,12 +1296,18 @@ export async function compilePackageFromSpecs(
     const entryPointIsStubbed = buildResult.outcomeReport?.remediations.some(
       r => r.remediationCode === "STUB_WORKFLOW_BLOCKING" && (r.file === "Main.xaml" || r.file === "Main")
     ) ?? false;
+    const hasStructuralBlockers = buildResult.outcomeReport?.studioCompatibility?.some(
+      sc => sc.level === "studio-blocked"
+    ) ?? false;
     const hasDegradation = downgrades.length > 0 || usedAIFallback || entryPointIsStubbed;
+    const hasStructuralWarnings = buildResult.outcomeReport?.studioCompatibility?.some(
+      sc => sc.level === "studio-warnings"
+    ) ?? false;
     const finalStatus: PackageStatus = !hasNupkg
       ? "FAILED"
       : hasDegradation
         ? "FALLBACK_READY"
-        : (pipelineWarnings.length > 0 || metaValidationResult?.flatStructureWarnings)
+        : (hasStructuralBlockers || pipelineWarnings.length > 0 || metaValidationResult?.flatStructureWarnings || hasStructuralWarnings)
           ? "READY_WITH_WARNINGS"
           : "READY";
 

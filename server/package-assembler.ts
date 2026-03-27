@@ -955,6 +955,8 @@ import type {
   RemediationCode,
   RepairCode,
   StructuralPreservationMetrics,
+  PerWorkflowStudioCompatibility,
+  StudioCompatibilityLevel,
 } from "./uipath-pipeline";
 
 export type BuildResult = {
@@ -3815,12 +3817,42 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         .map(k => (k.split("/").pop() || k))
     );
     const dhgRemediatedFileSet = new Set(outcomeRemediations.map(r => r.file));
-    const dhgFilesWithPlaceholders = new Set(
+    const dhgStructuralDefectChecks = new Set([
+      "placeholder-value",
+      "empty-container",
+      "empty-http-endpoint",
+      "unassigned-decision-variable",
+      "expression-syntax-mismatch",
+      "invalid-type-argument",
+      "invalid-default-value",
+      "invalid-trycatch-structure",
+      "invalid-catch-type",
+      "invalid-activity-property",
+      "invalid-continue-on-error",
+      "invoke-arg-type-mismatch",
+      "undeclared-variable",
+      "unknown-activity",
+      "undeclared-namespace",
+      "policy-blocked-activity",
+      "invalid-takescreenshot-result",
+      "invalid-takescreenshot-outputpath",
+      "invalid-takescreenshot-outputpath-attr",
+      "invalid-takescreenshot-filename",
+      "invalid-takescreenshot-filename-attr",
+      "object-object",
+      "pseudo-xaml",
+      "fake-trycatch",
+      "EXPRESSION_SYNTAX",
+      "EXPRESSION_SYNTAX_UNFIXABLE",
+      "TYPE_MISMATCH",
+      "FOREACH_TYPE_MISMATCH",
+    ]);
+    const dhgFilesWithStructuralDefects = new Set(
       qualityGateResult.violations
-        .filter(v => v.check === "placeholder-value")
+        .filter(v => v.severity === "error" && dhgStructuralDefectChecks.has(v.check))
         .map(v => v.file)
     );
-    const dhgFullyGenerated = Array.from(dhgAllFiles).filter(f => !dhgRemediatedFileSet.has(f) && !earlyStubFallbacks.includes(f) && !dhgFilesWithPlaceholders.has(f));
+    const dhgFullyGenerated = Array.from(dhgAllFiles).filter(f => !dhgRemediatedFileSet.has(f) && !earlyStubFallbacks.includes(f) && !dhgFilesWithStructuralDefects.has(f));
 
     const dhgQualityWarnings = qualityGateResult.violations
       .filter(v => v.severity === "warning")
@@ -3832,6 +3864,34 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         businessContext: v.businessContext,
       }));
 
+    const dhgStudioBlockingChecks = new Set([
+      "empty-container", "empty-http-endpoint", "invalid-trycatch-structure",
+      "invalid-catch-type", "invalid-activity-property", "undeclared-variable",
+      "unknown-activity", "undeclared-namespace", "invalid-type-argument",
+      "invalid-default-value", "policy-blocked-activity", "pseudo-xaml",
+      "fake-trycatch", "object-object", "EXPRESSION_SYNTAX_UNFIXABLE",
+      "TYPE_MISMATCH", "FOREACH_TYPE_MISMATCH",
+    ]);
+    const dhgStudioWarningChecks = new Set([
+      "placeholder-value", "expression-syntax-mismatch", "invoke-arg-type-mismatch",
+      "invalid-continue-on-error", "EXPRESSION_SYNTAX", "UNSAFE_VARIABLE_NAME", "empty-catches",
+    ]);
+    const dhgStudioCompatibility: PerWorkflowStudioCompatibility[] = Array.from(dhgAllFiles).map(file => {
+      const fileViolations = qualityGateResult.violations.filter(v => v.file === file);
+      const blockingViolations = fileViolations.filter(v => v.severity === "error" && dhgStudioBlockingChecks.has(v.check));
+      const warningViolations = fileViolations.filter(v =>
+        (v.severity === "error" && dhgStudioWarningChecks.has(v.check)) ||
+        (v.severity === "warning" && (dhgStudioBlockingChecks.has(v.check) || dhgStudioWarningChecks.has(v.check)))
+      );
+      const blockers = blockingViolations.map(v => `[${v.check}] ${v.detail}`);
+      const level: StudioCompatibilityLevel = blockingViolations.length > 0
+        ? "studio-blocked"
+        : warningViolations.length > 0
+          ? "studio-warnings"
+          : "studio-clean";
+      return { file, level, blockers };
+    });
+
     const assemblerOutcomeReport: PipelineOutcomeReport = {
       fullyGeneratedFiles: dhgFullyGenerated,
       autoRepairs: [],
@@ -3840,6 +3900,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       downgradeEvents: [],
       qualityWarnings: dhgQualityWarnings,
       totalEstimatedEffortMinutes: outcomeRemediations.reduce((s, r) => s + (r.estimatedEffortMinutes || 0), 0),
+      studioCompatibility: dhgStudioCompatibility,
     };
 
     const dhgContext: DhgContext = {
@@ -4080,12 +4141,42 @@ ${depEntries}
 
   const allFiles = new Set(xamlEntries.map(e => (e.name.split("/").pop() || e.name)));
   const remediatedFiles = new Set(outcomeRemediations.map(r => r.file));
-  const filesWithPlaceholders = new Set(
+  const structuralDefectChecks = new Set([
+    "placeholder-value",
+    "empty-container",
+    "empty-http-endpoint",
+    "unassigned-decision-variable",
+    "expression-syntax-mismatch",
+    "invalid-type-argument",
+    "invalid-default-value",
+    "invalid-trycatch-structure",
+    "invalid-catch-type",
+    "invalid-activity-property",
+    "invalid-continue-on-error",
+    "invoke-arg-type-mismatch",
+    "undeclared-variable",
+    "unknown-activity",
+    "undeclared-namespace",
+    "policy-blocked-activity",
+    "invalid-takescreenshot-result",
+    "invalid-takescreenshot-outputpath",
+    "invalid-takescreenshot-outputpath-attr",
+    "invalid-takescreenshot-filename",
+    "invalid-takescreenshot-filename-attr",
+    "object-object",
+    "pseudo-xaml",
+    "fake-trycatch",
+    "EXPRESSION_SYNTAX",
+    "EXPRESSION_SYNTAX_UNFIXABLE",
+    "TYPE_MISMATCH",
+    "FOREACH_TYPE_MISMATCH",
+  ]);
+  const filesWithStructuralDefects = new Set(
     qualityGateResult.violations
-      .filter(v => v.check === "placeholder-value")
+      .filter(v => v.severity === "error" && structuralDefectChecks.has(v.check))
       .map(v => v.file)
   );
-  const fullyGenerated = Array.from(allFiles).filter(f => !remediatedFiles.has(f) && !earlyStubFallbacks.includes(f) && !filesWithPlaceholders.has(f));
+  const fullyGenerated = Array.from(allFiles).filter(f => !remediatedFiles.has(f) && !earlyStubFallbacks.includes(f) && !filesWithStructuralDefects.has(f));
 
   const qualityWarnings = qualityGateResult.violations
     .filter(v => v.severity === "warning")
@@ -4097,6 +4188,50 @@ ${depEntries}
       businessContext: v.businessContext,
     }));
 
+  const studioBlockingChecks = new Set([
+    "empty-container",
+    "empty-http-endpoint",
+    "invalid-trycatch-structure",
+    "invalid-catch-type",
+    "invalid-activity-property",
+    "undeclared-variable",
+    "unknown-activity",
+    "undeclared-namespace",
+    "invalid-type-argument",
+    "invalid-default-value",
+    "policy-blocked-activity",
+    "pseudo-xaml",
+    "fake-trycatch",
+    "object-object",
+    "EXPRESSION_SYNTAX_UNFIXABLE",
+    "TYPE_MISMATCH",
+    "FOREACH_TYPE_MISMATCH",
+  ]);
+  const studioWarningChecks = new Set([
+    "placeholder-value",
+    "expression-syntax-mismatch",
+    "invoke-arg-type-mismatch",
+    "invalid-continue-on-error",
+    "EXPRESSION_SYNTAX",
+    "UNSAFE_VARIABLE_NAME",
+    "empty-catches",
+  ]);
+  const studioCompatibility: PerWorkflowStudioCompatibility[] = Array.from(allFiles).map(file => {
+    const fileViolations = qualityGateResult.violations.filter(v => v.file === file);
+    const blockingViolations = fileViolations.filter(v => v.severity === "error" && studioBlockingChecks.has(v.check));
+    const warningViolations = fileViolations.filter(v =>
+      (v.severity === "error" && studioWarningChecks.has(v.check)) ||
+      (v.severity === "warning" && (studioBlockingChecks.has(v.check) || studioWarningChecks.has(v.check)))
+    );
+    const blockers = blockingViolations.map(v => `[${v.check}] ${v.detail}`);
+    const level: StudioCompatibilityLevel = blockingViolations.length > 0
+      ? "studio-blocked"
+      : warningViolations.length > 0
+        ? "studio-warnings"
+        : "studio-clean";
+    return { file, level, blockers };
+  });
+
   const outcomeReport: PipelineOutcomeReport = {
     fullyGeneratedFiles: fullyGenerated,
     autoRepairs: outcomeAutoRepairs,
@@ -4106,6 +4241,7 @@ ${depEntries}
     qualityWarnings,
     totalEstimatedEffortMinutes: outcomeRemediations.reduce((s, r) => s + (r.estimatedEffortMinutes || 0), 0),
     structuralPreservationMetrics: structuralPreservationMetrics.length > 0 ? structuralPreservationMetrics : undefined,
+    studioCompatibility,
     preEmissionValidation: specValidationReport ? {
       totalActivities: specValidationReport.totalActivities,
       validActivities: specValidationReport.validActivities,
