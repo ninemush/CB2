@@ -73,8 +73,8 @@
       "verificationSource": "uipath-official-feed"
     },
     "UiPath.Testing.Activities": {
-      "preferred": "25.10.1",
-      "lastVerifiedAt": "2026-03-25T19:32:50.850Z",
+      "preferred": "25.10.2",
+      "lastVerifiedAt": "2026-03-27T10:20:58.968Z",
       "verificationSource": "uipath-official-feed"
     },
     "UiPath.Form.Activities": {
@@ -751,7 +751,7 @@
   "minimumRequiredPackages": [
     "UiPath.System.Activities"
   ],
-  "lastRefreshedAt": "2026-03-25T19:33:08.312Z",
+  "lastRefreshedAt": "2026-03-27T10:21:15.725Z",
   "lastVerifiedAt": "2026-03-21T09:00:00.000Z",
   "sourceVersion": "1.0.0",
   "snapshotVersion": "1.0.0"

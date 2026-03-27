@@ -1,7 +1,7 @@
 {
   "catalogVersion": "2.0.0",
-  "generatedAt": "2026-03-26T16:28:37.278Z",
-  "lastVerifiedAt": "2026-03-26T16:28:37.278Z",
+  "generatedAt": "2026-03-27T10:21:15.738Z",
+  "lastVerifiedAt": "2026-03-27T10:21:15.738Z",
   "studioVersion": "25.10.0",
   "packages": [
     {
@@ -9622,9 +9622,9 @@
     },
     {
       "packageId": "UiPath.Testing.Activities",
-      "version": "25.10.1",
+      "version": "25.10.2",
       "feedStatus": "verified",
-      "preferredVersion": "25.10.1",
+      "preferredVersion": "25.10.2",
       "activities": [
         {
           "className": "VerifyExpression",
