@@ -15,7 +15,6 @@ import {
 import { catalogService } from "./catalog/catalog-service";
 import type { StudioProfile } from "./catalog/metadata-service";
 import {
-  generateDeveloperHandoffGuide,
   makeUiPathCompliant,
   validateXamlContent,
   type XamlGap,
@@ -458,8 +457,10 @@ function buildDhgFromBuildResult(
   const workflows = pkg.workflows || [];
   const xamlEntries = overrideXamlEntries || buildResult.xamlEntries;
 
-  const wfNames = workflows.map((wf: { name?: string }) => (wf.name || "Workflow").replace(/\s+/g, "_"));
-  const effectiveWfNames = wfNames.length > 0 ? wfNames : xamlEntries.map(e => e.name.replace(".xaml", ""));
+  const effectiveWfNames = xamlEntries.map(e => {
+    const baseName = e.name.split("/").pop() || e.name;
+    return baseName.replace(/\.xaml$/i, "");
+  });
 
   const analysisReports: Array<{ fileName: string; report: AnalysisReport }> = [];
   for (const entry of xamlEntries) {
@@ -477,28 +478,26 @@ function buildDhgFromBuildResult(
   const extractedArtifacts = pkg.internal?.extractedArtifacts || undefined;
   const projectName = pkg.projectName || ctx.idea.title.replace(/\s+/g, "_");
 
-  const legacyDhgContent = generateDeveloperHandoffGuide({
-    projectName,
-    description: pkg.description || ctx.idea.description,
-    gaps: buildResult.gaps,
-    usedPackages: buildResult.usedPackages,
-    workflowNames: effectiveWfNames,
-    sddContent: sddContent || undefined,
-    enrichment,
-    useReFramework,
-    painPoints,
-    extractedArtifacts,
-    automationType: ctx.idea.automationType as "rpa" | "agent" | "hybrid" || undefined,
-    analysisReports,
-    outcomeReport: buildResult.outcomeReport,
-    xamlContents: xamlEntries.map(e => e.content),
-  });
-
-  let dhgContent = legacyDhgContent;
+  let dhgContent = "";
 
   if (buildResult.outcomeReport) {
     const qualityWarningCount = buildResult.outcomeReport.qualityWarnings.length;
     const remediationCount = buildResult.outcomeReport.remediations.length + buildResult.outcomeReport.propertyRemediations.length;
+
+    const plannedWfNames = workflows.map((wf: { name?: string }) => (wf.name || "Workflow").replace(/\s+/g, "_"));
+    const archiveWfNames = new Set(effectiveWfNames);
+    const stubRemediations = buildResult.outcomeReport.remediations.filter(r => r.remediationCode === "STUB_WORKFLOW_BLOCKING");
+    const stubFileNames = new Set(stubRemediations.map(r => r.file.replace(/\.xaml$/i, "")));
+    const entryPointStubbed = stubFileNames.has("Main");
+    const plannedButMissingCount = plannedWfNames.filter(n => !archiveWfNames.has(n)).length;
+
+    const stubAwareness = {
+      entryPointStubbed,
+      stubCount: stubFileNames.size,
+      totalWorkflowCount: archiveWfNames.size,
+      plannedButMissingCount,
+    };
+
     const upstreamContext: UpstreamContext = {
       ideaDescription: ctx.idea.description || undefined,
       automationType: ctx.idea.automationType || undefined,
@@ -589,6 +588,7 @@ function buildDhgFromBuildResult(
       ctx.idea.automationType || undefined,
       upstreamContext,
       sddArtifacts,
+      stubAwareness,
     );
     const dhgContext: DhgContext = {
       projectName,
@@ -596,8 +596,34 @@ function buildDhgFromBuildResult(
       generationMode: generationMode || undefined,
       analysis,
     };
-    const structuredDhg = generateDhgFromOutcomeReport(buildResult.outcomeReport, dhgContext);
-    dhgContent = legacyDhgContent + "\n\n---\n\n" + structuredDhg;
+    dhgContent = generateDhgFromOutcomeReport(buildResult.outcomeReport, dhgContext);
+  } else {
+    const syntheticReport: PipelineOutcomeReport = {
+      remediations: [],
+      propertyRemediations: [],
+      autoRepairs: [],
+      downgradeEvents: [],
+      qualityWarnings: [],
+      fullyGeneratedFiles: xamlEntries.map(e => {
+        const baseName = e.name.split("/").pop() || e.name;
+        return baseName;
+      }),
+      totalEstimatedEffortMinutes: 0,
+    };
+    const analysis = runDhgAnalysis(
+      xamlEntries,
+      buildResult.projectJsonContent || undefined,
+      0,
+      0,
+      ctx.idea.automationType || undefined,
+    );
+    const dhgContext: DhgContext = {
+      projectName,
+      workflowNames: effectiveWfNames,
+      generationMode: generationMode || undefined,
+      analysis,
+    };
+    dhgContent = generateDhgFromOutcomeReport(syntheticReport, dhgContext);
   }
 
   return {
@@ -1228,7 +1254,10 @@ export async function compilePackageFromSpecs(
       }
     }
 
-    const hasDegradation = downgrades.length > 0 || usedAIFallback;
+    const entryPointIsStubbed = buildResult.outcomeReport?.remediations.some(
+      r => r.remediationCode === "STUB_WORKFLOW_BLOCKING" && (r.file === "Main.xaml" || r.file === "Main")
+    ) ?? false;
+    const hasDegradation = downgrades.length > 0 || usedAIFallback || entryPointIsStubbed;
     const finalStatus: PackageStatus = !hasNupkg
       ? "FAILED"
       : hasDegradation

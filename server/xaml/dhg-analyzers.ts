@@ -638,6 +638,12 @@ export function calculateReadiness(
   envRequirements: EnvironmentRequirements,
   qualityWarningCount: number,
   remediationCount: number,
+  stubAwareness?: {
+    entryPointStubbed: boolean;
+    stubCount: number;
+    totalWorkflowCount: number;
+    plannedButMissingCount: number;
+  },
 ): OverallReadiness {
   const sections: ReadinessScore[] = [];
 
@@ -716,6 +722,22 @@ export function calculateReadiness(
       score -= 2;
       notes.push(`${remediationCount} remediation(s) to complete`);
     }
+    if (stubAwareness) {
+      if (stubAwareness.entryPointStubbed) {
+        score -= 8;
+        notes.push("Entry point (Main.xaml) is stubbed — package has no runnable entry point");
+      }
+      if (stubAwareness.totalWorkflowCount > 0 && stubAwareness.stubCount > 0) {
+        const stubProportion = stubAwareness.stubCount / stubAwareness.totalWorkflowCount;
+        const stubDeduction = Math.round(stubProportion * 6);
+        score -= stubDeduction;
+        notes.push(`${stubAwareness.stubCount}/${stubAwareness.totalWorkflowCount} workflow(s) are stubs (${Math.round(stubProportion * 100)}%)`);
+      }
+      if (stubAwareness.plannedButMissingCount > 0) {
+        score -= Math.min(3, stubAwareness.plannedButMissingCount);
+        notes.push(`${stubAwareness.plannedButMissingCount} planned workflow(s) missing from archive`);
+      }
+    }
     if (notes.length === 0) notes.push("Build quality is clean");
     sections.push({ section: "Build Quality", score: Math.max(0, score), maxScore: 10, notes });
   }
@@ -737,7 +759,11 @@ export function calculateReadiness(
 
   const totalScore = sections.reduce((s, sec) => s + sec.score, 0);
   const maxTotalScore = sections.reduce((s, sec) => s + sec.maxScore, 0);
-  const percent = maxTotalScore > 0 ? Math.round((totalScore / maxTotalScore) * 100) : 0;
+  let percent = maxTotalScore > 0 ? Math.round((totalScore / maxTotalScore) * 100) : 0;
+
+  if (stubAwareness?.entryPointStubbed && percent >= 40) {
+    percent = 39;
+  }
 
   let rating: OverallReadiness["rating"];
   if (percent >= 85) rating = "Ready";
@@ -970,6 +996,12 @@ export function runDhgAnalysis(
   automationType?: string,
   upstreamContext?: UpstreamContext,
   sddArtifacts?: Record<string, any> | null,
+  stubAwareness?: {
+    entryPointStubbed: boolean;
+    stubCount: number;
+    totalWorkflowCount: number;
+    plannedButMissingCount: number;
+  },
 ): DhgAnalysisResult {
   const credentialInventory = scanCredentialAssets(xamlEntries);
   const exceptionCoverage = analyzeExceptionCoverage(xamlEntries);
@@ -995,6 +1027,7 @@ export function runDhgAnalysis(
     environmentRequirements,
     qualityWarningCount || 0,
     remediationCount || 0,
+    stubAwareness,
   );
 
   return {

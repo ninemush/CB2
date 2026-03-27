@@ -2612,7 +2612,7 @@ export function generateInitAllSettingsXaml(orchestratorArtifacts?: any, targetF
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <x:Members>
-    <x:Property Name="out_Config" Type="OutArgument(scg:Dictionary(x:String, x:Object))" />
+    <x:Property Name="out_Config" Type="OutArgument({clr-namespace:System.Collections.Generic;assembly=${nsScg}}Dictionary({http://schemas.microsoft.com/winfx/2006/xaml}String, {http://schemas.microsoft.com/winfx/2006/xaml}Object))" />
   </x:Members>
   <Sequence DisplayName="Initialize All Settings">
     <Sequence.Variables>

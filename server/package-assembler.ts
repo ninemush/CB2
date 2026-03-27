@@ -12,8 +12,6 @@ import archiver from "archiver";
     generateCloseAllApplicationsXaml,
     generateKillAllProcessesXaml,
     aggregateGaps,
-    generateDeveloperHandoffGuide,
-    generateDhgSummary,
     makeUiPathCompliant,
     ensureBracketWrapped,
     normalizeAssignArgumentNesting,
@@ -50,6 +48,8 @@ import archiver from "archiver";
   import { metadataService as _metadataService } from "./catalog/metadata-service";
   import { PACKAGE_NAMESPACE_MAP, validateXmlWellFormedness } from "./xaml/xaml-compliance";
   import type { ComplexityTier } from "./complexity-classifier";
+  import { generateDhgFromOutcomeReport, type DhgContext } from "./dhg-generator";
+  import { runDhgAnalysis } from "./xaml/dhg-analyzers";
 
 async function getProbeCache() {
   const { getProbeCache: _getProbeCache } = await import("./uipath-integration");
@@ -1801,6 +1801,15 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           detail: `Generator failed: ${err.message} — replaced with Studio-openable stub`,
           stubbedWorkflow: `${wfName}.xaml`,
         });
+        outcomeRemediations.push({
+          level: "workflow",
+          file: `${wfName}.xaml`,
+          remediationCode: "STUB_WORKFLOW_BLOCKING",
+          reason: `Generator failed: ${err.message} — replaced with stub`,
+          classifiedCheck: "generator-failure",
+          developerAction: `Re-implement ${wfName}.xaml — generator could not produce valid XAML`,
+          estimatedEffortMinutes: 60,
+        });
         return null;
       }
     }
@@ -2195,31 +2204,45 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     }
 
     {
-      console.log(`[Structural Dedup] Building reachability graph from Main.xaml entry point...`);
-      const { reachable, unreachable, graph } = buildReachabilityGraph(deferredWrites, xamlEntries, libPath);
-      console.log(`[Structural Dedup] Reachability analysis: ${reachable.size} reachable, ${unreachable.size} unreachable out of ${reachable.size + unreachable.size} total XAML files`);
-
-      if (unreachable.size > 0) {
-        const { removedFiles, reasons } = removeUnreachableFiles(deferredWrites, xamlEntries, unreachable, libPath);
-        for (const reason of reasons) {
-          console.log(`[Structural Dedup] ${reason}`);
-          dependencyWarnings.push({
-            code: "STRUCTURAL_DEDUP_REMOVED",
-            message: reason,
-            stage: "structural-deduplication",
-            recoverable: true,
-          });
-        }
-        console.log(`[Structural Dedup] Removed ${removedFiles.length} unreachable file(s): ${removedFiles.join(", ")}`);
+      const mainDeferredKey = Array.from(deferredWrites.keys()).find(k => (k.split("/").pop() || k) === "Main.xaml");
+      const mainContent = mainDeferredKey ? deferredWrites.get(mainDeferredKey) || "" : "";
+      const mainIsStubbed = earlyStubFallbacks.includes("Main.xaml") ||
+        mainContent.includes("STUB_BLOCKING_FALLBACK") || mainContent.includes("STUB: Main");
+      if (mainIsStubbed) {
+        console.log(`[Structural Dedup] Main.xaml is stubbed — skipping reachability pruning to preserve child workflows`);
+        const { graph } = buildReachabilityGraph(deferredWrites, xamlEntries, libPath);
+        Array.from(graph.entries()).forEach(([file, refs]) => {
+          if (refs.length > 0) {
+            console.log(`[Structural Dedup] ${file} -> ${refs.join(", ")}`);
+          }
+        });
       } else {
-        console.log(`[Structural Dedup] All XAML files are reachable from Main.xaml — no orphaned files detected`);
-      }
+        console.log(`[Structural Dedup] Building reachability graph from Main.xaml entry point...`);
+        const { reachable, unreachable, graph } = buildReachabilityGraph(deferredWrites, xamlEntries, libPath);
+        console.log(`[Structural Dedup] Reachability analysis: ${reachable.size} reachable, ${unreachable.size} unreachable out of ${reachable.size + unreachable.size} total XAML files`);
 
-      Array.from(graph.entries()).forEach(([file, refs]) => {
-        if (refs.length > 0) {
-          console.log(`[Structural Dedup] ${file} -> ${refs.join(", ")}`);
+        if (unreachable.size > 0) {
+          const { removedFiles, reasons } = removeUnreachableFiles(deferredWrites, xamlEntries, unreachable, libPath);
+          for (const reason of reasons) {
+            console.log(`[Structural Dedup] ${reason}`);
+            dependencyWarnings.push({
+              code: "STRUCTURAL_DEDUP_REMOVED",
+              message: reason,
+              stage: "structural-deduplication",
+              recoverable: true,
+            });
+          }
+          console.log(`[Structural Dedup] Removed ${removedFiles.length} unreachable file(s): ${removedFiles.join(", ")}`);
+        } else {
+          console.log(`[Structural Dedup] All XAML files are reachable from Main.xaml — no orphaned files detected`);
         }
-      });
+
+        Array.from(graph.entries()).forEach(([file, refs]) => {
+          if (refs.length > 0) {
+            console.log(`[Structural Dedup] ${file} -> ${refs.join(", ")}`);
+          }
+        });
+      }
     }
 
     {
@@ -3561,38 +3584,6 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
     }
 
-    const xamlContentsForDhg: string[] = [];
-    Array.from(deferredWrites.entries()).forEach(([path, content]) => {
-      if (path.endsWith(".xaml")) {
-        xamlContentsForDhg.push(content);
-      }
-    });
-
-    const dhg = generateDeveloperHandoffGuide({
-      projectName,
-      description: pkg.description || "",
-      gaps: allGaps,
-      usedPackages: allUsedPkgs,
-      workflowNames,
-      sddContent: sddContent || undefined,
-      enrichment,
-      useReFramework,
-      painPoints,
-      deploymentResults: pkg.internal?.deploymentResults || undefined,
-      extractedArtifacts: orchestratorArtifacts || undefined,
-      analysisReports,
-      automationType: pkg.internal?.automationType || undefined,
-      targetFramework: tf,
-      autopilotEnabled: apEnabled,
-      generationMode,
-      generationModeReason: modeConfig.reason,
-      qualityIssues: collectedQualityIssues,
-      stubbedWorkflows: earlyStubFallbacks.length > 0 ? earlyStubFallbacks : undefined,
-      xamlContents: xamlContentsForDhg,
-    });
-    archive.append(dhg, { name: `${libPath}/DeveloperHandoffGuide.md` });
-    console.log(`[UiPath] Generated Developer Handoff Guide: ${allGaps.length} gaps, ~${(allGaps.reduce((s: number, g: XamlGap) => s + g.estimatedMinutes, 0) / 60).toFixed(1)}h effort, REFramework=${useReFramework}`);
-
     if (orchestratorArtifacts?.agents?.length > 0) {
       for (const agent of orchestratorArtifacts.agents) {
         const agentFileName = `Agent_${(agent.name || "Unnamed").replace(/\s+/g, "_")}.json`;
@@ -3655,7 +3646,62 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       let remediationFailed = false;
       for (const corruptedFile of corruptedFiles) {
         const stubName = corruptedFile.replace(/\.xaml$/i, "");
-        const stubXaml = generateStubWorkflow(stubName, { reason: `Final validation remediation — original XAML had well-formedness violations` });
+        const corruptedEntry = xamlEntries.find(e => e.name === corruptedFile || (e.name.split("/").pop() || e.name) === corruptedFile);
+        const corruptedContent = corruptedEntry?.content || "";
+        const extractedArgs: Array<{ name: string; direction: string; type: string }> = [];
+        const extractedVars: Array<{ name: string; type: string; defaultValue?: string }> = [];
+        const propPattern = /<x:Property\s+Name="([^"]+)"\s+Type="([^"]+)"/g;
+        let propMatch;
+        while ((propMatch = propPattern.exec(corruptedContent)) !== null) {
+          const argName = propMatch[1];
+          const typeStr = propMatch[2];
+          let direction = "InArgument";
+          if (typeStr.includes("OutArgument")) direction = "OutArgument";
+          else if (typeStr.includes("InOutArgument")) direction = "InOutArgument";
+          const typeMatch = typeStr.match(/Argument\(([^)]+)\)/);
+          const baseType = typeMatch ? typeMatch[1] : "x:String";
+          extractedArgs.push({ name: argName, direction, type: baseType });
+        }
+        const varPattern = /<Variable\s+(?:x:TypeArguments="([^"]+)"\s+Name="([^"]+)"|Name="([^"]+)"\s+x:TypeArguments="([^"]+)")(?:\s+Default="([^"]*)")?/g;
+        let varMatch;
+        while ((varMatch = varPattern.exec(corruptedContent)) !== null) {
+          const varType = varMatch[1] || varMatch[4] || "x:String";
+          const varName = varMatch[2] || varMatch[3] || "";
+          const defVal = varMatch[5];
+          if (varName) extractedVars.push({ name: varName, type: varType, ...(defVal ? { defaultValue: defVal } : {}) });
+        }
+        let finalArgs = extractedArgs;
+        let finalVars = extractedVars;
+        if (finalVars.length === 0) {
+          const matchingSpec = workflows.find(wf => {
+            const specName = (wf.name || "").replace(/\s+/g, "_");
+            return specName === stubName || specName + ".xaml" === corruptedFile;
+          });
+          if (matchingSpec && matchingSpec.variables && matchingSpec.variables.length > 0) {
+            finalVars = matchingSpec.variables.map(v => ({
+              name: v.name,
+              type: v.type || "x:String",
+              ...(v.defaultValue ? { defaultValue: v.defaultValue } : {}),
+            }));
+          }
+        }
+        if (finalArgs.length === 0) {
+          const specArgs = treeEnrichment?.status === "success" && treeEnrichment.workflowSpec?.arguments?.length
+            ? treeEnrichment.workflowSpec.arguments
+            : enrichment?.arguments?.length ? enrichment.arguments : null;
+          if (specArgs) {
+            finalArgs = specArgs.map(a => ({
+              name: a.name,
+              direction: a.direction || "InArgument",
+              type: a.type || "x:String",
+            }));
+          }
+        }
+        const stubXaml = generateStubWorkflow(stubName, {
+          reason: `Final validation remediation — original XAML had well-formedness violations`,
+          arguments: finalArgs.length > 0 ? finalArgs : undefined,
+          variables: finalVars.length > 0 ? finalVars : undefined,
+        });
         let stubCompliant: string;
         try {
           stubCompliant = compliancePass(stubXaml, corruptedFile, true);
@@ -3697,6 +3743,91 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         );
       }
     }
+
+    const archiveWfNames = Array.from(deferredWrites.keys())
+      .filter(k => k.endsWith(".xaml"))
+      .map(k => {
+        const baseName = (k.split("/").pop() || k);
+        return baseName.replace(/\.xaml$/i, "");
+      });
+
+    const stubRemediationFiles = new Set(
+      outcomeRemediations
+        .filter(r => r.remediationCode === "STUB_WORKFLOW_BLOCKING")
+        .map(r => r.file.replace(/\.xaml$/i, ""))
+    );
+    const entryPointStubbed = stubRemediationFiles.has("Main") || earlyStubFallbacks.includes("Main.xaml");
+    const stubCount = stubRemediationFiles.size + earlyStubFallbacks.filter(f => !stubRemediationFiles.has(f.replace(/\.xaml$/i, ""))).length;
+    const archiveWfSet = new Set(archiveWfNames);
+    const plannedButMissingCount = workflowNames.filter(n => !archiveWfSet.has(n)).length;
+
+    const stubAwareness = {
+      entryPointStubbed,
+      stubCount,
+      totalWorkflowCount: archiveWfSet.size,
+      plannedButMissingCount,
+    };
+
+    const qualityWarningCount = qualityGateResult.violations.filter(v => v.severity === "warning").length;
+    const remediationCount = outcomeRemediations.length;
+
+    const archiveXamlEntries = Array.from(deferredWrites.entries())
+      .filter(([k]) => k.endsWith(".xaml"))
+      .map(([name, content]) => ({ name, content }));
+    const dhgAnalysis = runDhgAnalysis(
+      archiveXamlEntries,
+      undefined,
+      qualityWarningCount,
+      remediationCount,
+      pkg.internal?.automationType || undefined,
+      undefined,
+      undefined,
+      stubAwareness,
+    );
+
+    const dhgAllFiles = new Set(
+      Array.from(deferredWrites.keys())
+        .filter(k => k.endsWith(".xaml"))
+        .map(k => (k.split("/").pop() || k))
+    );
+    const dhgRemediatedFileSet = new Set(outcomeRemediations.map(r => r.file));
+    const dhgFilesWithPlaceholders = new Set(
+      qualityGateResult.violations
+        .filter(v => v.check === "placeholder-value")
+        .map(v => v.file)
+    );
+    const dhgFullyGenerated = Array.from(dhgAllFiles).filter(f => !dhgRemediatedFileSet.has(f) && !earlyStubFallbacks.includes(f) && !dhgFilesWithPlaceholders.has(f));
+
+    const dhgQualityWarnings = qualityGateResult.violations
+      .filter(v => v.severity === "warning")
+      .map(v => ({
+        check: v.check,
+        file: v.file || "unknown",
+        detail: v.detail,
+        severity: v.severity as "warning",
+        businessContext: v.businessContext,
+      }));
+
+    const assemblerOutcomeReport: PipelineOutcomeReport = {
+      fullyGeneratedFiles: dhgFullyGenerated,
+      autoRepairs: [],
+      remediations: outcomeRemediations,
+      propertyRemediations: [],
+      downgradeEvents: [],
+      qualityWarnings: dhgQualityWarnings,
+      totalEstimatedEffortMinutes: outcomeRemediations.reduce((s, r) => s + (r.estimatedEffortMinutes || 0), 0),
+    };
+
+    const dhgContext: DhgContext = {
+      projectName,
+      workflowNames: archiveWfNames,
+      generationMode: generationMode || undefined,
+      generationModeReason: modeConfig.reason,
+      analysis: dhgAnalysis,
+    };
+    const dhg = generateDhgFromOutcomeReport(assemblerOutcomeReport, dhgContext);
+    archive.append(dhg, { name: `${libPath}/DeveloperHandoffGuide.md` });
+    console.log(`[UiPath] Generated Developer Handoff Guide (structured): ${archiveWfNames.length} workflows, ${outcomeRemediations.length} remediations, REFramework=${useReFramework}`);
 
     if (xamlEntries.length > 0) {
       let parityMatches = 0;
