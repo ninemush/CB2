@@ -142,6 +142,25 @@ function resolveCollisions(
   }
 }
 
+function countSubtreeSize(
+  startId: string,
+  outEdges: Map<string, LayoutEdgeInput[]>,
+  excludeId: string
+): number {
+  const visited = new Set<string>();
+  const queue = [startId];
+  while (queue.length > 0) {
+    const nId = queue.shift()!;
+    if (visited.has(nId) || nId === excludeId) continue;
+    visited.add(nId);
+    const nOuts = outEdges.get(nId) || [];
+    for (const ne of nOuts) {
+      if (!visited.has(ne.target)) queue.push(ne.target);
+    }
+  }
+  return visited.size;
+}
+
 function findConvergenceNode(
   decisionId: string,
   outEdges: Map<string, LayoutEdgeInput[]>,
@@ -266,7 +285,20 @@ export function computeProcessAwareLayout(
       if (convergence) {
         current = convergence;
       } else {
-        break;
+        let bestEdge: LayoutEdgeInput | null = null;
+        let bestSize = -1;
+        for (const edge of outs) {
+          const size = countSubtreeSize(edge.target, outEdges, current);
+          if (size > bestSize || (size === bestSize && isYesLabel(edge.label))) {
+            bestSize = size;
+            bestEdge = edge;
+          }
+        }
+        if (bestEdge) {
+          current = bestEdge.target;
+        } else {
+          break;
+        }
       }
     } else {
       if (outs.length === 1) {
@@ -461,20 +493,33 @@ export function computeProcessAwareLayout(
 
       const isDecision = node.nodeType === "decision" || node.nodeType === "agent-decision";
       if (isDecision && outs.length >= 2) {
-        let subBranchIdx = 0;
+        let leftIdx = 0;
+        let rightIdx = 0;
         for (const edge of outs) {
           if (!positions.has(edge.target) && !trunkSet.has(edge.target)) {
-            subBranchIdx++;
+            let edgeSide: "left" | "right";
+            if (isNoLabel(edge.label)) {
+              edgeSide = "right";
+            } else if (isYesLabel(edge.label)) {
+              edgeSide = "left";
+            } else {
+              edgeSide = work.inheritedSide;
+            }
+
+            if (edgeSide === "left") leftIdx++;
+            else rightIdx++;
+
             const depthMultiplier = 0.6 + work.depth * 0.15;
+            const branchNum = edgeSide === "left" ? leftIdx : rightIdx;
             const subOffset = work.xOffset + (
-              work.inheritedSide === "left"
-                ? -branchXOffset * depthMultiplier * subBranchIdx
-                : branchXOffset * depthMultiplier * subBranchIdx
+              edgeSide === "left"
+                ? -branchXOffset * depthMultiplier * branchNum
+                : branchXOffset * depthMultiplier * branchNum
             );
             branchQueue.push({
               nodeId: edge.target,
               parentId: currentId,
-              inheritedSide: work.inheritedSide,
+              inheritedSide: edgeSide,
               branchY,
               xOffset: subOffset,
               depth: work.depth + 1,
