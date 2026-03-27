@@ -243,6 +243,48 @@ function segmentIntersectsBox(
   return false;
 }
 
+function computeTargetEntry(
+  tgtNode: LayoutNode,
+  approachX: number,
+  approachY: number,
+): { x: number; y: number; side: "top" | "left" | "right" } {
+  const tx = tgtNode.x + tgtNode.width / 2;
+  const ty = tgtNode.y;
+  const tgtCenterY = tgtNode.y + tgtNode.height / 2;
+  const tgtType = (tgtNode.data?.nodeType || "task").toLowerCase();
+  const isEndNode = tgtType === "end" || tgtType === "start";
+  const radius = tgtNode.width / 2;
+
+  const dx = approachX - tx;
+  const dy = approachY - tgtCenterY;
+  const horizontalDist = Math.abs(dx);
+  const verticalDist = Math.abs(dy);
+
+  const enterFromSide = horizontalDist > tgtNode.width && horizontalDist >= verticalDist;
+
+  if (enterFromSide) {
+    if (dx < 0) {
+      const entryX = isEndNode ? tx - radius : tgtNode.x;
+      return { x: entryX, y: tgtCenterY, side: "left" };
+    } else {
+      const entryX = isEndNode ? tx + radius : tgtNode.x + tgtNode.width;
+      return { x: entryX, y: tgtCenterY, side: "right" };
+    }
+  }
+
+  if (isEndNode) {
+    if (horizontalDist > radius * 0.5) {
+      if (dx < 0) {
+        return { x: tx - radius, y: tgtCenterY, side: "left" };
+      } else {
+        return { x: tx + radius, y: tgtCenterY, side: "right" };
+      }
+    }
+    return { x: tx, y: tgtCenterY - radius, side: "top" };
+  }
+  return { x: tx, y: ty, side: "top" };
+}
+
 function computeEdgePoints(
   srcNode: LayoutNode,
   tgtNode: LayoutNode,
@@ -255,6 +297,7 @@ function computeEdgePoints(
   const ty = tgtNode.y;
   const diamondR = 42;
   const clearance = 60;
+  const elbowClearance = 20;
 
   const isBackEdge = ty < cy;
 
@@ -277,19 +320,35 @@ function computeEdgePoints(
     return adjustedX;
   }
 
+  function routeFromHorizontalExit(sx: number, sy: number, exitX: number, handleDir: "left" | "right"): { x: number; y: number }[] {
+    if (isBackEdge) {
+      const routeX = handleDir === "left"
+        ? Math.min(exitX, tgtNode.x - clearance)
+        : Math.max(exitX, tgtNode.x + tgtNode.width + clearance);
+      const entry = computeTargetEntry(tgtNode, routeX, sy);
+      return [{ x: sx, y: sy }, { x: routeX, y: sy }, { x: routeX, y: entry.y }, { x: entry.x, y: entry.y }];
+    }
+
+    const entry = computeTargetEntry(tgtNode, exitX, sy);
+
+    if (entry.side === "left" || entry.side === "right") {
+      return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: exitX, y: entry.y }, { x: entry.x, y: entry.y }];
+    }
+
+    if (Math.abs(exitX - entry.x) < 5) {
+      return [{ x: sx, y: sy }, { x: entry.x, y: sy }, { x: entry.x, y: entry.y }];
+    }
+
+    const elbowY = entry.y - elbowClearance;
+    return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: exitX, y: elbowY }, { x: entry.x, y: elbowY }, { x: entry.x, y: entry.y }];
+  }
+
   if (sourceHandle === "left") {
     const sx = cx - diamondR;
     const sy = cy;
     let exitX = sx - clearance;
     exitX = adjustClearanceForObstacles(exitX, sy, ty, "left");
-    if (isBackEdge) {
-      const routeX = Math.min(exitX, tgtNode.x - clearance);
-      return [{ x: sx, y: sy }, { x: routeX, y: sy }, { x: routeX, y: ty }, { x: tx, y: ty }];
-    }
-    if (Math.abs(exitX - tx) < 5) {
-      return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: tx, y: ty }];
-    }
-    return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: exitX, y: ty - 10 }, { x: tx, y: ty }];
+    return routeFromHorizontalExit(sx, sy, exitX, "left");
   }
 
   if (sourceHandle === "right") {
@@ -297,53 +356,59 @@ function computeEdgePoints(
     const sy = cy;
     let exitX = sx + clearance;
     exitX = adjustClearanceForObstacles(exitX, sy, ty, "right");
-    if (isBackEdge) {
-      const routeX = Math.max(exitX, tgtNode.x + tgtNode.width + clearance);
-      return [{ x: sx, y: sy }, { x: routeX, y: sy }, { x: routeX, y: ty }, { x: tx, y: ty }];
-    }
-    if (Math.abs(exitX - tx) < 5) {
-      return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: tx, y: ty }];
-    }
-    return [{ x: sx, y: sy }, { x: exitX, y: sy }, { x: exitX, y: ty - 10 }, { x: tx, y: ty }];
+    return routeFromHorizontalExit(sx, sy, exitX, "right");
   }
 
   if (sourceHandle === "bottom-left") {
     const sx = cx - diamondR * 0.5;
     const sy = cy + diamondR;
-    if (Math.abs(sx - tx) < 5) {
-      return [{ x: sx, y: sy }, { x: tx, y: ty }];
+    const entry = computeTargetEntry(tgtNode, sx, sy);
+    if (Math.abs(sx - entry.x) < 5) {
+      return [{ x: sx, y: sy }, { x: sx, y: entry.y }, { x: entry.x, y: entry.y }];
     }
-    const midY = sy + (ty - sy) * 0.3;
-    return [{ x: sx, y: sy }, { x: sx, y: midY }, { x: tx, y: midY }, { x: tx, y: ty }];
+    if (entry.side === "left" || entry.side === "right") {
+      const midY = sy + (entry.y - sy) * 0.5;
+      return [{ x: sx, y: sy }, { x: sx, y: midY }, { x: entry.x, y: midY }, { x: entry.x, y: entry.y }];
+    }
+    const midY = sy + (entry.y - sy) * 0.3;
+    return [{ x: sx, y: sy }, { x: sx, y: midY }, { x: entry.x, y: midY }, { x: entry.x, y: entry.y }];
   }
 
   if (sourceHandle === "bottom-right") {
     const sx = cx + diamondR * 0.5;
     const sy = cy + diamondR;
-    if (Math.abs(sx - tx) < 5) {
-      return [{ x: sx, y: sy }, { x: tx, y: ty }];
+    const entry = computeTargetEntry(tgtNode, sx, sy);
+    if (Math.abs(sx - entry.x) < 5) {
+      return [{ x: sx, y: sy }, { x: sx, y: entry.y }, { x: entry.x, y: entry.y }];
     }
-    const midY = sy + (ty - sy) * 0.3;
-    return [{ x: sx, y: sy }, { x: sx, y: midY }, { x: tx, y: midY }, { x: tx, y: ty }];
+    if (entry.side === "left" || entry.side === "right") {
+      const midY = sy + (entry.y - sy) * 0.5;
+      return [{ x: sx, y: sy }, { x: sx, y: midY }, { x: entry.x, y: midY }, { x: entry.x, y: entry.y }];
+    }
+    const midY = sy + (entry.y - sy) * 0.3;
+    return [{ x: sx, y: sy }, { x: sx, y: midY }, { x: entry.x, y: midY }, { x: entry.x, y: entry.y }];
   }
 
   const sx = srcNode.x + srcNode.width / 2;
   const sy = srcNode.y + srcNode.height;
   if (isBackEdge) {
     const routeX = Math.max(srcNode.x + srcNode.width + clearance, tgtNode.x + tgtNode.width + clearance);
-    return [{ x: sx, y: sy }, { x: sx, y: sy + clearance / 2 }, { x: routeX, y: sy + clearance / 2 }, { x: routeX, y: ty }, { x: tx, y: ty }];
+    const entry = computeTargetEntry(tgtNode, routeX, sy);
+    return [{ x: sx, y: sy }, { x: sx, y: sy + clearance / 2 }, { x: routeX, y: sy + clearance / 2 }, { x: routeX, y: entry.y }, { x: entry.x, y: entry.y }];
   }
-  if (Math.abs(sx - tx) < 5) {
-    const directPath = [{ x: sx, y: sy }, { x: tx, y: ty }];
+  const entry = computeTargetEntry(tgtNode, sx, sy);
+  if (Math.abs(sx - entry.x) < 5) {
+    const directPath = [{ x: sx, y: sy }, { x: sx, y: entry.y }, { x: entry.x, y: entry.y }];
     const hasObstacle = obstacleNodes.some(obs =>
-      segmentIntersectsBox(sx, sy, tx, ty, obs.x, obs.y, obs.width, obs.height)
+      segmentIntersectsBox(sx, sy, sx, entry.y, obs.x, obs.y, obs.width, obs.height)
     );
     if (!hasObstacle) return directPath;
     const detourX = sx + clearance;
-    return [{ x: sx, y: sy }, { x: detourX, y: sy }, { x: detourX, y: ty - 10 }, { x: tx, y: ty }];
+    const elbowY = entry.y - elbowClearance;
+    return [{ x: sx, y: sy }, { x: detourX, y: sy }, { x: detourX, y: elbowY }, { x: entry.x, y: elbowY }, { x: entry.x, y: entry.y }];
   }
-  const midY = (sy + ty) / 2;
-  const path = [{ x: sx, y: sy }, { x: sx, y: midY }, { x: tx, y: midY }, { x: tx, y: ty }];
+  const midY = (sy + entry.y) / 2;
+  const path = [{ x: sx, y: sy }, { x: sx, y: midY }, { x: entry.x, y: midY }, { x: entry.x, y: entry.y }];
   const hasObstacleOnPath = obstacleNodes.some(obs => {
     for (let i = 0; i < path.length - 1; i++) {
       if (segmentIntersectsBox(path[i].x, path[i].y, path[i + 1].x, path[i + 1].y, obs.x, obs.y, obs.width, obs.height)) {
@@ -353,8 +418,9 @@ function computeEdgePoints(
     return false;
   });
   if (hasObstacleOnPath) {
-    const detourX = tx > sx ? Math.max(tx + clearance, sx + clearance) : Math.min(tx - clearance, sx - clearance);
-    return [{ x: sx, y: sy }, { x: detourX, y: sy }, { x: detourX, y: ty - 10 }, { x: tx, y: ty }];
+    const detourX = entry.x > sx ? Math.max(entry.x + clearance, sx + clearance) : Math.min(entry.x - clearance, sx - clearance);
+    const elbowY = entry.y - elbowClearance;
+    return [{ x: sx, y: sy }, { x: detourX, y: sy }, { x: detourX, y: elbowY }, { x: entry.x, y: elbowY }, { x: entry.x, y: entry.y }];
   }
   return path;
 }
