@@ -8,8 +8,8 @@
   },
   "packageVersionRanges": {
     "UiPath.System.Activities": {
-      "preferred": "26.2.3",
-      "lastVerifiedAt": "2026-03-25T19:32:48.082Z",
+      "preferred": "26.2.4",
+      "lastVerifiedAt": "2026-03-28T04:14:37.549Z",
       "verificationSource": "uipath-official-feed"
     },
     "UiPath.UIAutomation.Activities": {
@@ -751,7 +751,7 @@
   "minimumRequiredPackages": [
     "UiPath.System.Activities"
   ],
-  "lastRefreshedAt": "2026-03-27T10:21:15.725Z",
+  "lastRefreshedAt": "2026-03-28T04:15:00.839Z",
   "lastVerifiedAt": "2026-03-21T09:00:00.000Z",
   "sourceVersion": "1.0.0",
   "snapshotVersion": "1.0.0"
