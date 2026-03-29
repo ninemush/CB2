@@ -138,6 +138,10 @@ const CONVERSION_MAP: Record<string, Record<string, ConversionInfo>> = {
     "System.String": { kind: "unrepairable", detail: "Cannot convert DataTable to String — use DataTable.Rows.Count.ToString or serialize via JsonConvert" },
     "System.Int32": { kind: "unrepairable", detail: "Cannot convert DataTable to Int32 — use DataTable.Rows.Count for row count" },
   },
+  "System.Object": {
+    "System.Collections.Generic.IEnumerable`1[System.Object]": { kind: "variable-type-change", detail: "Object variable should be typed as IEnumerable — retype variable to match ForEach.Values" },
+    "System.Collections.IEnumerable": { kind: "variable-type-change", detail: "Object variable should be typed as IEnumerable — retype variable to match ForEach.Values" },
+  },
 };
 
 export function getConversion(sourceType: string, targetType: string): ConversionInfo | null {
@@ -515,6 +519,33 @@ export function validateTypeCompatibility(
 
         if (conversion.kind === "wrap" && conversion.wrapper) {
           pendingWraps.push({ binding, conversion, varInfo });
+        } else if (conversion.kind === "variable-type-change") {
+          const targetTypeArg = clrTypeToXamlTypeArg(normalizeClrType(binding.expectedClrType));
+          const oldType = varInfo.type;
+          const oldClrType = varInfo.fullClrType;
+          patchedContent = changeVariableType(patchedContent, binding.boundVariable, targetTypeArg);
+          changed = true;
+          madeChangesThisPass = true;
+
+          repairs.push({
+            file: shortName,
+            line: binding.line,
+            activity: binding.activityTag,
+            property: binding.propertyName,
+            expectedType: binding.expectedClrType,
+            actualType: oldClrType,
+            repairKind: "variable-type-change",
+            boundVariable: binding.boundVariable,
+            detail: `Changed variable "${binding.boundVariable}" type from ${oldType} to ${targetTypeArg} to match ${binding.activityTag}.${binding.propertyName} input type`,
+          });
+
+          violations.push({
+            category: "accuracy",
+            severity: "warning",
+            check: "TYPE_MISMATCH",
+            file: shortName,
+            detail: `Line ${binding.line}: Auto-repaired — changed variable "${binding.boundVariable}" type from ${oldType} to ${targetTypeArg} to match ${binding.activityTag}.${binding.propertyName} (${binding.expectedClrType})`,
+          });
         } else {
           repairs.push({
             file: shortName,

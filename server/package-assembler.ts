@@ -4103,10 +4103,12 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
     const stubRemediationFiles = new Set(
       outcomeRemediations
-        .filter(r => r.remediationCode === "STUB_WORKFLOW_BLOCKING")
+        .filter(r => r.remediationCode === "STUB_WORKFLOW_BLOCKING" || r.remediationCode === "STUB_WORKFLOW_GENERATOR_FAILURE")
         .map(r => r.file.replace(/\.xaml$/i, ""))
     );
-    const entryPointStubbed = stubRemediationFiles.has("Main") || earlyStubFallbacks.includes("Main.xaml");
+    const complianceFallbackFiles = new Set(complianceFallbacks.map(fb => fb.file.replace(/\.xaml$/i, "")));
+    for (const cf of complianceFallbackFiles) stubRemediationFiles.add(cf);
+    const entryPointStubbed = stubRemediationFiles.has("Main") || earlyStubFallbacks.includes("Main.xaml") || complianceFallbackFiles.has("Main");
     const stubCount = stubRemediationFiles.size + earlyStubFallbacks.filter(f => !stubRemediationFiles.has(f.replace(/\.xaml$/i, ""))).length;
     const archiveWfSet = new Set(archiveWfNames);
     const plannedButMissingCount = workflowNames.filter(n => !archiveWfSet.has(n)).length;
@@ -4120,6 +4122,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
     const qualityWarningCount = qualityGateResult.violations.filter(v => v.severity === "warning").length;
     const remediationCount = outcomeRemediations.length;
+    const emptyContainerCount = qualityGateResult.violations.filter(v => v.check === "empty-container" && v.severity === "error").length;
 
     const archiveXamlEntries = Array.from(deferredWrites.entries())
       .filter(([k]) => k.endsWith(".xaml"))
@@ -4190,7 +4193,21 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       "placeholder-value", "expression-syntax-mismatch", "invoke-arg-type-mismatch",
       "invalid-continue-on-error", "EXPRESSION_SYNTAX", "UNSAFE_VARIABLE_NAME", "empty-catches",
     ]);
+    const dhgStubbedFiles = new Set(complianceFallbacks.map(fb => fb.file));
+    for (const esf of earlyStubFallbacks) dhgStubbedFiles.add(esf);
+    for (const r of outcomeRemediations) {
+      if (r.remediationCode === "STUB_WORKFLOW_BLOCKING" || r.remediationCode === "STUB_WORKFLOW_GENERATOR_FAILURE") {
+        dhgStubbedFiles.add(r.file);
+      }
+    }
     const dhgStudioCompatibility: PerWorkflowStudioCompatibility[] = Array.from(dhgAllFiles).map(file => {
+      if (dhgStubbedFiles.has(file)) {
+        return {
+          file,
+          level: "studio-blocked" as StudioCompatibilityLevel,
+          blockers: [`[STUB_WORKFLOW_GENERATOR_FAILURE] Workflow was replaced with a stub due to generation/compliance failure — structurally invalid`],
+        };
+      }
       const fileViolations = qualityGateResult.violations.filter(v => v.file === file);
       const blockingViolations = fileViolations.filter(v => v.severity === "error" && dhgStudioBlockingChecks.has(v.check));
       const warningViolations = fileViolations.filter(v =>
@@ -4392,7 +4409,9 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         undefined,
         undefined,
         stubAwareness,
+        emptyContainerCount,
       );
+      dhgAnalysis.hasBlockedWorkflows = dhgStudioCompatibility.some(sc => sc.level === "studio-blocked");
       const dhgContext: DhgContext = {
         projectName,
         workflowNames: archiveWfNames,
@@ -4545,7 +4564,21 @@ ${depEntries}
     "UNSAFE_VARIABLE_NAME",
     "empty-catches",
   ]);
+  const stubbedFiles = new Set(complianceFallbacks.map(fb => fb.file));
+  for (const esf of earlyStubFallbacks) stubbedFiles.add(esf);
+  for (const r of outcomeRemediations) {
+    if (r.remediationCode === "STUB_WORKFLOW_BLOCKING" || r.remediationCode === "STUB_WORKFLOW_GENERATOR_FAILURE") {
+      stubbedFiles.add(r.file);
+    }
+  }
   const studioCompatibility: PerWorkflowStudioCompatibility[] = Array.from(allFiles).map(file => {
+    if (stubbedFiles.has(file)) {
+      return {
+        file,
+        level: "studio-blocked" as StudioCompatibilityLevel,
+        blockers: [`[STUB_WORKFLOW_GENERATOR_FAILURE] Workflow was replaced with a stub due to generation/compliance failure — structurally invalid`],
+      };
+    }
     const fileViolations = qualityGateResult.violations.filter(v => v.file === file);
     const blockingViolations = fileViolations.filter(v => v.severity === "error" && studioBlockingChecks.has(v.check));
     const warningViolations = fileViolations.filter(v =>

@@ -644,6 +644,7 @@ export function calculateReadiness(
     totalWorkflowCount: number;
     plannedButMissingCount: number;
   },
+  emptyContainerCount?: number,
 ): OverallReadiness {
   const sections: ReadinessScore[] = [];
 
@@ -724,19 +725,23 @@ export function calculateReadiness(
     }
     if (stubAwareness) {
       if (stubAwareness.entryPointStubbed) {
-        score -= 8;
+        score -= 10;
         notes.push("Entry point (Main.xaml) is stubbed — package has no runnable entry point");
       }
       if (stubAwareness.totalWorkflowCount > 0 && stubAwareness.stubCount > 0) {
         const stubProportion = stubAwareness.stubCount / stubAwareness.totalWorkflowCount;
-        const stubDeduction = Math.round(stubProportion * 6);
+        const stubDeduction = Math.round(stubProportion * 10);
         score -= stubDeduction;
-        notes.push(`${stubAwareness.stubCount}/${stubAwareness.totalWorkflowCount} workflow(s) are stubs (${Math.round(stubProportion * 100)}%)`);
+        notes.push(`${stubAwareness.stubCount}/${stubAwareness.totalWorkflowCount} workflow(s) are stubs (${Math.round(stubProportion * 100)}%) — structurally invalid`);
       }
       if (stubAwareness.plannedButMissingCount > 0) {
-        score -= Math.min(3, stubAwareness.plannedButMissingCount);
+        score -= Math.min(5, stubAwareness.plannedButMissingCount * 2);
         notes.push(`${stubAwareness.plannedButMissingCount} planned workflow(s) missing from archive`);
       }
+    }
+    if (emptyContainerCount && emptyContainerCount > 0) {
+      score -= Math.min(4, emptyContainerCount);
+      notes.push(`${emptyContainerCount} empty container(s) — workflows with empty sequences are structurally incomplete`);
     }
     if (notes.length === 0) notes.push("Build quality is clean");
     sections.push({ section: "Build Quality", score: Math.max(0, score), maxScore: 10, notes });
@@ -761,8 +766,10 @@ export function calculateReadiness(
   const maxTotalScore = sections.reduce((s, sec) => s + sec.maxScore, 0);
   let percent = maxTotalScore > 0 ? Math.round((totalScore / maxTotalScore) * 100) : 0;
 
-  if (stubAwareness?.entryPointStubbed && percent >= 40) {
-    percent = 39;
+  if (stubAwareness?.entryPointStubbed && percent >= 20) {
+    percent = 19;
+  } else if (stubAwareness && stubAwareness.stubCount > 0 && percent >= 40) {
+    percent = Math.min(percent, 39);
   }
 
   let rating: OverallReadiness["rating"];
@@ -984,6 +991,7 @@ export interface DhgAnalysisResult {
   environmentRequirements: EnvironmentRequirements;
   triggerSuggestions: TriggerSuggestion[];
   readiness: OverallReadiness;
+  hasBlockedWorkflows?: boolean;
   upstreamContext?: UpstreamContext;
   sddCrossReference?: SddArtifactCrossReference;
 }
@@ -1002,6 +1010,7 @@ export function runDhgAnalysis(
     totalWorkflowCount: number;
     plannedButMissingCount: number;
   },
+  emptyContainerCount?: number,
 ): DhgAnalysisResult {
   const credentialInventory = scanCredentialAssets(xamlEntries);
   const exceptionCoverage = analyzeExceptionCoverage(xamlEntries);
@@ -1028,6 +1037,7 @@ export function runDhgAnalysis(
     qualityWarningCount || 0,
     remediationCount || 0,
     stubAwareness,
+    emptyContainerCount,
   );
 
   return {

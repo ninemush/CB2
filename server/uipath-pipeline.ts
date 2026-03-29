@@ -590,6 +590,9 @@ function buildDhgFromBuildResult(
       sddArtifacts = parseArtifactBlockAsObject(ctx.sdd.content);
     }
 
+    const pipelineEmptyContainerCount = buildResult.outcomeReport.qualityWarnings.filter(
+      w => w.check === "empty-container"
+    ).length;
     const analysis = runDhgAnalysis(
       xamlEntries,
       buildResult.projectJsonContent || undefined,
@@ -599,7 +602,11 @@ function buildDhgFromBuildResult(
       upstreamContext,
       sddArtifacts,
       stubAwareness,
+      pipelineEmptyContainerCount,
     );
+    analysis.hasBlockedWorkflows = buildResult.outcomeReport?.studioCompatibility?.some(
+      sc => sc.level === "studio-blocked"
+    ) ?? false;
     const dhgContext: DhgContext = {
       projectName,
       workflowNames: effectiveWfNames,
@@ -1298,12 +1305,12 @@ export async function compilePackageFromSpecs(
     }
 
     const entryPointIsStubbed = buildResult.outcomeReport?.remediations.some(
-      r => r.remediationCode === "STUB_WORKFLOW_BLOCKING" && (r.file === "Main.xaml" || r.file === "Main")
+      r => (r.remediationCode === "STUB_WORKFLOW_BLOCKING" || r.remediationCode === "STUB_WORKFLOW_GENERATOR_FAILURE") && (r.file === "Main.xaml" || r.file === "Main")
     ) ?? false;
     const hasStructuralBlockers = buildResult.outcomeReport?.studioCompatibility?.some(
       sc => sc.level === "studio-blocked"
     ) ?? false;
-    const hasDegradation = downgrades.length > 0 || usedAIFallback || entryPointIsStubbed;
+    const hasDegradation = downgrades.length > 0 || usedAIFallback || entryPointIsStubbed || hasStructuralBlockers;
     const hasStructuralWarnings = buildResult.outcomeReport?.studioCompatibility?.some(
       sc => sc.level === "studio-warnings"
     ) ?? false;
@@ -1311,7 +1318,7 @@ export async function compilePackageFromSpecs(
       ? "FAILED"
       : hasDegradation
         ? "FALLBACK_READY"
-        : (hasStructuralBlockers || pipelineWarnings.length > 0 || metaValidationResult?.flatStructureWarnings || hasStructuralWarnings)
+        : (hasStructuralWarnings || pipelineWarnings.length > 0 || metaValidationResult?.flatStructureWarnings)
           ? "READY_WITH_WARNINGS"
           : "READY";
 

@@ -1033,10 +1033,14 @@ function assembleIfNode(
     .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
     .join("\n");
 
+  const thenContent = thenXml.trim()
+    ? thenXml
+    : `<ui:LogMessage Level="Trace" DisplayName="TODO: Implement Then" Message="[&quot;Placeholder — implement this branch&quot;]" />`;
+
   let xml = `<If Condition="${condition}" DisplayName="${displayName}">\n`;
   xml += `  <If.Then>\n`;
   xml += `    <Sequence DisplayName="Then">\n`;
-  xml += `      ${thenXml}\n`;
+  xml += `      ${thenContent}\n`;
   xml += `    </Sequence>\n`;
   xml += `  </If.Then>\n`;
   if (elseXml.trim()) {
@@ -1065,10 +1069,14 @@ function assembleWhileNode(
     .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
     .join("\n");
 
+  const bodyContent = bodyXml.trim()
+    ? bodyXml
+    : `<ui:LogMessage Level="Trace" DisplayName="TODO: Implement Body" Message="[&quot;Placeholder — implement this branch&quot;]" />`;
+
   return `<While Condition="${condition}" DisplayName="${displayName}">\n` +
     `  <While.Body>\n` +
     `    <Sequence DisplayName="While Body">\n` +
-    `      ${bodyXml}\n` +
+    `      ${bodyContent}\n` +
     `    </Sequence>\n` +
     `  </While.Body>\n` +
     `</While>`;
@@ -1145,6 +1153,10 @@ function assembleForEachNode(
     .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
     .join("\n");
 
+  const bodyContent = bodyXml.trim()
+    ? bodyXml
+    : `<ui:LogMessage Level="Trace" DisplayName="TODO: Implement Body" Message="[&quot;Placeholder — implement this branch&quot;]" />`;
+
   const valuesInner = wrappedValues.startsWith("[") && wrappedValues.endsWith("]")
     ? `[${escapeXmlExpression(wrappedValues.slice(1, -1))}]`
     : escapeXmlExpression(wrappedValues);
@@ -1154,7 +1166,7 @@ function assembleForEachNode(
     `      <DelegateInArgument x:TypeArguments="${itemType}" Name="${escapeXml(node.iteratorName || "item")}" />\n` +
     `    </ActivityAction.Argument>\n` +
     `    <Sequence DisplayName="Body">\n` +
-    `      ${bodyXml}\n` +
+    `      ${bodyContent}\n` +
     `    </Sequence>\n` +
     `  </ActivityAction>\n` +
     `</ForEach>`;
@@ -1173,10 +1185,14 @@ function assembleRetryScopeNode(
     .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
     .join("\n");
 
+  const bodyContent = bodyXml.trim()
+    ? bodyXml
+    : `<ui:LogMessage Level="Trace" DisplayName="TODO: Implement Retry" Message="[&quot;Placeholder — implement this branch&quot;]" />`;
+
   return `<ui:RetryScope NumberOfRetries="${node.numberOfRetries}" RetryInterval="${node.retryInterval}" DisplayName="${displayName}">\n` +
     `  <ui:RetryScope.Body>\n` +
     `    <Sequence DisplayName="Retry Body">\n` +
-    `      ${bodyXml}\n` +
+    `      ${bodyContent}\n` +
     `    </Sequence>\n` +
     `  </ui:RetryScope.Body>\n` +
     `  <ui:RetryScope.Condition>\n` +

@@ -696,6 +696,21 @@ const TYPE_ARGUMENT_PACKAGE_MAP: Record<string, string> = {
   "UiPath.Mail.Activities": "UiPath.Mail.Activities",
   "UiPath.Web.Activities": "UiPath.Web.Activities",
   "UiPath.Database.Activities": "UiPath.Database.Activities",
+  "UiPath.Persistence.Activities": "UiPath.Persistence.Activities",
+  "UiPath.Persistence.Activities.Models.TaskData": "UiPath.Persistence.Activities",
+  "UiPath.Persistence.Activities.Models.FormTaskData": "UiPath.Persistence.Activities",
+  "UiPath.Persistence.Activities.Models.ExternalTaskData": "UiPath.Persistence.Activities",
+  "UiPath.Persistence.Activities.Models.TaskAction": "UiPath.Persistence.Activities",
+  "UiPath.IntegrationService.Activities": "UiPath.IntegrationService.Activities",
+  "UiPath.IntegrationService.Models": "UiPath.IntegrationService.Activities",
+  "UiPath.GSuite.Activities": "UiPath.GSuite.Activities",
+  "UiPath.GSuite": "UiPath.GSuite.Activities",
+  "UiPath.GenAI.Activities": "UiPath.GenAI.Activities",
+  "UiPath.GenAI": "UiPath.GenAI.Activities",
+  "UiPath.DocumentUnderstanding": "UiPath.IntelligentOCR.Activities",
+  "UiPath.IntelligentOCR": "UiPath.IntelligentOCR.Activities",
+  "UiPath.DataService": "UiPath.DataService.Activities",
+  "UiPath.DataService.Activities": "UiPath.DataService.Activities",
 };
 
 function inferPackageFromNamespace(ns: string): string | null {
@@ -728,6 +743,39 @@ export const NAMESPACE_PREFIX_TO_PACKAGE: Record<string, string> = {
   "uocr": "UiPath.IntelligentOCR.Activities",
   "upers": "UiPath.Persistence.Activities",
   "uds": "UiPath.DataService.Activities",
+  "ugsuite": "UiPath.GSuite.Activities",
+  "uis": "UiPath.IntegrationService.Activities",
+  "ugenai": "UiPath.GenAI.Activities",
+};
+
+const UI_PREFIX_ACTIVITY_PACKAGE_MAP: Record<string, string> = {
+  "ui:CreateTask": "UiPath.Persistence.Activities",
+  "ui:CompleteTask": "UiPath.Persistence.Activities",
+  "ui:GetTask": "UiPath.Persistence.Activities",
+  "ui:GetTasks": "UiPath.Persistence.Activities",
+  "ui:ResumeAfterTask": "UiPath.Persistence.Activities",
+  "ui:WaitForTask": "UiPath.Persistence.Activities",
+  "ui:CreateFormTask": "UiPath.Persistence.Activities",
+  "ui:CreateExternalTask": "UiPath.Persistence.Activities",
+  "ui:SendGmail": "UiPath.GSuite.Activities",
+  "ui:ReadGmail": "UiPath.GSuite.Activities",
+  "ui:GetGmailMessages": "UiPath.GSuite.Activities",
+  "ui:SendGoogleSheet": "UiPath.GSuite.Activities",
+  "ui:ReadGoogleSheet": "UiPath.GSuite.Activities",
+  "ui:WriteGoogleSheet": "UiPath.GSuite.Activities",
+  "ui:GoogleDriveUpload": "UiPath.GSuite.Activities",
+  "ui:GoogleDriveDownload": "UiPath.GSuite.Activities",
+  "ui:IntegrationServiceConnector": "UiPath.IntegrationService.Activities",
+  "ui:Connector": "UiPath.IntegrationService.Activities",
+  "ui:ConnectorAction": "UiPath.IntegrationService.Activities",
+  "ui:ConnectorTrigger": "UiPath.IntegrationService.Activities",
+  "ui:GenerateText": "UiPath.GenAI.Activities",
+  "ui:PromptActivity": "UiPath.GenAI.Activities",
+  "ui:ClassifyText": "UiPath.GenAI.Activities",
+  "ui:ExtractData": "UiPath.GenAI.Activities",
+  "ui:SummarizeText": "UiPath.GenAI.Activities",
+  "ui:AnalyzeSentiment": "UiPath.GenAI.Activities",
+  "ui:TranslateText": "UiPath.GenAI.Activities",
 };
 
 export function scanXamlForRequiredPackages(xamlContent: string): Set<string> {
@@ -738,6 +786,12 @@ export function scanXamlForRequiredPackages(xamlContent: string): Set<string> {
   let match;
   while ((match = activityPattern.exec(xamlContent)) !== null) {
     const actTag = match[1];
+
+    const specializedPkg = UI_PREFIX_ACTIVITY_PACKAGE_MAP[actTag];
+    if (specializedPkg) {
+      packages.add(specializedPkg);
+      continue;
+    }
 
     if (catalogService.isLoaded()) {
       const pkg = catalogService.getPackageForActivity(actTag);

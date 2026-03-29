@@ -70,6 +70,9 @@ export function generateDhgFromOutcomeReport(
     md += `| # | Workflow | Status |\n`;
     md += `|---|----------|--------|\n`;
     context.workflowNames.forEach((wf, i) => {
+      const isStubbed = report.remediations.some(
+        r => (r.remediationCode === "STUB_WORKFLOW_GENERATOR_FAILURE" || r.remediationCode === "STUB_WORKFLOW_BLOCKING") && (r.file === `${wf}.xaml` || r.file === wf)
+      );
       const isFullyGenerated = report.fullyGeneratedFiles.some(f => f === `${wf}.xaml` || f === wf);
       const hasRemediation = [...report.remediations, ...report.propertyRemediations].some(
         r => r.file === `${wf}.xaml` || r.file === wf
@@ -77,7 +80,7 @@ export function generateDhgFromOutcomeReport(
       const hasPlaceholders = report.qualityWarnings.some(
         w => w.check === "placeholder-value" && (w.file === `${wf}.xaml` || w.file === wf)
       );
-      const status = isFullyGenerated ? "Fully Generated" : hasPlaceholders ? "Generated with Placeholders" : hasRemediation ? "Generated with Remediations" : "Generated";
+      const status = isStubbed ? "Structurally invalid (stub)" : isFullyGenerated ? "Fully Generated" : hasPlaceholders ? "Generated with Placeholders" : hasRemediation ? "Generated with Remediations" : "Generated";
       md += `| ${i + 1} | \`${wf}.xaml\` | ${status} |\n`;
     });
     md += `\n`;
@@ -803,8 +806,11 @@ function generateReadinessScoreSection(analysis: DhgAnalysisResult, sectionNum: 
   }
   md += `\n`;
 
+  const hasBlockingDefects = analysis.hasBlockedWorkflows || analysis.readiness.sections.some(s => s.score <= 0);
   if (r.rating === "Not Ready" || r.rating === "Needs Work") {
     md += `> **Action Required:** Address the items above before deploying to production. Focus on sections with the lowest scores first.\n\n`;
+  } else if (hasBlockingDefects) {
+    md += `> **Action Required:** The package has blocking structural defects that must be resolved before deployment.\n\n`;
   } else if (r.rating === "Mostly Ready") {
     md += `> **Almost There:** A few items need attention before production deployment.\n\n`;
   } else {

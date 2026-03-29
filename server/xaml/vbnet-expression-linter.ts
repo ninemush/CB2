@@ -521,6 +521,18 @@ export function lintExpression(expression: string): LintResult {
     "New "
   );
 
+  if (testOutsideStrings(corrected, /\?[^.?]/) && testOutsideStrings(corrected, /:/)) {
+    const ternaryMatch = corrected.match(/^(.+?)\s*\?\s*(.+?)\s*:\s*(.+)$/);
+    if (ternaryMatch) {
+      const [, cond, trueVal, falseVal] = ternaryMatch;
+      if (!cond.includes("(Of") && !cond.includes("TypeArguments")) {
+        corrected = `If(${cond.trim()}, ${trueVal.trim()}, ${falseVal.trim()})`;
+        issues.push({ code: "CSHARP_TERNARY", message: "C# ternary 'condition ? a : b' converted to VB.NET 'If(condition, a, b)'", autoFixed: true });
+        wasModified = true;
+      }
+    }
+  }
+
   if (/\$"/.test(corrected)) {
     const before = corrected;
     corrected = corrected.replace(/\$"([^"]*)"/g, (_match: string, inner: string) => {

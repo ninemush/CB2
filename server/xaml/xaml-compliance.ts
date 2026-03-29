@@ -1145,10 +1145,15 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
 
   let xml = rawXaml;
 
+  const isStateMachineXaml = /<StateMachine[\s>]/.test(xml);
+  const hasUiPathNamespace = /xmlns:ui="http:\/\/schemas\.uipath\.com\/workflow\/activities"/.test(xml);
+
   const targetNamespaces = isCrossPlatform ? UIPATH_CROSS_PLATFORM_NAMESPACES : UIPATH_NAMESPACES;
-  const oldNsBlock = xml.match(/xmlns="http:\/\/schemas\.microsoft\.com\/netfx\/2009\/xaml\/activities"[\s\S]*?xmlns:x="http:\/\/schemas\.microsoft\.com\/winfx\/2006\/xaml"/);
-  if (oldNsBlock) {
-    xml = xml.replace(oldNsBlock[0], targetNamespaces);
+  if (!(isStateMachineXaml && hasUiPathNamespace)) {
+    const oldNsBlock = xml.match(/xmlns="http:\/\/schemas\.microsoft\.com\/netfx\/2009\/xaml\/activities"[\s\S]*?xmlns:x="http:\/\/schemas\.microsoft\.com\/winfx\/2006\/xaml"/);
+    if (oldNsBlock) {
+      xml = xml.replace(oldNsBlock[0], targetNamespaces);
+    }
   }
 
   const classMatch = xml.match(/x:Class="([^"]+)"/);
@@ -1176,8 +1181,9 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
     ? UIPATH_CSHARP_SETTINGS.replace("__ROOT_ID__", rootId)
     : UIPATH_VB_SETTINGS.replace("__ROOT_ID__", rootId);
 
+  const alreadyHasSettings = /VisualBasic\.Settings|TextExpression\.NamespacesForImplementation/.test(xml);
   const firstTag = xml.match(/<(Sequence|StateMachine|Flowchart)\s/);
-  if (firstTag && firstTag.index !== undefined) {
+  if (firstTag && firstTag.index !== undefined && !alreadyHasSettings) {
     xml = xml.slice(0, firstTag.index) + settingsBlock + "\n  " + xml.slice(firstTag.index);
   }
 
@@ -1628,6 +1634,8 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
 
   xml = normalizeAssignArgumentNesting(xml);
 
+  xml = fillEmptyContainers(xml);
+
   const xmlValidation = validateXmlWellFormedness(xml);
   if (!xmlValidation.valid) {
     for (const err of xmlValidation.errors) {
@@ -1635,6 +1643,25 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
     }
     throw new Error(`XAML XML well-formedness validation failed: ${xmlValidation.errors.join("; ")}`);
   }
+
+  return xml;
+}
+
+function fillEmptyContainers(xml: string): string {
+  const hasUiNs = /xmlns:ui\s*=/.test(xml);
+  const placeholder = hasUiNs
+    ? `<ui:LogMessage Level="Warn" Message="[&quot;Placeholder: no activities generated for this container&quot;]" DisplayName="Placeholder — implement logic" />`
+    : `<WriteLine Text="Placeholder: no activities generated for this container — implement logic" DisplayName="Placeholder — implement logic" />`;
+
+  xml = xml.replace(
+    /(<Sequence\s[^>]*>)\s*(<\/Sequence>)/g,
+    (_, open: string, close: string) => `${open}\n      ${placeholder}\n    ${close}`
+  );
+
+  xml = xml.replace(
+    /(<Sequence\s[^>]*>)\s*(<Sequence\.Variables\s*\/>)\s*(<\/Sequence>)/g,
+    (_, open: string, vars: string, close: string) => `${open}\n      ${vars}\n      ${placeholder}\n    ${close}`
+  );
 
   return xml;
 }
