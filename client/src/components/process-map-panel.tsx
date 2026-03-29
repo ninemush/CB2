@@ -612,32 +612,28 @@ function computeTargetHandle(
   tgtPos: { x: number; y: number },
   allEdgesForTarget?: { sourceHandle: string; srcPos: { x: number; y: number } }[]
 ): string {
-  if (sourceHandle === "left" || sourceHandle === "right") {
-    const dy = tgtPos.y - srcPos.y;
-    const dx = Math.abs(tgtPos.x - srcPos.x);
-    if (dy > dx * 0.5) {
-      if (allEdgesForTarget && allEdgesForTarget.length > 1) {
-        const topCount = allEdgesForTarget.filter(e => {
-          const edy = tgtPos.y - e.srcPos.y;
-          const edx = Math.abs(tgtPos.x - e.srcPos.x);
-          return edy > edx * 0.5;
-        }).length;
-        if (topCount > 1 && srcPos.x < tgtPos.x) return "left";
-        if (topCount > 1 && srcPos.x > tgtPos.x) return "right";
-      }
-      return "top";
+  const dy = tgtPos.y - srcPos.y;
+  const dx = tgtPos.x - srcPos.x;
+  const absDx = Math.abs(dx);
+
+  if (dy > 0) {
+    if (dy < absDx * 0.25) {
+      return dx > 0 ? "left" : "right";
     }
-    if (sourceHandle === "left") return "right";
-    return "left";
+    if (allEdgesForTarget && allEdgesForTarget.length > 1) {
+      const topCount = allEdgesForTarget.filter(e => {
+        const edy = tgtPos.y - e.srcPos.y;
+        const edx = Math.abs(tgtPos.x - e.srcPos.x);
+        return edy > 0 && !(edy < edx * 0.25);
+      }).length;
+      if (topCount > 1 && dx > 30) return "left";
+      if (topCount > 1 && dx < -30) return "right";
+    }
+    return "top";
   }
-  if (allEdgesForTarget && allEdgesForTarget.length > 1) {
-    const topEntries = allEdgesForTarget.filter(e => {
-      return e.sourceHandle !== "left" && e.sourceHandle !== "right";
-    });
-    if (topEntries.length > 1) {
-      if (srcPos.x < tgtPos.x - 30) return "left";
-      if (srcPos.x > tgtPos.x + 30) return "right";
-    }
+
+  if (absDx > 30) {
+    return dx > 0 ? "left" : "right";
   }
   return "top";
 }

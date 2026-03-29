@@ -460,6 +460,39 @@ export function computeProcessAwareLayout(
     cumulativeLeftOffset += leftBranchCount > 0 ? branchXOffset * 0.15 : 0;
   }
 
+  for (const trunkNodeId of trunk) {
+    const outs = (outEdges.get(trunkNodeId) || []).filter(e => !backEdges.has(`${trunkNodeId}->${e.target}`));
+    if (outs.length < 2) continue;
+    const node = nodeMap.get(trunkNodeId);
+    const isDecision = node && (node.nodeType === "decision" || node.nodeType === "agent-decision");
+    if (!isDecision) continue;
+
+    const trunkEdges = outs.filter(e => trunkSet.has(e.target));
+    const nonTrunkEdges = outs.filter(e => !trunkSet.has(e.target));
+    if (trunkEdges.length !== 1 || nonTrunkEdges.length !== 1) continue;
+
+    const branchItem = branchQueue.find(w => w.parentId === trunkNodeId && w.nodeId === nonTrunkEdges[0].target);
+    if (!branchItem) continue;
+
+    const reconns = branchReconnections.get(trunkNodeId) || [];
+    let convergenceIdx = -1;
+    for (const reconn of reconns) {
+      if (convergenceIdx < 0 || reconn.reconnectTrunkIdx < convergenceIdx) {
+        convergenceIdx = reconn.reconnectTrunkIdx;
+      }
+    }
+    if (convergenceIdx < 0) continue;
+
+    const decisionIdx = trunk.indexOf(trunkNodeId);
+    const trunkShift = -branchItem.xOffset;
+    for (let i = decisionIdx + 1; i < convergenceIdx && i < trunk.length; i++) {
+      const pos = positions.get(trunk[i]);
+      if (pos) {
+        positions.set(trunk[i], { x: pos.x + trunkShift, y: pos.y });
+      }
+    }
+  }
+
   const processedBranches = new Set<string>();
   const maxAbsoluteOffset = branchXOffset * 3;
 
