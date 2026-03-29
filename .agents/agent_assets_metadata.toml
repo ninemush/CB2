@@ -24,3 +24,9 @@ id = "xpVha3XKDuJdo7MBeRGsz"
 uri = "file://scripts/renderer-comparison/improved.svg"
 type = "image"
 title = "IMPROVED SVG (vector)"
+
+[[outputs]]
+id = "_ldv2vALLiPZcNA-NSU0c"
+uri = "file://package-generation-logs.txt"
+type = "text"
+title = "Full Package Generation Logs — Last 2 Runs"
