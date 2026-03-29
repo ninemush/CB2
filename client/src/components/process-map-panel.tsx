@@ -27,6 +27,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import dagre from "@dagrejs/dagre";
 import { computeProcessAwareLayout, LAYOUT_VERSION, type LayoutInput, type LayoutEdgeInput } from "@shared/process-layout";
+import { computeElkLayout, logElkComparisonSummary } from "@shared/elk-layout";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import type { ProcessNode, ProcessApproval } from "@shared/schema";
@@ -919,6 +920,33 @@ function applyDagreLayout(
         x: pos.x - dims.width / 2,
         y: pos.y - dims.height / 2,
       },
+    };
+  });
+}
+
+async function applyElkLayout(
+  rawNodes: Node[],
+  edges: Edge[],
+  dbNodes: { id: number; orderIndex: number; nodeType: string }[]
+): Promise<Node[]> {
+  const layoutInputs: LayoutInput[] = dbNodes.map((n) => ({
+    id: String(n.id),
+    nodeType: n.nodeType || "task",
+    orderIndex: n.orderIndex,
+  }));
+  const layoutEdges: LayoutEdgeInput[] = edges.map((e) => {
+    const edgeData = e.data as Record<string, unknown> | undefined;
+    const dataLabel = typeof edgeData?.label === "string" ? edgeData.label : null;
+    const topLabel = typeof e.label === "string" ? e.label : null;
+    return { source: e.source, target: e.target, label: dataLabel || topLabel };
+  });
+  const result = await computeElkLayout(layoutInputs, layoutEdges, (nodeType) => getNodeDimensions(nodeType));
+  logElkComparisonSummary(result, rawNodes.length, edges.length);
+  return rawNodes.map((node) => {
+    const pos = result.positions.get(node.id);
+    return {
+      ...node,
+      position: pos ? { x: pos.x, y: pos.y } : { x: 0, y: 0 },
     };
   });
 }
@@ -2136,6 +2164,10 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
   const isDark = theme === "dark";
   const nodesRef = useRef<Node[]>([]);
   const edgesRef = useRef<Edge[]>([]);
+  const [useElk, setUseElk] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("layout") === "elk"; } catch { return false; }
+  });
+  const elkLayoutRunIdRef = useRef(0);
 
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   useEffect(() => { edgesRef.current = edges; }, [edges]);
@@ -2276,38 +2308,63 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
         },
       };
     });
-    let layoutNodes: Node[];
-    if (rawEdges.length > 0) {
-      layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB", relSimplified, dbNodes.map(n => ({ id: n.id, orderIndex: n.orderIndex, nodeType: n.nodeType || "task" })));
-    } else {
-      layoutNodes = rawNodes.map((node, i) => ({ ...node, position: getNodePosition(i, rawNodes.length) }));
-    }
-    const fixedEdges = fixDecisionHandlesPostLayout(layoutNodes, rawEdges, nodeTypeMap);
 
-    const relNodeBounds = layoutNodes.map((n) => {
-      const nt = (n.data as any)?.nodeType || "task";
-      const dims = getNodeDimensions(nt);
-      return { id: n.id, x: n.position.x, y: n.position.y, w: dims.width, h: dims.height };
-    });
-    const relEdgesWithBounds = fixedEdges.map((e) => ({
-      ...e,
-      data: { ...(e.data as any), nodeBounds: relNodeBounds },
-    }));
-
-    setNodes(layoutNodes);
-    setEdges(relEdgesWithBounds);
-    layoutNodes.forEach((n) => {
-      const d = n.data as any;
-      if (d.dbId && d.dbId > 0) {
-        updateNodeMutation.mutate({ id: d.dbId, data: { positionX: n.position.x, positionY: n.position.y } });
+    const finishLayout = (layoutNodes: Node[], isElk: boolean) => {
+      const finalEdges = isElk ? rawEdges : fixDecisionHandlesPostLayout(layoutNodes, rawEdges, nodeTypeMap);
+      const relNodeBounds = layoutNodes.map((n) => {
+        const nt = (n.data as any)?.nodeType || "task";
+        const dims = getNodeDimensions(nt);
+        return { id: n.id, x: n.position.x, y: n.position.y, w: dims.width, h: dims.height };
+      });
+      const relEdgesWithBounds = finalEdges.map((e) => ({
+        ...e,
+        data: { ...(e.data as any), nodeBounds: relNodeBounds },
+      }));
+      setNodes(layoutNodes);
+      setEdges(relEdgesWithBounds);
+      if (!isElk) {
+        layoutNodes.forEach((n) => {
+          const d = n.data as any;
+          if (d.dbId && d.dbId > 0) {
+            updateNodeMutation.mutate({ id: d.dbId, data: { positionX: n.position.x, positionY: n.position.y } });
+          }
+        });
       }
-    });
-    setTimeout(() => fitView({ padding: 0.3, duration: 400, maxZoom: 1.2 }), 150);
-  }, [mapData, activeView, detailLevel, setNodes, setEdges, fitView]);
+      setTimeout(() => fitView({ padding: 0.3, duration: 400, maxZoom: 1.2 }), 150);
+    };
 
+    if (rawEdges.length === 0) {
+      finishLayout(rawNodes.map((node, i) => ({ ...node, position: getNodePosition(i, rawNodes.length) })), false);
+      return;
+    }
+
+    const dbNodeInfo = dbNodes.map(n => ({ id: n.id, orderIndex: n.orderIndex, nodeType: n.nodeType || "task" }));
+    if (useElk) {
+      const runId = ++elkLayoutRunIdRef.current;
+      applyElkLayout(rawNodes, rawEdges, dbNodeInfo).then((layoutNodes) => {
+        if (elkLayoutRunIdRef.current === runId) finishLayout(layoutNodes, true);
+      }).catch((err) => {
+        console.warn("[ELK] Layout failed in doRelayout, falling back to dagre:", err);
+        if (elkLayoutRunIdRef.current === runId) {
+          finishLayout(applyDagreLayout(rawNodes, rawEdges, "TB", relSimplified, dbNodeInfo), false);
+        }
+      });
+    } else {
+      finishLayout(applyDagreLayout(rawNodes, rawEdges, "TB", relSimplified, dbNodeInfo), false);
+    }
+  }, [mapData, activeView, detailLevel, setNodes, setEdges, fitView, useElk]);
+
+  const elkToggleCountRef = useRef(0);
   useEffect(() => {
     if (onRelayout) onRelayout(doRelayout);
   }, [onRelayout, doRelayout]);
+
+  useEffect(() => {
+    if (elkToggleCountRef.current > 0 && mapData) {
+      doRelayout();
+    }
+    elkToggleCountRef.current += 1;
+  }, [useElk]);
 
   useEffect(() => {
     if (!mapData) return;
@@ -2387,51 +2444,64 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       };
     });
 
-    let layoutNodes: Node[];
     const levelChanged = prevDetailLevelRef.current !== detailLevel;
     prevDetailLevelRef.current = detailLevel;
 
+    const finishInitialLayout = (layoutNodes: Node[], isElk: boolean) => {
+      const finalEdges = isElk ? rawEdges : fixDecisionHandlesPostLayout(layoutNodes, rawEdges, nodeTypeMap2);
+      const nodeBounds = layoutNodes.map((n) => {
+        const nt = (n.data as any)?.nodeType || "task";
+        const dims = getNodeDimensions(nt);
+        return { id: n.id, x: n.position.x, y: n.position.y, w: dims.width, h: dims.height };
+      });
+      const edgesWithBounds = finalEdges.map((e) => ({
+        ...e,
+        data: { ...(e.data as any), nodeBounds },
+      }));
+      setNodes(layoutNodes);
+      setEdges(edgesWithBounds);
+      dataVersionRef.current += 1;
+      if (!isElk && (needsVersionUpgrade || detailLevel === "L2")) {
+        try { localStorage.setItem(layoutKey, String(LAYOUT_VERSION)); } catch {}
+      }
+      if (levelChanged || (!hasInitialFitRef.current && layoutNodes.length > 0)) {
+        hasInitialFitRef.current = true;
+        setTimeout(() => fitView({ padding: 0.3, duration: 400, maxZoom: 1.2 }), 150);
+      }
+    };
+
+    const dbNodeInfo = dbNodes.map(n => ({ id: n.id, orderIndex: n.orderIndex, nodeType: n.nodeType || "task" }));
+
     if (rawEdges.length > 0) {
-      layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB", isSimplified, dbNodes.map(n => ({ id: n.id, orderIndex: n.orderIndex, nodeType: n.nodeType || "task" })));
-      if (detailLevel === "L2") {
-        layoutNodes.forEach((n) => {
-          const d = n.data as any;
-          if (d.dbId && d.dbId > 0) {
-            updateNodeMutation.mutate({ id: d.dbId, data: { positionX: n.position.x, positionY: n.position.y } });
-          }
+      if (useElk) {
+        const runId = ++elkLayoutRunIdRef.current;
+        applyElkLayout(rawNodes, rawEdges, dbNodeInfo).then((layoutNodes) => {
+          if (elkLayoutRunIdRef.current !== runId) return;
+          finishInitialLayout(layoutNodes, true);
+        }).catch((err) => {
+          console.warn("[ELK] Initial layout failed, falling back to dagre:", err);
+          if (elkLayoutRunIdRef.current !== runId) return;
+          const fallback = applyDagreLayout(rawNodes, rawEdges, "TB", isSimplified, dbNodeInfo);
+          finishInitialLayout(fallback, false);
         });
+      } else {
+        const layoutNodes = applyDagreLayout(rawNodes, rawEdges, "TB", isSimplified, dbNodeInfo);
+        if (detailLevel === "L2") {
+          layoutNodes.forEach((n) => {
+            const d = n.data as any;
+            if (d.dbId && d.dbId > 0) {
+              updateNodeMutation.mutate({ id: d.dbId, data: { positionX: n.position.x, positionY: n.position.y } });
+            }
+          });
+        }
+        finishInitialLayout(layoutNodes, false);
       }
     } else if (rawNodes.length > 0) {
-      layoutNodes = rawNodes.map((node, i) => ({ ...node, position: getNodePosition(i, rawNodes.length) }));
+      finishInitialLayout(rawNodes.map((node, i) => ({ ...node, position: getNodePosition(i, rawNodes.length) })), false);
     } else {
-      layoutNodes = rawNodes;
+      finishInitialLayout(rawNodes, false);
     }
-
-    const fixedEdges2 = fixDecisionHandlesPostLayout(layoutNodes, rawEdges, nodeTypeMap2);
-
-    const nodeBounds = layoutNodes.map((n) => {
-      const nt = (n.data as any)?.nodeType || "task";
-      const dims = getNodeDimensions(nt);
-      return { id: n.id, x: n.position.x, y: n.position.y, w: dims.width, h: dims.height };
-    });
-    const edgesWithBounds = fixedEdges2.map((e) => ({
-      ...e,
-      data: { ...(e.data as any), nodeBounds },
-    }));
-
-    setNodes(layoutNodes);
-    setEdges(edgesWithBounds);
-    dataVersionRef.current += 1;
-
-    if (needsVersionUpgrade || detailLevel === "L2") {
-      try { localStorage.setItem(layoutKey, String(LAYOUT_VERSION)); } catch {}
-    }
-
-    if (levelChanged || (!hasInitialFitRef.current && layoutNodes.length > 0)) {
-      hasInitialFitRef.current = true;
-      setTimeout(() => fitView({ padding: 0.3, duration: 400, maxZoom: 1.2 }), 150);
-    }
-  }, [mapData, detailLevel, setNodes, setEdges]);
+  }, [mapData, detailLevel, setNodes, setEdges, useElk]);
 
   const updateNodeMutation = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: any }) => {
@@ -2984,6 +3054,16 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
           pannable
           zoomable
         />
+        <div className="absolute top-3 right-3 z-40">
+          <button
+            onClick={() => { setUseElk(v => !v); }}
+            className={`px-2 py-1 rounded-md text-[10px] font-mono font-medium border transition-all ${useElk ? "bg-amber-500/20 text-amber-400 border-amber-500/40" : "bg-card/80 text-muted-foreground border-border hover:text-foreground"}`}
+            title={useElk ? "Using ELK layout (experimental) - click to switch to default" : "Using default layout - click to switch to ELK (experimental)"}
+            data-testid="button-toggle-elk"
+          >
+            {useElk ? "ELK" : "Default"} Layout
+          </button>
+        </div>
       </ReactFlow>
 
       {selectedEdgeIds.size > 0 && (
