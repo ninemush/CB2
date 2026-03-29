@@ -28,6 +28,7 @@ import "@xyflow/react/dist/style.css";
 import dagre from "@dagrejs/dagre";
 import { computeProcessAwareLayout, LAYOUT_VERSION, type LayoutInput, type LayoutEdgeInput } from "@shared/process-layout";
 import { computeElkLayout, logElkComparisonSummary } from "@shared/elk-layout";
+import { computeYFilesLayout } from "@shared/yfiles-layout";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import type { ProcessNode, ProcessApproval } from "@shared/schema";
@@ -938,6 +939,33 @@ async function applyElkLayout(
   });
   const result = await computeElkLayout(layoutInputs, layoutEdges, (nodeType) => getNodeDimensions(nodeType));
   logElkComparisonSummary(result, rawNodes.length, edges.length);
+  return rawNodes.map((node) => {
+    const pos = result.positions.get(node.id);
+    return {
+      ...node,
+      position: pos ? { x: pos.x, y: pos.y } : { x: 0, y: 0 },
+    };
+  });
+}
+
+async function applyYFilesLayout(
+  rawNodes: Node[],
+  edges: Edge[],
+  dbNodes: { id: number; orderIndex: number; nodeType: string }[]
+): Promise<Node[]> {
+  const layoutInputs: LayoutInput[] = dbNodes.map((n) => ({
+    id: String(n.id),
+    nodeType: n.nodeType || "task",
+    orderIndex: n.orderIndex,
+  }));
+  const layoutEdges: LayoutEdgeInput[] = edges.map((e) => {
+    const edgeData = e.data as Record<string, unknown> | undefined;
+    const dataLabel = typeof edgeData?.label === "string" ? edgeData.label : null;
+    const topLabel = typeof e.label === "string" ? e.label : null;
+    return { source: e.source, target: e.target, label: dataLabel || topLabel };
+  });
+  const result = await computeYFilesLayout(layoutInputs, layoutEdges, (nodeType) => getNodeDimensions(nodeType));
+  console.log(`[yFiles] Layout completed in ${result.elapsed.toFixed(1)}ms for ${rawNodes.length} nodes`);
   return rawNodes.map((node) => {
     const pos = result.positions.get(node.id);
     return {
@@ -2160,9 +2188,8 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
   const isDark = theme === "dark";
   const nodesRef = useRef<Node[]>([]);
   const edgesRef = useRef<Edge[]>([]);
-  const [useElk, setUseElk] = useState(() => {
-    try { return new URLSearchParams(window.location.search).get("layout") === "elk"; } catch { return false; }
-  });
+  type LayoutEngine = "default" | "elk" | "yfiles";
+  const [layoutEngine, setLayoutEngine] = useState<LayoutEngine>("elk");
   const elkLayoutRunIdRef = useRef(0);
 
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
@@ -2335,7 +2362,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
     }
 
     const dbNodeInfo = dbNodes.map(n => ({ id: n.id, orderIndex: n.orderIndex, nodeType: n.nodeType || "task" }));
-    if (useElk) {
+    if (layoutEngine === "elk") {
       const runId = ++elkLayoutRunIdRef.current;
       applyElkLayout(rawNodes, rawEdges, dbNodeInfo).then((layoutNodes) => {
         if (elkLayoutRunIdRef.current === runId) finishLayout(layoutNodes, true);
@@ -2345,10 +2372,20 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
           finishLayout(applyDagreLayout(rawNodes, rawEdges, "TB", relSimplified, dbNodeInfo), false);
         }
       });
+    } else if (layoutEngine === "yfiles") {
+      const runId = ++elkLayoutRunIdRef.current;
+      applyYFilesLayout(rawNodes, rawEdges, dbNodeInfo).then((layoutNodes) => {
+        if (elkLayoutRunIdRef.current === runId) finishLayout(layoutNodes, true);
+      }).catch((err) => {
+        console.warn("[yFiles] Layout failed in doRelayout, falling back to dagre:", err);
+        if (elkLayoutRunIdRef.current === runId) {
+          finishLayout(applyDagreLayout(rawNodes, rawEdges, "TB", relSimplified, dbNodeInfo), false);
+        }
+      });
     } else {
       finishLayout(applyDagreLayout(rawNodes, rawEdges, "TB", relSimplified, dbNodeInfo), false);
     }
-  }, [mapData, activeView, detailLevel, setNodes, setEdges, fitView, useElk]);
+  }, [mapData, activeView, detailLevel, setNodes, setEdges, fitView, layoutEngine]);
 
   const elkToggleCountRef = useRef(0);
   useEffect(() => {
@@ -2360,7 +2397,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
       doRelayout();
     }
     elkToggleCountRef.current += 1;
-  }, [useElk]);
+  }, [layoutEngine]);
 
   useEffect(() => {
     if (!mapData) return;
@@ -2469,13 +2506,24 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
     const dbNodeInfo = dbNodes.map(n => ({ id: n.id, orderIndex: n.orderIndex, nodeType: n.nodeType || "task" }));
 
     if (rawEdges.length > 0) {
-      if (useElk) {
+      if (layoutEngine === "elk") {
         const runId = ++elkLayoutRunIdRef.current;
         applyElkLayout(rawNodes, rawEdges, dbNodeInfo).then((layoutNodes) => {
           if (elkLayoutRunIdRef.current !== runId) return;
           finishInitialLayout(layoutNodes, true);
         }).catch((err) => {
           console.warn("[ELK] Initial layout failed, falling back to dagre:", err);
+          if (elkLayoutRunIdRef.current !== runId) return;
+          const fallback = applyDagreLayout(rawNodes, rawEdges, "TB", isSimplified, dbNodeInfo);
+          finishInitialLayout(fallback, false);
+        });
+      } else if (layoutEngine === "yfiles") {
+        const runId = ++elkLayoutRunIdRef.current;
+        applyYFilesLayout(rawNodes, rawEdges, dbNodeInfo).then((layoutNodes) => {
+          if (elkLayoutRunIdRef.current !== runId) return;
+          finishInitialLayout(layoutNodes, true);
+        }).catch((err) => {
+          console.warn("[yFiles] Initial layout failed, falling back to dagre:", err);
           if (elkLayoutRunIdRef.current !== runId) return;
           const fallback = applyDagreLayout(rawNodes, rawEdges, "TB", isSimplified, dbNodeInfo);
           finishInitialLayout(fallback, false);
@@ -2497,7 +2545,7 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
     } else {
       finishInitialLayout(rawNodes, false);
     }
-  }, [mapData, detailLevel, setNodes, setEdges, useElk]);
+  }, [mapData, detailLevel, setNodes, setEdges, layoutEngine]);
 
   const updateNodeMutation = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: any }) => {
@@ -3050,15 +3098,18 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
           pannable
           zoomable
         />
-        <div className="absolute top-3 right-3 z-40">
-          <button
-            onClick={() => { setUseElk(v => !v); }}
-            className={`px-2 py-1 rounded-md text-[10px] font-mono font-medium border transition-all ${useElk ? "bg-amber-500/20 text-amber-400 border-amber-500/40" : "bg-card/80 text-muted-foreground border-border hover:text-foreground"}`}
-            title={useElk ? "Using ELK layout (experimental) - click to switch to default" : "Using default layout - click to switch to ELK (experimental)"}
-            data-testid="button-toggle-elk"
-          >
-            {useElk ? "ELK" : "Default"} Layout
-          </button>
+        <div className="absolute top-3 right-3 z-40 flex items-center gap-0.5 bg-card/90 backdrop-blur-sm border border-border rounded-lg p-0.5" data-testid="layout-engine-selector">
+          {(["default", "elk", "yfiles"] as const).map((engine) => (
+            <button
+              key={engine}
+              onClick={() => setLayoutEngine(engine)}
+              className={`px-2 py-1 rounded-md text-[10px] font-mono font-medium transition-all ${layoutEngine === engine ? "bg-primary/20 text-primary border border-primary/40" : "text-muted-foreground hover:text-foreground"}`}
+              title={`Switch to ${engine === "default" ? "Default (Dagre)" : engine === "elk" ? "ELK" : "yFiles"} layout`}
+              data-testid={`button-layout-${engine}`}
+            >
+              {engine === "default" ? "Default" : engine === "elk" ? "ELK" : "yFiles"}
+            </button>
+          ))}
         </div>
       </ReactFlow>
 
