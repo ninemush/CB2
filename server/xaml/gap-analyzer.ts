@@ -286,8 +286,7 @@ function replaceActivityAtLine(
   }
 
   const indent = lines[startLine].match(/^(\s*)/)?.[1] || "    ";
-  const reason = classifiedIssue.detail.replace(/"/g, "'").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const stubComment = `${indent}<ui:Comment Text="[STUB_ACTIVITY] Original: ${escapeXml(tagName)}${originalDisplayName ? ` (${escapeXml(originalDisplayName)})` : ''}. Reason: ${escapeXml(classifiedIssue.check)} — ${reason}" DisplayName="Stub: ${escapeXml(originalDisplayName || tagName)}" />`;
+  const stubComment = `${indent}<ui:Comment Text="${escapeXml(`[STUB_ACTIVITY] Original: ${tagName}${originalDisplayName ? ` (${originalDisplayName})` : ''}. Reason: ${classifiedIssue.check} — ${classifiedIssue.detail}`)}" DisplayName="${escapeXml(`Stub: ${originalDisplayName || tagName}`)}" />`;
 
   const newLines = [
     ...lines.slice(0, startLine),
@@ -354,13 +353,33 @@ export function replaceSequenceChildrenWithStub(
     }
 
     let childStart = seqStart + 1;
-    while (childStart < seqEnd && (
-      lines[childStart].includes("<Sequence.Variables") ||
-      lines[childStart].includes("</Sequence.Variables") ||
-      lines[childStart].includes("<Variable ") ||
-      lines[childStart].trim() === ""
-    )) {
-      childStart++;
+    let inVariablesBlock = false;
+    while (childStart < seqEnd) {
+      const currentLine = lines[childStart];
+      const lineTrimmed = currentLine.trim();
+      if (lineTrimmed === "") {
+        childStart++;
+        continue;
+      }
+      if (currentLine.includes("<Sequence.Variables")) {
+        if (/\/>\s*$/.test(currentLine) || currentLine.includes("</Sequence.Variables")) {
+          childStart++;
+          continue;
+        }
+        inVariablesBlock = true;
+        childStart++;
+        continue;
+      }
+      if (currentLine.includes("</Sequence.Variables")) {
+        inVariablesBlock = false;
+        childStart++;
+        continue;
+      }
+      if (inVariablesBlock) {
+        childStart++;
+        continue;
+      }
+      break;
     }
 
     sequenceRanges.push({ seqStart, seqEnd, displayName, childStart, childEnd: seqEnd });
@@ -724,8 +743,7 @@ export function preserveStructureAndStubLeaves(
 
   for (const stub of deduped) {
     const indent = result[stub.startLine].match(/^(\s*)/)?.[1] || "    ";
-    const reason = stub.detail.replace(/"/g, "'").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const stubComment = `${indent}<ui:Comment Text="[STUB_STRUCTURAL_LEAF] Original: ${escapeXml(stub.tag)}${stub.displayName ? ` (${escapeXml(stub.displayName)})` : ''}. Check: ${escapeXml(stub.check)} — ${reason}" DisplayName="Stub: ${escapeXml(stub.displayName || stub.tag)}" />`;
+    const stubComment = `${indent}<ui:Comment Text="${escapeXml(`[STUB_STRUCTURAL_LEAF] Original: ${stub.tag}${stub.displayName ? ` (${stub.displayName})` : ''}. Check: ${stub.check} — ${stub.detail}`)}" DisplayName="${escapeXml(`Stub: ${stub.displayName || stub.tag}`)}" />`;
 
     result = [
       ...result.slice(0, stub.startLine),

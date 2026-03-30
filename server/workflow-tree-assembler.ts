@@ -15,7 +15,8 @@ import { catalogService } from "./catalog/catalog-service";
 import type { ActivityValidationResult, ValidationCorrection } from "./catalog/catalog-service";
 import { buildTemplateBlock } from "./catalog/xaml-template-builder";
 import type { ProcessType } from "./catalog/catalog-service";
-import { escapeXml, escapeXmlExpression, normalizeXmlExpression } from "./lib/xml-utils";
+import { escapeXml, escapeXmlExpression, normalizeXmlExpression, escapeXmlTextContent } from "./lib/xml-utils";
+import { XMLValidator } from "fast-xml-parser";
 import { buildExpression, isValueIntent, type ValueIntent } from "./xaml/expression-builder";
 import { getActivityTag, getActivityPrefixStrict } from "./xaml/xaml-compliance";
 import type { RemediationEntry, RemediationCode } from "./uipath-pipeline";
@@ -459,7 +460,7 @@ export function resolveActivityTemplate(
     const djTag = getActivityTag("DeserializeJson");
     return applyCatalogConformance(`<${djTag} DisplayName="${displayName}" JsonString="${escapeXml(input)}">\n` +
       `  <${djTag}.Result>\n` +
-      `    <OutArgument x:TypeArguments="x:Object">${ensureBracketWrapped(outputVar)}</OutArgument>\n` +
+      `    <OutArgument x:TypeArguments="x:Object">${escapeXmlTextContent(ensureBracketWrapped(outputVar))}</OutArgument>\n` +
       `  </${djTag}.Result>\n` +
       `</${djTag}>`);
   }
@@ -576,8 +577,8 @@ function resolveAssignTemplate(node: ActivityNode, allVariables: VariableDeclara
   const wrappedTo = ensureBracketWrapped(toVarName);
   const wrappedVal = resolvePropertyValue(valRaw as PropertyValue);
 
-  const safeToExpr = normalizeXmlExpression(wrappedTo);
-  const safeValExpr = normalizeXmlExpression(wrappedVal);
+  const safeToExpr = escapeXmlTextContent(normalizeXmlExpression(wrappedTo));
+  const safeValExpr = escapeXmlTextContent(normalizeXmlExpression(wrappedVal));
 
   return `<Assign DisplayName="${displayName}">\n` +
     `  <Assign.To>\n` +
@@ -597,7 +598,7 @@ function resolveGetAssetTemplate(node: ActivityNode): string {
 
   return `<ui:GetAsset DisplayName="${displayName}" AssetName="${escapeXml(assetName)}">\n` +
     `  <ui:GetAsset.AssetValue>\n` +
-    `    <OutArgument x:TypeArguments="x:String">${ensureBracketWrapped(outputVar)}</OutArgument>\n` +
+    `    <OutArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(outputVar))}</OutArgument>\n` +
     `  </ui:GetAsset.AssetValue>\n` +
     `</ui:GetAsset>`;
 }
@@ -611,10 +612,10 @@ function resolveGetCredentialTemplate(node: ActivityNode): string {
 
   return `<ui:GetCredential DisplayName="${displayName}" AssetName="${escapeXml(assetName)}">\n` +
     `  <ui:GetCredential.Username>\n` +
-    `    <OutArgument x:TypeArguments="x:String">${ensureBracketWrapped(usernameVar)}</OutArgument>\n` +
+    `    <OutArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(usernameVar))}</OutArgument>\n` +
     `  </ui:GetCredential.Username>\n` +
     `  <ui:GetCredential.Password>\n` +
-    `    <OutArgument x:TypeArguments="s:Security.SecureString">${ensureBracketWrapped(passwordVar)}</OutArgument>\n` +
+    `    <OutArgument x:TypeArguments="s:Security.SecureString">${escapeXmlTextContent(ensureBracketWrapped(passwordVar))}</OutArgument>\n` +
     `  </ui:GetCredential.Password>\n` +
     `</ui:GetCredential>`;
 }
@@ -684,7 +685,7 @@ function resolveHttpClientTemplate(node: ActivityNode): string {
   const methodUpper = method.toUpperCase();
   if (body) {
     xml += `  <${tag}.Body>\n`;
-    xml += `    <InArgument x:TypeArguments="x:String">${ensureBracketWrapped(body)}</InArgument>\n`;
+    xml += `    <InArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(body))}</InArgument>\n`;
     xml += `  </${tag}.Body>\n`;
   } else if (methodUpper === "POST" || methodUpper === "PUT" || methodUpper === "PATCH") {
     xml += `  <${tag}.Body>\n`;
@@ -695,19 +696,20 @@ function resolveHttpClientTemplate(node: ActivityNode): string {
   const headers = getPropString(props, "Headers", "headers");
   if (headers) {
     xml += `  <${tag}.Headers>\n`;
-    xml += `    <InArgument x:TypeArguments="scg:Dictionary(x:String, x:String)">${ensureBracketWrapped(headers)}</InArgument>\n`;
+    xml += `    <InArgument x:TypeArguments="scg:Dictionary(x:String, x:String)">${escapeXmlTextContent(ensureBracketWrapped(headers))}</InArgument>\n`;
     xml += `  </${tag}.Headers>\n`;
   } else {
     const authToken = getPropString(props, "AuthToken", "authToken", "BearerToken", "bearerToken");
     if (authToken) {
       xml += `  <${tag}.Headers>\n`;
-      xml += `    <InArgument x:TypeArguments="scg:Dictionary(x:String, x:String)">[New Dictionary(Of String, String) From {{"Authorization", "Bearer " &amp; ${ensureBracketWrapped(authToken).slice(1, -1)}}}]</InArgument>\n`;
+      const safeAuthToken = escapeXmlTextContent(ensureBracketWrapped(authToken)).slice(1, -1);
+      xml += `    <InArgument x:TypeArguments="scg:Dictionary(x:String, x:String)">${escapeXmlTextContent(`[New Dictionary(Of String, String) From {{"Authorization", "Bearer " & ${safeAuthToken}}}]`)}</InArgument>\n`;
       xml += `  </${tag}.Headers>\n`;
     }
   }
 
   xml += `  <${tag}.Result>\n`;
-  xml += `    <OutArgument x:TypeArguments="x:String">${ensureBracketWrapped(outputVar)}</OutArgument>\n`;
+  xml += `    <OutArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(outputVar))}</OutArgument>\n`;
   xml += `  </${tag}.Result>\n`;
   xml += `</${tag}>`;
 
@@ -824,9 +826,10 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
         const wrapper = propDef.argumentWrapper || "InArgument";
         const typeArg = propDef.typeArguments ? ` x:TypeArguments="${propDef.typeArguments}"` : "";
         const wrappedValue = validationResult ? effectiveValue : (isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : smartBracketWrap(effectiveValue));
+        const safeWrappedValue = escapeXmlTextContent(wrappedValue);
         childParts.push(
           `  <${tag}.${key}>\n` +
-          `    <${wrapper}${typeArg}>${wrappedValue}</${wrapper}>\n` +
+          `    <${wrapper}${typeArg}>${safeWrappedValue}</${wrapper}>\n` +
           `  </${tag}.${key}>`
         );
       }
@@ -845,7 +848,7 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
     const outputType = node.outputType || "x:Object";
     childParts.push(
       `  <${tag}.Result>\n` +
-      `    <OutArgument x:TypeArguments="${mapClrType(outputType)}">${ensureBracketWrapped(node.outputVar)}</OutArgument>\n` +
+      `    <OutArgument x:TypeArguments="${mapClrType(outputType)}">${escapeXmlTextContent(ensureBracketWrapped(node.outputVar))}</OutArgument>\n` +
       `  </${tag}.Result>`
     );
   }
@@ -1553,6 +1556,25 @@ ${xMembersBlock}  <Sequence DisplayName="${escapeXml(workflowName)}">
     ${activitiesXml}
   </Sequence>
 </Activity>`;
+
+  const validationResult = XMLValidator.validate(xaml, { allowBooleanAttributes: true });
+  if (validationResult !== true) {
+    const err = validationResult.err;
+    console.error(`[Tree Assembler] Post-assembly XML well-formedness check FAILED for "${workflowName}": ${err.msg} at line ${err.line}, col ${err.col}`);
+    const fallbackXaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="${escapeXml(workflowName)}"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="${escapeXml(workflowName)}">
+    <ui:Comment Text="[ASSEMBLY_FAILED] Tree assembly produced malformed XML: ${escapeXml(err.msg)} at line ${err.line}, col ${err.col}. Manual implementation required." DisplayName="Assembly Failed — ${escapeXml(workflowName)}" />
+  </Sequence>
+</Activity>`;
+    return { xaml: fallbackXaml, variables: allVariables };
+  }
 
   return { xaml, variables: allVariables };
 }

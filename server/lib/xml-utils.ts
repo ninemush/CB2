@@ -31,6 +31,14 @@ export function escapeXmlExpression(str: string): string {
     .replace(/"/g, "&quot;");
 }
 
+export function escapeXmlTextContent(str: string): string {
+  const decoded = decodeXmlEntities(str);
+  return decoded
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 export function normalizeXmlExpression(str: string): string {
   let result = str;
   let prev: string;
