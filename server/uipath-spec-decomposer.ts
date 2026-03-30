@@ -6,6 +6,8 @@ import { storage } from "./storage";
 import { RunLogger } from "./lib/run-logger";
 
 const SCAFFOLD_MAX_TOKENS = 4096;
+const SCAFFOLD_RETRY_LIMIT = 3;
+const SCAFFOLD_TIMEOUT_ESCALATION_MS = 60_000;
 const DETAIL_MAX_TOKENS = 8192;
 const DETAIL_RETRY_LIMIT = 3;
 const DETAIL_LLM_TIMEOUT_MS = 150_000;
@@ -30,6 +32,24 @@ function backoffWithJitter(attempt: number): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function extractHttpStatus(err: any): number {
+  const explicit = err?.status ?? err?.statusCode ?? 0;
+  if (explicit) return explicit;
+  const match = (err?.message ?? "").match(/\((\d{3})\)/);
+  return match ? parseInt(match[1], 10) : 0;
+}
+
+function isTransientError(err: any): boolean {
+  if (isRateLimitError(err)) return true;
+  const msg = (err?.message ?? "").toLowerCase();
+  const status = extractHttpStatus(err);
+  if (/timed?\s*out/i.test(msg) || msg.includes("timeout") || msg.includes("econnreset") || msg.includes("econnrefused") || msg.includes("socket hang up") || msg.includes("fetch failed")) return true;
+  if (status >= 500 && status < 600) return true;
+  if (status === 404) return true;
+  if (status === 401 || status === 403) return false;
+  return false;
 }
 
 export interface DecompositionMetrics {
@@ -414,24 +434,61 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
 
   const scaffoldStart = Date.now();
   let scaffoldResponse;
-  try {
-    scaffoldResponse = await getCodeLLM().create({
-      maxTokens: SCAFFOLD_MAX_TOKENS,
-      system: systemContext,
-      messages: [{ role: "user", content: buildScaffoldPrompt(complexityGuidance) }],
-      timeoutMs: SDD_LLM_TIMEOUT_MS,
-    });
-    metrics.totalLlmCalls++;
-  } catch (err: any) {
-    runLogger.stageEnd("spec_scaffold", "failed", undefined, err?.message);
-    onPipelineProgress?.({ type: "failed", stage: "spec_scaffold", message: "Scaffold generation failed" });
-    throw new Error(`Scaffold LLM call failed: ${err?.message}`);
+  let scaffoldTimeoutEscalations = 0;
+  for (let attempt = 0; attempt <= SCAFFOLD_RETRY_LIMIT; attempt++) {
+    const escalatedTimeout = SDD_LLM_TIMEOUT_MS + (scaffoldTimeoutEscalations * SCAFFOLD_TIMEOUT_ESCALATION_MS);
+    console.log(`[SpecDecomposer] Run ${runId}: Scaffold attempt ${attempt + 1}/${SCAFFOLD_RETRY_LIMIT + 1} (timeout: ${Math.round(escalatedTimeout / 1000)}s)`);
+
+    try {
+      metrics.totalLlmCalls++;
+      scaffoldResponse = await getCodeLLM().create({
+        maxTokens: SCAFFOLD_MAX_TOKENS,
+        system: systemContext,
+        messages: [{ role: "user", content: buildScaffoldPrompt(complexityGuidance) }],
+        timeoutMs: escalatedTimeout,
+      });
+      break;
+    } catch (err: any) {
+      const isTimeout = /timed?\s*out/i.test(err?.message ?? "");
+      const failureKind = isTimeout ? "timeout" : "error";
+      const attemptDuration = Date.now() - scaffoldStart;
+      console.warn(`[SpecDecomposer] Run ${runId}: Scaffold attempt ${attempt + 1} failed (${failureKind}) after ${attemptDuration}ms: ${err?.message}`);
+      runLogger.recordRetry("spec_scaffold", attempt + 1, err?.message);
+
+      if (isTimeout) {
+        scaffoldTimeoutEscalations++;
+      }
+
+      if (attempt < SCAFFOLD_RETRY_LIMIT && isTransientError(err)) {
+        const isRateLimit = isRateLimitError(err);
+        const backoffMs = backoffWithJitter(attempt);
+        const nextTimeout = SDD_LLM_TIMEOUT_MS + (scaffoldTimeoutEscalations * SCAFFOLD_TIMEOUT_ESCALATION_MS);
+        const retryMessage = isTimeout
+          ? `Scaffold attempt ${attempt + 1} timed out, backing off ${Math.round(backoffMs)}ms, retrying with ${Math.round(nextTimeout / 1000)}s timeout`
+          : isRateLimit
+            ? `Scaffold attempt ${attempt + 1} rate-limited, backing off ${Math.round(backoffMs)}ms before retry`
+            : `Scaffold attempt ${attempt + 1} failed (${err?.message}), backing off ${Math.round(backoffMs)}ms, retrying with ${Math.round(nextTimeout / 1000)}s timeout`;
+        onPipelineProgress?.({
+          type: "warning",
+          stage: "spec_scaffold",
+          message: retryMessage,
+          context: { attempt: attempt + 1, maxAttempts: SCAFFOLD_RETRY_LIMIT + 1, failureKind: isRateLimit ? "rate_limit" : failureKind, backoffMs: Math.round(backoffMs) },
+        });
+        onProgress?.(`Retrying scaffold (retry ${attempt + 1}/${SCAFFOLD_RETRY_LIMIT})...`);
+        await sleep(backoffMs);
+        continue;
+      }
+
+      runLogger.stageEnd("spec_scaffold", "failed", undefined, err?.message);
+      onPipelineProgress?.({ type: "failed", stage: "spec_scaffold", message: `Scaffold generation failed after ${attempt + 1} attempt(s)` });
+      throw new Error(`Scaffold LLM call failed after ${attempt + 1} attempt(s): ${err?.message}`);
+    }
   }
   metrics.scaffoldDurationMs = Date.now() - scaffoldStart;
 
   let scaffold: ScaffoldResult;
   try {
-    scaffold = parseScaffold(scaffoldResponse.text || "{}");
+    scaffold = parseScaffold(scaffoldResponse!.text || "{}");
   } catch (err: any) {
     runLogger.stageEnd("spec_scaffold", "failed", undefined, err?.message);
     onPipelineProgress?.({ type: "failed", stage: "spec_scaffold", message: "Failed to parse scaffold" });
