@@ -240,14 +240,29 @@ export interface StructuralPreservationMetrics {
   preservedActivities: number;
   stubbedActivities: number;
   preservedStructures: string[];
+  studioLoadable?: boolean;
+  studioLoadableNote?: string;
 }
 
 export type StudioCompatibilityLevel = "studio-clean" | "studio-warnings" | "studio-blocked";
+
+export type StubFailureCategory =
+  | "xml-wellformedness"
+  | "quality-gate-escalation"
+  | "type-mismatch"
+  | "structural-invalid"
+  | "generation-failure"
+  | "compliance-failure"
+  | "expression-syntax"
+  | "undeclared-variable"
+  | "unknown-activity";
 
 export interface PerWorkflowStudioCompatibility {
   file: string;
   level: StudioCompatibilityLevel;
   blockers: string[];
+  failureCategory?: StubFailureCategory;
+  failureSummary?: string;
 }
 
 export interface PipelineOutcomeReport {
@@ -502,11 +517,17 @@ function buildDhgFromBuildResult(
     const entryPointStubbed = stubFileNames.has("Main");
     const plannedButMissingCount = plannedWfNames.filter(n => !archiveWfNames.has(n)).length;
 
+    const pipelineStudioBlocked = buildResult.outcomeReport?.studioCompatibility?.filter(
+      sc => sc.level === "studio-blocked"
+    ).length ?? stubFileNames.size;
+    const pipelineStudioLoadable = archiveWfNames.size - pipelineStudioBlocked;
     const stubAwareness = {
       entryPointStubbed,
       stubCount: stubFileNames.size,
       totalWorkflowCount: archiveWfNames.size,
       plannedButMissingCount,
+      studioLoadableCount: Math.max(0, pipelineStudioLoadable),
+      studioBlockedCount: pipelineStudioBlocked,
     };
 
     const upstreamContext: UpstreamContext = {

@@ -88,7 +88,10 @@ export function generateDhgFromOutcomeReport(
 
       let status: string;
       if (isStubbed || isStudioBlocked) {
-        status = "Structurally invalid (stub)";
+        const failureSummary = studioEntry?.failureSummary;
+        status = failureSummary
+          ? `Structurally invalid — ${failureSummary}`
+          : "Structurally invalid (not Studio-loadable)";
       } else if (isFullyGenerated) {
         status = "Fully Generated";
       } else if (hasPlaceholders) {
@@ -105,26 +108,41 @@ export function generateDhgFromOutcomeReport(
 
   if (report.studioCompatibility && report.studioCompatibility.length > 0) {
     md += `### Studio Compatibility\n\n`;
-    md += `| # | Workflow | Compatibility | Blockers |\n`;
-    md += `|---|----------|--------------|----------|\n`;
+    md += `| # | Workflow | Compatibility | Failure Category | Blockers |\n`;
+    md += `|---|----------|--------------|-----------------|----------|\n`;
     report.studioCompatibility.forEach((sc, i) => {
       const levelLabel = sc.level === "studio-clean"
         ? "Studio-openable"
         : sc.level === "studio-warnings"
           ? "Openable with warnings"
-          : "Structurally invalid — requires fixes";
+          : "Structurally invalid — not Studio-loadable";
+      const categoryLabel = sc.failureCategory
+        ? sc.failureCategory.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase())
+        : sc.level === "studio-clean" ? "—" : "Unclassified";
       const blockerSummary = sc.blockers.length > 0
         ? sc.blockers.slice(0, 3).map(b => b.length > 80 ? b.slice(0, 77) + "..." : b).join("; ").replace(/\|/g, "\\|")
         : "—";
-      md += `| ${i + 1} | \`${sc.file}\` | ${levelLabel} | ${blockerSummary} |\n`;
+      md += `| ${i + 1} | \`${sc.file}\` | ${levelLabel} | ${categoryLabel} | ${blockerSummary} |\n`;
     });
     const blocked = report.studioCompatibility.filter(sc => sc.level === "studio-blocked");
     const warnings = report.studioCompatibility.filter(sc => sc.level === "studio-warnings");
     const clean = report.studioCompatibility.filter(sc => sc.level === "studio-clean");
     md += `\n`;
-    md += `**Summary:** ${clean.length} clean, ${warnings.length} with warnings, ${blocked.length} blocked\n\n`;
+    md += `**Summary:** ${clean.length} Studio-loadable, ${warnings.length} with warnings, ${blocked.length} not Studio-loadable\n\n`;
     if (blocked.length > 0) {
-      md += `> **⚠ ${blocked.length} workflow(s) have structural defects that will prevent Studio from loading or executing them.** Address the blockers listed above before importing into Studio.\n\n`;
+      md += `> **⚠ ${blocked.length} workflow(s) are not Studio-loadable** — they will fail to open in UiPath Studio. Address the blockers listed above before importing.\n\n`;
+      const categoryCounts = new Map<string, number>();
+      for (const b of blocked) {
+        const cat = b.failureSummary || "Unknown";
+        categoryCounts.set(cat, (categoryCounts.get(cat) || 0) + 1);
+      }
+      if (categoryCounts.size > 1) {
+        md += `**Blocked by category:**\n`;
+        for (const [cat, count] of categoryCounts) {
+          md += `- ${cat}: ${count} workflow(s)\n`;
+        }
+        md += `\n`;
+      }
     }
   }
 
@@ -232,16 +250,33 @@ export function generateDhgFromOutcomeReport(
 
     if (report.structuralPreservationMetrics && report.structuralPreservationMetrics.length > 0) {
       md += `#### Structural Preservation Metrics\n\n`;
-      md += `| File | Total Activities | Preserved | Stubbed | Preservation Rate | Preserved Structures |\n`;
-      md += `|------|-----------------|-----------|---------|-------------------|---------------------|\n`;
+      md += `| File | Total Activities | Preserved | Stubbed | Preservation Rate | Studio-Loadable | Preserved Structures |\n`;
+      md += `|------|-----------------|-----------|---------|-------------------|----------------|---------------------|\n`;
       for (const m of report.structuralPreservationMetrics) {
         const rate = m.totalActivities > 0 ? Math.round((m.preservedActivities / m.totalActivities) * 100) : 0;
         const structures = m.preservedStructures.length > 3
           ? m.preservedStructures.slice(0, 3).join(", ") + `... (+${m.preservedStructures.length - 3})`
           : m.preservedStructures.join(", ");
-        md += `| \`${m.file}\` | ${m.totalActivities} | ${m.preservedActivities} | ${m.stubbedActivities} | ${rate}% | ${structures} |\n`;
+        const loadableLabel = m.studioLoadable === false
+          ? "No"
+          : m.studioLoadable === true
+            ? "Yes"
+            : "Unknown";
+        md += `| \`${m.file}\` | ${m.totalActivities} | ${m.preservedActivities} | ${m.stubbedActivities} | ${rate}% | ${loadableLabel} | ${structures} |\n`;
       }
       md += `\n`;
+      const nonLoadable = report.structuralPreservationMetrics.filter(m => m.studioLoadable === false);
+      if (nonLoadable.length > 0) {
+        md += `> **⚠ ${nonLoadable.length} structurally-preserved file(s) are not Studio-loadable** despite high preservation rates. `;
+        md += `XML structure is intact but Studio cannot load these files (missing Implementation/DynamicActivity). `;
+        md += `These require rebuilding from scratch.\n\n`;
+        for (const m of nonLoadable) {
+          if (m.studioLoadableNote) {
+            md += `> - \`${m.file}\`: ${m.studioLoadableNote}\n`;
+          }
+        }
+        if (nonLoadable.some(m => m.studioLoadableNote)) md += `\n`;
+      }
     }
   }
 

@@ -643,6 +643,8 @@ export function calculateReadiness(
     stubCount: number;
     totalWorkflowCount: number;
     plannedButMissingCount: number;
+    studioLoadableCount?: number;
+    studioBlockedCount?: number;
   },
   emptyContainerCount?: number,
 ): OverallReadiness {
@@ -728,13 +730,19 @@ export function calculateReadiness(
         score -= 10;
         notes.push("Entry point (Main.xaml) is stubbed — package has no runnable entry point");
       }
-      if (stubAwareness.totalWorkflowCount > 0 && stubAwareness.stubCount > 0) {
-        const stubProportion = stubAwareness.stubCount / stubAwareness.totalWorkflowCount;
-        const perStubPenalty = stubAwareness.stubCount * 3;
-        const proportionalPenalty = Math.round(stubProportion * 10);
-        const stubDeduction = Math.max(perStubPenalty, proportionalPenalty);
-        score -= stubDeduction;
-        notes.push(`${stubAwareness.stubCount}/${stubAwareness.totalWorkflowCount} workflow(s) are stubs (${Math.round(stubProportion * 100)}%) — structurally invalid`);
+      const effectiveBlockedCount = stubAwareness.studioBlockedCount !== undefined
+        ? stubAwareness.studioBlockedCount
+        : stubAwareness.stubCount;
+      const effectiveLoadableCount = stubAwareness.studioLoadableCount !== undefined
+        ? stubAwareness.studioLoadableCount
+        : (stubAwareness.totalWorkflowCount - stubAwareness.stubCount);
+      if (stubAwareness.totalWorkflowCount > 0 && effectiveBlockedCount > 0) {
+        const blockedProportion = effectiveBlockedCount / stubAwareness.totalWorkflowCount;
+        const perBlockedPenalty = effectiveBlockedCount * 3;
+        const proportionalPenalty = Math.round(blockedProportion * 10);
+        const blockedDeduction = Math.max(perBlockedPenalty, proportionalPenalty);
+        score -= blockedDeduction;
+        notes.push(`${effectiveLoadableCount}/${stubAwareness.totalWorkflowCount} workflow(s) are Studio-loadable (${effectiveBlockedCount} blocked — ${Math.round(blockedProportion * 100)}% not loadable)`);
       }
       if (stubAwareness.plannedButMissingCount > 0) {
         score -= Math.min(5, stubAwareness.plannedButMissingCount * 2);
@@ -770,17 +778,22 @@ export function calculateReadiness(
 
   if (stubAwareness?.entryPointStubbed && percent >= 20) {
     percent = 19;
-  } else if (stubAwareness && stubAwareness.stubCount > 0) {
-    const stubFraction = stubAwareness.totalWorkflowCount > 0
-      ? stubAwareness.stubCount / stubAwareness.totalWorkflowCount
-      : 0;
-    const stubCap = stubAwareness.stubCount >= 4
-      ? Math.min(29, Math.round(30 * (1 - stubFraction)))
-      : stubAwareness.stubCount >= 2
-        ? Math.min(34, Math.round(40 * (1 - stubFraction)))
-        : 39;
-    if (percent > stubCap) {
-      percent = stubCap;
+  } else if (stubAwareness) {
+    const blockedCount = stubAwareness.studioBlockedCount !== undefined
+      ? stubAwareness.studioBlockedCount
+      : stubAwareness.stubCount;
+    if (blockedCount > 0) {
+      const blockedFraction = stubAwareness.totalWorkflowCount > 0
+        ? blockedCount / stubAwareness.totalWorkflowCount
+        : 0;
+      const blockedCap = blockedCount >= 4
+        ? Math.min(29, Math.round(30 * (1 - blockedFraction)))
+        : blockedCount >= 2
+          ? Math.min(34, Math.round(40 * (1 - blockedFraction)))
+          : 39;
+      if (percent > blockedCap) {
+        percent = blockedCap;
+      }
     }
   }
 

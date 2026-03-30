@@ -219,6 +219,140 @@ function normalizeXamlPath(p: string): string {
   return p.replace(/\\/g, "/").replace(/^[./]+/, "");
 }
 
+interface StudioLoadabilityResult {
+  loadable: boolean;
+  reason?: string;
+}
+
+function checkStudioLoadability(xamlContent: string): StudioLoadabilityResult {
+  if (!xamlContent || xamlContent.trim().length === 0) {
+    return { loadable: false, reason: "Empty XAML content" };
+  }
+
+  const hasActivityRoot = /<Activity\b[^.]/i.test(xamlContent);
+  if (!hasActivityRoot) {
+    return { loadable: false, reason: "Missing root <Activity> element" };
+  }
+
+  const isEmptyActivity = /<Activity\b[^.][^>]*>\s*<\/Activity>/s.test(xamlContent);
+  if (isEmptyActivity) {
+    return { loadable: false, reason: "Empty <Activity> element — no Implementation child" };
+  }
+
+  const implPattern = /<(?:Sequence|Flowchart|StateMachine)\b(?!\.)(?:\s|>|\/)/i;
+  const hasImplementation = implPattern.test(xamlContent);
+  if (!hasImplementation) {
+    return { loadable: false, reason: "No <Sequence>, <Flowchart>, or <StateMachine> child — Studio will report DynamicActivity/Implementation is null" };
+  }
+
+  const openTags: string[] = [];
+  const structuralTagPattern = /<\/?(?:Activity|Sequence|Flowchart|StateMachine|TryCatch|If|While|DoWhile|ForEach|Switch|Pick|Parallel)\b(?!\.)[^>]*\/?>/gi;
+  let match;
+  while ((match = structuralTagPattern.exec(xamlContent)) !== null) {
+    const tag = match[0];
+    if (tag.endsWith("/>")) continue;
+    if (tag.startsWith("</")) {
+      const closeName = tag.match(/<\/(\w+)/)?.[1]?.toLowerCase();
+      if (closeName && openTags.length > 0 && openTags[openTags.length - 1] === closeName) {
+        openTags.pop();
+      }
+    } else {
+      const openName = tag.match(/<(\w+)/)?.[1]?.toLowerCase();
+      if (openName) openTags.push(openName);
+    }
+  }
+  if (openTags.length > 0) {
+    return { loadable: false, reason: `Unclosed structural element(s): ${openTags.join(", ")}` };
+  }
+
+  return { loadable: true };
+}
+
+function classifyStubFailureCategory(
+  file: string,
+  remediations: Array<{ file: string; remediationCode: string; classifiedCheck?: string; reason?: string }>,
+  qualityViolations: Array<{ file: string; check: string; severity: string; detail?: string }>,
+): { category: import("./uipath-pipeline").StubFailureCategory; summary: string; developerAction: string } {
+  const fileRemediations = remediations.filter(r => r.file === file || r.file === file.replace(/\.xaml$/i, ""));
+  const fileViolations = qualityViolations.filter(v => v.file === file);
+
+  const checks = new Set([
+    ...fileRemediations.map(r => r.classifiedCheck).filter(Boolean),
+    ...fileViolations.filter(v => v.severity === "error").map(v => v.check),
+  ]);
+
+  if (checks.has("xml-wellformedness") || fileRemediations.some(r => r.remediationCode === "STUB_WORKFLOW_BLOCKING" && r.reason?.includes("well-formedness"))) {
+    return {
+      category: "xml-wellformedness",
+      summary: "XML well-formedness failure in tree assembler",
+      developerAction: "Regenerate the workflow from the SDD spec, or manually fix XML structure (proper nesting and closing tags)",
+    };
+  }
+
+  if (checks.has("EXPRESSION_SYNTAX_UNFIXABLE") || checks.has("EXPRESSION_SYNTAX")) {
+    const hasVarDefaults = fileViolations.some(v => v.detail?.includes("variable default") || v.detail?.includes("Variable.Default"));
+    if (hasVarDefaults) {
+      return {
+        category: "quality-gate-escalation",
+        summary: "Quality gate escalation — variable defaults treated as expressions",
+        developerAction: "Manually set variable default values in Studio — the pipeline incorrectly flagged literal defaults as invalid expressions",
+      };
+    }
+    return {
+      category: "expression-syntax",
+      summary: "Expression syntax errors that could not be auto-corrected",
+      developerAction: "Open in Studio and fix VB.NET expression syntax in flagged activities",
+    };
+  }
+
+  if (checks.has("TYPE_MISMATCH") || checks.has("FOREACH_TYPE_MISMATCH") || checks.has("LITERAL_TYPE_ERROR") || checks.has("invalid-type-argument")) {
+    return {
+      category: "type-mismatch",
+      summary: "Type mismatch — x:Object or incorrect types used where specific types needed",
+      developerAction: "Change variable types to match expected types in Studio (e.g., replace x:Object with System.Data.DataTable)",
+    };
+  }
+
+  if (checks.has("undeclared-variable")) {
+    return {
+      category: "undeclared-variable",
+      summary: "References to variables not declared in the workflow scope",
+      developerAction: "Declare missing variables in the Variables panel in Studio, or fix variable name references",
+    };
+  }
+
+  if (checks.has("unknown-activity") || checks.has("undeclared-namespace") || checks.has("policy-blocked-activity")) {
+    return {
+      category: "unknown-activity",
+      summary: "Unknown or policy-blocked activities referenced in XAML",
+      developerAction: "Install required NuGet packages or replace blocked activities with approved alternatives",
+    };
+  }
+
+  if (fileRemediations.some(r => r.remediationCode === "STUB_WORKFLOW_GENERATOR_FAILURE")) {
+    return {
+      category: "generation-failure",
+      summary: "Workflow generation failed — LLM output could not be parsed into valid XAML",
+      developerAction: "Re-implement the workflow from scratch using the SDD specification as reference",
+    };
+  }
+
+  const loadabilityFailure = fileRemediations.some(r => r.reason?.includes("not Studio-loadable") || r.reason?.includes("Implementation is null"));
+  if (loadabilityFailure) {
+    return {
+      category: "structural-invalid",
+      summary: "Structural preservation — valid XML but not Studio-loadable (missing Implementation)",
+      developerAction: "Rebuild the workflow from scratch — the preserved XML structure lacks required XAML semantics",
+    };
+  }
+
+  return {
+    category: "compliance-failure",
+    summary: "Compliance or quality gate failure requiring manual remediation",
+    developerAction: "Review quality gate findings and fix each issue in Studio",
+  };
+}
+
 function buildReachabilityGraph(
   deferredWrites: Map<string, string>,
   xamlEntries: Array<{ name: string; content: string }>,
@@ -4126,13 +4260,19 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                 anyStructuralPreserved = true;
                 autoFixSummary.push(`Structural-leaf stub: preserved skeleton of ${shortName} (${spResult.preservedActivities}/${spResult.totalActivities} activities kept, ${spResult.stubbedActivities} stubbed)`);
 
+                const spLoadability = checkStudioLoadability(compliant);
                 structuralPreservationMetrics.push({
                   file: shortName,
                   totalActivities: spResult.totalActivities,
                   preservedActivities: spResult.preservedActivities,
                   stubbedActivities: spResult.stubbedActivities,
                   preservedStructures: spResult.preservedStructures,
+                  studioLoadable: spLoadability.loadable,
+                  studioLoadableNote: spLoadability.loadable ? undefined : `XML-preserved but not Studio-loadable: ${spLoadability.reason}`,
                 });
+                if (!spLoadability.loadable) {
+                  console.log(`[Studio-Loadability] Structural preservation of ${shortName}: ${spResult.preservedActivities}/${spResult.totalActivities} activities preserved, but NOT Studio-loadable — ${spLoadability.reason}`);
+                }
 
                 for (const stubbed of spResult.stubbedDetails) {
                   outcomeRemediations.push({
@@ -4152,13 +4292,19 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                 anyStructuralPreserved = true;
                 autoFixSummary.push(`Structural preservation: ${shortName} preserved unchanged — XML is valid but blocking issues could not be mapped to specific leaf activities`);
 
+                const spLoadability2 = checkStudioLoadability(xamlEntries[i].content);
                 structuralPreservationMetrics.push({
                   file: shortName,
                   totalActivities: spResult.totalActivities,
                   preservedActivities: spResult.totalActivities,
                   stubbedActivities: 0,
                   preservedStructures: spResult.preservedStructures,
+                  studioLoadable: spLoadability2.loadable,
+                  studioLoadableNote: spLoadability2.loadable ? undefined : `XML-preserved but not Studio-loadable: ${spLoadability2.reason}`,
                 });
+                if (!spLoadability2.loadable) {
+                  console.log(`[Studio-Loadability] Structural preservation of ${shortName}: preserved unchanged, but NOT Studio-loadable — ${spLoadability2.reason}`);
+                }
 
                 for (const bd of blockingDetails) {
                   outcomeRemediations.push({
@@ -4496,11 +4642,25 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     const archiveWfSet = new Set(archiveWfNames);
     const plannedButMissingCount = workflowNames.filter(n => !archiveWfSet.has(n)).length;
 
+    let assemblerStudioBlockedCount = stubCount;
+    let assemblerStudioLoadableCount = Math.max(0, archiveWfSet.size - stubCount);
+    for (const entry of xamlEntries) {
+      const shortName = (entry.name.split("/").pop() || entry.name).replace(/\.xaml$/i, "");
+      if (stubRemediationFiles.has(shortName) || earlyStubFallbacks.includes(shortName + ".xaml")) continue;
+      const loadability = checkStudioLoadability(entry.content);
+      if (!loadability.loadable) {
+        assemblerStudioBlockedCount++;
+        assemblerStudioLoadableCount = Math.max(0, assemblerStudioLoadableCount - 1);
+      }
+    }
+
     const stubAwareness = {
       entryPointStubbed,
       stubCount,
       totalWorkflowCount: archiveWfSet.size,
       plannedButMissingCount,
+      studioLoadableCount: assemblerStudioLoadableCount,
+      studioBlockedCount: assemblerStudioBlockedCount,
     };
 
     const qualityWarningCount = qualityGateResult.violations.filter(v => v.severity === "warning").length;
@@ -4562,22 +4722,26 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       "Manual implementation required",
     ];
     const dhgFilesWithStubContent = new Set<string>();
+    const dhgStudioNonLoadableFiles = new Set<string>();
+    const dhgStudioLoadabilityReasons = new Map<string, string>();
     for (const entry of xamlEntries) {
       const shortName = entry.name.split("/").pop() || entry.name;
       if (DHG_STUB_CONTENT_PATTERNS.some(pattern => entry.content.includes(pattern))) {
         dhgFilesWithStubContent.add(shortName);
       }
-      const hasImpl = /<(Sequence|Flowchart|StateMachine)\b/i.test(entry.content);
-      const isEmptyAct = /<Activity[^>]*>\s*<\/Activity>/s.test(entry.content);
-      if (isEmptyAct || (!hasImpl && entry.content.includes("<Activity"))) {
-        dhgFilesWithStubContent.add(shortName);
+      const loadability = checkStudioLoadability(entry.content);
+      if (!loadability.loadable) {
+        dhgStudioNonLoadableFiles.add(shortName);
+        dhgStudioLoadabilityReasons.set(shortName, loadability.reason || "Unknown Studio-loadability failure");
+        console.log(`[Studio-Loadability] ${shortName}: NOT loadable — ${loadability.reason}`);
       }
     }
     const dhgFullyGenerated = Array.from(dhgAllFiles).filter(f =>
       !dhgRemediatedFileSet.has(f) &&
       !earlyStubFallbacks.includes(f) &&
       !dhgFilesWithStructuralDefects.has(f) &&
-      !dhgFilesWithStubContent.has(f)
+      !dhgFilesWithStubContent.has(f) &&
+      !dhgStudioNonLoadableFiles.has(f)
     );
 
     const dhgQualityWarnings = qualityGateResult.violations
@@ -4611,11 +4775,24 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     }
     for (const f of dhgFilesWithStubContent) dhgStubbedFiles.add(f);
     const dhgStudioCompatibility: PerWorkflowStudioCompatibility[] = Array.from(dhgAllFiles).map(file => {
-      if (dhgStubbedFiles.has(file)) {
+      if (dhgStudioNonLoadableFiles.has(file) && !dhgStubbedFiles.has(file)) {
+        const reason = dhgStudioLoadabilityReasons.get(file) || "Not Studio-loadable";
         return {
           file,
           level: "studio-blocked" as StudioCompatibilityLevel,
-          blockers: [`[STUB_WORKFLOW_GENERATOR_FAILURE] Workflow was replaced with a stub due to generation/compliance failure — structurally invalid`],
+          blockers: [`[STUDIO_LOADABILITY] ${reason}`],
+          failureCategory: "structural-invalid" as import("./uipath-pipeline").StubFailureCategory,
+          failureSummary: "Structural preservation — valid XML but not Studio-loadable",
+        };
+      }
+      if (dhgStubbedFiles.has(file)) {
+        const classified = classifyStubFailureCategory(file, outcomeRemediations, qualityGateResult.violations);
+        return {
+          file,
+          level: "studio-blocked" as StudioCompatibilityLevel,
+          blockers: [`[${classified.category.toUpperCase()}] ${classified.summary}`],
+          failureCategory: classified.category,
+          failureSummary: classified.summary,
         };
       }
       const fileViolations = qualityGateResult.violations.filter(v => v.file === file);
@@ -4625,11 +4802,16 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         (v.severity === "warning" && (dhgStudioBlockingChecks.has(v.check) || dhgStudioWarningChecks.has(v.check)))
       );
       const blockers = blockingViolations.map(v => `[${v.check}] ${v.detail}`);
-      const level: StudioCompatibilityLevel = blockingViolations.length > 0
+      let level: StudioCompatibilityLevel = blockingViolations.length > 0
         ? "studio-blocked"
         : warningViolations.length > 0
           ? "studio-warnings"
           : "studio-clean";
+      const loadability = dhgStudioNonLoadableFiles.has(file);
+      if (level === "studio-clean" && loadability) {
+        level = "studio-blocked";
+        blockers.push(`[STUDIO_LOADABILITY] ${dhgStudioLoadabilityReasons.get(file) || "Not Studio-loadable"}`);
+      }
       return { file, level, blockers };
     });
 
@@ -4945,16 +5127,18 @@ ${depEntries}
   ];
 
   const filesWithStubContent = new Set<string>();
+  const studioNonLoadableFiles = new Set<string>();
+  const studioLoadabilityReasons = new Map<string, string>();
   for (const entry of xamlEntries) {
     const shortName = entry.name.split("/").pop() || entry.name;
     if (STUB_CONTENT_PATTERNS.some(pattern => entry.content.includes(pattern))) {
       filesWithStubContent.add(shortName);
     }
-    const hasImplementation = /<(Sequence|Flowchart|StateMachine)\b/i.test(entry.content);
-    const isEmptyActivity = /<Activity[^>]*>\s*<\/Activity>/s.test(entry.content);
-    if (isEmptyActivity || (!hasImplementation && entry.content.includes("<Activity"))) {
-      filesWithStubContent.add(shortName);
-      console.log(`[Classification Guard] ${shortName}: empty or missing Implementation body — excluded from fullyGenerated`);
+    const loadability = checkStudioLoadability(entry.content);
+    if (!loadability.loadable) {
+      studioNonLoadableFiles.add(shortName);
+      studioLoadabilityReasons.set(shortName, loadability.reason || "Unknown Studio-loadability failure");
+      console.log(`[Studio-Loadability] ${shortName}: NOT loadable — ${loadability.reason}`);
     }
   }
 
@@ -4962,7 +5146,8 @@ ${depEntries}
     !remediatedFiles.has(f) &&
     !earlyStubFallbacks.includes(f) &&
     !filesWithStructuralDefects.has(f) &&
-    !filesWithStubContent.has(f)
+    !filesWithStubContent.has(f) &&
+    !studioNonLoadableFiles.has(f)
   );
 
   const qualityWarnings = qualityGateResult.violations
@@ -5013,11 +5198,24 @@ ${depEntries}
   }
   for (const f of filesWithStubContent) stubbedFiles.add(f);
   const studioCompatibility: PerWorkflowStudioCompatibility[] = Array.from(allFiles).map(file => {
-    if (stubbedFiles.has(file)) {
+    if (studioNonLoadableFiles.has(file) && !stubbedFiles.has(file)) {
+      const reason = studioLoadabilityReasons.get(file) || "Not Studio-loadable";
       return {
         file,
         level: "studio-blocked" as StudioCompatibilityLevel,
-        blockers: [`[STUB_WORKFLOW_GENERATOR_FAILURE] Workflow was replaced with a stub due to generation/compliance failure — structurally invalid`],
+        blockers: [`[STUDIO_LOADABILITY] ${reason}`],
+        failureCategory: "structural-invalid" as import("./uipath-pipeline").StubFailureCategory,
+        failureSummary: "Structural preservation — valid XML but not Studio-loadable",
+      };
+    }
+    if (stubbedFiles.has(file)) {
+      const classified = classifyStubFailureCategory(file, outcomeRemediations, qualityGateResult.violations);
+      return {
+        file,
+        level: "studio-blocked" as StudioCompatibilityLevel,
+        blockers: [`[${classified.category.toUpperCase()}] ${classified.summary}`],
+        failureCategory: classified.category,
+        failureSummary: classified.summary,
       };
     }
     const fileViolations = qualityGateResult.violations.filter(v => v.file === file);
@@ -5027,11 +5225,15 @@ ${depEntries}
       (v.severity === "warning" && (studioBlockingChecks.has(v.check) || studioWarningChecks.has(v.check)))
     );
     const blockers = blockingViolations.map(v => `[${v.check}] ${v.detail}`);
-    const level: StudioCompatibilityLevel = blockingViolations.length > 0
+    let level: StudioCompatibilityLevel = blockingViolations.length > 0
       ? "studio-blocked"
       : warningViolations.length > 0
         ? "studio-warnings"
         : "studio-clean";
+    if (level === "studio-clean" && studioNonLoadableFiles.has(file)) {
+      level = "studio-blocked";
+      blockers.push(`[STUDIO_LOADABILITY] ${studioLoadabilityReasons.get(file) || "Not Studio-loadable"}`);
+    }
     return { file, level, blockers };
   });
 
