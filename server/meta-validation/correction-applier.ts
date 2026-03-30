@@ -176,6 +176,36 @@ function applyLiteralExpression(
   return scopedReplace(xaml, correction);
 }
 
+function findPrimaryScope(xaml: string): { container: string; varsStart: number; varsEnd: number; type: "existing-open" | "existing-selfclose" | "create" } | null {
+  const containerTypes = ["Sequence", "Flowchart", "StateMachine"];
+
+  const implMatch = xaml.match(/<DynamicActivity\.Implementation>\s*/);
+  const searchStart = implMatch ? (implMatch.index! + implMatch[0].length) : 0;
+  const searchRegion = xaml.substring(searchStart);
+
+  for (const container of containerTypes) {
+    const selfClosingVarsMatch = searchRegion.match(new RegExp(`<${container}\\.Variables\\s*\\/>`));
+    if (selfClosingVarsMatch && selfClosingVarsMatch.index !== undefined) {
+      return { container, varsStart: searchStart + selfClosingVarsMatch.index, varsEnd: searchStart + selfClosingVarsMatch.index + selfClosingVarsMatch[0].length, type: "existing-selfclose" };
+    }
+
+    const varsOpenMatch = searchRegion.match(new RegExp(`<${container}\\.Variables>`));
+    if (varsOpenMatch && varsOpenMatch.index !== undefined) {
+      return { container, varsStart: searchStart + varsOpenMatch.index, varsEnd: searchStart + varsOpenMatch.index + `<${container}.Variables>`.length, type: "existing-open" };
+    }
+  }
+
+  for (const container of containerTypes) {
+    const containerMatch = searchRegion.match(new RegExp(`<${container}(\\s[^>]*)?>(?!\\.)`));
+    if (containerMatch && containerMatch.index !== undefined) {
+      const insertPos = searchStart + containerMatch.index + containerMatch[0].length;
+      return { container, varsStart: insertPos, varsEnd: insertPos, type: "create" };
+    }
+  }
+
+  return null;
+}
+
 function applyUndeclaredVariable(
   xaml: string,
   correction: Correction,
@@ -185,29 +215,25 @@ function applyUndeclaredVariable(
   const variableDecl = correction.corrected.trim();
   if (!variableDecl.startsWith("<Variable")) return { result: xaml, success: false };
 
-  const selfClosingVarsMatch = xaml.match(/<Sequence\.Variables\s*\/>/);
-  if (selfClosingVarsMatch && selfClosingVarsMatch.index !== undefined) {
-    const replacement = `<Sequence.Variables>\n      ${variableDecl}\n    </Sequence.Variables>`;
-    const modified = xaml.substring(0, selfClosingVarsMatch.index) + replacement + xaml.substring(selfClosingVarsMatch.index + selfClosingVarsMatch[0].length);
+  const scope = findPrimaryScope(xaml);
+  if (!scope) return { result: xaml, success: false };
+
+  const { container, varsStart, varsEnd } = scope;
+
+  if (scope.type === "existing-selfclose") {
+    const replacement = `<${container}.Variables>\n      ${variableDecl}\n    </${container}.Variables>`;
+    const modified = xaml.substring(0, varsStart) + replacement + xaml.substring(varsEnd);
     return { result: modified, success: true };
   }
 
-  const seqVarsMatch = xaml.match(/<Sequence\.Variables>/);
-  if (seqVarsMatch && seqVarsMatch.index !== undefined) {
-    const insertPos = seqVarsMatch.index + "<Sequence.Variables>".length;
-    const modified = xaml.substring(0, insertPos) + "\n      " + variableDecl + xaml.substring(insertPos);
+  if (scope.type === "existing-open") {
+    const modified = xaml.substring(0, varsEnd) + "\n      " + variableDecl + xaml.substring(varsEnd);
     return { result: modified, success: true };
   }
 
-  const seqMatch = xaml.match(/<Sequence\s[^>]*>/);
-  if (seqMatch && seqMatch.index !== undefined) {
-    const insertPos = (seqMatch.index ?? 0) + seqMatch[0].length;
-    const variablesBlock = `\n    <Sequence.Variables>\n      ${variableDecl}\n    </Sequence.Variables>`;
-    const modified = xaml.substring(0, insertPos) + variablesBlock + xaml.substring(insertPos);
-    return { result: modified, success: true };
-  }
-
-  return { result: xaml, success: false };
+  const variablesBlock = `\n    <${container}.Variables>\n      ${variableDecl}\n    </${container}.Variables>`;
+  const modified = xaml.substring(0, varsStart) + variablesBlock + xaml.substring(varsEnd);
+  return { result: modified, success: true };
 }
 
 function applyMissingProperty(
@@ -307,16 +333,29 @@ export function applyCorrections(
         status: "applied",
         description: correction.description,
       });
+      console.log(`[Meta-Validation] Applied ${correction.category} correction in ${correction.workflowName}: ${correction.description.substring(0, 120)}`);
     } else {
       failed++;
+      let failReason = "Could not locate target text in XAML";
+      if (correction.category === "UNDECLARED_VARIABLES") {
+        const hasSequence = /<Sequence[\s>]/.test(entry.content);
+        const hasFlowchart = /<Flowchart[\s>]/.test(entry.content);
+        const hasVarsBlock = /\.Variables[>\s]/.test(entry.content);
+        const hasDynActivity = /DynamicActivity\.Implementation/.test(entry.content);
+        failReason = `Variable insertion failed — Sequence:${hasSequence}, Flowchart:${hasFlowchart}, VarsBlock:${hasVarsBlock}, DynActivity:${hasDynActivity}`;
+      } else if (correction.category === "ENUM_VIOLATIONS") {
+        const hasOriginal = correction.original ? entry.content.includes(correction.original) : false;
+        failReason = `Enum correction failed — original text ${hasOriginal ? "found" : "NOT found"} in XAML (original: "${(correction.original || "").substring(0, 60)}")`;
+      }
       details.push({
         workflowName: correction.workflowName,
         category: correction.category,
         confidence: correction.confidence,
         status: "failed",
-        reason: "Could not locate target text in XAML",
+        reason: failReason,
         description: correction.description,
       });
+      console.warn(`[Meta-Validation] Failed ${correction.category} correction in ${correction.workflowName}: ${failReason} — ${correction.description.substring(0, 120)}`);
     }
   }
 

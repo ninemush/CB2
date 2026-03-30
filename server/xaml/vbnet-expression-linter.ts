@@ -512,9 +512,21 @@ export function lintExpression(expression: string): LintResult {
   if (/\+/.test(corrected)) {
     const hasStringContext = /"[^"]*"\s*\+/.test(corrected) || /\+\s*"[^"]*"/.test(corrected)
       || /\.ToString\(\)\s*\+/.test(corrected) || /\+\s*\w+\.ToString\(\)/.test(corrected)
-      || /CStr\([^)]*\)\s*\+/.test(corrected);
+      || /CStr\([^)]*\)\s*\+/.test(corrected)
+      || /&quot;.*?&quot;\s*\+/.test(corrected) || /\+\s*&quot;.*?&quot;/.test(corrected)
+      || /\.GetType\(\)\.Name\s*\+/.test(corrected)
+      || /\.Name\s*\+\s*&quot;/.test(corrected) || /&quot;.*?&quot;\s*\+\s*\w+\.Message/.test(corrected)
+      || /\bexception\w*\.Message/i.test(corrected) || /\bex\.Message/i.test(corrected)
+      || /String\.Concat\b/.test(corrected);
     const isPureNumeric = /^\s*\d[\d.]*\s*\+\s*\d[\d.]*\s*$/.test(corrected);
-    if (hasStringContext && !isPureNumeric) {
+    const hasNumericPlus = /\b\d+\s*\+\s*\d+\b/.test(corrected)
+      || /\bint_\w+\s*\+\s*\d+/.test(corrected)
+      || /\b\d+\s*\+\s*int_\w+/.test(corrected)
+      || /\bint_\w+\s*\+\s*int_\w+/.test(corrected)
+      || /\bdbl_\w+\s*\+/.test(corrected)
+      || /\bCInt\s*\(/.test(corrected)
+      || /\bCDbl\s*\(/.test(corrected);
+    if (hasStringContext && !isPureNumeric && !hasNumericPlus) {
       applyFix(
         "CSHARP_STRING_CONCAT",
         "C# '+' for string concatenation should be VB.NET '&'",

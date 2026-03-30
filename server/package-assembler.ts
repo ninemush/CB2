@@ -4021,16 +4021,21 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                     const selfClosingRegex = new RegExp(`(<${escapedTag}\\s[^>]*?)${propName}="${escapedVal}"([^>]*?)(\\s*\\/>)`);
                     const openTagRegex = new RegExp(`(<${escapedTag}\\s[^>]*?)${propName}="${escapedVal}"([^>]*?>)`);
 
+                    const contentLenBefore = content.length;
                     if (selfClosingRegex.test(content)) {
                       content = content.replace(selfClosingRegex, `$1 $2>\n          ${childElement}\n        </${fullTag}>`);
                       correctedProperties.add(propName);
                       modified = true;
                       autoFixSummary.push(`Catalog: Moved ${fullTag}.${propName} from attribute to child-element in ${fileName}`);
+                      const contentLenDelta = content.length - contentLenBefore;
+                      elementRegex.lastIndex = Math.max(0, elementRegex.lastIndex + contentLenDelta);
                     } else if (openTagRegex.test(content)) {
                       content = content.replace(openTagRegex, `$1 $2\n          ${childElement}`);
                       correctedProperties.add(propName);
                       modified = true;
                       autoFixSummary.push(`Catalog: Moved ${fullTag}.${propName} from attribute to child-element in ${fileName}`);
+                      const contentLenDelta = content.length - contentLenBefore;
+                      elementRegex.lastIndex = Math.max(0, elementRegex.lastIndex + contentLenDelta);
                     }
                   }
                 } else if (correction.type === "fix-invalid-value" && correction.correctedValue) {
@@ -4040,12 +4045,17 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                     const escapedTag = fullTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                     const escapedOldVal = oldVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                     const attrRegex = new RegExp(`(<${escapedTag}\\s[^>]*?)${propName}="${escapedOldVal}"`, "g");
+                    const contentLenBefore2 = content.length;
                     const newContent = content.replace(attrRegex, `$1${propName}="${correction.correctedValue}"`);
                     if (newContent !== content) {
                       content = newContent;
                       correctedProperties.add(propName);
                       modified = true;
                       autoFixSummary.push(`Catalog: Corrected ${fullTag}.${propName} value from "${oldVal}" to "${correction.correctedValue}" in ${fileName}`);
+                      const contentLenDelta2 = content.length - contentLenBefore2;
+                      if (contentLenDelta2 !== 0) {
+                        elementRegex.lastIndex = Math.max(0, elementRegex.lastIndex + contentLenDelta2);
+                      }
                     }
                   }
                 } else if (correction.type === "wrap-in-argument" && correction.argumentWrapper) {
@@ -4067,12 +4077,17 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                     `<${escapedClassName}\\.${propName}>[\\s\\n]*<(?:InArgument|OutArgument|InOutArgument)[\\s>]`,
                   );
                   if (childTagRegex.test(content) && !alreadyWrappedRegex.test(content)) {
+                    const contentLenBefore3 = content.length;
                     content = content.replace(childTagRegex,
                       `$1\n            <${wrapper} x:TypeArguments="${xType}">$2</${wrapper}>\n          $3`
                     );
                     correctedProperties.add(propName);
                     modified = true;
                     autoFixSummary.push(`Catalog: Wrapped ${fullTag}.${propName} child content in <${wrapper}> in ${fileName}`);
+                    const contentLenDelta3 = content.length - contentLenBefore3;
+                    if (contentLenDelta3 !== 0) {
+                      elementRegex.lastIndex = Math.max(0, elementRegex.lastIndex + contentLenDelta3);
+                    }
                   }
                 }
               }
