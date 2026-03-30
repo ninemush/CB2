@@ -280,6 +280,21 @@ export function generateDhgFromOutcomeReport(
     }
   }
 
+  const validationFindings = report.remediations.filter(r => r.level === "validation-finding");
+  if (validationFindings.length > 0) {
+    md += `### Validation Issues — Requires Manual Attention (${validationFindings.length})\n\n`;
+    md += `The following issues were detected by the quality gate and require developer review. No automated remediation was applied — workflows are preserved as-generated.\n\n`;
+    md += `| # | File | Check | Developer Action | Est. Minutes |\n`;
+    md += `|---|------|-------|-----------------|-------------|\n`;
+    validationFindings.forEach((r, i) => {
+      const action = (r.developerAction || "").length > 80
+        ? (r.developerAction || "").slice(0, 77) + "..."
+        : (r.developerAction || "—");
+      md += `| ${i + 1} | \`${r.file}\` | \`${r.classifiedCheck}\` | ${action.replace(/\|/g, "\\|")} | ${r.estimatedEffortMinutes} |\n`;
+    });
+    md += `\n`;
+  }
+
   const workflowRemediations = report.remediations.filter(r => r.level === "workflow");
   if (workflowRemediations.length > 0) {
     md += `### Workflow-Level Stubs (${workflowRemediations.length})\n\n`;

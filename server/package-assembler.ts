@@ -20,8 +20,6 @@ import archiver from "archiver";
     selectGenerationMode,
     applyActivityPolicy,
     isReFrameworkFile,
-    replaceActivityWithStub,
-    replaceSequenceChildrenWithStub,
     preserveStructureAndStubLeaves,
     type GenerationMode,
     type GenerationModeConfig,
@@ -36,7 +34,7 @@ import archiver from "archiver";
   import { assembleWorkflowFromSpec } from "./workflow-tree-assembler";
   import type { WorkflowSpec as TreeWorkflowSpec, WorkflowNode as TreeWorkflowNode } from "./workflow-spec-types";
   import { analyzeAndFix, setGovernancePolicies, type AnalysisReport } from "./workflow-analyzer";
-  import { runQualityGate, formatQualityGateViolations, classifyQualityIssues, getBlockingFiles, hasOnlyWarnings, hasBlockingIssues, type QualityGateResult, type ClassifiedIssue } from "./uipath-quality-gate";
+  import { runQualityGate, validatePackage, formatQualityGateViolations, classifyQualityIssues, getBlockingFiles, hasOnlyWarnings, hasBlockingIssues, type QualityGateResult, type ClassifiedIssue, type PackageReadiness } from "./uipath-quality-gate";
   import { escapeXml } from "./lib/xml-utils";
   import { computePackageFingerprint, computeEnrichmentFingerprint, computeXamlFingerprint, computeQualityGateFingerprint } from "./lib/utils";
   import { scanXamlForRequiredPackages, classifyAutomationPattern, shouldUseReFramework, type AutomationPattern, ACTIVITY_NAME_ALIAS_MAP, normalizeActivityName, NAMESPACE_PREFIX_TO_PACKAGE, getActivityPackage } from "./uipath-activity-registry";
@@ -3935,8 +3933,54 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
     }
 
-    let qualityGateRunCount = 0;
-    const MAX_QUALITY_GATE_RUNS = 3;
+    const usedFallback = false;
+
+    for (let i = 0; i < xamlEntries.length; i++) {
+      let content = xamlEntries[i].content;
+      let wasFixed = false;
+
+      for (const [aliasName, canonicalName] of Object.entries(ACTIVITY_NAME_ALIAS_MAP)) {
+        const escapedAlias = aliasName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const aliasRegex = new RegExp(`<${escapedAlias}(\\s|>|\\/)`, "g");
+        const closingRegex = new RegExp(`</${escapedAlias}>`, "g");
+        if (aliasRegex.test(content)) {
+          content = content.replace(new RegExp(`<${escapedAlias}(\\s|>|\\/)`, "g"), `<${canonicalName}$1`);
+          content = content.replace(closingRegex, `</${canonicalName}>`);
+          autoFixSummary.push(`Normalised activity alias ${aliasName} → ${canonicalName} in ${xamlEntries[i].name}`);
+          wasFixed = true;
+        }
+      }
+
+      content = content.replace(/<ui:Assign\s/g, "<Assign ");
+      content = content.replace(/<\/ui:Assign>/g, "</Assign>");
+
+      content = content.replace(/WorkflowFileName="Workflows\\([^"]+)"/g, 'WorkflowFileName="$1"');
+      content = content.replace(/WorkflowFileName="Workflows\/([^"]+)"/g, 'WorkflowFileName="$1"');
+      content = content.replace(/WorkflowFileName="([^"]+)"/g, (_match, p1) => {
+        const cleaned = p1.replace(/\\/g, "/").replace(/^[./]+/, "");
+        return `WorkflowFileName="${cleaned}"`;
+      });
+
+      content = content.replace(/Dictionary<String,\s*ui:InArgument>/g, 'Dictionary<x:String, x:Object>');
+      content = content.replace(/x:TypeArguments="x:String, ui:InArgument"/g, 'x:TypeArguments="x:String, x:Object"');
+
+      if (content !== xamlEntries[i].content) {
+        xamlEntries[i] = { name: xamlEntries[i].name, content };
+        if (!wasFixed) autoFixSummary.push(`Applied XAML fixes to ${xamlEntries[i].name}`);
+      }
+    }
+
+    for (const entry of xamlEntries) {
+      const basename = entry.name.split("/").pop() || entry.name;
+      const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === basename);
+      if (archivePath) {
+        deferredWrites.set(archivePath, entry.content);
+      } else {
+        console.warn(`[UiPath Parity] No deferredWrites key found for basename "${basename}" during quality gate sync — skipping deferred update`);
+      }
+    }
+
+    const qualityGateRunCount = 1;
     let qualityGateResult = runQualityGate({
       xamlEntries,
       projectJsonContent: projectJsonStr,
@@ -3947,62 +3991,54 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       archiveContentHashes: buildContentHashRecord(),
       automationPattern,
     });
-    qualityGateRunCount++;
     const initialQGViolationCount = qualityGateResult.violations?.length || 0;
 
-    const applyCatalogViolations = (result: typeof qualityGateResult) => {
-      if (catalogViolations.length > 0) {
-        const existingKeys = new Set(
-          result.violations
-            .filter(v => v.check === "CATALOG_VIOLATION" || v.check === "ENUM_VIOLATION" || v.check === "CATALOG_STRUCTURAL_VIOLATION")
-            .map(v => `${v.file}::${v.detail}`)
-        );
-        let addedWarnings = 0;
-        let addedErrors = 0;
-        for (const cv of catalogViolations) {
-          const key = `${cv.file}::${cv.detail}`;
-          if (!existingKeys.has(key)) {
-            const isEnumViolation = cv.detail.includes("ENUM_VIOLATION");
-            const isStructuralViolation = cv.detail.includes("must be a child element") ||
-              cv.detail.includes("should be an attribute") ||
-              cv.detail.includes("move-to-child-element") ||
-              cv.detail.includes("move-to-attribute");
-            const severity = (isEnumViolation || isStructuralViolation) ? "error" as const : "warning" as const;
-            const check = isEnumViolation ? "ENUM_VIOLATION" :
-              isStructuralViolation ? "CATALOG_STRUCTURAL_VIOLATION" : "CATALOG_VIOLATION";
-            result.violations.push({
-              category: "accuracy",
-              severity,
-              check,
-              file: cv.file,
-              detail: cv.detail,
-            });
-            existingKeys.add(key);
-            if (severity === "error") {
-              addedErrors++;
-            } else {
-              addedWarnings++;
-            }
+    if (catalogViolations.length > 0) {
+      const existingKeys = new Set(
+        qualityGateResult.violations
+          .filter(v => v.check === "CATALOG_VIOLATION" || v.check === "ENUM_VIOLATION" || v.check === "CATALOG_STRUCTURAL_VIOLATION")
+          .map(v => `${v.file}::${v.detail}`)
+      );
+      let addedWarnings = 0;
+      let addedErrors = 0;
+      for (const cv of catalogViolations) {
+        const key = `${cv.file}::${cv.detail}`;
+        if (!existingKeys.has(key)) {
+          const isEnumViolation = cv.detail.includes("ENUM_VIOLATION");
+          const isStructuralViolation = cv.detail.includes("must be a child element") ||
+            cv.detail.includes("should be an attribute") ||
+            cv.detail.includes("move-to-child-element") ||
+            cv.detail.includes("move-to-attribute");
+          const severity = (isEnumViolation || isStructuralViolation) ? "error" as const : "warning" as const;
+          const check = isEnumViolation ? "ENUM_VIOLATION" :
+            isStructuralViolation ? "CATALOG_STRUCTURAL_VIOLATION" : "CATALOG_VIOLATION";
+          qualityGateResult.violations.push({
+            category: "accuracy",
+            severity,
+            check,
+            file: cv.file,
+            detail: cv.detail,
+          });
+          existingKeys.add(key);
+          if (severity === "error") {
+            addedErrors++;
+          } else {
+            addedWarnings++;
           }
         }
-        if (addedWarnings > 0) {
-          result.summary.accuracyWarnings = (result.summary.accuracyWarnings || 0) + addedWarnings;
-          result.summary.totalWarnings += addedWarnings;
-        }
-        if (addedErrors > 0) {
-          result.summary.accuracyErrors = (result.summary.accuracyErrors || 0) + addedErrors;
-          result.summary.totalErrors = (result.summary.totalErrors || 0) + addedErrors;
-          result.passed = false;
-        }
       }
-    };
-    applyCatalogViolations(qualityGateResult);
+      if (addedWarnings > 0) {
+        qualityGateResult.summary.accuracyWarnings = (qualityGateResult.summary.accuracyWarnings || 0) + addedWarnings;
+        qualityGateResult.summary.totalWarnings += addedWarnings;
+      }
+      if (addedErrors > 0) {
+        qualityGateResult.summary.accuracyErrors = (qualityGateResult.summary.accuracyErrors || 0) + addedErrors;
+        qualityGateResult.summary.totalErrors = (qualityGateResult.summary.totalErrors || 0) + addedErrors;
+        qualityGateResult.passed = false;
+      }
+    }
 
-    let usedFallback = false;
-
-    if (!qualityGateResult.passed) {
-      console.log(`[UiPath Quality Gate] Initial check failed with ${qualityGateResult.summary.totalErrors} error(s). Attempting auto-remediation...`);
-
+    {
       const classifiedIssues = classifyQualityIssues(qualityGateResult);
       for (const ci of classifiedIssues) {
         collectedQualityIssues.push({
@@ -4011,68 +4047,24 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           check: ci.check,
           detail: ci.detail,
         });
-      }
-
-      for (let i = 0; i < xamlEntries.length; i++) {
-        let content = xamlEntries[i].content;
-        let wasFixed = false;
-
-        for (const [aliasName, canonicalName] of Object.entries(ACTIVITY_NAME_ALIAS_MAP)) {
-          const escapedAlias = aliasName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const aliasRegex = new RegExp(`<${escapedAlias}(\\s|>|\\/)`, "g");
-          const closingRegex = new RegExp(`</${escapedAlias}>`, "g");
-          if (aliasRegex.test(content)) {
-            content = content.replace(new RegExp(`<${escapedAlias}(\\s|>|\\/)`, "g"), `<${canonicalName}$1`);
-            content = content.replace(closingRegex, `</${canonicalName}>`);
-            autoFixSummary.push(`Normalised activity alias ${aliasName} → ${canonicalName} in ${xamlEntries[i].name}`);
-            wasFixed = true;
-          }
-        }
-
-        const unknownActivityViolations = qualityGateResult.violations.filter(
-          v => v.check === "unknown-activity" && v.file === (xamlEntries[i].name.split("/").pop() || xamlEntries[i].name)
-        );
-        for (const v of unknownActivityViolations) {
-          const actMatch = v.detail.match(/unknown activity "([^"]+)"/);
-          if (actMatch) {
-            const badTag = actMatch[1];
-            if (ACTIVITY_NAME_ALIAS_MAP[badTag]) continue;
-            content = content.replace(new RegExp(`<${badTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^>]*\\/?>`, "g"), `<ui:Comment Text="Removed unknown activity: ${badTag}" />`);
-            content = content.replace(new RegExp(`</${badTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}>`, "g"), "");
-            autoFixSummary.push(`Removed unknown activity ${badTag} from ${xamlEntries[i].name}`);
-            wasFixed = true;
-          }
-        }
-
-        content = content.replace(/<ui:Assign\s/g, "<Assign ");
-        content = content.replace(/<\/ui:Assign>/g, "</Assign>");
-
-        content = content.replace(/WorkflowFileName="Workflows\\([^"]+)"/g, 'WorkflowFileName="$1"');
-        content = content.replace(/WorkflowFileName="Workflows\/([^"]+)"/g, 'WorkflowFileName="$1"');
-        content = content.replace(/WorkflowFileName="([^"]+)"/g, (_match, p1) => {
-          const cleaned = p1.replace(/\\/g, "/").replace(/^[./]+/, "");
-          return `WorkflowFileName="${cleaned}"`;
-        });
-
-        content = content.replace(/Dictionary<String,\s*ui:InArgument>/g, 'Dictionary<x:String, x:Object>');
-        content = content.replace(/x:TypeArguments="x:String, ui:InArgument"/g, 'x:TypeArguments="x:String, x:Object"');
-
-        if (content !== xamlEntries[i].content) {
-          xamlEntries[i] = { name: xamlEntries[i].name, content };
-          if (!wasFixed) autoFixSummary.push(`Applied XAML fixes to ${xamlEntries[i].name}`);
+        if (ci.severity === "blocking") {
+          outcomeRemediations.push({
+            level: "validation-finding",
+            file: ci.file,
+            remediationCode: mapCheckToRemediationCode(ci.check),
+            reason: ci.detail,
+            classifiedCheck: ci.check,
+            developerAction: developerActionForCheck(ci.check, ci.file),
+            estimatedEffortMinutes: estimateEffortForCheck(ci.check),
+          });
         }
       }
-
-      for (const entry of xamlEntries) {
-        const basename = entry.name.split("/").pop() || entry.name;
-        const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === basename);
-        if (archivePath) {
-          deferredWrites.set(archivePath, entry.content);
-        } else {
-          console.warn(`[UiPath Parity] No deferredWrites key found for basename "${basename}" during quality gate sync — skipping deferred update`);
-        }
+      if (!qualityGateResult.passed) {
+        console.log(`[UiPath Quality Gate] Validation found ${qualityGateResult.summary.totalErrors} error(s), ${qualityGateResult.summary.totalWarnings} warning(s) — reporting in DHG without remediation`);
       }
+    }
 
+    {
       const depsAfterScan = scanXamlForRequiredPackages(xamlEntries.map(e => e.content).join("\n"));
       for (const rawPkgName of depsAfterScan) {
         const pkgName = normalizePackageName(rawPkgName);
@@ -4113,485 +4105,52 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
 
       validateAndEnforceDependencyCompatibility(deps, dependencyWarnings);
-
-      const fixedProjectJsonStr = JSON.stringify(projectJson, null, 2);
-
-      if (qualityGateRunCount < MAX_QUALITY_GATE_RUNS) {
-        qualityGateResult = runQualityGate({
-          xamlEntries,
-          projectJsonContent: fixedProjectJsonStr,
-          configData: configCsv,
-          orchestratorArtifacts,
-          targetFramework: tf,
-          archiveManifest: allArchivePaths,
-          archiveContentHashes: buildContentHashRecord(),
-          automationPattern,
-        });
-        qualityGateRunCount++;
-        applyCatalogViolations(qualityGateResult);
-      } else {
-        console.log(`[UiPath Quality Gate] Skipping post-fix rerun — already at max ${MAX_QUALITY_GATE_RUNS} runs`);
-      }
-
-      if (!qualityGateResult.passed) {
-        const reClassified = classifyQualityIssues(qualityGateResult);
-        const blockingFiles = getBlockingFiles(reClassified);
-        const onlyWarnings = hasOnlyWarnings(reClassified);
-
-        if (onlyWarnings) {
-          console.log(`[UiPath Quality Gate] Only warning-level issues remain (${qualityGateResult.summary.totalWarnings}) — shipping package with warnings documented in DHG`);
-          qualityGateResult = { ...qualityGateResult, passed: true };
-        } else if (blockingFiles.size > 0) {
-          console.log(`[UiPath Escalation] Level 1: Attempting per-activity stub replacement for ${blockingFiles.size} file(s)`);
-          let perActivityFixed = false;
-          const stubbedVariableNames = new Set<string>();
-
-          for (let i = 0; i < xamlEntries.length; i++) {
-            const entryName = xamlEntries[i].name;
-            const shortName = entryName.split("/").pop() || entryName;
-            if (!blockingFiles.has(shortName)) continue;
-
-            const fileIssues = reClassified.filter(ci => ci.file === shortName && ci.severity === "blocking");
-            let content = xamlEntries[i].content;
-            let anyReplaced = false;
-
-            const preStubVarNames = new Set<string>();
-            const preVarPattern = /<Variable\s[^>]*Name="([^"]+)"[^>]*>/g;
-            let pvm;
-            while ((pvm = preVarPattern.exec(content)) !== null) {
-              preStubVarNames.add(pvm[1]);
-            }
-
-            for (const issue of fileIssues) {
-              const stubResult = replaceActivityWithStub(content, issue);
-              if (stubResult.replaced) {
-                content = stubResult.content;
-                anyReplaced = true;
-                perActivityFixed = true;
-                autoFixSummary.push(`Per-activity stub: replaced ${stubResult.originalTag || "activity"}${stubResult.originalDisplayName ? ` (${stubResult.originalDisplayName})` : ""} in ${shortName} [${issue.check}]`);
-                outcomeRemediations.push({
-                  level: "activity",
-                  file: shortName,
-                  remediationCode: mapCheckToRemediationCode(issue.check),
-                  originalTag: stubResult.originalTag,
-                  originalDisplayName: stubResult.originalDisplayName,
-                  reason: issue.detail,
-                  classifiedCheck: issue.check,
-                  developerAction: developerActionForCheck(issue.check, shortName, stubResult.originalDisplayName),
-                  estimatedEffortMinutes: estimateEffortForCheck(issue.check),
-                });
-              }
-            }
-
-            if (anyReplaced) {
-              const postVarPattern = /<Variable\s[^>]*Name="([^"]+)"[^>]*>/g;
-              const postStubVarNames = new Set<string>();
-              let pvmPost;
-              while ((pvmPost = postVarPattern.exec(content)) !== null) {
-                postStubVarNames.add(pvmPost[1]);
-              }
-              for (const varName of preStubVarNames) {
-                if (!postStubVarNames.has(varName)) {
-                  stubbedVariableNames.add(varName);
-                }
-              }
-
-              xamlEntries[i] = { name: entryName, content };
-              const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === shortName);
-              if (archivePath) {
-                deferredWrites.set(archivePath, content);
-              } else {
-                console.warn(`[UiPath Parity] No deferredWrites key found for basename "${shortName}" during per-activity stub — skipping deferred update`);
-              }
-            }
-          }
-
-          if (perActivityFixed) {
-            if (stubbedVariableNames.size > 0) {
-              console.log(`[UiPath Escalation] Tracking ${stubbedVariableNames.size} stubbed variable(s) to suppress cascade: ${Array.from(stubbedVariableNames).join(", ")}`);
-            }
-            if (qualityGateRunCount < MAX_QUALITY_GATE_RUNS) {
-              const perActivityProjectJsonStr = JSON.stringify(projectJson, null, 2);
-              qualityGateResult = runQualityGate({
-                xamlEntries,
-                projectJsonContent: perActivityProjectJsonStr,
-                configData: configCsv,
-                orchestratorArtifacts,
-                targetFramework: tf,
-                archiveManifest: allArchivePaths,
-                archiveContentHashes: buildContentHashRecord(),
-                automationPattern,
-              });
-              qualityGateRunCount++;
-              applyCatalogViolations(qualityGateResult);
-            } else {
-              console.log(`[UiPath Quality Gate] Skipping post-activity-stub rerun — already at max ${MAX_QUALITY_GATE_RUNS} runs. Halting further escalation to prevent stale-result cascade.`);
-              usedFallback = true;
-            }
-
-            if (stubbedVariableNames.size > 0 && qualityGateResult.violations) {
-              const beforeCount = qualityGateResult.violations.length;
-              qualityGateResult = {
-                ...qualityGateResult,
-                violations: qualityGateResult.violations.filter(v => {
-                  if (v.check !== "UNDECLARED_VARIABLE") return true;
-                  for (const varName of stubbedVariableNames) {
-                    if (v.detail && v.detail.includes(`"${varName}"`)) return false;
-                  }
-                  return true;
-                }),
-              };
-              const removedCount = beforeCount - qualityGateResult.violations.length;
-              if (removedCount > 0) {
-                console.log(`[UiPath Escalation] Suppressed ${removedCount} cascade UNDECLARED_VARIABLE violation(s) from stubbed variables`);
-                const remainingBlocking = qualityGateResult.violations.filter(v => v.severity === "error");
-                if (remainingBlocking.length === 0) {
-                  qualityGateResult = { ...qualityGateResult, passed: true };
-                }
-              }
-            }
-
-            if (qualityGateResult.passed || hasOnlyWarnings(classifyQualityIssues(qualityGateResult))) {
-              console.log(`[UiPath Escalation] Per-activity stubs resolved all blocking issues`);
-              if (!qualityGateResult.passed) qualityGateResult = { ...qualityGateResult, passed: true };
-              usedFallback = true;
-            }
-          }
-
-          if (!qualityGateResult.passed && !hasOnlyWarnings(classifyQualityIssues(qualityGateResult)) && qualityGateRunCount < MAX_QUALITY_GATE_RUNS) {
-            console.log(`[UiPath Escalation] Level 2: Attempting per-sequence stub replacement`);
-            const seqClassified = classifyQualityIssues(qualityGateResult);
-            const seqBlockingFiles = getBlockingFiles(seqClassified);
-
-            let perSequenceFixed = false;
-            for (let i = 0; i < xamlEntries.length; i++) {
-              const entryName = xamlEntries[i].name;
-              const shortName = entryName.split("/").pop() || entryName;
-              if (!seqBlockingFiles.has(shortName)) continue;
-
-              const fileIssues = seqClassified.filter(ci => ci.file === shortName && ci.severity === "blocking");
-              const seqResult = replaceSequenceChildrenWithStub(xamlEntries[i].content, fileIssues);
-              if (seqResult.replaced) {
-                xamlEntries[i] = { name: entryName, content: seqResult.content };
-                const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === shortName);
-                if (archivePath) {
-                  deferredWrites.set(archivePath, seqResult.content);
-                } else {
-                  console.warn(`[UiPath Parity] No deferredWrites key found for basename "${shortName}" during per-sequence stub — skipping deferred update`);
-                }
-                perSequenceFixed = true;
-                autoFixSummary.push(`Per-sequence stub: replaced ${seqResult.replacedActivityCount} activities in sequence "${seqResult.sequenceDisplayName}" in ${shortName}`);
-                outcomeRemediations.push({
-                  level: "sequence",
-                  file: shortName,
-                  remediationCode: "STUB_SEQUENCE_MULTIPLE_FAILURES",
-                  originalDisplayName: seqResult.sequenceDisplayName,
-                  reason: `${seqResult.replacedActivityCount} activities in sequence failed validation`,
-                  classifiedCheck: fileIssues.map(i => i.check).filter((v, idx, arr) => arr.indexOf(v) === idx).join(", "),
-                  developerAction: `Re-implement ${seqResult.replacedActivityCount} activities in sequence "${seqResult.sequenceDisplayName}" in ${shortName}`,
-                  estimatedEffortMinutes: seqResult.replacedActivityCount * 15,
-                });
-              }
-            }
-
-            if (perSequenceFixed) {
-              if (qualityGateRunCount < MAX_QUALITY_GATE_RUNS) {
-                const seqProjectJsonStr = JSON.stringify(projectJson, null, 2);
-                qualityGateResult = runQualityGate({
-                  xamlEntries,
-                  projectJsonContent: seqProjectJsonStr,
-                  configData: configCsv,
-                  orchestratorArtifacts,
-                  targetFramework: tf,
-                  archiveManifest: allArchivePaths,
-                  archiveContentHashes: buildContentHashRecord(),
-                  automationPattern,
-                });
-                qualityGateRunCount++;
-                applyCatalogViolations(qualityGateResult);
-              } else {
-                console.log(`[UiPath Quality Gate] Skipping post-sequence-stub rerun — already at max ${MAX_QUALITY_GATE_RUNS} runs. No further escalation from stale results.`);
-              }
-
-              if (qualityGateResult.passed || hasOnlyWarnings(classifyQualityIssues(qualityGateResult))) {
-                console.log(`[UiPath Escalation] Per-sequence stubs resolved all blocking issues`);
-                if (!qualityGateResult.passed) qualityGateResult = { ...qualityGateResult, passed: true };
-                usedFallback = true;
-              }
-            }
-          }
-
-          if (!qualityGateResult.passed && !hasOnlyWarnings(classifyQualityIssues(qualityGateResult)) && qualityGateRunCount < MAX_QUALITY_GATE_RUNS) {
-            console.log(`[UiPath Escalation] Level 3: Structural-preservation stub for remaining blocking files`);
-            const wfClassified = classifyQualityIssues(qualityGateResult);
-            const wfBlockingFiles = getBlockingFiles(wfClassified);
-            usedFallback = true;
-
-            let anyStructuralPreserved = false;
-
-            for (let i = 0; i < xamlEntries.length; i++) {
-              const entryName = xamlEntries[i].name;
-              const shortName = entryName.split("/").pop() || entryName;
-              if (!wfBlockingFiles.has(shortName)) continue;
-
-              const blockingDetails = wfClassified.filter(ci => ci.file === shortName && ci.severity === "blocking");
-              const isMainFile = shortName === "Main.xaml";
-
-              const spResult = preserveStructureAndStubLeaves(
-                xamlEntries[i].content,
-                blockingDetails,
-                { isMainXaml: isMainFile },
-              );
-
-              if (spResult.preserved) {
-                console.log(`[UiPath Escalation] Structural preservation succeeded for ${shortName}: ${spResult.preservedActivities} preserved, ${spResult.stubbedActivities} stubbed out of ${spResult.totalActivities} total`);
-                const compliant = makeUiPathCompliant(spResult.content, tf);
-                xamlEntries[i] = { name: entryName, content: compliant };
-
-                const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === shortName);
-                if (archivePath) {
-                  deferredWrites.set(archivePath, compliant);
-                } else {
-                  console.warn(`[UiPath Parity] No deferredWrites key found for basename "${shortName}" during structural preservation — skipping deferred update`);
-                }
-
-                anyStructuralPreserved = true;
-                autoFixSummary.push(`Structural-leaf stub: preserved skeleton of ${shortName} (${spResult.preservedActivities}/${spResult.totalActivities} activities kept, ${spResult.stubbedActivities} stubbed)`);
-
-                const spLoadability = checkStudioLoadability(compliant);
-                structuralPreservationMetrics.push({
-                  file: shortName,
-                  totalActivities: spResult.totalActivities,
-                  preservedActivities: spResult.preservedActivities,
-                  stubbedActivities: spResult.stubbedActivities,
-                  preservedStructures: spResult.preservedStructures,
-                  studioLoadable: spLoadability.loadable,
-                  studioLoadableNote: spLoadability.loadable ? undefined : `XML-preserved but not Studio-loadable: ${spLoadability.reason}`,
-                });
-                if (!spLoadability.loadable) {
-                  console.log(`[Studio-Loadability] Structural preservation of ${shortName}: ${spResult.preservedActivities}/${spResult.totalActivities} activities preserved, but NOT Studio-loadable — ${spLoadability.reason}`);
-                }
-
-                for (const stubbed of spResult.stubbedDetails) {
-                  outcomeRemediations.push({
-                    level: "structural-leaf",
-                    file: shortName,
-                    remediationCode: "STUB_STRUCTURAL_LEAF",
-                    originalTag: stubbed.tag,
-                    originalDisplayName: stubbed.displayName,
-                    reason: stubbed.reason,
-                    classifiedCheck: stubbed.check,
-                    developerAction: `Re-implement ${stubbed.tag}${stubbed.displayName ? ` ("${stubbed.displayName}")` : ""} in ${shortName} — workflow skeleton preserved, only this leaf activity needs work`,
-                    estimatedEffortMinutes: estimateEffortForCheck(stubbed.check),
-                  });
-                }
-              } else if (spResult.parseableXml) {
-                console.log(`[UiPath Escalation] ${shortName} is parseable XML${isMainFile ? " (Main.xaml)" : ""} — preserving structure unchanged, blocking issues could not be mapped to specific leaves`);
-                anyStructuralPreserved = true;
-                autoFixSummary.push(`Structural preservation: ${shortName} preserved unchanged — XML is valid but blocking issues could not be mapped to specific leaf activities`);
-
-                const spLoadability2 = checkStudioLoadability(xamlEntries[i].content);
-                structuralPreservationMetrics.push({
-                  file: shortName,
-                  totalActivities: spResult.totalActivities,
-                  preservedActivities: spResult.totalActivities,
-                  stubbedActivities: 0,
-                  preservedStructures: spResult.preservedStructures,
-                  studioLoadable: spLoadability2.loadable,
-                  studioLoadableNote: spLoadability2.loadable ? undefined : `XML-preserved but not Studio-loadable: ${spLoadability2.reason}`,
-                });
-                if (!spLoadability2.loadable) {
-                  console.log(`[Studio-Loadability] Structural preservation of ${shortName}: preserved unchanged, but NOT Studio-loadable — ${spLoadability2.reason}`);
-                }
-
-                for (const bd of blockingDetails) {
-                  outcomeRemediations.push({
-                    level: "structural-leaf",
-                    file: shortName,
-                    remediationCode: "STUB_STRUCTURAL_LEAF",
-                    reason: bd.detail,
-                    classifiedCheck: bd.check,
-                    developerAction: `Review and fix ${bd.check} issue in ${shortName} — workflow structure was preserved intact`,
-                    estimatedEffortMinutes: estimateEffortForCheck(bd.check),
-                  });
-                }
-              } else {
-                console.log(`[UiPath Escalation] Structural preservation failed for ${shortName} (unparseable XML), falling back to full stub`);
-                const className = shortName.replace(".xaml", "");
-                const stubXaml = generateStubWorkflow(className, {
-                  reason: `Blocking quality gate issues: ${blockingDetails.map(d => d.check).join(", ")}`,
-                  isBlockingFallback: true,
-                });
-                const stubCompliant = makeUiPathCompliant(stubXaml, tf);
-                xamlEntries[i] = { name: entryName, content: stubCompliant };
-
-                const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === shortName);
-                if (archivePath) {
-                  deferredWrites.set(archivePath, stubCompliant);
-                } else {
-                  console.warn(`[UiPath Parity] No deferredWrites key found for basename "${shortName}" during full stub fallback — skipping deferred update`);
-                }
-                earlyStubFallbacks.push(shortName);
-                autoFixSummary.push(`Replaced ${entryName} with per-workflow Studio-openable stub (blocking issues: ${blockingDetails.map(d => d.check).join(", ")})`);
-                for (const bd of blockingDetails) {
-                  outcomeRemediations.push({
-                    level: "workflow",
-                    file: shortName,
-                    remediationCode: "STUB_WORKFLOW_BLOCKING",
-                    reason: bd.detail,
-                    classifiedCheck: bd.check,
-                    developerAction: `Re-implement entire workflow ${shortName} — XAML was not parseable for structural preservation`,
-                    estimatedEffortMinutes: 60,
-                  });
-                }
-              }
-            }
-
-            const stubPackages = new Set<string>();
-            for (const stubEntry of xamlEntries) {
-              const scanned = scanXamlForRequiredPackages(stubEntry.content);
-              for (const pkg of scanned) stubPackages.add(pkg);
-            }
-            for (const key of Object.keys(deps)) {
-              if (!stubPackages.has(key)) {
-                delete deps[key];
-              }
-            }
-            for (const pkg of stubPackages) {
-              if (isFrameworkAssembly(pkg)) {
-                continue;
-              }
-              if (!deps[pkg]) {
-                const metaVersion = getPreferredVersionFromMeta(pkg);
-                const catalogVersion = catalogService.isLoaded() ? catalogService.getConfirmedVersion(pkg) : null;
-                const fallbackVersion = metaVersion || catalogVersion;
-                if (!fallbackVersion) {
-                  throw new Error(`Cannot resolve version for package ${pkg}: no metadata or catalog source available`);
-                }
-                deps[pkg] = fallbackVersion;
-              }
-            }
-            if (!deps["UiPath.System.Activities"]) {
-              const resolvedSysVersion = getPreferredVersionFromMeta("UiPath.System.Activities") ||
-                (catalogService.isLoaded() ? catalogService.getConfirmedVersion("UiPath.System.Activities") : null);
-              if (!resolvedSysVersion) {
-                throw new Error("Cannot resolve version for UiPath.System.Activities: no metadata or catalog source available");
-              }
-              deps["UiPath.System.Activities"] = resolvedSysVersion;
-            }
-            projectJson.dependencies = { ...deps };
-            const stubProjectJsonStr = JSON.stringify(projectJson, null, 2);
-
-            if (qualityGateRunCount < MAX_QUALITY_GATE_RUNS) {
-              qualityGateResult = runQualityGate({
-                xamlEntries,
-                projectJsonContent: stubProjectJsonStr,
-                configData: configCsv,
-                orchestratorArtifacts,
-                targetFramework: tf,
-                archiveManifest: allArchivePaths,
-                archiveContentHashes: buildContentHashRecord(),
-                automationPattern,
-              });
-              qualityGateRunCount++;
-              applyCatalogViolations(qualityGateResult);
-            } else {
-              console.log(`[UiPath Quality Gate] Skipping post-structural-stub rerun — already at max ${MAX_QUALITY_GATE_RUNS} runs. No further escalation from stale results.`);
-            }
-
-            if (!qualityGateResult.passed) {
-              const finalClassified = classifyQualityIssues(qualityGateResult);
-              if (hasOnlyWarnings(finalClassified)) {
-                console.log(`[UiPath Quality Gate] After structural-preservation stub, only warnings remain — passing`);
-                qualityGateResult = { ...qualityGateResult, passed: true };
-              } else {
-                console.log(`[UiPath Quality Gate] After structural-preservation stub, some blocking issues remain — passing with warnings`);
-                qualityGateResult = { ...qualityGateResult, passed: true };
-                autoFixSummary.push(`Skipped full-package stub escalation — structural-preservation stubs already cover affected files`);
-              }
-            }
-
-            if (anyStructuralPreserved) {
-              console.log(`[UiPath Escalation] Structural preservation summary: ${structuralPreservationMetrics.map(m => `${m.file}: ${m.preservedActivities}/${m.totalActivities} preserved`).join(", ")}`);
-            }
-          }
-        } else {
-          console.log(`[UiPath Quality Gate] Still failing after remediation (${qualityGateResult.summary.totalErrors} errors) with package-level blocking issues — passing with warnings instead of full-package stub fallback`);
-          qualityGateResult = { ...qualityGateResult, passed: true };
-          autoFixSummary.push(`Skipped full-package stub fallback for package-level issues — preserving generated workflows`);
-        }
-      }
-
-      if (autoFixSummary.length > 0) {
-        console.log(`[UiPath Auto-Remediation] Applied ${autoFixSummary.length} fix(es):\n${autoFixSummary.map(s => `  - ${s}`).join("\n")}`);
-      }
     }
 
-    if (!qualityGateResult.passed && !usedFallback) {
-      if (generationMode === "baseline_openable") {
-        const formattedViolations = formatQualityGateViolations(qualityGateResult);
-        console.warn(`[UiPath Quality Gate] baseline_openable mode — demoting ${qualityGateResult.summary.totalErrors} error(s) to warnings (non-blocking):\n${formattedViolations}`);
-      } else {
-        const formattedViolations = formatQualityGateViolations(qualityGateResult);
-        console.error(`[UiPath Quality Gate] FAILED after remediation:\n${formattedViolations}`);
-        const classified = classifyQualityIssues(qualityGateResult);
-        const blockingFileSet = getBlockingFiles(classified);
-        const compliantFromCurrent = xamlEntries
-          .filter(e => {
-            const shortName = e.name.split("/").pop() || e.name;
-            return !blockingFileSet.has(shortName);
-          })
-          .map(e => ({ name: e.name.split("/").pop() || e.name, content: e.content }));
-        const qgError = new QualityGateError(
-          `UiPath pre-package quality gate failed with ${qualityGateResult.summary.totalErrors} error(s) after auto-remediation:\n${formattedViolations}`,
-          qualityGateResult,
-          compliantFromCurrent
-        );
-        throw qgError;
-      }
+    if (autoFixSummary.length > 0) {
+      console.log(`[UiPath Auto-Fix] Applied ${autoFixSummary.length} proven-safe fix(es):\n${autoFixSummary.map(s => `  - ${s}`).join("\n")}`);
     }
 
-    if (!qualityGateResult.passed && usedFallback) {
+    if (!qualityGateResult.passed) {
       const formattedViolations = formatQualityGateViolations(qualityGateResult);
-      console.warn(`[UiPath Quality Gate] Delivering fallback package with ${qualityGateResult.summary.totalErrors} residual finding(s):\n${formattedViolations}`);
+      if (generationMode === "baseline_openable") {
+        console.warn(`[UiPath Quality Gate] baseline_openable mode — ${qualityGateResult.summary.totalErrors} error(s) reported as validation issues (non-blocking):\n${formattedViolations}`);
+      } else {
+        console.warn(`[UiPath Quality Gate] Validation found ${qualityGateResult.summary.totalErrors} error(s) — reported in DHG without remediation:\n${formattedViolations}`);
+      }
     }
 
     {
       const warnCount = qualityGateResult.summary.totalWarnings;
+      const errorCount = qualityGateResult.summary.totalErrors;
       const evidenceCount = qualityGateResult.positiveEvidence?.length || 0;
-      const status = usedFallback ? "PASSED_WITH_FALLBACK" : (generationMode === "baseline_openable" && !qualityGateResult.passed ? "BASELINE_OPENABLE" : "PASSED");
-      console.log(`[UiPath Quality Gate] ${status}${warnCount > 0 ? ` with ${warnCount} warning(s)` : ""}${stubsGenerated.length > 0 ? `, ${stubsGenerated.length} stub(s) generated` : ""}${usedFallback ? ", FALLBACK stubs used" : ""}, ${evidenceCount} positive evidence item(s)`);
-      if (autoFixSummary.length > 0) {
-        console.log(`[UiPath Auto-Remediation Summary] ${autoFixSummary.length} fix(es) applied:\n${autoFixSummary.map(s => `  - ${s}`).join("\n")}`);
-      }
+      const readiness = qualityGateResult.readiness;
+      const status = readiness === "SUCCESS" ? "PASSED"
+        : readiness === "READY_WITH_WARNINGS" ? "PASSED_WITH_WARNINGS"
+        : "NEEDS_ATTENTION";
+      console.log(`[UiPath Quality Gate] ${status} (readiness: ${readiness})${errorCount > 0 ? `, ${errorCount} error(s)` : ""}${warnCount > 0 ? `, ${warnCount} warning(s)` : ""}${stubsGenerated.length > 0 ? `, ${stubsGenerated.length} stub(s) generated` : ""}, ${evidenceCount} positive evidence item(s)`);
 
       const totalActivities = xamlEntries.reduce((sum, e) => {
         const matches = e.content.match(/<([\w:]+)\s[^>]*DisplayName="/g);
         return sum + (matches ? matches.length : 0);
       }, 0);
-      const stubbedActivities = outcomeRemediations.filter(r => r.level === "activity" || r.level === "structural-leaf").length;
-      const stubRatio = totalActivities > 0 ? stubbedActivities / totalActivities : 0;
-      const cascadeAmplification = initialQGViolationCount > 0
-        ? stubbedActivities / Math.max(1, initialQGViolationCount)
-        : 0;
       const postComplianceDefectCount = totalPostComplianceReCorrections;
 
-      const dhgAccuracy = (stubRatio === 0 && !usedFallback) ? 1.0 : Math.max(0, 1 - stubRatio);
       const convergenceMetrics = {
         qualityGateRunCount,
-        maxQualityGateRuns: MAX_QUALITY_GATE_RUNS,
-        postComplianceDefectCount,
-        complianceIdempotencyRate: postComplianceDefectCount === 0 ? 1.0 : Math.max(0, 1 - (postComplianceDefectCount / Math.max(1, totalActivities))),
-        cascadeAmplificationRatio: Math.round(cascadeAmplification * 100) / 100,
-        stubRatio: Math.round(stubRatio * 100) / 100,
-        stubbedActivities,
+        cascadeAmplificationRatio: 1.0,
+        stubRatio: 0,
+        stubbedActivities: 0,
         totalActivities,
         qualityGateStatus: status,
+        readiness,
         autoRepairsApplied: autoFixSummary.length,
         initialViolationCount: initialQGViolationCount,
         finalViolationCount: qualityGateResult.violations?.length || 0,
-        dhgAccuracy: Math.round(dhgAccuracy * 100) / 100,
-        usedFallbackStubs: usedFallback,
+        dhgAccuracy: 1.0,
+        usedFallbackStubs: false,
+        postComplianceDefectCount,
+        complianceIdempotencyRate: postComplianceDefectCount === 0 ? 1.0 : Math.max(0, 1 - (postComplianceDefectCount / Math.max(1, totalActivities))),
       };
       console.log(`[Pipeline Convergence Metrics] ${JSON.stringify(convergenceMetrics)}`);
     }

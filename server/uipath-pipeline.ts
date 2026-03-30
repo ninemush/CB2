@@ -153,7 +153,7 @@ export interface DowngradeEvent {
   timestamp: Date;
 }
 
-export type RemediationLevel = "property" | "activity" | "sequence" | "structural-leaf" | "workflow" | "package";
+export type RemediationLevel = "property" | "activity" | "sequence" | "structural-leaf" | "workflow" | "package" | "validation-finding";
 
 export type RemediationCode =
   | "STUB_PROPERTY_BAD_EXPRESSION"

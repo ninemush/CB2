@@ -58,12 +58,15 @@ export type TypeRepairAction = {
   detail: string;
 };
 
+export type PackageReadiness = "SUCCESS" | "READY_WITH_WARNINGS" | "NEEDS_ATTENTION";
+
 export type QualityGateResult = {
   passed: boolean;
   violations: QualityGateViolation[];
   positiveEvidence: PositiveEvidence[];
   completenessLevel: CompletenessLevel;
   typeRepairs: TypeRepairAction[];
+  readiness: PackageReadiness;
   summary: {
     blockedPatterns: number;
     completenessErrors: number;
@@ -1967,19 +1970,15 @@ function computeCompletenessLevel(violations: QualityGateViolation[]): Completen
   return "functional";
 }
 
-export function runQualityGate(input: QualityGateInput): QualityGateResult {
-  const resilienceCorrected = injectResilienceDefaults(input.xamlEntries);
-  if (resilienceCorrected.length > 0) {
-    for (let i = 0; i < input.xamlEntries.length; i++) {
-      const corrected = resilienceCorrected.find(
-        ce => ce.name === input.xamlEntries[i].name
-      );
-      if (corrected) {
-        input.xamlEntries[i] = corrected;
-      }
-    }
-  }
+function computeReadiness(violations: QualityGateViolation[]): PackageReadiness {
+  const hasBlockingErrors = violations.some(v => v.severity === "error" && BLOCKING_CHECKS.has(v.check));
+  if (hasBlockingErrors) return "NEEDS_ATTENTION";
+  const hasAnyIssues = violations.some(v => v.severity === "error" || v.severity === "warning");
+  if (hasAnyIssues) return "READY_WITH_WARNINGS";
+  return "SUCCESS";
+}
 
+export function validatePackage(input: QualityGateInput): QualityGateResult {
   const blockedViolations = scanBlockedPatterns(input);
   const completenessViolations = checkCompleteness(input);
   const accuracyViolations = checkAccuracy(input);
@@ -2111,6 +2110,7 @@ export function runQualityGate(input: QualityGateInput): QualityGateResult {
   const hasErrors = allViolations.some(v => v.severity === "error");
   const summary = buildSummary(allViolations);
   const completenessLevel = computeCompletenessLevel(allViolations);
+  const readiness = computeReadiness(allViolations);
 
   return {
     passed: !hasErrors,
@@ -2118,8 +2118,25 @@ export function runQualityGate(input: QualityGateInput): QualityGateResult {
     positiveEvidence,
     completenessLevel,
     typeRepairs: typeCompatResult.repairs,
+    readiness,
     summary,
   };
+}
+
+export function runQualityGate(input: QualityGateInput): QualityGateResult {
+  const resilienceCorrected = injectResilienceDefaults(input.xamlEntries);
+  if (resilienceCorrected.length > 0) {
+    for (let i = 0; i < input.xamlEntries.length; i++) {
+      const corrected = resilienceCorrected.find(
+        ce => ce.name === input.xamlEntries[i].name
+      );
+      if (corrected) {
+        input.xamlEntries[i] = corrected;
+      }
+    }
+  }
+
+  return validatePackage(input);
 }
 
 function buildSummary(violations: QualityGateViolation[]): QualityGateResult["summary"] {
