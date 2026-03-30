@@ -1225,8 +1225,18 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
     return `${attr}="${canonical}"`;
   });
 
-  xml = xml.replace(/Default="([^"[\]]+)"/g, (match, val) => {
+  xml = xml.replace(/Default="([^"[\]]+)"/g, (match, val, offset) => {
     if (/^[0-9]+$/.test(val) || val === "True" || val === "False" || val === "Nothing" || val === "null" || val.startsWith("[") || val.startsWith("&quot;")) return match;
+    const precedingContext = xml.substring(Math.max(0, offset - 200), offset);
+    const isOnVariable = /<Variable\s[^>]*$/.test(precedingContext);
+    if (isOnVariable && /^[a-zA-Z_]\w*$/.test(val) && !/[.()=<>&|+\-*/^,]/.test(val)) {
+      const typeMatch = precedingContext.match(/x:TypeArguments="([^"]+)"/);
+      const typeArg = typeMatch ? typeMatch[1] : "";
+      const isStringType = typeArg.includes("String") && !typeArg.includes("Secure");
+      if (isStringType) {
+        return `Default="&quot;${val}&quot;"`;
+      }
+    }
     if (/^[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*(\(.*\))?$/.test(val)) {
       return `Default="[${val}]"`;
     }

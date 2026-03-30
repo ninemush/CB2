@@ -234,6 +234,34 @@ function looksLikeVariableRef(expr: string): boolean {
   return false;
 }
 
+function isVbExpression(val: string): boolean {
+  const trimmed = val.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return true;
+  if (trimmed.startsWith("\"") || trimmed.startsWith("&quot;")) return true;
+  if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing" || trimmed === "null") return true;
+  if (/^[0-9]+(\.[0-9]+)?$/.test(trimmed)) return true;
+  if (/^New\s/.test(trimmed)) return true;
+  if (/[()=<>&|+*/^]/.test(trimmed)) return true;
+  if (/\b\w+\.\w+/.test(trimmed)) return true;
+  if (/\b(AndAlso|OrElse|Not|Mod|Xor|Is|IsNot|Like)\b/.test(trimmed)) return true;
+  if (trimmed.startsWith("in_") || trimmed.startsWith("out_") || trimmed.startsWith("io_")) return true;
+  if (/^(str|int|bool|dbl|dec|obj|dt|ts|drow|qi|arr|dict|list|sec)_/i.test(trimmed)) return true;
+  return false;
+}
+
+function wrapVariableDefault(val: string, varType: string): string {
+  const trimmed = val.trim();
+  if (!trimmed) return trimmed;
+  if (isVbExpression(trimmed)) return trimmed;
+  const typeNorm = varType.toLowerCase();
+  const isStringType = typeNorm.includes("string") && !typeNorm.includes("secure");
+  if (isStringType) {
+    return `"${trimmed}"`;
+  }
+  return trimmed;
+}
+
 function smartBracketWrap(val: string): string {
   const trimmed = val.trim();
   if (!trimmed) return trimmed;
@@ -943,7 +971,8 @@ function assembleSequenceNode(
             console.warn(`[Variable Guard] Omitting literal Default="${v.default}" for x:Object variable "${v.name}" — UiPath does not support Literal<Object>`);
           }
         } else {
-          defaultAttr = ` Default="${escapeXml(v.default)}"`;
+          const wrappedDefault = wrapVariableDefault(v.default, v.type);
+          defaultAttr = ` Default="${escapeXml(wrappedDefault)}"`;
         }
       }
       varsBlock += `    <Variable x:TypeArguments="${typeAttr}" Name="${escapeXml(v.name)}"${defaultAttr} />\n`;
@@ -1267,7 +1296,8 @@ function buildVariablesBlock(variables: VariableDeclaration[]): string {
           console.warn(`[Variable Guard] Omitting literal Default="${v.default}" for x:Object variable "${v.name}" — UiPath does not support Literal<Object>`);
         }
       } else {
-        defaultAttr = ` Default="${escapeXml(v.default)}"`;
+        const wrappedDefault = wrapVariableDefault(v.default, v.type);
+        defaultAttr = ` Default="${escapeXml(wrappedDefault)}"`;
       }
     }
     xml += `      <Variable x:TypeArguments="${typeAttr}" Name="${escapeXml(v.name)}"${defaultAttr} />\n`;

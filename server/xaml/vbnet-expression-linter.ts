@@ -48,6 +48,16 @@ const VB_BUILTIN_TYPES = new Set([
   "StringBuilder", "StreamReader", "StreamWriter",
   "File", "Directory", "Path", "Console",
   "System", "Microsoft", "UiPath",
+  "StringComparer", "TimeZoneInfo", "Guid", "Encoding", "Uri",
+  "Activator", "Enumerable", "Queryable", "Task", "CancellationToken",
+  "JsonConvert", "JObject", "JArray", "JToken",
+  "SecureString", "NetworkCredential",
+  "Type", "Nullable", "Tuple", "KeyValuePair",
+  "Process", "Thread", "Monitor", "Interlocked",
+  "HttpClient", "WebClient", "WebRequest", "WebResponse",
+  "MailMessage", "SmtpClient",
+  "XDocument", "XElement", "XmlDocument", "XmlNode",
+  "Enumeration", "BitConverter", "Buffer",
 ]);
 
 const VB_BUILTIN_FUNCTIONS = new Set([
@@ -823,8 +833,8 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
     const charBefore = m.index > 0 ? exprWithoutStrings[m.index - 1] : "";
     if (charBefore === ".") continue;
 
-    if (/^[A-Z][a-z]/.test(ident) && expression.includes(`${ident}.`)) continue;
-    if (/^[A-Z][a-z]/.test(ident) && expression.includes(`${ident}(`)) continue;
+    if (/^[A-Z][a-z]/.test(ident) && (expression.includes(`${ident}.`) || decoded.includes(`${ident}.`))) continue;
+    if (/^[A-Z][a-z]/.test(ident) && (expression.includes(`${ident}(`) || decoded.includes(`${ident}(`))) continue;
 
     if (/^[A-Z]{2,}$/.test(ident)) continue;
 
@@ -833,6 +843,8 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
     if (invokedTokens.has(ident) && !declaredVars.has(ident)) {
       if (/^[A-Z]/.test(ident)) continue;
     }
+
+    if (/^(in|out|io)_/i.test(ident)) continue;
 
     undeclared.push(ident);
   }
@@ -854,6 +866,18 @@ export interface ExpressionLintSummary {
     corrected: string;
     issues: LintIssue[];
   }>;
+}
+
+function isLiteralDefaultFalsePositive(loc: ExpressionLocation, issue: LintIssue): boolean {
+  if (issue.code !== "BARE_WORD_REFERENCE" && issue.code !== "IMPLICIT_NARROWING") return false;
+  const isVariableDefault = /Default=/.test(loc.context) && /<Variable\s/.test(loc.context);
+  if (!isVariableDefault) return false;
+  const expr = loc.expression.trim();
+  if (/^[a-zA-Z_]\w*$/.test(expr)) return true;
+  if (/^&quot;.*&quot;$/.test(expr) || /^".*"$/.test(expr)) return true;
+  if (/^[0-9]+(\.[0-9]+)?$/.test(expr)) return true;
+  if (/^(True|False|Nothing)$/.test(expr)) return true;
+  return false;
 }
 
 export function lintXamlExpressions(
@@ -908,10 +932,16 @@ export function lintXamlExpressions(
         }
 
         for (const issue of result.issues) {
+          let severity: "warning" | "error" = issue.autoFixed ? "warning" : "error";
+          let check = issue.autoFixed ? "EXPRESSION_SYNTAX" : "EXPRESSION_SYNTAX_UNFIXABLE";
+          if (!issue.autoFixed && isLiteralDefaultFalsePositive(loc, issue)) {
+            severity = "warning";
+            check = "EXPRESSION_SYNTAX";
+          }
           violations.push({
             category: "accuracy",
-            severity: issue.autoFixed ? "warning" : "error",
-            check: issue.autoFixed ? "EXPRESSION_SYNTAX" : "EXPRESSION_SYNTAX_UNFIXABLE",
+            severity,
+            check,
             file: loc.file,
             detail: `Line ${loc.line}: ${issue.message} in expression: ${loc.expression.substring(0, 80)}${loc.expression.length > 80 ? "..." : ""}`,
           });
