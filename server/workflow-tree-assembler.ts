@@ -19,6 +19,7 @@ import { escapeXml, escapeXmlExpression, normalizeXmlExpression, escapeXmlTextCo
 import { XMLValidator } from "fast-xml-parser";
 import { buildExpression, isValueIntent, normalizeStringToExpression, type ValueIntent } from "./xaml/expression-builder";
 import { getActivityTag, getActivityPrefixStrict } from "./xaml/xaml-compliance";
+import { lintExpression } from "./xaml/vbnet-expression-linter";
 import type { RemediationEntry, RemediationCode } from "./uipath-pipeline";
 import { PROPERTY_REMEDIATION_ESCALATION_THRESHOLD } from "./uipath-pipeline";
 
@@ -28,6 +29,17 @@ export interface PropertyRemediationRecord {
   reason: string;
   originalValue: string;
   replacementValue: string;
+}
+
+export class CSharpExpressionBlockedError extends Error {
+  public readonly syntaxType: string;
+  public readonly expression: string;
+  constructor(syntaxType: string, expression: string) {
+    super(`Unconvertible C# syntax (${syntaxType}) blocked: "${expression}"`);
+    this.name = "CSharpExpressionBlockedError";
+    this.syntaxType = syntaxType;
+    this.expression = expression;
+  }
 }
 
 export interface AssemblyRemediationContext {
@@ -261,13 +273,167 @@ function inferTypeFromPrefix(varName: string): string | null {
   if (varName.startsWith("bool_") || varName.startsWith("is_") || varName.startsWith("has_")) return "x:Boolean";
   if (varName.startsWith("dbl_")) return "x:Double";
   if (varName.startsWith("dec_")) return "x:Decimal";
-  if (varName.startsWith("dt_")) return "s:DateTime";
+  if (varName.startsWith("dt_")) return "scg2:DataTable";
+  if (varName.startsWith("date_") || varName.startsWith("dtm_")) return "s:DateTime";
   if (varName.startsWith("dr_") || varName.startsWith("drow_")) return "scg2:DataRow";
   if (varName.startsWith("dict_")) return "scg:Dictionary(x:String, x:Object)";
   if (varName.startsWith("sec_")) return "s:Security.SecureString";
   if (varName.startsWith("ts_")) return "s:TimeSpan";
   if (varName.startsWith("obj_")) return "x:Object";
   return null;
+}
+
+const IMPLICIT_OUTPUT_ACTIVITY_TYPES: Record<string, { outputPropNames: string[]; defaultVar: string; defaultType: string }> = {
+  "GetAsset": { outputPropNames: ["AssetValue", "Value"], defaultVar: "str_AssetValue", defaultType: "String" },
+  "GetCredential": { outputPropNames: ["Username", "Password"], defaultVar: "str_Username", defaultType: "String" },
+  "GetTransactionItem": { outputPropNames: ["TransactionItem"], defaultVar: "qi_TransactionItem", defaultType: "UiPath.Core.QueueItem" },
+  "DeserializeJson": { outputPropNames: ["Result"], defaultVar: "obj_Result", defaultType: "Object" },
+  "HttpClient": { outputPropNames: ["Result"], defaultVar: "str_ResponseBody", defaultType: "String" },
+  "GetRobotAsset": { outputPropNames: ["AssetValue", "Value"], defaultVar: "str_RobotAssetValue", defaultType: "String" },
+  "GetQueueItems": { outputPropNames: ["QueueItems"], defaultVar: "list_QueueItems", defaultType: "System.Collections.Generic.List(UiPath.Core.QueueItem)" },
+  "AddQueueItem": { outputPropNames: ["QueueItem"], defaultVar: "qi_NewQueueItem", defaultType: "UiPath.Core.QueueItem" },
+  "ReadRange": { outputPropNames: ["DataTable"], defaultVar: "dt_ExcelData", defaultType: "System.Data.DataTable" },
+  "ReadCsvFile": { outputPropNames: ["DataTable"], defaultVar: "dt_CsvData", defaultType: "System.Data.DataTable" },
+  "ExecuteQuery": { outputPropNames: ["DataTable"], defaultVar: "dt_QueryResult", defaultType: "System.Data.DataTable" },
+  "DeserializeXml": { outputPropNames: ["XmlDocument"], defaultVar: "obj_XmlDoc", defaultType: "System.Xml.Linq.XDocument" },
+  "InputDialog": { outputPropNames: ["Result"], defaultVar: "str_UserInput", defaultType: "String" },
+  "MessageBox": { outputPropNames: ["ChosenButton"], defaultVar: "str_ChosenButton", defaultType: "String" },
+  "GetOrchestratorJobInfo": { outputPropNames: ["JobId", "MachineName"], defaultVar: "str_JobId", defaultType: "String" },
+  "ReadTextFile": { outputPropNames: ["Content"], defaultVar: "str_FileContent", defaultType: "String" },
+  "SerializeJson": { outputPropNames: ["JsonString"], defaultVar: "str_JsonOutput", defaultType: "String" },
+  "MatchPattern": { outputPropNames: ["Matches", "Result"], defaultVar: "obj_Matches", defaultType: "System.Text.RegularExpressions.MatchCollection" },
+};
+
+function collectImplicitOutputVariables(children: WorkflowNode[], allVariables: VariableDeclaration[]): void {
+  const existingNames = new Set(allVariables.map(v => v.name));
+
+  function scanNode(node: WorkflowNode): void {
+    if (node.kind === "activity") {
+      const actNode = node as ActivityNode;
+      const templateName = actNode.template || "";
+      const actConfig = IMPLICIT_OUTPUT_ACTIVITY_TYPES[templateName];
+
+      if (actConfig) {
+        const props = actNode.properties || {};
+        const varNames: string[] = [];
+
+        if (actNode.outputVar) {
+          varNames.push(actNode.outputVar);
+        }
+
+        for (const propName of actConfig.outputPropNames) {
+          const val = props[propName] || props[propName.charAt(0).toLowerCase() + propName.slice(1)];
+          if (val && typeof val === "string" && /^[a-zA-Z_]\w*$/.test(val.replace(/^\[|\]$/g, ""))) {
+            varNames.push(val.replace(/^\[|\]$/g, ""));
+          }
+        }
+
+        if (varNames.length === 0) {
+          varNames.push(actConfig.defaultVar);
+        }
+
+        if (templateName === "GetCredential") {
+          const usernameVar = (props.Username || props.username || "str_Username") as string;
+          const passwordVar = (props.Password || props.password || "sec_Password") as string;
+          const cleanUser = usernameVar.replace(/^\[|\]$/g, "");
+          const cleanPass = passwordVar.replace(/^\[|\]$/g, "");
+          if (!existingNames.has(cleanUser)) {
+            allVariables.push({ name: cleanUser, type: "String" });
+            existingNames.add(cleanUser);
+          }
+          if (!existingNames.has(cleanPass)) {
+            allVariables.push({ name: cleanPass, type: "System.Security.SecureString" });
+            existingNames.add(cleanPass);
+          }
+        }
+
+        for (const varName of varNames) {
+          const cleanName = varName.replace(/^\[|\]$/g, "");
+          if (!cleanName || existingNames.has(cleanName)) continue;
+
+          const PREFIX_TO_CLR: Record<string, string> = {
+            "x:String": "String",
+            "x:Int32": "Int32",
+            "x:Boolean": "Boolean",
+            "x:Double": "Double",
+            "x:Decimal": "Decimal",
+            "s:DateTime": "DateTime",
+            "scg2:DataTable": "System.Data.DataTable",
+            "scg2:DataRow": "System.Data.DataRow",
+            "s:Security.SecureString": "System.Security.SecureString",
+            "s:TimeSpan": "TimeSpan",
+            "x:Object": "Object",
+            "ui:QueueItem": "UiPath.Core.QueueItem",
+          };
+          const prefixType = inferTypeFromPrefix(cleanName);
+          const prefixClr = prefixType ? (PREFIX_TO_CLR[prefixType] || null) : null;
+          const schemaType = actConfig.defaultType;
+          const isSchemaGeneric = !schemaType || schemaType === "Object" || schemaType === "x:Object";
+          let varType: string;
+          if (prefixClr && !isSchemaGeneric) {
+            varType = prefixClr;
+          } else if (prefixClr) {
+            varType = prefixClr;
+          } else if (!isSchemaGeneric) {
+            varType = schemaType;
+          } else {
+            varType = "String";
+          }
+
+          allVariables.push({ name: cleanName, type: varType });
+          existingNames.add(cleanName);
+          console.log(`[Implicit Variable] Auto-declared "${cleanName}" (type: ${varType}) from ${templateName} activity`);
+        }
+      }
+
+      if (actNode.outputVar) {
+        const cleanName = actNode.outputVar.replace(/^\[|\]$/g, "");
+        if (cleanName && !existingNames.has(cleanName)) {
+          let varType = "Object";
+          const prefixType = inferTypeFromPrefix(cleanName);
+          if (prefixType) {
+            const PREFIX_TO_CLR: Record<string, string> = {
+              "x:String": "String", "x:Int32": "Int32", "x:Boolean": "Boolean",
+              "x:Double": "Double", "x:Decimal": "Decimal", "s:DateTime": "DateTime",
+              "scg2:DataTable": "System.Data.DataTable", "scg2:DataRow": "System.Data.DataRow",
+              "s:Security.SecureString": "System.Security.SecureString", "s:TimeSpan": "TimeSpan",
+              "x:Object": "Object", "ui:QueueItem": "UiPath.Core.QueueItem",
+            };
+            varType = PREFIX_TO_CLR[prefixType] || varType;
+          }
+          allVariables.push({ name: cleanName, type: varType });
+          existingNames.add(cleanName);
+          console.log(`[Implicit Variable] Auto-declared "${cleanName}" (type: ${varType}) from generic outputVar`);
+        }
+      }
+    }
+
+    if ("children" in node && Array.isArray((node as any).children)) {
+      for (const child of (node as any).children) scanNode(child);
+    }
+    if ("thenChildren" in node && Array.isArray((node as any).thenChildren)) {
+      for (const child of (node as any).thenChildren) scanNode(child);
+    }
+    if ("elseChildren" in node && Array.isArray((node as any).elseChildren)) {
+      for (const child of (node as any).elseChildren) scanNode(child);
+    }
+    if ("tryChildren" in node && Array.isArray((node as any).tryChildren)) {
+      for (const child of (node as any).tryChildren) scanNode(child);
+    }
+    if ("catchChildren" in node && Array.isArray((node as any).catchChildren)) {
+      for (const child of (node as any).catchChildren) scanNode(child);
+    }
+    if ("finallyChildren" in node && Array.isArray((node as any).finallyChildren)) {
+      for (const child of (node as any).finallyChildren) scanNode(child);
+    }
+    if ("bodyChildren" in node && Array.isArray((node as any).bodyChildren)) {
+      for (const child of (node as any).bodyChildren) scanNode(child);
+    }
+  }
+
+  for (const child of children) {
+    scanNode(child);
+  }
 }
 
 function indent(xml: string, level: number): string {
@@ -361,9 +527,11 @@ function smartBracketWrap(val: string): string {
 
 export function resolvePropertyValue(value: PropertyValue): string {
   if (isValueIntent(value)) {
-    return buildExpression(value as ValueIntent);
+    const built = buildExpression(value as ValueIntent);
+    return smartBracketWrap(lintAndFixVbExpression(built));
   }
-  return smartBracketWrap(String(value));
+  const strVal = String(value);
+  return smartBracketWrap(lintAndFixVbExpression(strVal));
 }
 
 export function resolvePropertyValueRaw(value: PropertyValue): string {
@@ -1001,7 +1169,7 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
         isChildElement = true;
         const wrapper = propDef.argumentWrapper || "InArgument";
         const typeArg = propDef.typeArguments ? ` x:TypeArguments="${propDef.typeArguments}"` : "";
-        const wrappedValue = validationResult ? effectiveValue : (isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : smartBracketWrap(effectiveValue));
+        const wrappedValue = validationResult ? effectiveValue : (isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : smartBracketWrap(lintAndFixVbExpression(effectiveValue)));
         const safeWrappedValue = escapeXmlTextContent(wrappedValue);
         childParts.push(
           `  <${tag}.${key}>\n` +
@@ -1012,7 +1180,8 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
     }
 
     if (!isChildElement) {
-      attrParts.push(`${key}="${escapeXml(effectiveValue)}"`);
+      const lintedAttrValue = lintAndFixVbExpression(effectiveValue);
+      attrParts.push(`${key}="${escapeXml(lintedAttrValue)}"`);
     }
   }
 
@@ -1067,14 +1236,12 @@ function wrapInRetryScope(innerXml: string, displayName: string, retries: number
     ? innerXml
     : `<ui:LogMessage Level="Trace" DisplayName="TODO: Implement RetryScope body" Message="[&quot;Placeholder — RetryScope body has no activities yet&quot;]" />`;
   return `<ui:RetryScope NumberOfRetries="${retries}" RetryInterval="${interval}" DisplayName="Retry: ${escapeXml(displayName)}">
-  <ui:RetryScope.Body>
-    <Sequence DisplayName="Retry Body">
-      ${effectiveInnerXml}
-    </Sequence>
-  </ui:RetryScope.Body>
   <ui:RetryScope.Condition>
     <ui:ShouldRetry />
   </ui:RetryScope.Condition>
+  <Sequence DisplayName="Retry Body">
+    ${effectiveInnerXml}
+  </Sequence>
 </ui:RetryScope>`;
 }
 
@@ -1231,22 +1398,56 @@ function assembleTryCatchNode(
   return xml;
 }
 
+const CSHARP_BLOCKERS = [
+  { pattern: /=>\s*\{/, desc: "C# lambda expression" },
+  { pattern: /\$"/, desc: "C# string interpolation" },
+  { pattern: /\?\?/, desc: "C# null coalescing operator" },
+  { pattern: /\?\.\w/, desc: "C# null conditional operator" },
+  { pattern: /\bvar\s+\w/, desc: "C# var keyword" },
+  { pattern: /\bforeach\s*\(/, desc: "C# foreach" },
+  { pattern: /\busing\s*\(/, desc: "C# using statement" },
+];
+
+export function lintAndFixVbExpression(expr: string): string {
+  if (!expr || !expr.trim()) return expr;
+  const trimmed = expr.trim();
+  if (/^"[^"]*"$/.test(trimmed)) return expr;
+  if (/^\d+(\.\d+)?$/.test(trimmed)) return expr;
+  if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing") return expr;
+
+  for (const { pattern, desc } of CSHARP_BLOCKERS) {
+    if (pattern.test(trimmed)) {
+      console.error(`[VB Lint BLOCKED] Expression contains unconvertible C# syntax (${desc}): "${trimmed}"`);
+      throw new CSharpExpressionBlockedError(desc, trimmed);
+    }
+  }
+
+  const result = lintExpression(expr);
+  if (result.corrected && result.corrected !== expr) {
+    console.log(`[VB Lint Pre-Emission] Auto-corrected expression: "${expr}" → "${result.corrected}"`);
+    return result.corrected;
+  }
+  return expr;
+}
+
 function resolveConditionValue(condition: string | ValueIntent): string {
   if (isValueIntent(condition)) {
     const built = buildExpression(condition as ValueIntent);
-    return escapeXmlExpression(built);
+    return escapeXmlExpression(lintAndFixVbExpression(built));
   }
   const trimmed = (condition as string).trim();
   if (!trimmed) return trimmed;
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
     const inner = trimmed.slice(1, -1);
-    return `[${escapeXmlExpression(inner)}]`;
+    const linted = lintAndFixVbExpression(inner);
+    return `[${escapeXmlExpression(linted)}]`;
   }
   if (trimmed === "True" || trimmed === "False") return trimmed;
-  if (/[<>=]/.test(trimmed) || /\b(And|Or|Not|AndAlso|OrElse|Is|IsNot|Like)\b/.test(trimmed)) {
-    return `[${escapeXmlExpression(trimmed)}]`;
+  const linted = lintAndFixVbExpression(trimmed);
+  if (/[<>=]/.test(linted) || /\b(And|Or|Not|AndAlso|OrElse|Is|IsNot|Like)\b/.test(linted)) {
+    return `[${escapeXmlExpression(linted)}]`;
   }
-  return escapeXmlExpression(trimmed);
+  return escapeXmlExpression(linted);
 }
 
 function assembleIfNode(
@@ -1464,14 +1665,12 @@ function assembleRetryScopeNode(
     : `<ui:LogMessage Level="Trace" DisplayName="TODO: Implement RetryScope body" Message="[&quot;Placeholder — RetryScope body has no activities yet&quot;]" />`;
 
   return `<ui:RetryScope NumberOfRetries="${node.numberOfRetries}" RetryInterval="${node.retryInterval}" DisplayName="${displayName}">\n` +
-    `  <ui:RetryScope.Body>\n` +
-    `    <Sequence DisplayName="Retry Body">\n` +
-    `      ${bodyContent}\n` +
-    `    </Sequence>\n` +
-    `  </ui:RetryScope.Body>\n` +
     `  <ui:RetryScope.Condition>\n` +
     `    <ui:ShouldRetry />\n` +
     `  </ui:RetryScope.Condition>\n` +
+    `  <Sequence DisplayName="Retry Body">\n` +
+    `    ${bodyContent}\n` +
+    `  </Sequence>\n` +
     `</ui:RetryScope>`;
 }
 
@@ -1687,7 +1886,7 @@ export function assembleWorkflowFromSpec(
   spec: WorkflowSpec,
   processType: ProcessType = "general",
 ): { xaml: string; variables: VariableDeclaration[] } {
-  const workflowName = (spec.name || "Workflow").replace(/\s+/g, "_");
+  const workflowName = (spec.name || "Workflow").replace(/"/g, "").replace(/&quot;/g, "").replace(/\s+/g, "_");
 
   const renameMap = new Map<string, string>();
   const sanitizedTopVars = sanitizeVariableDeclarations(spec.variables || [], renameMap);
@@ -1721,9 +1920,32 @@ export function assembleWorkflowFromSpec(
   };
   crossCheckGetCredentialVariableTypes(sanitizedRootSequence, allVariables);
 
-  const activitiesXml = sanitizedRootChildren
-    .map(child => assembleNode(child, allVariables, processType))
-    .join("\n    ");
+  collectImplicitOutputVariables(sanitizedRootChildren, allVariables);
+
+  let activitiesXml: string;
+  try {
+    activitiesXml = sanitizedRootChildren
+      .map(child => assembleNode(child, allVariables, processType))
+      .join("\n    ");
+  } catch (e) {
+    if (e instanceof CSharpExpressionBlockedError) {
+      console.error(`[VB Lint FATAL] Workflow "${workflowName}" blocked due to unconvertible C# expression: ${e.message}`);
+      const blockedFallbackXaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="${escapeXml(workflowName)}"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="${escapeXml(workflowName)}">
+    <ui:Comment Text="[VB_EXPRESSION_BLOCKED] Workflow generation was blocked because an expression contained unconvertible C# syntax: ${escapeXml(e.message)}. The expression must be rewritten in VB.NET before this workflow can be generated." DisplayName="BLOCKED — C# Expression Not Convertible" />
+  </Sequence>
+</Activity>`;
+      return { xaml: blockedFallbackXaml, variables: allVariables };
+    }
+    throw e;
+  }
 
   const isMainWorkflow = workflowName.toLowerCase() === "main" || workflowName.toLowerCase() === "main.xaml";
   const isInitAllSettings = workflowName.toLowerCase().includes("initallsettings");
@@ -1760,6 +1982,31 @@ ${xMembersBlock}  <Sequence DisplayName="${escapeXml(workflowName)}">
 
   xaml = deduplicateAssemblyAttributes(xaml);
 
+  const containerResult = validateContainerChildModel(xaml, workflowName);
+  xaml = containerResult.repairedXaml;
+  for (const repair of containerResult.repairs) {
+    console.log(`[Container Repair] ${workflowName}: ${repair}`);
+  }
+  if (containerResult.errors.length > 0) {
+    for (const err of containerResult.errors) {
+      console.error(`[Container Error] ${workflowName}: ${err}`);
+    }
+    const errorSummary = containerResult.errors.join("; ");
+    const fallbackXaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="${escapeXml(workflowName)}"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="${escapeXml(workflowName)}">
+    <ui:Comment Text="[CONTAINER_VALIDATION_FAILED] Irrecoverable container structure error(s): ${escapeXml(errorSummary)}. Manual implementation required." DisplayName="Container Validation Failed — ${escapeXml(workflowName)}" />
+  </Sequence>
+</Activity>`;
+    return { xaml: fallbackXaml, variables: allVariables };
+  }
+
   const validationResult = XMLValidator.validate(xaml, { allowBooleanAttributes: true });
   if (validationResult !== true) {
     const err = validationResult.err;
@@ -1780,6 +2027,188 @@ ${xMembersBlock}  <Sequence DisplayName="${escapeXml(workflowName)}">
   }
 
   return { xaml, variables: allVariables };
+}
+
+export interface ContainerValidationResult {
+  repairedXaml: string;
+  repairs: string[];
+  errors: string[];
+}
+
+export function validateContainerChildModel(xaml: string, workflowName: string): ContainerValidationResult {
+  const repairs: string[] = [];
+  const errors: string[] = [];
+  let patched = xaml;
+
+  patched = patched.replace(/<If\.Then>\s*<\/If\.Then>/g, () => {
+    repairs.push("If.Then was empty — injected placeholder Sequence");
+    return `<If.Then><Sequence DisplayName="TODO: If.Then"><ui:Comment DisplayName="TODO" Text="If.Then was empty — implement then branch" /></Sequence></If.Then>`;
+  });
+
+  patched = patched.replace(/<If\.Else>\s*<\/If\.Else>/g, () => {
+    repairs.push("If.Else was empty — injected placeholder Sequence");
+    return `<If.Else><Sequence DisplayName="TODO: If.Else"><ui:Comment DisplayName="TODO" Text="If.Else was empty — implement else branch" /></Sequence></If.Else>`;
+  });
+
+  patched = patched.replace(/<TryCatch\.Try>\s*<\/TryCatch\.Try>/g, () => {
+    repairs.push("TryCatch.Try was empty — injected placeholder Sequence");
+    return `<TryCatch.Try><Sequence DisplayName="TODO: TryCatch.Try"><ui:Comment DisplayName="TODO" Text="TryCatch.Try was empty — implement try body" /></Sequence></TryCatch.Try>`;
+  });
+
+  const ifThenMulti = /<If\.Then>([\s\S]*?)<\/If\.Then>/g;
+  let ifMatch;
+  while ((ifMatch = ifThenMulti.exec(patched)) !== null) {
+    const inner = ifMatch[1].trim();
+    const topLevelTags = inner.match(/<(?!\/)[A-Za-z][^>]*>/g) || [];
+    const directChildren = topLevelTags.filter(t => !t.startsWith("</") && !t.endsWith("/>"));
+    if (directChildren.length > 1 && !inner.startsWith("<Sequence")) {
+      const wrapped = `<If.Then><Sequence DisplayName="Auto-wrapped Then">${inner}</Sequence></If.Then>`;
+      patched = patched.replace(ifMatch[0], wrapped);
+      repairs.push("If.Then had multiple children — auto-wrapped in Sequence");
+    }
+  }
+
+  const tryCatchBlocks = /<TryCatch\s[^>]*>[\s\S]*?<\/TryCatch>/g;
+  let tcBlockMatch;
+  while ((tcBlockMatch = tryCatchBlocks.exec(patched)) !== null) {
+    const block = tcBlockMatch[0];
+    if (!block.includes("<TryCatch.Catches>")) {
+      const fixed = block.replace(
+        /<\/TryCatch>/,
+        `<TryCatch.Catches><Catch x:TypeArguments="s:Exception"><ActivityAction x:TypeArguments="s:Exception"><ActivityAction.Argument><DelegateInArgument x:TypeArguments="s:Exception" Name="exception" /></ActivityAction.Argument><Sequence DisplayName="Catch Handler"><ui:LogMessage Level="Error" DisplayName="Log Exception" Message="[exception.Message]" /></Sequence></ActivityAction></Catch></TryCatch.Catches></TryCatch>`
+      );
+      patched = patched.replace(block, fixed);
+      repairs.push("TryCatch was missing Catches — injected default Exception catch");
+    }
+  }
+
+  const forEachBlocks = /<ForEach\s[^>]*>[\s\S]*?<\/ForEach>/g;
+  let feBlockMatch;
+  while ((feBlockMatch = forEachBlocks.exec(patched)) !== null) {
+    const block = feBlockMatch[0];
+    if (!block.includes("<ActivityAction")) {
+      errors.push("ForEach is missing ActivityAction child element — cannot auto-repair (irrecoverable)");
+    }
+  }
+
+  const statePattern = /<State\s[^>]*DisplayName="([^"]*)"[^>]*>/g;
+  let stateMatch;
+  while ((stateMatch = statePattern.exec(patched)) !== null) {
+    const stateName = stateMatch[1];
+    const stateStart = stateMatch.index;
+    const stateEnd = patched.indexOf("</State>", stateStart);
+    if (stateEnd === -1) continue;
+    const stateSection = patched.substring(stateStart, stateEnd + 8);
+    const isFinal = /IsFinal="True"/i.test(stateMatch[0]);
+    if (!isFinal && !stateSection.includes("<State.Entry>")) {
+      errors.push(`State "${stateName}" is missing State.Entry element — non-final states require entry activities`);
+    }
+  }
+
+  const transitionPattern = /<Transition\s[^>]*(?:\/>|>)/g;
+  let transMatch;
+  while ((transMatch = transitionPattern.exec(patched)) !== null) {
+    const isSelfClosing = transMatch[0].endsWith("/>");
+    const transStart = transMatch.index;
+
+    if (isSelfClosing) {
+      const tag = transMatch[0];
+      if (!tag.includes("To=")) {
+        errors.push("Transition is missing To attribute — every Transition must specify a target State");
+      }
+      const hasConditionAttr = /Condition="[^"]*"/.test(tag);
+      if (!hasConditionAttr) {
+        const displayNameMatch = tag.match(/DisplayName="([^"]*)"/);
+        const dn = displayNameMatch ? displayNameMatch[1] : "Transition";
+        const toMatch = tag.match(/To="([^"]*)"/);
+        const toRef = toMatch ? toMatch[1] : "";
+        const expanded = `<Transition DisplayName="${dn}" To="${toRef}">\n        <Transition.Condition>[True]</Transition.Condition>\n      </Transition>`;
+        patched = patched.replace(tag, expanded);
+        repairs.push(`Self-closing Transition "${dn}" had no Condition — expanded with [True] condition`);
+      }
+      continue;
+    }
+
+    const transEnd = patched.indexOf("</Transition>", transStart);
+    if (transEnd === -1) continue;
+    const transSection = patched.substring(transStart, transEnd + 13);
+    if (!transSection.includes("To=")) {
+      errors.push("Transition is missing To attribute — every Transition must specify a target State");
+    }
+    const hasCondition = transSection.includes("<Transition.Condition>");
+    const hasAction = transSection.includes("<Transition.Action>");
+    if (!hasCondition && !hasAction) {
+      const displayNameMatch = transSection.match(/DisplayName="([^"]*)"/);
+      const dn = displayNameMatch ? displayNameMatch[1] : "Transition";
+      repairs.push(`Transition "${dn}" has neither Condition nor Action — injecting [True] condition`);
+      const conditionInsert = `<Transition.Condition>[True]</Transition.Condition>\n`;
+      patched = patched.replace(transMatch[0], transMatch[0] + "\n        " + conditionInsert);
+    }
+    if (hasCondition) {
+      const condInner = transSection.match(/<Transition\.Condition>([\s\S]*?)<\/Transition\.Condition>/);
+      if (condInner && !condInner[1].trim()) {
+        errors.push("Transition.Condition is empty — must contain exactly one condition expression");
+      }
+    }
+    if (hasAction) {
+      const actionInner = transSection.match(/<Transition\.Action>([\s\S]*?)<\/Transition\.Action>/);
+      if (actionInner && !actionInner[1].trim()) {
+        repairs.push("Transition.Action was empty — injected placeholder Sequence");
+        const fixed = transSection.replace(
+          /<Transition\.Action>\s*<\/Transition\.Action>/,
+          `<Transition.Action><Sequence DisplayName="TODO: Transition Action"><ui:Comment DisplayName="TODO" Text="Transition action was empty — implement transition logic" /></Sequence></Transition.Action>`
+        );
+        patched = patched.replace(transSection, fixed);
+      }
+    }
+  }
+
+  const tryCatchFinallyMulti = /<TryCatch\.Finally>([\s\S]*?)<\/TryCatch\.Finally>/g;
+  let finMatch;
+  while ((finMatch = tryCatchFinallyMulti.exec(patched)) !== null) {
+    const inner = finMatch[1].trim();
+    if (inner) {
+      const topTags = inner.match(/<(?!\/)[A-Za-z][^/>]*(?:\/>|>)/g) || [];
+      const nonSelfClosing = topTags.filter(t => !t.endsWith("/>"));
+      if (nonSelfClosing.length > 1 && !inner.startsWith("<Sequence")) {
+        const wrapped = `<TryCatch.Finally><Sequence DisplayName="Auto-wrapped Finally">${inner}</Sequence></TryCatch.Finally>`;
+        patched = patched.replace(finMatch[0], wrapped);
+        repairs.push("TryCatch.Finally had multiple children — auto-wrapped in Sequence");
+      }
+    }
+  }
+
+  if (patched.includes("<ui:RetryScope.Body>")) {
+    errors.push("RetryScope still uses explicit .Body property element after all code paths — must use default content property");
+  }
+
+  const retryScopePattern = /<ui:RetryScope\s[^>]*>[\s\S]*?<\/ui:RetryScope>/g;
+  let rsMatch;
+  while ((rsMatch = retryScopePattern.exec(patched)) !== null) {
+    const block = rsMatch[0];
+    if (!block.includes("<ui:RetryScope.Condition>") && !block.includes("<ui:ShouldRetry")) {
+      repairs.push("RetryScope is missing Condition — injecting default ShouldRetry");
+      const conditionXml = `<ui:RetryScope.Condition><ui:ShouldRetry /></ui:RetryScope.Condition>`;
+      const insertPoint = block.indexOf(">") + 1;
+      const fixed = block.substring(0, insertPoint) + "\n    " + conditionXml + block.substring(insertPoint);
+      patched = patched.replace(block, fixed);
+    }
+    if (!block.includes("<Sequence")) {
+      repairs.push("RetryScope has no Sequence body — injecting placeholder");
+      const closingTag = "</ui:RetryScope>";
+      const fixed = block.replace(closingTag, `<Sequence DisplayName="TODO: RetryScope Body"><ui:Comment DisplayName="TODO" Text="RetryScope body was empty — implement retry logic" /></Sequence>\n    ${closingTag}`);
+      patched = patched.replace(block, fixed);
+    }
+  }
+
+  if (repairs.length > 0) {
+    console.log(`[Container Validation] ${workflowName}: Repaired ${repairs.length} container structure issue(s)`);
+  }
+  if (errors.length > 0) {
+    console.error(`[Container Validation] ${workflowName}: ${errors.length} irrecoverable container error(s)`);
+  }
+
+  return { repairedXaml: patched, repairs, errors };
 }
 
 function deduplicateAssemblyAttributes(xaml: string): string {

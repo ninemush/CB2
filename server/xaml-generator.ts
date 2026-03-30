@@ -1912,13 +1912,11 @@ function wrapInTryCatch(innerXml: string, stepName: string, errorHandling: "retr
                         </TryCatch>`;
     const retryBody = alreadyHasRetryScope ? innerXml : `
               <ui:RetryScope DisplayName="Retry: ${escapedStep}" NumberOfRetries="3" RetryInterval="00:00:05">
-                <ui:RetryScope.Body>
-                  <Sequence DisplayName="Retry Body: ${escapedStep}">${innerXml}
-                  </Sequence>
-                </ui:RetryScope.Body>
                 <ui:RetryScope.Condition>
                   <ui:ShouldRetry />
                 </ui:RetryScope.Condition>
+                <Sequence DisplayName="Retry Body: ${escapedStep}">${innerXml}
+                </Sequence>
               </ui:RetryScope>`;
     return `
           <TryCatch DisplayName="Try Retry: ${escapedStep}"${annotAttr}>
@@ -2898,6 +2896,7 @@ export function generateReframeworkMainXaml(projectName: string, queueName: stri
   xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
   xmlns:scg2="clr-namespace:System.Data;assembly=System.Data"
   xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=mscorlib"
+  xmlns:sads="clr-namespace:System.Activities.Statements;assembly=System.Activities"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">${isCSharp ? "" : `
   <mva:VisualBasic.Settings>
@@ -2921,6 +2920,7 @@ export function generateReframeworkMainXaml(projectName: string, queueName: stri
       <x:String>System.Activities</x:String>
       <x:String>System.Activities.Statements</x:String>
       <x:String>System.Activities.Expressions</x:String>
+      <x:String>System.ComponentModel</x:String>
     </sco:Collection>
   </TextExpression.NamespacesForImplementation>
   <TextExpression.ReferencesForImplementation>
@@ -2936,6 +2936,8 @@ export function generateReframeworkMainXaml(projectName: string, queueName: stri
       <AssemblyReference>System.Xml.Linq</AssemblyReference>
       <AssemblyReference>UiPath.Core</AssemblyReference>
       <AssemblyReference>UiPath.Core.Activities</AssemblyReference>
+      <AssemblyReference>System.ServiceModel</AssemblyReference>
+      <AssemblyReference>System.ComponentModel.Composition</AssemblyReference>
     </sco:Collection>
   </TextExpression.ReferencesForImplementation>
   <StateMachine DisplayName="${safeName} - REFramework Main">
@@ -3067,7 +3069,9 @@ export function generateReframeworkMainXaml(projectName: string, queueName: stri
           </TryCatch.Catches>
         </TryCatch>
       </State.Entry>
-      <Transition DisplayName="Process -&gt; Get Next Transaction" To="{x:Reference State_GetTransaction}" />
+      <Transition DisplayName="Process -&gt; Get Next Transaction" To="{x:Reference State_GetTransaction}">
+        <Transition.Condition>[True]</Transition.Condition>
+      </Transition>
     </State>
 
     <State DisplayName="End Process" x:Name="State_End" IsFinal="True">

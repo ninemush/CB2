@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assembleNode, assembleWorkflowFromSpec, resolveActivityTemplate } from "../workflow-tree-assembler";
+import { assembleNode, assembleWorkflowFromSpec, resolveActivityTemplate, lintAndFixVbExpression, CSharpExpressionBlockedError, validateContainerChildModel } from "../workflow-tree-assembler";
 import { validateWorkflowSpec, type WorkflowNode, type WorkflowSpec, type ActivityNode, type VariableDeclaration } from "../workflow-spec-types";
 import { makeUiPathCompliant } from "../xaml-generator";
 
@@ -555,7 +555,7 @@ describe("Workflow Tree Architecture", () => {
   });
 
   describe("assembleNode — RetryScopeNode", () => {
-    it("places children in RetryScope.Body", () => {
+    it("places children as default content (no explicit .Body)", () => {
       const node: WorkflowNode = {
         kind: "retryScope",
         displayName: "Retry Operations",
@@ -575,7 +575,7 @@ describe("Workflow Tree Architecture", () => {
       expect(xml).toContain("<ui:RetryScope");
       expect(xml).toContain('NumberOfRetries="5"');
       expect(xml).toContain('RetryInterval="00:00:10"');
-      expect(xml).toContain("<ui:RetryScope.Body>");
+      expect(xml).not.toContain("<ui:RetryScope.Body>");
       expect(xml).toContain("<ui:ShouldRetry");
       expect(xml).toContain("API Call");
     });
@@ -918,6 +918,93 @@ describe("Workflow Tree Architecture", () => {
       expect(result).toContain("[count]");
       const outArgCount = (result.match(/<OutArgument/g) || []).length;
       expect(outArgCount).toBe(1);
+    });
+  });
+
+  describe("VB Expression Lint & C# Blocking", () => {
+    it("blocks C# lambda with body (=> {)", () => {
+      expect(() => lintAndFixVbExpression("items.Where(x => { return x.Active; })")).toThrow(CSharpExpressionBlockedError);
+    });
+
+    it("blocks C# string interpolation ($\"...\")", () => {
+      expect(() => lintAndFixVbExpression('$"Hello {name}"')).toThrow(CSharpExpressionBlockedError);
+    });
+
+    it("blocks null-coalescing operator (??)", () => {
+      expect(() => lintAndFixVbExpression("value ?? defaultVal")).toThrow(CSharpExpressionBlockedError);
+    });
+
+    it("blocks null-conditional access (?.)", () => {
+      expect(() => lintAndFixVbExpression("obj?.Property")).toThrow(CSharpExpressionBlockedError);
+    });
+
+    it("blocks var declarations", () => {
+      expect(() => lintAndFixVbExpression("var x = 5")).toThrow(CSharpExpressionBlockedError);
+    });
+
+    it("blocks C# foreach statements", () => {
+      expect(() => lintAndFixVbExpression("foreach(var item in list)")).toThrow(CSharpExpressionBlockedError);
+    });
+
+    it("blocks C# using statements", () => {
+      expect(() => lintAndFixVbExpression("using(var stream = new FileStream())")).toThrow(CSharpExpressionBlockedError);
+    });
+
+    it("passes through valid VB expressions unchanged", () => {
+      expect(lintAndFixVbExpression("str_Input")).toBe("str_Input");
+      expect(lintAndFixVbExpression('"Hello World"')).toBe('"Hello World"');
+      expect(lintAndFixVbExpression("42")).toBe("42");
+    });
+
+    it("passes through empty/whitespace expressions unchanged", () => {
+      expect(lintAndFixVbExpression("")).toBe("");
+      expect(lintAndFixVbExpression("  ")).toBe("  ");
+    });
+  });
+
+  describe("Container Child-Model Validation", () => {
+    it("auto-repairs empty If.Then with placeholder", () => {
+      const xaml = `<If Condition="True"><If.Then></If.Then></If>`;
+      const result = validateContainerChildModel(xaml, "TestWf");
+      expect(result.repairs.length).toBeGreaterThan(0);
+      expect(result.errors.length).toBe(0);
+    });
+
+    it("auto-repairs empty TryCatch.Try with placeholder", () => {
+      const xaml = `<TryCatch><TryCatch.Try></TryCatch.Try></TryCatch>`;
+      const result = validateContainerChildModel(xaml, "TestWf");
+      expect(result.repairs.length).toBeGreaterThan(0);
+      expect(result.errors.length).toBe(0);
+    });
+
+    it("detects irrecoverable missing ForEach ActivityAction", () => {
+      const xaml = `<ForEach x:TypeArguments="x:String" DisplayName="Loop"><Sequence /></ForEach>`;
+      const result = validateContainerChildModel(xaml, "TestWf");
+      expect(result.errors.length).toBeGreaterThan(0);
+      expect(result.errors[0]).toContain("ActivityAction");
+    });
+
+    it("flags lingering RetryScope.Body as irrecoverable", () => {
+      const xaml = `<ui:RetryScope><ui:RetryScope.Body><Sequence /></ui:RetryScope.Body></ui:RetryScope>`;
+      const result = validateContainerChildModel(xaml, "TestWf");
+      expect(result.errors.length).toBeGreaterThan(0);
+      expect(result.errors[0]).toContain(".Body");
+    });
+
+    it("auto-repairs self-closing Transition without Condition", () => {
+      const xaml = `<Transition DisplayName="Go Next" To="{x:Reference State_B}" />`;
+      const result = validateContainerChildModel(xaml, "TestWf");
+      expect(result.repairs.length).toBeGreaterThan(0);
+      expect(result.repairedXaml).toContain("<Transition.Condition>");
+      expect(result.repairedXaml).toContain("[True]");
+      expect(result.errors.length).toBe(0);
+    });
+
+    it("auto-repairs open Transition with neither Condition nor Action", () => {
+      const xaml = `<Transition DisplayName="Go Next" To="{x:Reference State_B}"><Sequence /></Transition>`;
+      const result = validateContainerChildModel(xaml, "TestWf");
+      expect(result.repairs.length).toBeGreaterThan(0);
+      expect(result.repairedXaml).toContain("Transition.Condition");
     });
   });
 });

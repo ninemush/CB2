@@ -524,6 +524,32 @@ export function lintExpression(expression: string): LintResult {
     }
   }
 
+  {
+    const csharpGenericPattern = /\bnew\s+([A-Z][A-Za-z0-9_]*)\s*<\s*([^>]+)\s*>\s*\(\s*\)/g;
+    if (csharpGenericPattern.test(corrected)) {
+      csharpGenericPattern.lastIndex = 0;
+      corrected = corrected.replace(csharpGenericPattern, (_match: string, typeName: string, typeArgs: string) => {
+        const vbTypeArgs = typeArgs.split(",").map((t: string) => t.trim()).join(", ");
+        return `New ${typeName}(Of ${vbTypeArgs})()`;
+      });
+      issues.push({ code: "CSHARP_GENERIC_NEW", message: "C# generic construction 'new Type<T>()' converted to VB.NET 'New Type(Of T)()'", autoFixed: true });
+      wasModified = true;
+    }
+  }
+
+  {
+    const csharpGenericPatternNoParens = /\bnew\s+([A-Z][A-Za-z0-9_]*)\s*<\s*([^>]+)\s*>\s*(?!\()/g;
+    if (csharpGenericPatternNoParens.test(corrected)) {
+      csharpGenericPatternNoParens.lastIndex = 0;
+      corrected = corrected.replace(csharpGenericPatternNoParens, (_match: string, typeName: string, typeArgs: string) => {
+        const vbTypeArgs = typeArgs.split(",").map((t: string) => t.trim()).join(", ");
+        return `New ${typeName}(Of ${vbTypeArgs})`;
+      });
+      issues.push({ code: "CSHARP_GENERIC_NEW", message: "C# generic construction 'new Type<T>' converted to VB.NET 'New Type(Of T)'", autoFixed: true });
+      wasModified = true;
+    }
+  }
+
   applyFix(
     "CSHARP_NEW",
     "C# 'new ' should be VB.NET 'New '",

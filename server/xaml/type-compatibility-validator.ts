@@ -473,7 +473,18 @@ export function validateTypeCompatibility(
           );
           if (alreadyRepaired) continue;
 
-          const targetTypeArg = clrTypeToXamlTypeArg(normalizeClrType(binding.expectedClrType));
+          const normalizedExpectedOut = normalizeClrType(binding.expectedClrType);
+          const GENERIC_CATALOG_TYPES = new Set([
+            "System.Object", "Object",
+          ]);
+          if (GENERIC_CATALOG_TYPES.has(normalizedExpectedOut) &&
+              varInfo.fullClrType !== "System.Object" &&
+              varInfo.fullClrType !== "Object") {
+            console.log(`[Type Compatibility] Skipping Out type-change for "${binding.boundVariable}" — variable has concrete type ${varInfo.fullClrType}, catalog expects generic ${normalizedExpectedOut}`);
+            continue;
+          }
+
+          const targetTypeArg = clrTypeToXamlTypeArg(normalizedExpectedOut);
           const oldType = varInfo.type;
           const oldClrType = varInfo.fullClrType;
           patchedContent = changeVariableType(patchedContent, binding.boundVariable, targetTypeArg);
@@ -541,6 +552,15 @@ export function validateTypeCompatibility(
           pendingWraps.push({ binding, conversion, varInfo });
         } else if (conversion.kind === "variable-type-change") {
           const normalizedExpected = normalizeClrType(binding.expectedClrType);
+
+          const GENERIC_CATALOG_TYPES_IN = new Set(["System.Object", "Object"]);
+          if (GENERIC_CATALOG_TYPES_IN.has(normalizedExpected) &&
+              varInfo.fullClrType !== "System.Object" &&
+              varInfo.fullClrType !== "Object") {
+            console.log(`[Type Compatibility] Skipping In type-change for "${binding.boundVariable}" — variable has concrete type ${varInfo.fullClrType}, catalog expects generic ${normalizedExpected}`);
+            continue;
+          }
+
           const isObjectToConcreteCollection = varInfo.fullClrType === "System.Object" &&
             !normalizedExpected.includes("IEnumerable") &&
             !normalizedExpected.includes("ICollection") &&

@@ -639,6 +639,163 @@ function runPostAssemblyValidation(
     warnings.push(`${unreachable.size} XAML file(s) unreachable from Main.xaml: ${Array.from(unreachable).join(", ")}`);
   }
 
+  const allXamlContent = [
+    ...xamlEntries.map(e => e.content),
+    ...Array.from(deferredWrites.entries())
+      .filter(([p]) => p.endsWith(".xaml"))
+      .map(([, c]) => c),
+  ].join("\n");
+
+  const objectDefaultPattern = /<Variable\s+x:TypeArguments="x:Object"[^>]*Default="[^"]*"/g;
+  let objDefaultMatch;
+  while ((objDefaultMatch = objectDefaultPattern.exec(allXamlContent)) !== null) {
+    const nameMatch = objDefaultMatch[0].match(/Name="([^"]+)"/);
+    const varName = nameMatch ? nameMatch[1] : "unknown";
+    warnings.push(`Variable "${varName}" has Default value on x:Object type — may cause "Literal only supports value types" error`);
+  }
+
+  const csharpPatterns = [
+    { pattern: /\bnew\s+[A-Z]\w*\s*</g, desc: "C# new with generic angle bracket" },
+    { pattern: /!=\s*null/g, desc: "C# != null" },
+    { pattern: /&&/g, desc: "C# &&" },
+    { pattern: /\|\|/g, desc: "C# ||" },
+    { pattern: /=>\s*\{/g, desc: "C# lambda =>" },
+    { pattern: /\$"/g, desc: "C# string interpolation $\"" },
+  ];
+  const exprContentOnly = allXamlContent.replace(/<\?xml[^>]*\?>/g, "").replace(/<!--[\s\S]*?-->/g, "");
+  for (const { pattern, desc } of csharpPatterns) {
+    const attrContext = new RegExp(`(?:Condition|Value|Expression|Message|Text)="[^"]*${pattern.source}`, "g");
+    if (attrContext.test(exprContentOnly)) {
+      warnings.push(`C# expression leakage detected: ${desc} found in XAML expression attributes`);
+    }
+  }
+
+  if (/<If\.Then>\s*<\/If\.Then>/.test(allXamlContent)) {
+    errors.push("Container structure error: Empty If.Then element — Studio requires exactly one child activity");
+  }
+  if (/<TryCatch\.Try>\s*<\/TryCatch\.Try>/.test(allXamlContent)) {
+    errors.push("Container structure error: Empty TryCatch.Try element — Studio requires exactly one child activity");
+  }
+  const forEachPattern = /<ForEach\s[^>]*>[\s\S]*?<\/ForEach>/g;
+  let feCheckMatch;
+  while ((feCheckMatch = forEachPattern.exec(allXamlContent)) !== null) {
+    if (!feCheckMatch[0].includes("<ActivityAction")) {
+      errors.push("Container structure error: ForEach missing ActivityAction child — required by Studio");
+    }
+  }
+
+  if (allXamlContent.includes("<StateMachine") || allXamlContent.includes("<State ")) {
+    if (!allXamlContent.includes("System.Activities.Statements") && !allXamlContent.includes("sads:")) {
+      warnings.push("StateMachine/State used but System.Activities.Statements namespace not declared");
+    }
+  }
+
+  if (allXamlContent.includes("<ui:RetryScope")) {
+    if (allXamlContent.includes("<ui:RetryScope.Body>")) {
+      errors.push("RetryScope uses explicit .Body property element — Studio 25.10 requires default content property");
+    }
+    const retryScopeBlocks = /<ui:RetryScope\s[^>]*>[\s\S]*?<\/ui:RetryScope>/g;
+    let rsMatch;
+    while ((rsMatch = retryScopeBlocks.exec(allXamlContent)) !== null) {
+      const block = rsMatch[0];
+      if (!block.includes("<ui:RetryScope.Condition>") && !block.includes("<ui:ShouldRetry")) {
+        warnings.push("RetryScope is missing Condition element (ui:RetryScope.Condition with ui:ShouldRetry)");
+      }
+      const directChildren = block.match(/<Sequence\s/g) || [];
+      if (directChildren.length === 0 && !block.includes("<ui:RetryScope.Body>")) {
+        warnings.push("RetryScope has no Sequence child as default content — body activities may not execute");
+      }
+    }
+  }
+
+  if (allXamlContent.includes("<ui:GetAsset")) {
+    const getAssetVarPattern = /ui:GetAsset\.AssetValue>[\s\S]*?<OutArgument[^>]*>\[([^\]]+)\]/g;
+    let gaMatch;
+    while ((gaMatch = getAssetVarPattern.exec(allXamlContent)) !== null) {
+      const varName = gaMatch[1];
+      const varDeclared = allXamlContent.includes(`Name="${varName}"`);
+      if (!varDeclared) {
+        warnings.push(`GetAsset output variable "${varName}" is not declared in workflow variables`);
+      }
+    }
+  }
+
+  const activityFamilyChecks = [
+    {
+      tag: "ui:GetTransactionItem",
+      requiredProps: ["QueueName"],
+      outputProps: ["TransactionItem"],
+      desc: "GetTransactionItem",
+    },
+    {
+      tag: "ui:AddQueueItem",
+      requiredProps: ["QueueName", "ItemInformation"],
+      outputProps: [],
+      desc: "AddQueueItem",
+    },
+    {
+      tag: "ui:SetTransactionStatus",
+      requiredProps: ["TransactionItem", "Status"],
+      outputProps: [],
+      desc: "SetTransactionStatus",
+    },
+    {
+      tag: "ui:GetCredential",
+      requiredProps: ["AssetName"],
+      outputProps: ["Username", "Password"],
+      desc: "GetCredential",
+    },
+    {
+      tag: "ui:GetAsset",
+      requiredProps: ["AssetName"],
+      outputProps: ["AssetValue"],
+      desc: "GetAsset",
+    },
+  ];
+
+  for (const check of activityFamilyChecks) {
+    const tagPattern = new RegExp(`<${check.tag}\\s[^>]*>`, "g");
+    let familyMatch;
+    while ((familyMatch = tagPattern.exec(allXamlContent)) !== null) {
+      const tagStr = familyMatch[0];
+      for (const reqProp of check.requiredProps) {
+        if (!tagStr.includes(`${reqProp}="`)) {
+          const endIdx = allXamlContent.indexOf(`</${check.tag}>`, familyMatch.index);
+          const bodySection = endIdx > 0 ? allXamlContent.substring(familyMatch.index, endIdx) : tagStr;
+          if (!bodySection.includes(`${check.tag}.${reqProp}`)) {
+            warnings.push(`${check.desc} activity is missing required property "${reqProp}"`);
+          }
+        }
+      }
+    }
+  }
+
+  const transitionTags = /<Transition\s[^>]*>/g;
+  let transValidMatch;
+  while ((transValidMatch = transitionTags.exec(allXamlContent)) !== null) {
+    const tag = transValidMatch[0];
+    if (!tag.includes('To="{x:Reference')) {
+      if (!tag.includes('To="')) {
+        warnings.push("Transition is missing To attribute — every Transition must specify a target State");
+      }
+    }
+  }
+
+  if (allXamlContent.includes("<State ")) {
+    const stateBlocks = /<State\s[^>]*DisplayName="([^"]*)"[^>]*>[\s\S]*?<\/State>/g;
+    let stValidMatch;
+    while ((stValidMatch = stateBlocks.exec(allXamlContent)) !== null) {
+      const stateName = stValidMatch[1];
+      const block = stValidMatch[0];
+      const isFinal = /IsFinal="True"/i.test(block);
+      if (!isFinal && !block.includes("<State.Entry>")) {
+        warnings.push(`State "${stateName}" is missing State.Entry — non-final states require entry activities`);
+      }
+    }
+  }
+
+  console.log(`[Post-Assembly Validation] Activity family checks complete: ${warnings.length} warning(s), ${errors.length} error(s)`);
+
   return {
     passed: errors.length === 0,
     errors,
@@ -2312,7 +2469,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         console.log(`[UiPath] WorkflowSpec tree (validated) before assembly for "${enrichEntry.name}":\n${truncatedSpec}`);
         console.log(`[UiPath] Using tree-based assembly for "${spec.name}"`);
 
-        const wfName = (spec.name || enrichEntry.name || projectName).replace(/\s+/g, "_");
+        const wfName = (spec.name || enrichEntry.name || projectName).replace(/"/g, "").replace(/&quot;/g, "").replace(/\s+/g, "_");
         if (priorCompliantMap.has(wfName)) {
           const priorContent = priorCompliantMap.get(wfName)!;
           deferredWrites.set(`${libPath}/${wfName}.xaml`, priorContent);
@@ -3130,6 +3287,29 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         usedPackages.add(safePkg);
       }
 
+      const hasStubbedWorkflows = earlyStubFallbacks.length > 0 || complianceFallbacks.some(fb => fb.wasFullStub);
+      let stubbedWorkflowActivityPackages: Set<string> | null = null;
+      if (hasStubbedWorkflows) {
+        stubbedWorkflowActivityPackages = new Set<string>();
+        const stubbedFileNames = new Set([
+          ...earlyStubFallbacks,
+          ...complianceFallbacks.filter(fb => fb.wasFullStub).map(fb => fb.file),
+        ]);
+        if (allTreeEnrichments && allTreeEnrichments.size > 0) {
+          for (const [wfName, entry] of allTreeEnrichments.entries()) {
+            const wfFile = `${wfName}.xaml`;
+            if (stubbedFileNames.has(wfFile)) {
+              const templates = collectActivityTemplatesFromSpec(entry.spec);
+              for (const template of templates) {
+                const pkg = catalogService.getPackageForActivity(template) || getActivityPackage(template) || null;
+                if (pkg) {
+                  stubbedWorkflowActivityPackages.add(normalizePackageName(pkg));
+                }
+              }
+            }
+          }
+        }
+      }
       const unusedDeps: string[] = [];
       for (const pkgName of Object.keys(deps)) {
         if (!usedPackages.has(pkgName)) {
@@ -3138,6 +3318,14 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
       const proactiveRemovals: string[] = [];
       for (const pkgName of unusedDeps) {
+        if (hasStubbedWorkflows && specPredictedPackages.has(pkgName) && !proactivelyResolvedPackages.has(pkgName)) {
+          const hasActivityEvidence = stubbedWorkflowActivityPackages ? stubbedWorkflowActivityPackages.has(pkgName) : true;
+          if (hasActivityEvidence) {
+            console.log(`[Dependency Alignment] Preserving spec-predicted dependency ${pkgName} — stubbed workflows reference activities from this package`);
+            continue;
+          }
+          console.log(`[Dependency Alignment] Removing spec-predicted dependency ${pkgName} — no concrete activity evidence from stubbed workflows`);
+        }
         delete deps[pkgName];
         if (proactivelyResolvedPackages.has(pkgName) || specPredictedPackages.has(pkgName)) {
           proactiveRemovals.push(pkgName);

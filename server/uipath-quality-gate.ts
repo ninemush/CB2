@@ -624,7 +624,8 @@ function checkCompleteness(input: QualityGateInput): QualityGateViolation[] {
     const referencedAssets = new Set<string>();
     let match;
     while ((match = assetPattern.exec(allXamlContent)) !== null) {
-      const name = match[1];
+      let name = match[1];
+      name = name.replace(/&quot;/g, "").replace(/^"|"$/g, "");
       if (!name.startsWith("TODO") && !name.startsWith("PLACEHOLDER")) {
         referencedAssets.add(name);
       }

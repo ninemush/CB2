@@ -137,7 +137,8 @@ export function scanCredentialAssets(
 
       const contextBlock = lines.slice(i, Math.min(i + 5, lines.length)).join("\n");
       const nameMatch = contextBlock.match(nameAttr) || contextBlock.match(ASSET_NAME_ATTR);
-      const assetName = nameMatch ? nameMatch[1] : "UNKNOWN";
+      let assetName = nameMatch ? nameMatch[1] : "UNKNOWN";
+      assetName = assetName.replace(/&quot;/g, "").replace(/^"|"$/g, "");
 
       const isHardcoded = !!nameMatch && !nameMatch[1].startsWith("[") && !nameMatch[1].includes("variable");
 

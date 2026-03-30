@@ -194,14 +194,12 @@ function buildRetryScopeTemplate(): TemplateEntry {
     category: "activity",
     template:
       `<ui:RetryScope NumberOfRetries="{{numberOfRetries:int}}" RetryInterval="{{retryInterval:timespan}}" DisplayName="{{displayName:string}}">\n` +
-      `  <ui:RetryScope.Body>\n` +
-      `    <Sequence DisplayName="Retry Body">\n` +
-      `      <!-- Activities to retry go here -->\n` +
-      `    </Sequence>\n` +
-      `  </ui:RetryScope.Body>\n` +
       `  <ui:RetryScope.Condition>\n` +
       `    <ui:ShouldRetry />\n` +
       `  </ui:RetryScope.Condition>\n` +
+      `  <Sequence DisplayName="Retry Body">\n` +
+      `    <!-- Activities to retry go here -->\n` +
+      `  </Sequence>\n` +
       `</ui:RetryScope>`,
     placeholders: [
       { key: "displayName", type: "string", required: true },
