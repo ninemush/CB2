@@ -922,8 +922,9 @@ export function scanXamlForRequiredPackages(xamlContent: string): Set<string> {
   const newtonsoftPatterns = [
     /Newtonsoft\.Json/,
     /JToken/,
-    /JObject\.Parse/,
-    /JArray\.Parse/,
+    /JObject/,
+    /JArray/,
+    /JsonConvert/,
   ];
   for (const pattern of newtonsoftPatterns) {
     if (pattern.test(xamlContent)) {

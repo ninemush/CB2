@@ -271,7 +271,7 @@ export function computePipelineHealthFromResult(
   };
 }
 
-function computeDhgAccuracy(pipelineResult: {
+export function computeDhgAccuracy(pipelineResult: {
   usedFallbackStubs: boolean;
   outcomeReport?: {
     remediations: Array<{ level: string }>;

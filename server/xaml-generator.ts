@@ -2790,7 +2790,7 @@ export function generateInitAllSettingsXaml(orchestratorArtifacts?: any, targetF
 
   const nsS = isCSharp ? "System.Runtime" : "mscorlib";
   const nsScg = isCSharp ? "System.Runtime" : "mscorlib";
-  const sq = isCSharp ? `&quot;` : `'`;
+  const sq = `&quot;`;
 
   const excelBlock = isCSharp
     ? `<ui:UseExcel DisplayName="Read Config File" ExcelFile="[str_ConfigPath]">

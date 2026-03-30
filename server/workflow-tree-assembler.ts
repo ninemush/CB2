@@ -17,7 +17,7 @@ import { buildTemplateBlock } from "./catalog/xaml-template-builder";
 import type { ProcessType } from "./catalog/catalog-service";
 import { escapeXml, escapeXmlExpression, normalizeXmlExpression, escapeXmlTextContent } from "./lib/xml-utils";
 import { XMLValidator } from "fast-xml-parser";
-import { buildExpression, isValueIntent, type ValueIntent } from "./xaml/expression-builder";
+import { buildExpression, isValueIntent, normalizeStringToExpression, type ValueIntent } from "./xaml/expression-builder";
 import { getActivityTag, getActivityPrefixStrict } from "./xaml/xaml-compliance";
 import type { RemediationEntry, RemediationCode } from "./uipath-pipeline";
 import { PROPERTY_REMEDIATION_ESCALATION_THRESHOLD } from "./uipath-pipeline";
@@ -293,6 +293,27 @@ function looksLikeVariableRef(expr: string): boolean {
   return false;
 }
 
+function looksLikeVbExpression(val: string): boolean {
+  const trimmed = val.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return true;
+  if (trimmed.startsWith('"') || trimmed.startsWith("&quot;")) return true;
+  if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing" || trimmed === "null") return true;
+  if (/^[0-9]+(\.[0-9]+)?$/.test(trimmed)) return true;
+  if (/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_)/i.test(trimmed)) return true;
+  if (/^[a-zA-Z_]\w*\(/.test(trimmed)) return true;
+  if (/[+\-*/&=<>]/.test(trimmed) && !/[.,!?;:'"…]/.test(trimmed)) return true;
+  if (/^[a-zA-Z_]\w*\.[a-zA-Z_]\w*/.test(trimmed)) return true;
+  return false;
+}
+
+function looksLikeStringLiteral(val: string): boolean {
+  const trimmed = val.trim();
+  if (!trimmed) return false;
+  if (looksLikeVbExpression(trimmed)) return false;
+  return true;
+}
+
 function isVbExpression(val: string): boolean {
   const trimmed = val.trim();
   if (!trimmed) return false;
@@ -331,6 +352,10 @@ function smartBracketWrap(val: string): string {
   if (/^&quot;.*&quot;$/.test(trimmed)) return trimmed;
   if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing" || trimmed === "null") return trimmed;
   if (/^[0-9]+$/.test(trimmed)) return trimmed;
+  if (looksLikeStringLiteral(trimmed)) {
+    const escaped = trimmed.replace(/"/g, '""');
+    return `"${escaped}"`;
+  }
   return `[${trimmed}]`;
 }
 
@@ -475,7 +500,12 @@ export function resolveActivityTemplate(
   if (templateName === "LogMessage") {
     const level = getPropString(props, "Level", "level") || "Info";
     const message = getPropString(props, "Message", "message") || `"${displayName}"`;
-    const wrappedMessage = smartBracketWrap(message);
+    let wrappedMessage: string;
+    if (looksLikeStringLiteral(message)) {
+      wrappedMessage = `"${message.replace(/"/g, '""')}"`;
+    } else {
+      wrappedMessage = smartBracketWrap(message);
+    }
     return applyCatalogConformance(`<ui:LogMessage Level="${escapeXml(level)}" Message="${escapeXml(wrappedMessage)}" DisplayName="${displayName}" />`);
   }
 
@@ -913,9 +943,9 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
   const pendingPropertyRemediations: Array<{ propertyName: string; code: RemediationCode; reason: string }> = [];
 
   for (const [key, rawValue] of Object.entries(props)) {
-    if (key.startsWith("_") || key === "displayName") continue;
+    if (key.startsWith("_") || key === "displayName" || key === "DisplayName") continue;
 
-    const value = isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : String(rawValue);
+    const value = isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : normalizeStringToExpression(String(rawValue));
 
     const validationResult = validatePropertyValue(key, value, schema, templateName);
     if (validationResult && _activeRemediationContext) {
@@ -1728,6 +1758,8 @@ ${xMembersBlock}  <Sequence DisplayName="${escapeXml(workflowName)}">
 
   xaml = sanitizeObjectLiteralArguments(xaml);
 
+  xaml = deduplicateAssemblyAttributes(xaml);
+
   const validationResult = XMLValidator.validate(xaml, { allowBooleanAttributes: true });
   if (validationResult !== true) {
     const err = validationResult.err;
@@ -1748,6 +1780,37 @@ ${xMembersBlock}  <Sequence DisplayName="${escapeXml(workflowName)}">
   }
 
   return { xaml, variables: allVariables };
+}
+
+function deduplicateAssemblyAttributes(xaml: string): string {
+  let dedupCount = 0;
+  const result = xaml.replace(/<([a-zA-Z_][\w.:]*)((?:\s+[\w.:]+\s*=\s*"[^"]*")+)\s*(\/?>)/g, (match, tagName, attrsBlock, closing) => {
+    const attrPattern = /([\w.:]+)\s*=\s*"([^"]*)"/g;
+    const seen = new Map<string, string>();
+    const order: string[] = [];
+    let hasDup = false;
+    let attrMatch;
+    while ((attrMatch = attrPattern.exec(attrsBlock)) !== null) {
+      const name = attrMatch[1];
+      const value = attrMatch[2];
+      if (seen.has(name)) {
+        hasDup = true;
+      } else {
+        order.push(name);
+      }
+      if (!seen.has(name)) {
+        seen.set(name, value);
+      }
+    }
+    if (!hasDup) return match;
+    dedupCount++;
+    const rebuiltAttrs = order.map(n => `${n}="${seen.get(n)}"`).join(" ");
+    return `<${tagName} ${rebuiltAttrs} ${closing}`.replace(/\s+(\/?>) *$/, ` $1`);
+  });
+  if (dedupCount > 0) {
+    console.log(`[Tree Assembler] Deduplicated attributes in ${dedupCount} element(s) before well-formedness check`);
+  }
+  return result;
 }
 
 function sanitizeObjectLiteralArguments(xaml: string): string {

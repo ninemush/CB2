@@ -37,6 +37,7 @@ import archiver from "archiver";
   import { runQualityGate, validatePackage, formatQualityGateViolations, classifyQualityIssues, getBlockingFiles, hasOnlyWarnings, hasBlockingIssues, type QualityGateResult, type ClassifiedIssue, type PackageReadiness } from "./uipath-quality-gate";
   import { escapeXml } from "./lib/xml-utils";
   import { computePackageFingerprint, computeEnrichmentFingerprint, computeXamlFingerprint, computeQualityGateFingerprint } from "./lib/utils";
+  import { computeDhgAccuracy } from "./pipeline-health";
   import { scanXamlForRequiredPackages, classifyAutomationPattern, shouldUseReFramework, type AutomationPattern, ACTIVITY_NAME_ALIAS_MAP, normalizeActivityName, NAMESPACE_PREFIX_TO_PACKAGE, getActivityPackage } from "./uipath-activity-registry";
   import { filterBlockedActivitiesFromXaml } from "./uipath-activity-policy";
   import { catalogService, type ProcessType } from "./catalog/catalog-service";
@@ -235,6 +236,10 @@ function checkStudioLoadability(xamlContent: string): StudioLoadabilityResult {
   const isEmptyActivity = /<Activity\b[^.][^>]*>\s*<\/Activity>/s.test(xamlContent);
   if (isEmptyActivity) {
     return { loadable: false, reason: "Empty <Activity> element — no Implementation child" };
+  }
+
+  if (/\[ASSEMBLY_FAILED\]/.test(xamlContent)) {
+    return { loadable: false, reason: "Workflow contains [ASSEMBLY_FAILED] marker — tree assembly produced malformed XML" };
   }
 
   const implPattern = /<(?:Sequence|Flowchart|StateMachine)\b(?!\.)(?:\s|>|\/)/i;
@@ -825,6 +830,9 @@ export function resolveDependencies(
     ? (Array.isArray(treeSpecs) ? treeSpecs : [treeSpecs])
     : [];
 
+  const NEWTONSOFT_TRIGGER_ACTIVITIES = new Set(["DeserializeJson", "SerializeJson", "HttpClient", "DeserializeJsonArray"]);
+  const NEWTONSOFT_TYPE_PATTERNS = ["JObject", "JToken", "JArray", "JValue", "JsonConvert", "Newtonsoft"];
+
   for (const treeSpec of specArray) {
     const activityTemplates = collectActivityTemplatesFromSpec(treeSpec);
     for (const template of activityTemplates) {
@@ -839,6 +847,21 @@ export function resolveDependencies(
         const normalized = normalizePackageName(pkgId);
         referencedPackages.add(normalized);
         specPredictedPackages.add(normalized);
+      }
+      if (NEWTONSOFT_TRIGGER_ACTIVITIES.has(template)) {
+        referencedPackages.add("Newtonsoft.Json");
+        specPredictedPackages.add("Newtonsoft.Json");
+        console.log(`[Dependency Resolution] Proactively added Newtonsoft.Json — spec references JSON activity "${template}"`);
+      }
+    }
+
+    const specJson = JSON.stringify(treeSpec);
+    for (const typePattern of NEWTONSOFT_TYPE_PATTERNS) {
+      if (specJson.includes(typePattern)) {
+        referencedPackages.add("Newtonsoft.Json");
+        specPredictedPackages.add("Newtonsoft.Json");
+        console.log(`[Dependency Resolution] Proactively added Newtonsoft.Json — spec contains type reference "${typePattern}"`);
+        break;
       }
     }
   }
@@ -1707,7 +1730,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       try {
         const isSimpleTier = complexityTier === "simple";
         const enrichmentLabel = mappedAllTreeEnrichments ? "AI refinement of mapped specs" : (isSimpleTier ? "single-pass" : "tree-based");
-        const treeTimeout = isSimpleTier ? 60000 : 90000;
+        const nodeCount = processNodes.filter(n => n.nodeType !== "start" && n.nodeType !== "end").length;
+        const treeTimeout = isSimpleTier ? 60000 : (nodeCount >= 12 ? 180000 : 120000);
         console.log(`[UiPath] Requesting ${enrichmentLabel} AI enrichment for ${processNodes.length} process nodes${mappedAllTreeEnrichments ? ` (refining ${mappedAllTreeEnrichments.size} pre-mapped specs)` : ""}${isSimpleTier ? " (simple tier — no retry)" : ""} (timeout: ${treeTimeout}ms)...`);
         if (onProgress) onProgress({ type: "started", stage: "ai_enrichment_tree", message: `Starting ${enrichmentLabel} AI enrichment` });
         const treeHeartbeat = onProgress ? setInterval(() => {
@@ -2085,7 +2109,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       return result;
     }
 
-    const totalPostComplianceReCorrections = 0;
+    let totalPostComplianceReCorrections = 0;
 
     function compliancePass(rawXaml: string, fileName: string, skipTracking?: boolean): string {
       const preCatalogSnapshot = catalogService.isLoaded() ? snapshotCatalogValidProperties(rawXaml) : null;
@@ -2113,25 +2137,46 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         console.log(`[UiPath Analyzer] ${fileName}: ${report.totalAutoFixed} auto-fixed, ${report.totalRemaining} remaining`);
       }
 
+      let convergedOutput = fixed;
+      const MAX_CONVERGENCE_PASSES = 3;
       try {
-        const reCompliant = makeUiPathCompliant(fixed, tf);
-        if (reCompliant !== fixed) {
-          const diffLines: string[] = [];
-          const fixedLines = fixed.split("\n");
-          const reLines = reCompliant.split("\n");
-          const maxLen = Math.max(fixedLines.length, reLines.length);
-          for (let i = 0; i < maxLen && diffLines.length < 5; i++) {
-            if (fixedLines[i] !== reLines[i]) {
-              diffLines.push(`  line ${i + 1}: "${(fixedLines[i] || "").slice(0, 120)}" → "${(reLines[i] || "").slice(0, 120)}"`);
+        for (let pass = 1; pass <= MAX_CONVERGENCE_PASSES; pass++) {
+          const reCompliant = makeUiPathCompliant(convergedOutput, tf);
+          if (reCompliant === convergedOutput) {
+            if (pass > 1) {
+              console.log(`[Compliance Idempotency] ${fileName}: converged after ${pass} pass(es)`);
             }
+            break;
           }
-          console.warn(`[Compliance Idempotency] ${fileName}: compliance pass is NOT idempotent — re-running changed the output. First differences:\n${diffLines.join("\n")}`);
+          if (pass === 1) {
+            const diffLines: string[] = [];
+            const fixedLines = convergedOutput.split("\n");
+            const reLines = reCompliant.split("\n");
+            const maxLen = Math.max(fixedLines.length, reLines.length);
+            for (let i = 0; i < maxLen && diffLines.length < 5; i++) {
+              if (fixedLines[i] !== reLines[i]) {
+                diffLines.push(`  line ${i + 1}: "${(fixedLines[i] || "").slice(0, 120)}" → "${(reLines[i] || "").slice(0, 120)}"`);
+              }
+            }
+            console.warn(`[Compliance Idempotency] ${fileName}: compliance pass was NOT idempotent — running convergence loop (max ${MAX_CONVERGENCE_PASSES} passes). First differences:\n${diffLines.join("\n")}`);
+          }
+          convergedOutput = reCompliant;
+          totalPostComplianceReCorrections++;
+          if (pass === MAX_CONVERGENCE_PASSES) {
+            console.warn(`[Compliance Idempotency] ${fileName}: did not converge after ${MAX_CONVERGENCE_PASSES} passes — using last result`);
+          }
+        }
+        if (convergedOutput !== fixed && !skipTracking) {
+          const idx = xamlEntries.findIndex(e => e.name === fileName);
+          if (idx >= 0) {
+            xamlEntries[idx].content = convergedOutput;
+          }
         }
       } catch (idempotencyErr: any) {
-        console.warn(`[Compliance Idempotency] ${fileName}: re-run failed — ${idempotencyErr.message}`);
+        console.warn(`[Compliance Idempotency] ${fileName}: convergence pass failed — ${idempotencyErr.message}`);
       }
 
-      return fixed;
+      return convergedOutput;
     }
 
     function tryStructuralPreservationOrStub(
@@ -4104,6 +4149,29 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         }
       }
 
+      {
+        const allXamlForNewtonsoftCheck = xamlEntries.map(e => e.content).join("\n");
+        const hasNewtonsoftTypes = /JObject|JToken|JArray|JsonConvert|Newtonsoft/i.test(allXamlForNewtonsoftCheck);
+        if (hasNewtonsoftTypes && !deps["Newtonsoft.Json"]) {
+          const newtonsoftVersion = catalogService.isLoaded()
+            ? catalogService.getPreferredVersion("Newtonsoft.Json")
+            : null;
+          const resolvedVersion = newtonsoftVersion || "13.0.3";
+          deps["Newtonsoft.Json"] = resolvedVersion;
+          autoFixSummary.push(`Proactively added Newtonsoft.Json@${resolvedVersion} — Newtonsoft types detected in XAML`);
+          console.log(`[Dependency Proactive] Added Newtonsoft.Json@${resolvedVersion} — JObject/JToken/JArray/JsonConvert types detected in XAML`);
+        }
+        if ((deps["UiPath.Web.Activities"] || deps["UiPath.WebAPI.Activities"]) && !deps["Newtonsoft.Json"]) {
+          const newtonsoftVersion = catalogService.isLoaded()
+            ? catalogService.getPreferredVersion("Newtonsoft.Json")
+            : null;
+          const resolvedVersion = newtonsoftVersion || "13.0.3";
+          deps["Newtonsoft.Json"] = resolvedVersion;
+          autoFixSummary.push(`Proactively added Newtonsoft.Json@${resolvedVersion} — required by UiPath.Web.Activities`);
+          console.log(`[Dependency Proactive] Added Newtonsoft.Json@${resolvedVersion} — required by UiPath.Web.Activities dependency`);
+        }
+      }
+
       validateAndEnforceDependencyCompatibility(deps, dependencyWarnings);
     }
 
@@ -4147,8 +4215,16 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         autoRepairsApplied: autoFixSummary.length,
         initialViolationCount: initialQGViolationCount,
         finalViolationCount: qualityGateResult.violations?.length || 0,
-        dhgAccuracy: 1.0,
-        usedFallbackStubs: false,
+        dhgAccuracy: computeDhgAccuracy({
+          usedFallbackStubs: stubsGenerated.length > 0,
+          outcomeReport: qualityGateResult ? {
+            remediations: qualityGateResult.violations?.map(v => ({ level: v.severity || "warning" })) || [],
+            studioCompatibility: qualityGateResult.violations?.filter(v => v.category === "studio-blocked").map(v => ({ level: "studio-blocked" })) || [],
+            fullyGeneratedFiles: xamlEntries.filter(e => !stubsGenerated.includes(e.name)).map(e => e.name),
+          } : undefined,
+          xamlEntries,
+        }),
+        usedFallbackStubs: stubsGenerated.length > 0,
         postComplianceDefectCount,
         complianceIdempotencyRate: postComplianceDefectCount === 0 ? 1.0 : Math.max(0, 1 - (postComplianceDefectCount / Math.max(1, totalActivities))),
       };

@@ -344,7 +344,23 @@ export function smartBracketWrap(val: string): string {
   if (/^&quot;.*&quot;$/.test(trimmed)) return trimmed;
   if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing" || trimmed === "null") return trimmed;
   if (/^[0-9]+$/.test(trimmed)) return trimmed;
+  if (looksLikePlainText(trimmed)) {
+    const escaped = trimmed.replace(/"/g, '""');
+    return `"${escaped}"`;
+  }
   return `[${trimmed}]`;
+}
+
+function looksLikePlainText(val: string): boolean {
+  if (/^[a-zA-Z_]\w*\(/.test(val)) return false;
+  if (/[+\-*/&=<>]/.test(val) && !/[.,!?;:'"…]/.test(val)) return false;
+  if (/^[a-zA-Z_]\w*\.[a-zA-Z_]\w*/.test(val)) return false;
+  if (/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_)/i.test(val)) return false;
+  if (/\s/.test(val) || /[.,!?;:()'"…]/.test(val)) return true;
+  if (/^[a-zA-Z_]\w*$/.test(val) && !/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_)/i.test(val)) {
+    return false;
+  }
+  return false;
 }
 
 const UIPATH_NAMESPACES = `xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
