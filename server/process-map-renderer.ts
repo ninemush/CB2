@@ -1,7 +1,8 @@
 import dagreImport from "@dagrejs/dagre";
 import sharp from "sharp";
 import { escapeXml } from "./lib/xml-utils";
-import { computeProcessAwareLayout, type LayoutInput, type LayoutEdgeInput } from "../shared/process-layout";
+import { type LayoutInput, type LayoutEdgeInput } from "../shared/process-layout";
+import { computeYFilesLayout } from "../shared/yfiles-layout";
 
 const dagre = (dagreImport as any).default || dagreImport;
 
@@ -381,28 +382,28 @@ function computeEdgePoints(
   return computeMinElbowRoute(sx, sy, targetTopX, targetTopY, obstacleNodes, "bottom");
 }
 
-function computeLayout(nodes: MapNode[], edges: MapEdge[]): { layoutNodes: LayoutNode[]; layoutEdges: LayoutEdge[] } {
-  const hasOrderIndex = nodes.some((n) => n.orderIndex !== undefined && n.orderIndex > 0);
-
+async function computeLayout(nodes: MapNode[], edges: MapEdge[]): Promise<{ layoutNodes: LayoutNode[]; layoutEdges: LayoutEdge[] }> {
   let layoutNodes: LayoutNode[];
   let dagreGraph: any = null;
+  let yfilesEdgeRoutes: Map<string, Array<{ x: number; y: number }>> | null = null;
 
-  if (hasOrderIndex && nodes.length > 0) {
-    const layoutInputs: LayoutInput[] = nodes.map((n) => ({
-      id: String(n.id),
-      nodeType: n.nodeType || "task",
-      orderIndex: n.orderIndex || 0,
-    }));
-    const layoutEdgeInputs: LayoutEdgeInput[] = edges.map((e) => ({
-      source: String(e.sourceNodeId),
-      target: String(e.targetNodeId),
-      label: e.label || null,
-    }));
-    const positions = computeProcessAwareLayout(layoutInputs, layoutEdgeInputs, (nodeType) => getNodeDimensions(nodeType));
-    if (positions.size === nodes.length) {
+  const layoutInputs: LayoutInput[] = nodes.map((n) => ({
+    id: String(n.id),
+    nodeType: n.nodeType || "task",
+    orderIndex: n.orderIndex || 0,
+  }));
+  const layoutEdgeInputs: LayoutEdgeInput[] = edges.map((e) => ({
+    source: String(e.sourceNodeId),
+    target: String(e.targetNodeId),
+    label: e.label || null,
+  }));
+
+  try {
+    const yfilesResult = await computeYFilesLayout(layoutInputs, layoutEdgeInputs, (nodeType) => getNodeDimensions(nodeType));
+    if (yfilesResult.positions.size === nodes.length) {
       layoutNodes = nodes.map((node) => {
         const dims = getNodeDimensions(node.nodeType);
-        const pos = positions.get(String(node.id));
+        const pos = yfilesResult.positions.get(String(node.id));
         return {
           id: String(node.id),
           x: pos ? pos.x : 0,
@@ -412,12 +413,15 @@ function computeLayout(nodes: MapNode[], edges: MapEdge[]): { layoutNodes: Layou
           data: node,
         };
       });
+      yfilesEdgeRoutes = yfilesResult.edgeRoutes;
     } else {
+      console.warn("[PDD] yFiles returned incomplete positions, falling back to dagre");
       const result = computeDagreLayoutNodes(nodes, edges);
       layoutNodes = result.layoutNodes;
       dagreGraph = result.dagreGraph;
     }
-  } else {
+  } catch (err) {
+    console.warn("[PDD] yFiles layout failed, falling back to dagre:", err);
     const result = computeDagreLayoutNodes(nodes, edges);
     layoutNodes = result.layoutNodes;
     dagreGraph = result.dagreGraph;
@@ -436,14 +440,41 @@ function computeLayout(nodes: MapNode[], edges: MapEdge[]): { layoutNodes: Layou
     edgesBySource[key].push(edge);
   }
 
+  const nodeIdSet = new Set(nodes.map(n => String(n.id)));
+  const yfilesRouteByIndex = new Map<number, Array<{ x: number; y: number }>>();
+  if (yfilesEdgeRoutes) {
+    for (const [routeId, pts] of yfilesEdgeRoutes) {
+      const match = routeId.match(/^e(\d+)_/);
+      if (match) {
+        yfilesRouteByIndex.set(parseInt(match[1], 10), pts);
+      }
+    }
+  }
+
+  let yfilesEdgeIdx = 0;
   const initialEdges: LayoutEdge[] = edges.map((edge) => {
     const srcType = nodeTypeMap[String(edge.sourceNodeId)] || "task";
     const isDecision = srcType === "decision" || srcType === "agent-decision";
     const siblings = edgesBySource[String(edge.sourceNodeId)] || [edge];
     const sourceHandle = getEdgeSourceHandle(isDecision, edge.label, siblings, edge);
 
+    const edgeHasValidNodes = nodeIdSet.has(String(edge.sourceNodeId)) && nodeIdSet.has(String(edge.targetNodeId));
+
     let points: { x: number; y: number }[];
-    if (dagreGraph) {
+    if (yfilesEdgeRoutes) {
+      let yfilesPoints: Array<{ x: number; y: number }> | undefined;
+      if (edgeHasValidNodes) {
+        yfilesPoints = yfilesRouteByIndex.get(yfilesEdgeIdx);
+        yfilesEdgeIdx++;
+      }
+      if (yfilesPoints && yfilesPoints.length >= 2) {
+        points = yfilesPoints;
+      } else {
+        const srcNode = nodeById[String(edge.sourceNodeId)];
+        const tgtNode = nodeById[String(edge.targetNodeId)];
+        points = (srcNode && tgtNode) ? computeEdgePoints(srcNode, tgtNode, sourceHandle, layoutNodes) : [];
+      }
+    } else if (dagreGraph) {
       const edgeData = dagreGraph.edge(String(edge.sourceNodeId), String(edge.targetNodeId), String(edge.id));
       points = edgeData?.points || [];
     } else {
@@ -465,7 +496,7 @@ function computeLayout(nodes: MapNode[], edges: MapEdge[]): { layoutNodes: Layou
   fixDecisionHandlesPostLayout(layoutNodes, initialEdges, nodeTypeMap);
 
   const layoutEdges: LayoutEdge[] = initialEdges.map((le) => {
-    if (!dagreGraph && le.isDecisionSource) {
+    if (!dagreGraph && !yfilesEdgeRoutes && le.isDecisionSource) {
       const srcNode = nodeById[le.source];
       const tgtNode = nodeById[le.target];
       if (srcNode && tgtNode) {
@@ -698,7 +729,7 @@ export async function renderProcessMapImage(
 ): Promise<{ buffer: Buffer; width: number; height: number; pages?: { buffer: Buffer; width: number; height: number }[] } | null> {
   if (!nodes.length) return null;
 
-  const { layoutNodes, layoutEdges } = computeLayout(nodes, edges);
+  const { layoutNodes, layoutEdges } = await computeLayout(nodes, edges);
 
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const n of layoutNodes) {

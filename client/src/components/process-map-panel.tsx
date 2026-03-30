@@ -2188,8 +2188,8 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
   const isDark = theme === "dark";
   const nodesRef = useRef<Node[]>([]);
   const edgesRef = useRef<Edge[]>([]);
-  type LayoutEngine = "default" | "elk" | "yfiles";
-  const [layoutEngine, setLayoutEngine] = useState<LayoutEngine>("elk");
+  type LayoutEngine = "elk" | "yfiles";
+  const [layoutEngine, setLayoutEngine] = useState<LayoutEngine>("yfiles");
   const elkLayoutRunIdRef = useRef(0);
 
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
@@ -3099,15 +3099,15 @@ function ProcessMapFlow({ ideaId, activeView, detailLevel, onRelayout, onUndoRed
           zoomable
         />
         <div className="absolute top-3 right-3 z-40 flex items-center gap-0.5 bg-card/90 backdrop-blur-sm border border-border rounded-lg p-0.5" data-testid="layout-engine-selector">
-          {(["default", "elk", "yfiles"] as const).map((engine) => (
+          {(["elk", "yfiles"] as const).map((engine) => (
             <button
               key={engine}
               onClick={() => setLayoutEngine(engine)}
               className={`px-2 py-1 rounded-md text-[10px] font-mono font-medium transition-all ${layoutEngine === engine ? "bg-primary/20 text-primary border border-primary/40" : "text-muted-foreground hover:text-foreground"}`}
-              title={`Switch to ${engine === "default" ? "Default (Dagre)" : engine === "elk" ? "ELK" : "yFiles"} layout`}
+              title={`Switch to ${engine === "elk" ? "ELK" : "yFiles"} layout`}
               data-testid={`button-layout-${engine}`}
             >
-              {engine === "default" ? "Default" : engine === "elk" ? "ELK" : "yFiles"}
+              {engine === "elk" ? "ELK" : "yFiles"}
             </button>
           ))}
         </div>
