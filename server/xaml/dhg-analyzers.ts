@@ -98,8 +98,11 @@ const HIGH_RISK_ACTIVITIES = new Set([
   "ui:StartProcess",
   "ui:TypeInto", "ui:Click",
   "ui:GetCredential", "ui:GetAsset",
-  "ui:AddQueueItem", "ui:GetTransactionItem",
+  "ui:AddQueueItem", "ui:GetTransactionItem", "ui:SetTransactionStatus",
   "ui:ExcelApplicationScope", "ui:UseExcel",
+  "ui:ReadRange", "ui:WriteRange",
+  "ui:ReadTextFile", "ui:WriteTextFile",
+  "ui:ReadCsvFile", "ui:WriteCsvFile",
 ]);
 
 const BROWSER_EXTENSION_INDICATORS: Array<{ pattern: RegExp; extension: string }> = [

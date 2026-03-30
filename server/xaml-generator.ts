@@ -1442,6 +1442,31 @@ const PSEUDO_XAML_ATTR_KEYS = new Set(["Then", "Else", "Cases", "Body", "Finally
 
 const CONTROL_FLOW_ACTIVITY_TYPES = new Set(["If", "Switch", "ForEach", "TryCatch"]);
 
+const HIGH_RISK_ACTIVITY_TYPES = new Set([
+  "ui:HttpClient", "uweb:HttpClient",
+  "ui:ExecuteQuery", "udb:ExecuteQuery",
+  "ui:SendSmtpMailMessage", "umail:SendSmtpMailMessage",
+  "ui:InvokeCode",
+  "ui:StartProcess",
+  "ui:TypeInto", "ui:Click",
+  "ui:GetCredential", "ui:GetAsset",
+  "ui:AddQueueItem", "ui:GetTransactionItem", "ui:SetTransactionStatus",
+  "ui:ExcelApplicationScope", "ui:UseExcel",
+  "ui:ReadRange", "ui:WriteRange",
+  "ui:ReadTextFile", "ui:WriteTextFile",
+  "ui:ReadCsvFile", "ui:WriteCsvFile",
+]);
+
+function upgradeErrorHandlingForHighRisk(
+  errorHandling: "retry" | "catch" | "escalate" | "none",
+  activityType: string,
+): "retry" | "catch" | "escalate" | "none" {
+  if (errorHandling !== "none") return errorHandling;
+  if (HIGH_RISK_ACTIVITY_TYPES.has(activityType)) return "catch";
+  if (!activityType.includes(":") && HIGH_RISK_ACTIVITY_TYPES.has(`ui:${activityType}`)) return "catch";
+  return errorHandling;
+}
+
 interface NestedActivityObject {
   activityType: string;
   displayName?: string;
@@ -1980,8 +2005,8 @@ function wrapInTryCatch(innerXml: string, stepName: string, errorHandling: "retr
                     </ui:AddLogFields>`;
 
   const catchAction = errorHandling === "escalate"
-    ? `<ui:LogMessage Level="Error" Message="[&quot;[Escalation Required] ${escapedStep} failed — &quot;${concat}exception.Message]" DisplayName="Log Escalation" />`
-    : `<ui:LogMessage Level="Error" Message="[&quot;[Error] ${escapedStep} failed — &quot;${concat}exception.Message]" DisplayName="Log Error" />`;
+    ? `<ui:LogMessage Level="Error" Message="[&quot;[Escalation Required] ${escapedStep} failed (&quot;${concat}exception.GetType().Name${concat}&quot;): &quot;${concat}exception.Message]" DisplayName="Log Escalation" />`
+    : `<ui:LogMessage Level="Error" Message="[&quot;[Error] ${escapedStep} failed (&quot;${concat}exception.GetType().Name${concat}&quot;): &quot;${concat}exception.Message]" DisplayName="Log Error" />`;
 
   return `
           <TryCatch DisplayName="Try: ${escapedStep}"${annotAttr}>
@@ -2159,7 +2184,17 @@ function renderEnrichedActivities(enrichedNode: EnrichedNodeSpec, targetFramewor
   }
 
   const firstAct = enrichedNode.activities[0];
-  const errorHandling = firstAct.errorHandling || "none";
+  let rawErrorHandling: "retry" | "catch" | "escalate" | "none" = firstAct.errorHandling || "none";
+  let errorHandling = upgradeErrorHandlingForHighRisk(rawErrorHandling, firstAct.activityType);
+  if (errorHandling === "none" && enrichedNode.activities.length > 1) {
+    for (const act of enrichedNode.activities) {
+      const upgraded = upgradeErrorHandlingForHighRisk(act.errorHandling || "none", act.activityType);
+      if (upgraded !== "none") {
+        errorHandling = upgraded;
+        break;
+      }
+    }
+  }
 
   let xml: string;
   if (enrichedNode.activities.length === 1) {
@@ -2485,7 +2520,8 @@ export function generateRichXamlFromNodes(
 
     activities += `
         <!-- Source: ${nodeTrace} | Activity: ${classified.activityType}${node.isPainPoint ? " | ⚠ Pain Point" : ""} -->`;
-    const wrappedXml = wrapInTryCatch(activityXml, node.name, classified.errorHandling, targetFramework, genCtx);
+    const upgradedErrorHandling = upgradeErrorHandlingForHighRisk(classified.errorHandling, classified.activityType);
+    const wrappedXml = wrapInTryCatch(activityXml, node.name, upgradedErrorHandling, targetFramework, genCtx);
     activities += wrappedXml;
   }
 
@@ -2658,7 +2694,9 @@ export function generateRichXamlFromSpec(
         });
       }
 
-      const errorHandling = step.errorHandling || "none";
+      const rawStepErrorHandling = step.errorHandling || "none";
+      const stepActivityType = step.activityType || "";
+      const errorHandling = upgradeErrorHandlingForHighRisk(rawStepErrorHandling, stepActivityType);
       const wrappedXml = wrapInTryCatch(activityXml, stepName, errorHandling, targetFramework, genCtx);
       activities += wrappedXml;
     } else {
@@ -2688,7 +2726,8 @@ export function generateRichXamlFromSpec(
         targetFramework
       );
 
-      const wrappedXml = wrapInTryCatch(activityXml, stepName, classified.errorHandling, targetFramework, genCtx);
+      const upgradedClassifiedErrorHandling = upgradeErrorHandlingForHighRisk(classified.errorHandling, classified.activityType);
+      const wrappedXml = wrapInTryCatch(activityXml, stepName, upgradedClassifiedErrorHandling, targetFramework, genCtx);
       activities += wrappedXml;
     }
   }

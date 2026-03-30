@@ -649,7 +649,7 @@ function getPropString(props: Record<string, PropertyValue>, ...keys: string[]):
   return "";
 }
 
-export type EmissionContext = "normal" | "mandatory-catch" | "mandatory-finally";
+export type EmissionContext = "normal" | "mandatory-catch" | "mandatory-finally" | "inside-trycatch";
 
 export function resolveActivityTemplate(
   node: ActivityNode,
@@ -1205,6 +1205,33 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
   return `<${tag} ${attrParts.join(" ")}>\n${childParts.join("\n")}\n</${tag}>`;
 }
 
+const HIGH_RISK_TEMPLATES = new Set([
+  "HttpClient",
+  "ExecuteQuery",
+  "SendSmtpMailMessage",
+  "InvokeCode",
+  "StartProcess",
+  "TypeInto",
+  "Click",
+  "GetCredential",
+  "GetAsset",
+  "AddQueueItem",
+  "GetTransactionItem",
+  "SetTransactionStatus",
+  "ExcelApplicationScope",
+  "UseExcel",
+  "ReadRange",
+  "WriteRange",
+  "ReadTextFile",
+  "WriteTextFile",
+  "ReadCsvFile",
+  "WriteCsvFile",
+]);
+
+function isHighRiskTemplate(templateName: string): boolean {
+  return HIGH_RISK_TEMPLATES.has(templateName);
+}
+
 function wrapInTryCatch(innerXml: string, displayName: string): string {
   const effectiveInnerXml = innerXml.trim()
     ? innerXml
@@ -1222,7 +1249,7 @@ function wrapInTryCatch(innerXml: string, displayName: string): string {
           <DelegateInArgument x:TypeArguments="s:Exception" Name="exception" />
         </ActivityAction.Argument>
         <Sequence DisplayName="Handle Exception">
-          <ui:LogMessage Level="Error" Message="[&quot;Error in ${escapeXml(displayName)}: &quot; &amp; exception.Message]" DisplayName="Log Exception" />
+          <ui:LogMessage Level="Error" Message="[&quot;Error in ${escapeXml(displayName)} (&quot; &amp; exception.GetType().Name &amp; &quot;): &quot; &amp; exception.Message]" DisplayName="Log Exception" />
           <Rethrow DisplayName="Rethrow Exception" />
         </Sequence>
       </ActivityAction>
@@ -1284,6 +1311,8 @@ function assembleActivityNode(
     xml = wrapInTryCatch(xml, node.displayName);
   } else if (node.errorHandling === "retry") {
     xml = wrapInRetryScope(xml, node.displayName);
+  } else if ((!node.errorHandling || node.errorHandling === "none") && isHighRiskTemplate(node.template) && emissionContext !== "inside-trycatch" && emissionContext !== "mandatory-catch" && emissionContext !== "mandatory-finally") {
+    xml = wrapInTryCatch(xml, node.displayName);
   }
 
   return xml;
@@ -1342,7 +1371,7 @@ function assembleTryCatchNode(
 ): string {
   const displayName = escapeXml(node.displayName);
   let tryXml = node.tryChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, "inside-trycatch"))
     .join("\n");
 
   if (!tryXml.trim()) {
