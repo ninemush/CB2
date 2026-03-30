@@ -1632,6 +1632,8 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
 
   xml = normalizeAssignArgumentNesting(xml);
 
+  xml = deduplicateXmlAttributes(xml);
+
   xml = fillEmptyContainers(xml);
 
   const xmlValidation = validateXmlWellFormedness(xml);
@@ -1642,6 +1644,35 @@ export function makeUiPathCompliant(rawXaml: string, targetFramework: TargetFram
     throw new Error(`XAML XML well-formedness validation failed: ${xmlValidation.errors.join("; ")}`);
   }
 
+  return xml;
+}
+
+function deduplicateXmlAttributes(xml: string): string {
+  let totalDedupCount = 0;
+  xml = xml.replace(/<([a-zA-Z_][\w.:]*)((?:\s+[\w.:]+\s*=\s*"[^"]*")+)\s*(\/?>)/g, (match, tagName, attrsBlock, closing) => {
+    const attrPattern = /([\w.:]+)\s*=\s*"([^"]*)"/g;
+    const seen = new Map<string, string>();
+    const order: string[] = [];
+    let localDupCount = 0;
+    let attrMatch;
+    while ((attrMatch = attrPattern.exec(attrsBlock)) !== null) {
+      const name = attrMatch[1];
+      const value = attrMatch[2];
+      if (seen.has(name)) {
+        localDupCount++;
+      } else {
+        order.push(name);
+      }
+      seen.set(name, value);
+    }
+    if (localDupCount === 0) return match;
+    totalDedupCount += localDupCount;
+    const rebuiltAttrs = order.map(n => `${n}="${seen.get(n)}"`).join(" ");
+    return `<${tagName} ${rebuiltAttrs} ${closing}`.replace(/\s+(\/?>) *$/, ` $1`);
+  });
+  if (totalDedupCount > 0) {
+    console.log(`[XAML Compliance] Deduplicated ${totalDedupCount} duplicate XML attribute(s)`);
+  }
   return xml;
 }
 

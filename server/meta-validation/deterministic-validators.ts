@@ -150,6 +150,18 @@ export function validateLiteralExpressions(
       if (attrValue.includes(" ") || attrValue.includes("+") || attrValue.includes("&amp;")) continue;
 
       if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(attrValue)) {
+        if (catalogService.isLoaded()) {
+          const schema = catalogService.getActivitySchema(activity.className);
+          if (schema) {
+            const propDef = schema.activity.properties.find((p: any) => p.name === attrName);
+            if (propDef) {
+              const isStringLiteral = propDef.clrType === "System.String" || propDef.clrType === "String";
+              const isEnum = propDef.validValues && propDef.validValues.length > 0;
+              if (isStringLiteral || isEnum) continue;
+            }
+          }
+        }
+
         corrections.push({
           workflowName,
           activityDisplayName: activity.displayName,
@@ -292,10 +304,44 @@ export function validateUndeclaredVariables(
   declaredVars.add("row");
   declaredVars.add("index");
 
+  const universalSafeIdentifiers = new Set([
+    "Nothing", "True", "False", "String.Empty",
+    "DateTime", "TimeSpan", "Environment", "Math", "Convert",
+    "Integer", "Double", "Boolean", "Object",
+    "vbCrLf", "vbTab", "vbNewLine", "vbNullString",
+  ]);
+
+  const catalogExemptedRefs = new Set<string>();
+  if (catalogService.isLoaded()) {
+    const activities = extractActivities(xamlContent);
+    for (const activity of activities) {
+      const schema = catalogService.getActivitySchema(activity.className);
+      if (!schema) continue;
+      for (const [attrName, attrValue] of Object.entries(activity.attributes)) {
+        const bracketMatch = attrValue.match(/^\[([a-zA-Z_][a-zA-Z0-9_.]*)\]$/);
+        if (!bracketMatch) continue;
+        const refName = bracketMatch[1];
+        if (declaredVars.has(refName)) continue;
+        const propDef = schema.activity.properties.find((p: any) => p.name === attrName);
+        if (propDef) {
+          const isStringType = propDef.clrType === "System.String" || propDef.clrType === "String";
+          const isEnum = propDef.validValues && propDef.validValues.length > 0;
+          const isConstant = propDef.xamlSyntax === "attribute" && (isStringType || isEnum);
+          if (isConstant) {
+            catalogExemptedRefs.add(refName);
+          }
+        }
+      }
+    }
+  }
+
   const seen = new Set<string>();
   for (const ref of references) {
     if (declaredVars.has(ref.varName)) continue;
     if (seen.has(ref.varName)) continue;
+    if (universalSafeIdentifiers.has(ref.varName)) continue;
+    if (catalogExemptedRefs.has(ref.varName)) continue;
+    if (ref.varName.includes(".")) continue;
     seen.add(ref.varName);
 
     const inferredType = inferVariableType(ref.varName);

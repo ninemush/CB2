@@ -1485,18 +1485,21 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
   } else {
     const hasDecomposedSpecs = pkg.workflows && pkg.workflows.length > 0 &&
       pkg.workflows.some(w => w.steps && w.steps.length > 0);
+    let mappedTreeFallback: typeof treeEnrichment = null;
+    let mappedAllTreeEnrichments: typeof allTreeEnrichments | null = null;
     if (hasDecomposedSpecs) {
       try {
         const { mapPackageSpecToTreeEnrichments } = await import("./spec-to-tree-mapper");
-        allTreeEnrichments = mapPackageSpecToTreeEnrichments(pkg);
-        if (allTreeEnrichments.size > 0) {
-          const mainEntry = allTreeEnrichments.get("Main") || allTreeEnrichments.values().next().value;
+        const mapped = mapPackageSpecToTreeEnrichments(pkg);
+        if (mapped.size > 0) {
+          mappedAllTreeEnrichments = mapped;
+          const mainEntry = mapped.get("Main") || mapped.values().next().value;
           if (mainEntry) {
-            treeEnrichment = { status: "success", workflowSpec: mainEntry.spec, processType: mainEntry.processType };
+            mappedTreeFallback = { status: "success", workflowSpec: mainEntry.spec, processType: mainEntry.processType };
           }
-          const wfNames = Array.from(allTreeEnrichments.keys());
-          console.log(`[UiPath] Mapped ${allTreeEnrichments.size} decomposed spec(s) to tree enrichments: ${wfNames.join(", ")}`);
-          if (onProgress) onProgress({ type: "completed", stage: "spec_mapping", message: `Mapped ${allTreeEnrichments.size} decomposed spec(s) to tree enrichments` });
+          const wfNames = Array.from(mapped.keys());
+          console.log(`[UiPath] Mapped ${mapped.size} decomposed spec(s) to tree enrichments (held as fallback for AI refinement): ${wfNames.join(", ")}`);
+          if (onProgress) onProgress({ type: "completed", stage: "spec_mapping", message: `Mapped ${mapped.size} decomposed spec(s) — proceeding to AI enrichment refinement` });
         }
       } catch (err: any) {
         console.log(`[UiPath] Spec-to-tree mapping failed: ${err.message} — continuing with normal enrichment`);
@@ -1519,9 +1522,9 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     if (!treeEnrichment && !canReuseEnrichment && processNodes.length > 0 && sddContent) {
       try {
         const isSimpleTier = complexityTier === "simple";
-        const enrichmentLabel = isSimpleTier ? "single-pass" : "tree-based";
+        const enrichmentLabel = mappedAllTreeEnrichments ? "AI refinement of mapped specs" : (isSimpleTier ? "single-pass" : "tree-based");
         const treeTimeout = isSimpleTier ? 60000 : 90000;
-        console.log(`[UiPath] Requesting ${enrichmentLabel} AI enrichment for ${processNodes.length} process nodes${isSimpleTier ? " (simple tier — no retry)" : ""} (timeout: ${treeTimeout}ms)...`);
+        console.log(`[UiPath] Requesting ${enrichmentLabel} AI enrichment for ${processNodes.length} process nodes${mappedAllTreeEnrichments ? ` (refining ${mappedAllTreeEnrichments.size} pre-mapped specs)` : ""}${isSimpleTier ? " (simple tier — no retry)" : ""} (timeout: ${treeTimeout}ms)...`);
         if (onProgress) onProgress({ type: "started", stage: "ai_enrichment_tree", message: `Starting ${enrichmentLabel} AI enrichment` });
         const treeHeartbeat = onProgress ? setInterval(() => {
           onProgress({ type: "heartbeat", stage: "ai_enrichment_tree", message: isSimpleTier ? "AI is generating workflow structure (streamlined)..." : "AI is building the workflow tree structure — this may take a minute for complex processes..." });
@@ -1536,22 +1539,37 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
             treeTimeout,
             automationPattern,
             isSimpleTier,
+            mappedAllTreeEnrichments || undefined,
           );
           if (treeResult && treeResult.status === "success") {
             treeEnrichment = treeResult;
-            console.log(`[UiPath] Tree enrichment successful: "${treeResult.workflowSpec.name}", ${treeResult.workflowSpec.variables.length} variables`);
+            if (mappedAllTreeEnrichments && mappedAllTreeEnrichments.size > 0) {
+              allTreeEnrichments = new Map(mappedAllTreeEnrichments);
+              const aiMainName = treeResult.workflowSpec.name || "Main";
+              allTreeEnrichments.set(aiMainName, { spec: treeResult.workflowSpec, processType: treeResult.processType });
+              console.log(`[UiPath] Tree enrichment successful: AI refined "${aiMainName}" (${treeResult.workflowSpec.variables.length} variables), preserving ${mappedAllTreeEnrichments.size} mapped workflow decomposition(s)`);
+            } else {
+              console.log(`[UiPath] Tree enrichment successful: "${treeResult.workflowSpec.name}", ${treeResult.workflowSpec.variables.length} variables`);
+            }
             if (onProgress) onProgress({ type: "completed", stage: "ai_enrichment_tree", message: `Tree enrichment complete — ${treeResult.workflowSpec.variables.length} variables mapped` });
           } else if (treeResult && treeResult.status === "validation_failed") {
             const errorSummary = treeResult.validationErrors.join("; ");
-            console.log(`[UiPath] Tree enrichment validation failed: ${errorSummary} — falling through to deterministic scaffold`);
-            if (onProgress) onProgress({ type: "warning", stage: "ai_enrichment_tree", message: `Tree enrichment validation failed — falling back to deterministic scaffold` });
+            console.log(`[UiPath] Tree enrichment validation failed: ${errorSummary} — ${mappedTreeFallback ? "falling back to mapped specs" : "falling through to deterministic scaffold"}`);
+            if (onProgress) onProgress({ type: "warning", stage: "ai_enrichment_tree", message: `Tree enrichment validation failed — ${mappedTreeFallback ? "using mapped spec fallback" : "falling back to deterministic scaffold"}` });
           }
         } finally {
           if (treeHeartbeat) clearInterval(treeHeartbeat);
         }
       } catch (err: any) {
-        console.log(`[UiPath] Tree enrichment error: ${err.message} — falling back to deterministic scaffold`);
-        if (onProgress) onProgress({ type: "warning", stage: "ai_enrichment_tree", message: `Tree enrichment failed — falling back to deterministic scaffold` });
+        console.log(`[UiPath] Tree enrichment error: ${err.message} — ${mappedTreeFallback ? "falling back to mapped specs" : "falling back to deterministic scaffold"}`);
+        if (onProgress) onProgress({ type: "warning", stage: "ai_enrichment_tree", message: `Tree enrichment failed — ${mappedTreeFallback ? "using mapped spec fallback" : "falling back to deterministic scaffold"}` });
+      }
+
+      if (!treeEnrichment && mappedTreeFallback) {
+        console.log(`[UiPath] AI enrichment did not succeed — using mapped spec fallback with ${mappedAllTreeEnrichments?.size || 0} pre-mapped workflow(s)`);
+        treeEnrichment = mappedTreeFallback;
+        allTreeEnrichments = mappedAllTreeEnrichments || new Map();
+        if (onProgress) onProgress({ type: "completed", stage: "ai_enrichment_tree", message: `Using mapped spec fallback — ${mappedAllTreeEnrichments?.size || 0} workflow(s)` });
       }
 
       if (!treeEnrichment && processNodes.length > 0) {
@@ -2615,7 +2633,39 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       const mainIsFullStub = earlyStubFallbacks.includes("Main.xaml") ||
         mainContent.includes("STUB_BLOCKING_FALLBACK") || mainContent.includes("STUB: Main") ||
         complianceFallbacks.some(fb => (fb.file === "Main.xaml" || fb.file === "Process.xaml") && fb.wasFullStub);
-      const mainHadFallback = mainIsFullStub ||
+
+      const subWorkflowCount = Array.from(generatedWorkflowNames).filter(n => n !== "Main" && n !== "Process").length;
+      const mainHasInvokeRefs = mainContent.includes("InvokeWorkflowFile");
+      const mainIsFunctionallyEmpty = !mainHasInvokeRefs && subWorkflowCount > 0 && (() => {
+        const bodyOnlyPlaceholders = (() => {
+          const activityPattern = /<([\w:]+)\s[^>]*DisplayName="[^"]*"/g;
+          const activities: string[] = [];
+          let m;
+          while ((m = activityPattern.exec(mainContent)) !== null) {
+            const tag = m[1].replace(/^[a-zA-Z]+:/, "");
+            if (tag !== "Sequence" && tag !== "Variable") activities.push(tag);
+          }
+          const placeholderTags = new Set(["LogMessage", "Comment", "WriteLine"]);
+          return activities.length > 0 && activities.every(a => placeholderTags.has(a));
+        })();
+
+        const hasFallbackMarkers = mainContent.includes("TODO:") || mainContent.includes("STUB") ||
+          mainContent.includes("Placeholder") || mainContent.includes("stub");
+
+        const varMatches = mainContent.match(/<Variable\s/g);
+        const varCount = varMatches ? varMatches.length : 0;
+        const activityMatches = mainContent.match(/<([\w:]+)\s[^>]*DisplayName="/g);
+        const activityCount = activityMatches ? activityMatches.length : 0;
+        const triviallyLowActivities = varCount > 5 && activityCount <= Math.max(3, Math.floor(varCount / 10));
+
+        return bodyOnlyPlaceholders || hasFallbackMarkers || triviallyLowActivities;
+      })();
+
+      if (mainIsFunctionallyEmpty && !mainIsFullStub) {
+        console.log(`[UiPath] Main.xaml is functionally empty (no InvokeWorkflowFile refs, ${subWorkflowCount} sub-workflows exist) — injecting references and skipping reachability pruning`);
+      }
+
+      const mainHadFallback = mainIsFullStub || mainIsFunctionallyEmpty ||
         complianceFallbacks.some(fb => fb.file === "Main.xaml" || fb.file === "Process.xaml");
       const processDeferredKeyForCheck = Array.from(deferredWrites.keys()).find(k => (k.split("/").pop() || k) === "Process.xaml");
       const processContent = processDeferredKeyForCheck ? deferredWrites.get(processDeferredKeyForCheck) || "" : "";
@@ -2624,7 +2674,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         complianceFallbacks.some(fb => fb.file === "Process.xaml" && fb.wasFullStub);
       const processHadFallback = processIsFullStub ||
         complianceFallbacks.some(fb => fb.file === "Process.xaml");
-      if (mainIsFullStub && mainDeferredKey) {
+      if ((mainIsFullStub || mainIsFunctionallyEmpty) && mainDeferredKey) {
         let stubbedMainXaml = deferredWrites.get(mainDeferredKey) || "";
         const allWorkflowNames = new Set([...nonMainWorkflowNames, ...Array.from(generatedWorkflowNames).filter(n => n !== "Main" && n !== "Process")]);
         const invokeRefsToInject: string[] = [];
@@ -3253,13 +3303,29 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     const autoFixSummary: string[] = [];
     const outcomeRemediations: RemediationEntry[] = [];
     for (const fb of complianceFallbacks) {
+      const wfBaseName = fb.file.replace(/\.xaml$/, "");
+      const matchingSpec = allTreeEnrichments.get(wfBaseName);
+      const wfPurpose = matchingSpec?.spec?.description || "";
+      const targetSystem = (() => {
+        if (!matchingSpec?.spec?.rootSequence?.children) return "";
+        for (const child of matchingSpec.spec.rootSequence.children) {
+          if (child.kind === "activity" && child.properties) {
+            const sys = child.properties.Application || child.properties.BrowserType || child.properties.Target || "";
+            if (sys) return sys;
+          }
+        }
+        return "";
+      })();
+      const actionDescription = wfPurpose
+        ? `TODO: Implement ${wfPurpose}${targetSystem ? ` (System: ${targetSystem})` : ""}`
+        : `TODO: Implement ${wfBaseName}${targetSystem ? ` (System: ${targetSystem})` : ""} — review SDD for workflow requirements`;
       outcomeRemediations.push({
         level: "workflow",
         file: fb.file,
         remediationCode: "STUB_WORKFLOW_GENERATOR_FAILURE",
         reason: `Compliance transform failed — ${fb.reason}`,
         classifiedCheck: "compliance-crash",
-        developerAction: `Manually implement ${fb.file} — compliance transforms corrupted the generated XAML`,
+        developerAction: actionDescription,
         estimatedEffortMinutes: 15,
       });
     }

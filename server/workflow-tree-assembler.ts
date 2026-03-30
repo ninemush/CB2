@@ -957,7 +957,16 @@ function assembleTryCatchNode(
     .join("\n");
 
   if (!tryXml.trim()) {
-    tryXml = `<ui:Comment DisplayName="TODO: Implement try block logic" Text="This TryCatch was generated without try content — add activities here." />`;
+    const stepContext = node.displayName || "try block";
+    const targetSystemHints: string[] = [];
+    for (const child of node.tryChildren) {
+      if (child.kind === "activity" && child.properties) {
+        const sys = child.properties.Application || child.properties.BrowserType || child.properties.Target || child.properties.WorkflowFileName || "";
+        if (sys) targetSystemHints.push(sys);
+      }
+    }
+    const systemNote = targetSystemHints.length > 0 ? ` Target system: ${targetSystemHints.join(", ")}.` : "";
+    tryXml = `<ui:Comment DisplayName="TODO: Implement ${escapeXml(stepContext)}" Text="TryCatch step &quot;${escapeXml(stepContext)}&quot; was generated without try content — implement the business logic for this step.${escapeXml(systemNote)}" />`;
   }
 
   const catchXml = node.catchChildren.length > 0

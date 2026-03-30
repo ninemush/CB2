@@ -534,6 +534,7 @@ export async function enrichWithAITree(
   timeoutMs: number = 45000,
   automationPattern?: AutomationPattern,
   skipRetry?: boolean,
+  preMappedSpecs?: Map<string, { spec: any; processType: ProcessType }>,
 ): Promise<TreeEnrichmentResult | null> {
   try {
     const nodeDescriptions = nodes
@@ -575,6 +576,26 @@ ${sddSummary}
 
 Generate the hierarchical WorkflowSpec JSON tree. Use tryCatch nodes to wrap activities that can fail. Use if nodes for decision points. Reference template names from Section 2 for each activity node. Pre-declare all variables in the top-level variables array.`;
 
+    let preMappedContext = "";
+    if (preMappedSpecs && preMappedSpecs.size > 0) {
+      const specSummaries: string[] = [];
+      for (const [name, entry] of preMappedSpecs) {
+        const spec = entry.spec;
+        const varNames = (spec.variables || []).map((v: any) => v.name).join(", ");
+        const childCount = spec.rootSequence?.children?.length || 0;
+        specSummaries.push(`- ${name}: ${childCount} activities, variables=[${varNames}]`);
+      }
+      preMappedContext = `\n\nPRE-MAPPED WORKFLOW STRUCTURE (use as starting point — refine properties to match catalog, add error handling, fix variable flow):
+${specSummaries.join("\n")}
+${JSON.stringify(Array.from(preMappedSpecs.entries()).map(([name, e]) => ({ name, spec: e.spec })), null, 2).slice(0, 6000)}
+
+IMPORTANT: The pre-mapped structure above is authoritative for workflow decomposition and activity selection. Your job is to REFINE it:
+1. Ensure all activity properties conform to the catalog (Section 2 templates)
+2. Add proper error handling (TryCatch, RetryScope) where appropriate
+3. Fix variable declarations and ensure proper flow between activities
+4. Keep the same workflow structure and activity templates — do NOT change which activities are used unless they violate the catalog`;
+    }
+
     let section2Block = "";
     const processType = classifyProcessType(sddSummary, nodeDescriptions);
 
@@ -615,7 +636,7 @@ Generate the hierarchical WorkflowSpec JSON tree. Use tryCatch nodes to wrap act
       lastParseError = null;
 
       const messages: Array<{ role: "user"; content: string }> = [
-        { role: "user", content: extraContext ? userMessage + "\n\n" + extraContext : userMessage },
+        { role: "user", content: (preMappedContext ? userMessage + preMappedContext : userMessage) + (extraContext ? "\n\n" + extraContext : "") },
       ];
 
       const stream = getCodeLLM().stream({
