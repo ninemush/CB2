@@ -127,7 +127,7 @@ function buildComparisonExpression(left: string, operator: string, right: string
 
 const ALLOWED_OPERATOR_SET = new Set<string>(ALLOWED_OPERATORS);
 
-export function normalizeStringToExpression(val: string): string {
+export function normalizeStringToExpression(val: string, isDeclared?: (name: string) => boolean): string {
   const trimmed = val.trim();
   if (!trimmed) return trimmed;
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
@@ -146,10 +146,15 @@ export function normalizeStringToExpression(val: string): string {
   if (/^New\s+\w/.test(trimmed)) return `[${trimmed}]`;
   if (/^[a-zA-Z_]\w*\(/.test(trimmed)) return `[${trimmed}]`;
   if (/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_)/i.test(trimmed)) return `[${trimmed}]`;
+  if (/^(in_|out_|io_)/i.test(trimmed)) return `[${trimmed}]`;
   if (/^[a-zA-Z_]\w*\.[a-zA-Z_]\w*/.test(trimmed) && !/[.,!?;:'"…\s]/.test(trimmed)) return `[${trimmed}]`;
   if (/[+\-*/&=<>]/.test(trimmed) && !/[.,!?;:'"…\s]/.test(trimmed)) return `[${trimmed}]`;
 
   if (/^[a-zA-Z_]\w*$/.test(trimmed)) {
+    if (isDeclared && !isDeclared(trimmed)) {
+      const escaped = trimmed.replace(/"/g, '""');
+      return `"${escaped}"`;
+    }
     return `[${trimmed}]`;
   }
 
@@ -162,6 +167,7 @@ export function normalizePropertyToValueIntent(
   activityClassName?: string,
   propertyName?: string,
   getEnumValues?: (className: string, propName: string) => string[] | null,
+  isDeclared?: (name: string) => boolean,
 ): ValueIntent {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -217,6 +223,10 @@ export function normalizePropertyToValueIntent(
 
   if (/[+\-*/&=<>]/.test(trimmed) && !/[.,!?;:'"…]/.test(trimmed)) {
     return { type: "literal", value: `[${trimmed}]` };
+  }
+
+  if (isDeclared && VARIABLE_NAME_ONLY.test(trimmed) && isDeclared(trimmed)) {
+    return { type: "variable", name: trimmed };
   }
 
   return { type: "literal", value: trimmed };

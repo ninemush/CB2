@@ -315,14 +315,14 @@ export function buildDynamicNamespaceImports(usedPackages: Set<string>): string 
   return imports.join("\n");
 }
 
-export function ensureBracketWrapped(val: string): string {
+export function ensureBracketWrapped(val: string, isDeclared?: (name: string) => boolean): string {
   const trimmed = val.trim();
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
   if (trimmed.startsWith("<InArgument") || trimmed.startsWith("<OutArgument")) return trimmed;
   if (trimmed.startsWith("\"") || trimmed.startsWith("'")) return trimmed;
   if (/^\d+$/.test(trimmed)) return trimmed;
   if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing" || trimmed === "null") return trimmed;
-  if (looksLikePlainText(trimmed)) {
+  if (looksLikePlainText(trimmed, isDeclared)) {
     const escaped = trimmed.replace(/"/g, '""');
     return `"${escaped}"`;
   }
@@ -340,7 +340,7 @@ export function looksLikeVariableRef(val: string): boolean {
   return false;
 }
 
-export function smartBracketWrap(val: string): string {
+export function smartBracketWrap(val: string, isDeclared?: (name: string) => boolean): string {
   const trimmed = val.trim();
   if (!trimmed) return trimmed;
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
@@ -358,23 +358,30 @@ export function smartBracketWrap(val: string): string {
   if (/^[0-9]+$/.test(trimmed)) return trimmed;
   if (/^New\s+\w/.test(trimmed)) return `[${trimmed}]`;
   if (/&quot;|&amp;|&lt;|&gt;/.test(trimmed)) return `[${trimmed}]`;
-  if (looksLikePlainText(trimmed)) {
+  if (looksLikePlainText(trimmed, isDeclared)) {
     const escaped = trimmed.replace(/"/g, '""');
     return `"${escaped}"`;
   }
   return `[${trimmed}]`;
 }
 
-function looksLikePlainText(val: string): boolean {
+function looksLikePlainText(val: string, isDeclared?: (name: string) => boolean): boolean {
   if (/^[a-zA-Z_]\w*\(/.test(val)) return false;
   if (/[+\-*/&=<>]/.test(val) && !/[.,!?;:'"…]/.test(val)) return false;
   if (/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_)/i.test(val)) return false;
+  if (/^(in_|out_|io_)/i.test(val)) return false;
   if (/\b[\w_]+\.(json|xml|xlsx|csv|txt|log|config|pdf|html|xaml)\b/i.test(val)) return true;
   if (/\w+\/\w+\/\w+/.test(val)) return true;
   if (/\u2014/.test(val)) return true;
   if (/^[a-zA-Z_]\w*\.[a-zA-Z_]\w*/.test(val) && !/\s/.test(val)) return false;
   if (/\s/.test(val) || /[.,!?;:()'"…]/.test(val)) return true;
   if (/^[a-zA-Z_]\w*$/.test(val) && !/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_)/i.test(val)) {
+    if (isDeclared && isDeclared(val)) {
+      return false;
+    }
+    if (isDeclared && !isDeclared(val)) {
+      return true;
+    }
     return false;
   }
   return false;

@@ -50,6 +50,7 @@ export interface AssemblyRemediationContext {
 }
 
 let _activeRemediationContext: AssemblyRemediationContext | null = null;
+let _activeDeclarationLookup: ((name: string) => boolean) | null = null;
 
 export function setRemediationContext(ctx: AssemblyRemediationContext): void {
   _activeRemediationContext = ctx;
@@ -848,14 +849,14 @@ function indent(xml: string, level: number): string {
   return xml.split("\n").map(line => line.trim() ? spaces + line : line).join("\n");
 }
 
-function ensureBracketWrapped(expr: string): string {
+function ensureBracketWrapped(expr: string, isDeclared?: (name: string) => boolean): string {
   const trimmed = expr.trim();
   if (!trimmed) return trimmed;
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
   if (trimmed.startsWith("\"") || trimmed.startsWith("'")) return trimmed;
   if (/^\d+$/.test(trimmed)) return trimmed;
   if (trimmed === "True" || trimmed === "False") return trimmed;
-  if (looksLikeStringLiteral(trimmed)) {
+  if (looksLikeStringLiteral(trimmed, isDeclared)) {
     const escaped = trimmed.replace(/"/g, '""');
     return `"${escaped}"`;
   }
@@ -887,13 +888,16 @@ function looksLikeVbExpression(val: string): boolean {
   return false;
 }
 
-function looksLikeStringLiteral(val: string): boolean {
+function looksLikeStringLiteral(val: string, isDeclared?: (name: string) => boolean): boolean {
   const trimmed = val.trim();
   if (!trimmed) return false;
   if (/\b[\w_]+\.(json|xml|xlsx|csv|txt|log|config|pdf|html|xaml|dll|exe|zip|png|jpg)\b/i.test(trimmed)) return true;
   if (/\w+\/\w+\/\w+/.test(trimmed) && !/[()=<>]/.test(trimmed)) return true;
   if (/\u2014/.test(trimmed)) return true;
   if (looksLikeVbExpression(trimmed)) return false;
+  if (isDeclared && /^[a-zA-Z_]\w*$/.test(trimmed) && isDeclared(trimmed)) {
+    return false;
+  }
   return true;
 }
 
@@ -935,7 +939,7 @@ function wrapVariableDefault(val: string, varType: string): string {
   return trimmed;
 }
 
-function smartBracketWrap(val: string): string {
+function smartBracketWrap(val: string, isDeclared?: (name: string) => boolean): string {
   const trimmed = val.trim();
   if (!trimmed) return trimmed;
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
@@ -952,7 +956,7 @@ function smartBracketWrap(val: string): string {
   if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing" || trimmed === "null") return trimmed;
   if (/^[0-9]+$/.test(trimmed)) return trimmed;
   if (/^New\s+\w/.test(trimmed)) return `[${trimmed}]`;
-  if (looksLikeStringLiteral(trimmed)) {
+  if (looksLikeStringLiteral(trimmed, isDeclared)) {
     const escaped = trimmed.replace(/"/g, '""');
     return `"${escaped}"`;
   }
@@ -981,6 +985,7 @@ export function resolvePropertyValue(
     activityClassName,
     propertyName,
     (cls, prop) => catalogService.getEnumValues(cls, prop),
+    _activeDeclarationLookup || undefined,
   );
   return resolveValueIntentToXaml(normalized, isEnumProperty);
 }
@@ -1018,7 +1023,7 @@ function resolveValueIntentToXaml(intent: ValueIntent, isEnumProperty: boolean =
     return `[${escapeXmlExpression(linted)}]`;
   }
 
-  const wrapped = smartBracketWrap(linted);
+  const wrapped = smartBracketWrap(linted, _activeDeclarationLookup || undefined);
   if (wrapped.startsWith("[") && wrapped.endsWith("]")) {
     const inner = wrapped.slice(1, -1);
     return `[${escapeXmlExpression(inner)}]`;
@@ -1096,7 +1101,7 @@ function applyCatalogConformance(xml: string): string {
 
       const wrapper = correction.argumentWrapper || "InArgument";
       const xType = correction.typeArguments || "x:String";
-      const wrappedVal = escapeXmlTextContent(ensureBracketWrapped(propVal));
+      const wrappedVal = escapeXmlTextContent(ensureBracketWrapped(propVal, _activeDeclarationLookup || undefined));
       const childElement = `<${tag}.${propName}>\n    <${wrapper} x:TypeArguments="${xType}">${wrappedVal}</${wrapper}>\n  </${tag}.${propName}>`;
 
       const escapedPropName = propName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1137,7 +1142,7 @@ function applyCatalogConformance(xml: string): string {
       if (catalogProp?.xamlSyntax === "child-element") {
         const wrapper = catalogProp.argumentWrapper || "InArgument";
         const xType = catalogProp.typeArguments || "x:String";
-        const wrappedVal = escapeXmlTextContent(ensureBracketWrapped(correction.correctedValue));
+        const wrappedVal = escapeXmlTextContent(ensureBracketWrapped(correction.correctedValue, _activeDeclarationLookup || undefined));
         const childElement = `<${tag}.${propName}>\n    <${wrapper} x:TypeArguments="${xType}">${wrappedVal}</${wrapper}>\n  </${tag}.${propName}>`;
 
         const selfClosingRegex = new RegExp(`(<${escapedTag}\\s[^>]*?)\\s*\\/>`);
@@ -1212,10 +1217,10 @@ export function resolveActivityTemplate(
     const level = ENUM_NORMALIZE[rawLevel.toLowerCase()] || rawLevel;
     const message = getPropString(props, "Message", "message") || `"${displayName}"`;
     let wrappedMessage: string;
-    if (looksLikeStringLiteral(message)) {
+    if (looksLikeStringLiteral(message, _activeDeclarationLookup || undefined)) {
       wrappedMessage = `"${message.replace(/"/g, '""')}"`;
     } else {
-      wrappedMessage = smartBracketWrap(message);
+      wrappedMessage = smartBracketWrap(message, _activeDeclarationLookup || undefined);
     }
     return applyCatalogConformance(`<ui:LogMessage Level="${escapeXml(level)}" Message="${escapeXml(wrappedMessage)}" DisplayName="${displayName}" />`);
   }
@@ -1268,7 +1273,7 @@ export function resolveActivityTemplate(
     const djTag = getActivityTag("DeserializeJson");
     return applyCatalogConformance(`<${djTag} DisplayName="${displayName}" JsonString="${escapeXml(input)}">\n` +
       `  <${djTag}.Result>\n` +
-      `    <OutArgument x:TypeArguments="x:Object">${escapeXmlTextContent(ensureBracketWrapped(outputVar))}</OutArgument>\n` +
+      `    <OutArgument x:TypeArguments="x:Object">${escapeXmlTextContent(ensureBracketWrapped(outputVar, _activeDeclarationLookup || undefined))}</OutArgument>\n` +
       `  </${djTag}.Result>\n` +
       `</${djTag}>`);
   }
@@ -1382,7 +1387,7 @@ function resolveAssignTemplate(node: ActivityNode, allVariables: VariableDeclara
     ? (toRaw as ValueIntent & { type: "variable" }).name
     : isValueIntent(toRaw) ? buildExpression(toRaw as ValueIntent) : String(toRaw);
   const typeArg = inferAssignType(toVarName, allVariables);
-  const wrappedTo = ensureBracketWrapped(toVarName);
+  const wrappedTo = ensureBracketWrapped(toVarName, _activeDeclarationLookup || undefined);
   const wrappedVal = resolvePropertyValue(valRaw as PropertyValue);
 
   const safeToExpr = escapeXmlTextContent(normalizeXmlExpression(wrappedTo));
@@ -1458,7 +1463,7 @@ function resolveGetAssetTemplate(node: ActivityNode): string {
 
   return `<ui:GetAsset DisplayName="${displayName}" AssetName="${escapeXml(assetName)}">\n` +
     `  <ui:GetAsset.AssetValue>\n` +
-    `    <OutArgument x:TypeArguments="${outArgType}">${escapeXmlTextContent(ensureBracketWrapped(outputVar))}</OutArgument>\n` +
+    `    <OutArgument x:TypeArguments="${outArgType}">${escapeXmlTextContent(ensureBracketWrapped(outputVar, _activeDeclarationLookup || undefined))}</OutArgument>\n` +
     `  </ui:GetAsset.AssetValue>\n` +
     `</ui:GetAsset>`;
 }
@@ -1472,17 +1477,17 @@ function resolveGetCredentialTemplate(node: ActivityNode): string {
 
   return `<ui:GetCredential DisplayName="${displayName}" AssetName="${escapeXml(assetName)}">\n` +
     `  <ui:GetCredential.Username>\n` +
-    `    <OutArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(usernameVar))}</OutArgument>\n` +
+    `    <OutArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(usernameVar, _activeDeclarationLookup || undefined))}</OutArgument>\n` +
     `  </ui:GetCredential.Username>\n` +
     `  <ui:GetCredential.Password>\n` +
-    `    <OutArgument x:TypeArguments="s:Security.SecureString">${escapeXmlTextContent(ensureBracketWrapped(passwordVar))}</OutArgument>\n` +
+    `    <OutArgument x:TypeArguments="s:Security.SecureString">${escapeXmlTextContent(ensureBracketWrapped(passwordVar, _activeDeclarationLookup || undefined))}</OutArgument>\n` +
     `  </ui:GetCredential.Password>\n` +
     `</ui:GetCredential>`;
 }
 
 function wrapSmtpPropValue(val: string): string {
   if (!val) return val;
-  return smartBracketWrap(val);
+  return smartBracketWrap(val, _activeDeclarationLookup || undefined);
 }
 
 function resolveSendSmtpMailMessageTemplate(node: ActivityNode): string {
@@ -1546,7 +1551,7 @@ function resolveHttpClientTemplate(node: ActivityNode): string {
   const methodUpper = method.toUpperCase();
   if (body) {
     xml += `  <${tag}.Body>\n`;
-    xml += `    <InArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(body))}</InArgument>\n`;
+    xml += `    <InArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(body, _activeDeclarationLookup || undefined))}</InArgument>\n`;
     xml += `  </${tag}.Body>\n`;
   } else if (methodUpper === "POST" || methodUpper === "PUT" || methodUpper === "PATCH") {
     xml += `  <${tag}.Body>\n`;
@@ -1557,20 +1562,20 @@ function resolveHttpClientTemplate(node: ActivityNode): string {
   const headers = getPropString(props, "Headers", "headers");
   if (headers) {
     xml += `  <${tag}.Headers>\n`;
-    xml += `    <InArgument x:TypeArguments="scg:Dictionary(x:String, x:String)">${escapeXmlTextContent(ensureBracketWrapped(headers))}</InArgument>\n`;
+    xml += `    <InArgument x:TypeArguments="scg:Dictionary(x:String, x:String)">${escapeXmlTextContent(ensureBracketWrapped(headers, _activeDeclarationLookup || undefined))}</InArgument>\n`;
     xml += `  </${tag}.Headers>\n`;
   } else {
     const authToken = getPropString(props, "AuthToken", "authToken", "BearerToken", "bearerToken");
     if (authToken) {
       xml += `  <${tag}.Headers>\n`;
-      const safeAuthToken = escapeXmlTextContent(ensureBracketWrapped(authToken)).slice(1, -1);
+      const safeAuthToken = escapeXmlTextContent(ensureBracketWrapped(authToken, _activeDeclarationLookup || undefined)).slice(1, -1);
       xml += `    <InArgument x:TypeArguments="scg:Dictionary(x:String, x:String)">${escapeXmlTextContent(`[New Dictionary(Of String, String) From {{"Authorization", "Bearer " & ${safeAuthToken}}}]`)}</InArgument>\n`;
       xml += `  </${tag}.Headers>\n`;
     }
   }
 
   xml += `  <${tag}.Result>\n`;
-  xml += `    <OutArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(outputVar))}</OutArgument>\n`;
+  xml += `    <OutArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(outputVar, _activeDeclarationLookup || undefined))}</OutArgument>\n`;
   xml += `  </${tag}.Result>\n`;
   xml += `</${tag}>`;
 
@@ -1600,7 +1605,7 @@ function resolveExcelApplicationScopeTemplate(
     bodyXml = `<ui:Comment Text="TODO: Add Excel activities here" DisplayName="Placeholder" />`;
   }
 
-  return `<${tag} DisplayName="${displayName}" WorkbookPath="${escapeXml(smartBracketWrap(workbookPath))}" Visible="${escapeXml(visible)}">\n` +
+  return `<${tag} DisplayName="${displayName}" WorkbookPath="${escapeXml(smartBracketWrap(workbookPath, _activeDeclarationLookup || undefined))}" Visible="${escapeXml(visible)}">\n` +
     `  <${tag}.Body>\n` +
     `    <ActivityAction x:TypeArguments="x:Object">\n` +
     `      <ActivityAction.Handler>\n` +
@@ -1635,7 +1640,7 @@ function resolveUseExcelTemplate(
     bodyXml = `<ui:Comment Text="TODO: Add Excel activities here" DisplayName="Placeholder" />`;
   }
 
-  return `<${tag} DisplayName="${displayName}" ExcelFile="${escapeXml(smartBracketWrap(excelFile))}">\n` +
+  return `<${tag} DisplayName="${displayName}" ExcelFile="${escapeXml(smartBracketWrap(excelFile, _activeDeclarationLookup || undefined))}">\n` +
     `  <${tag}.Body>\n` +
     `    <ActivityAction x:TypeArguments="x:Object">\n` +
     `      <ActivityAction.Handler>\n` +
@@ -1712,7 +1717,7 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
   for (const [key, rawValue] of Object.entries(props)) {
     if (key.startsWith("_") || key === "displayName" || key === "DisplayName") continue;
 
-    let value = isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : normalizeStringToExpression(String(rawValue));
+    let value = isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : normalizeStringToExpression(String(rawValue), _activeDeclarationLookup || undefined);
 
     const enumMap = KNOWN_ENUM_PROPERTIES[key];
     if (enumMap) {
@@ -1774,7 +1779,7 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
         isChildElement = true;
         const wrapper = propDef.argumentWrapper || "InArgument";
         const typeArg = propDef.typeArguments ? ` x:TypeArguments="${propDef.typeArguments}"` : "";
-        const wrappedValue = validationResult ? effectiveValue : (isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : smartBracketWrap(lintAndFixVbExpression(effectiveValue)));
+        const wrappedValue = validationResult ? effectiveValue : (isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : smartBracketWrap(lintAndFixVbExpression(effectiveValue), _activeDeclarationLookup || undefined));
         const safeWrappedValue = escapeXmlTextContent(wrappedValue);
         childParts.push(
           `  <${tag}.${key}>\n` +
@@ -1798,7 +1803,7 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
     const outputType = node.outputType || "x:Object";
     childParts.push(
       `  <${tag}.Result>\n` +
-      `    <OutArgument x:TypeArguments="${mapClrType(outputType)}">${escapeXmlTextContent(ensureBracketWrapped(node.outputVar))}</OutArgument>\n` +
+      `    <OutArgument x:TypeArguments="${mapClrType(outputType)}">${escapeXmlTextContent(ensureBracketWrapped(node.outputVar, _activeDeclarationLookup || undefined))}</OutArgument>\n` +
       `  </${tag}.Result>`
     );
   }
@@ -2390,7 +2395,7 @@ function assembleForEachNode(
   const displayName = escapeXml(node.displayName);
   const inferredType = inferForEachItemType(node.itemType || "x:Object", node.valuesExpression, allVariables);
   const itemType = validateForEachTypeConsistency(inferredType, node.valuesExpression);
-  const wrappedValues = ensureBracketWrapped(node.valuesExpression);
+  const wrappedValues = ensureBracketWrapped(node.valuesExpression, _activeDeclarationLookup || undefined);
 
   const effectiveIteratorName = inferForEachIteratorFromBody(node, allVariables);
 
@@ -2967,6 +2972,16 @@ function normalizeSpecProperties(node: WorkflowNode): void {
   }
 }
 
+function demoteUndeclaredBracketReferences(xml: string, registry: DeclarationRegistry): string {
+  return xml.replace(/<(In|Out|InOut)Argument[^>]*>\[([a-zA-Z_]\w*)\]<\/(In|Out|InOut)Argument>/g, (match, openTag, name, closeTag) => {
+    if (openTag !== closeTag) return match;
+    if (registry.hasName(name)) return match;
+    if (/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_|in_|out_|io_|arr_|dict_|list_)/i.test(name)) return match;
+    console.log(`[Literal Demotion] Post-emission: demoted bracket reference [${name}] to literal "${name}" in ${openTag}Argument (not in declaration registry)`);
+    return match.replace(`[${name}]`, `"${name}"`);
+  });
+}
+
 export function assembleWorkflowFromSpec(
   spec: WorkflowSpec,
   processType: ProcessType = "general",
@@ -3083,6 +3098,8 @@ export function assembleWorkflowFromSpec(
   const finalVariables = registry.getAllVariables();
   const wfArgs = registry.getAllArgumentsAsSpec();
 
+  _activeDeclarationLookup = (name: string) => registry.hasName(name);
+
   let activitiesXml: string;
   try {
     activitiesXml = sanitizedRootChildren
@@ -3106,7 +3123,11 @@ export function assembleWorkflowFromSpec(
       return { xaml: blockedFallbackXaml, variables: finalVariables };
     }
     throw e;
+  } finally {
+    _activeDeclarationLookup = null;
   }
+
+  activitiesXml = demoteUndeclaredBracketReferences(activitiesXml, registry);
 
   activitiesXml = injectTransactionItemNullGuard(activitiesXml, finalVariables);
 
