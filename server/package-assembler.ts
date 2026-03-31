@@ -6,6 +6,7 @@ import archiver from "archiver";
     generateRichXamlFromSpec,
     generateRichXamlFromNodes,
     generateInitAllSettingsXaml,
+    generateInitXaml,
     generateReframeworkMainXaml,
     generateGetTransactionDataXaml,
     generateSetTransactionStatusXaml,
@@ -2887,6 +2888,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         `${libPath}/SetTransactionStatus.xaml`,
         `${libPath}/CloseAllApplications.xaml`,
         `${libPath}/KillAllProcesses.xaml`,
+        `${libPath}/Init.xaml`,
       ];
       try {
         console.log(`[UiPath] Generating REFramework structure (queue: ${queueName})`);
@@ -2906,8 +2908,12 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         const killXaml = generateKillAllProcessesXaml(tf);
         deferredWrites.set(`${libPath}/KillAllProcesses.xaml`, compliancePass(killXaml, "KillAllProcesses.xaml"));
 
+        const initXaml = generateInitXaml(tf);
+        deferredWrites.set(`${libPath}/Init.xaml`, compliancePass(initXaml, "Init.xaml"));
+        console.log(`[UiPath] Generated deterministic Init.xaml template`);
+
         if (!deferredWrites.has(`${libPath}/Process.xaml`)) {
-          const infrastructureFiles = new Set(["main", "initallsettings", "closeallapplications", "gettransactiondata", "settransactionstatus", "killallprocesses", "process"]);
+          const infrastructureFiles = new Set(["main", "initallsettings", "closeallapplications", "gettransactiondata", "settransactionstatus", "killallprocesses", "process", "init"]);
           let processInvocations = "";
           const invokedInProcess = new Set<string>();
           if (enrichment?.decomposition?.length) {
@@ -3006,7 +3012,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         <ui:InvokeWorkflowFile DisplayName="Run ${escapeXml(gwfName)}" WorkflowFileName="${gwfName}.xaml" />`;
       }
 
-      const infrastructureFiles = new Set(["main", "initallsettings", "closeallapplications", "gettransactiondata", "settransactionstatus", "killallprocesses"]);
+      const infrastructureFiles = new Set(["main", "initallsettings", "closeallapplications", "gettransactiondata", "settransactionstatus", "killallprocesses", "init"]);
       for (const deferredKey of deferredWrites.keys()) {
         const deferredMatch = deferredKey.match(/([^/]+)\.xaml$/i);
         if (!deferredMatch) continue;

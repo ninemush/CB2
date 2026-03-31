@@ -127,7 +127,7 @@ function buildComparisonExpression(left: string, operator: string, right: string
 
 const ALLOWED_OPERATOR_SET = new Set<string>(ALLOWED_OPERATORS);
 
-export function normalizeStringToExpression(val: string, isDeclared?: (name: string) => boolean): string {
+export function normalizeStringToExpression(val: string, isDeclared?: (name: string) => boolean, clrType?: string): string {
   const trimmed = val.trim();
   if (!trimmed) return trimmed;
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
@@ -150,8 +150,15 @@ export function normalizeStringToExpression(val: string, isDeclared?: (name: str
   if (/^[a-zA-Z_]\w*\.[a-zA-Z_]\w*/.test(trimmed) && !/[.,!?;:'"…\s]/.test(trimmed)) return `[${trimmed}]`;
   if (/[+\-*/&=<>]/.test(trimmed) && !/[.,!?;:'"…\s]/.test(trimmed)) return `[${trimmed}]`;
 
+  const isStringTyped = clrType === "System.String" || clrType === "String";
+
+  if (isStringTyped && /\s/.test(trimmed) && !looksLikeVbCodePattern(trimmed)) {
+    const escaped = trimmed.replace(/"/g, '""');
+    return `"${escaped}"`;
+  }
+
   if (/^[a-zA-Z_]\w*$/.test(trimmed)) {
-    if (isDeclared && !isDeclared(trimmed)) {
+    if (isStringTyped && isDeclared && !isDeclared(trimmed)) {
       const escaped = trimmed.replace(/"/g, '""');
       return `"${escaped}"`;
     }
@@ -162,16 +169,43 @@ export function normalizeStringToExpression(val: string, isDeclared?: (name: str
   return `"${escaped}"`;
 }
 
+function looksLikeVbCodePattern(value: string): boolean {
+  if (/String\.Format\s*\(/.test(value)) return true;
+  if (/CType\s*\(/.test(value)) return true;
+  if (/CStr\s*\(/.test(value)) return true;
+  if (/CInt\s*\(/.test(value)) return true;
+  if (/DirectCast\s*\(/.test(value)) return true;
+  if (/TryCast\s*\(/.test(value)) return true;
+  if (/\.ToString\s*\(/.test(value)) return true;
+  if (/\.Contains\s*\(/.test(value)) return true;
+  if (/\.Replace\s*\(/.test(value)) return true;
+  if (/"\s*&\s*/.test(value)) return true;
+  if (/\s*&\s*"/.test(value)) return true;
+  if (/^New\s+\w/.test(value)) return true;
+  if (/\bIf\s*\(/.test(value)) return true;
+  return false;
+}
+
 export function normalizePropertyToValueIntent(
   value: string,
   activityClassName?: string,
   propertyName?: string,
   getEnumValues?: (className: string, propName: string) => string[] | null,
   isDeclared?: (name: string) => boolean,
+  clrType?: string,
 ): ValueIntent {
   const trimmed = value.trim();
   if (!trimmed) {
     return { type: "literal", value: "" };
+  }
+
+  const isStringTyped = clrType === "System.String" || clrType === "String";
+  const isBooleanTyped = clrType === "System.Boolean" || clrType === "Boolean";
+
+  if (isBooleanTyped) {
+    const lower = trimmed.toLowerCase().replace(/^"+|"+$/g, "").replace(/^'+|'+$/g, "");
+    if (lower === "true") return { type: "literal", value: "True" };
+    if (lower === "false") return { type: "literal", value: "False" };
   }
 
   if (activityClassName && propertyName && getEnumValues) {
@@ -225,8 +259,16 @@ export function normalizePropertyToValueIntent(
     return { type: "literal", value: `[${trimmed}]` };
   }
 
+  if (isStringTyped && /\s/.test(trimmed) && !looksLikeVbCodePattern(trimmed)) {
+    return { type: "literal", value: trimmed };
+  }
+
   if (isDeclared && VARIABLE_NAME_ONLY.test(trimmed) && isDeclared(trimmed)) {
     return { type: "variable", name: trimmed };
+  }
+
+  if (isStringTyped && VARIABLE_NAME_ONLY.test(trimmed) && !(isDeclared && isDeclared(trimmed))) {
+    return { type: "literal", value: trimmed };
   }
 
   return { type: "literal", value: trimmed };

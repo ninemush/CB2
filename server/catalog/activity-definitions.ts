@@ -2374,6 +2374,24 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       ],
     },
     {
+      className: "RetryScope",
+      displayName: "Retry Scope",
+      browsable: true,
+      processTypes: ["general", "api-integration", "orchestration", "attended-ui", "unattended-ui"],
+      properties: [
+        prop("NumberOfRetries", { type: "System.Int32", default: "3" }),
+        prop("RetryInterval", { type: "System.TimeSpan", default: "00:00:05" }),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "ShouldRetry",
+      displayName: "Should Retry",
+      browsable: true,
+      processTypes: ["general", "api-integration", "orchestration", "attended-ui", "unattended-ui"],
+      properties: [],
+    },
+    {
       className: "ExcelApplicationScope",
       displayName: "Excel Application Scope",
       browsable: true,

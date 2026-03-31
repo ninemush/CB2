@@ -36,6 +36,9 @@ export interface CatalogPackage {
   version?: string;
   feedStatus?: FeedStatus;
   preferredVersion?: string;
+  prefix?: string;
+  clrNamespace?: string;
+  assembly?: string;
   activities: CatalogActivity[];
 }
 
@@ -362,6 +365,45 @@ class CatalogService {
     return prop.validValues;
   }
 
+  getPropertyClrType(activityClassName: string, propertyName: string): string | null {
+    const schema = this.getActivitySchema(activityClassName);
+    if (!schema) return null;
+
+    const prop = schema.activity.properties.find(p => p.name === propertyName);
+    if (!prop) return null;
+
+    return prop.clrType;
+  }
+
+  getAllPackageNamespaceEntries(): Array<{ packageId: string; prefix: string; clrNamespace: string; assembly: string }> {
+    if (!this.loaded || !this.catalog) return [];
+    const entries: Array<{ packageId: string; prefix: string; clrNamespace: string; assembly: string }> = [];
+    for (const [packageId, pkg] of this.packageIndex) {
+      if (pkg.prefix && pkg.clrNamespace && pkg.assembly) {
+        entries.push({ packageId, prefix: pkg.prefix, clrNamespace: pkg.clrNamespace, assembly: pkg.assembly });
+      }
+    }
+    return entries;
+  }
+
+  getPackageNamespaceInfo(packageId: string): { prefix: string; clrNamespace: string; assembly: string } | null {
+    if (!this.loaded || !this.catalog) return null;
+    const pkg = this.packageIndex.get(packageId);
+    if (!pkg) return null;
+    if (pkg.prefix && pkg.clrNamespace && pkg.assembly) {
+      return { prefix: pkg.prefix, clrNamespace: pkg.clrNamespace, assembly: pkg.assembly };
+    }
+    return null;
+  }
+
+  getNamespaceInfoForActivity(activityClassName: string): { prefix: string; clrNamespace: string; assembly: string; packageId: string } | null {
+    const schema = this.getActivitySchema(activityClassName);
+    if (!schema) return null;
+    const nsInfo = this.getPackageNamespaceInfo(schema.packageId);
+    if (!nsInfo) return null;
+    return { ...nsInfo, packageId: schema.packageId };
+  }
+
   isPropertyAvailableForVersion(activityClassName: string, propertyName: string, packageVersion: string): boolean {
     const schema = this.getActivitySchema(activityClassName);
     if (!schema) return true;
@@ -474,7 +516,7 @@ class CatalogService {
       const hasChild = children.some(c => c === prop.name || c === `${tag.split(":").pop()}.${prop.name}`);
 
       if (prop.required && !hasAttribute && !hasChild) {
-        const defaultValue = prop.default || `[REVIEW_REQUIRED: ${prop.name}]`;
+        const defaultValue = prop.default || `TODO_Provide_value_for_${prop.name}`;
         result.valid = false;
         result.violations.push(`Missing required property "${prop.name}" on ${tag}`);
         result.corrections.push({

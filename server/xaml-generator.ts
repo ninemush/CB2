@@ -75,6 +75,7 @@ const REFRAMEWORK_FILES = new Set([
   "SetTransactionStatus.xaml",
   "CloseAllApplications.xaml",
   "KillAllProcesses.xaml",
+  "Init.xaml",
 ]);
 
 export function selectGenerationMode(
@@ -2953,6 +2954,91 @@ export function generateInitAllSettingsXaml(orchestratorArtifacts?: any, targetF
 </Activity>`;
 }
 
+export function generateInitXaml(targetFramework?: TargetFramework): string {
+  const isCSharp = targetFramework === "Portable";
+  const nsS = isCSharp ? "System.Runtime" : "mscorlib";
+  const nsScg = isCSharp ? "System.Runtime" : "mscorlib";
+  const nsSco = isCSharp ? "System.Runtime" : "mscorlib";
+  const sq = `&quot;`;
+  const concat = isCSharp ? " + " : " &amp; ";
+
+  return `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="Init"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:mva="clr-namespace:Microsoft.VisualBasic.Activities;assembly=System.Activities"
+  xmlns:s="clr-namespace:System;assembly=${nsS}"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=${nsScg}"
+  xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=${nsSco}"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <x:Members>
+    <x:Property Name="in_Config" Type="InArgument({clr-namespace:System.Collections.Generic;assembly=${nsScg}}Dictionary({http://schemas.microsoft.com/winfx/2006/xaml}String, {http://schemas.microsoft.com/winfx/2006/xaml}Object))" />
+    <x:Property Name="io_Config" Type="InOutArgument({clr-namespace:System.Collections.Generic;assembly=${nsScg}}Dictionary({http://schemas.microsoft.com/winfx/2006/xaml}String, {http://schemas.microsoft.com/winfx/2006/xaml}Object))" />
+  </x:Members>
+  <Sequence DisplayName="Init">
+    <Sequence.Variables>
+      <Variable x:TypeArguments="scg:Dictionary(x:String, x:Object)" Name="dict_Config" />
+      <Variable x:TypeArguments="x:Boolean" Name="bool_InitSuccess" Default="False" />
+    </Sequence.Variables>
+    <ui:LogMessage Level="Info" Message="[${sq}=== Initialization Started ===${sq}]" DisplayName="Log Init Start" />
+    <TryCatch DisplayName="Init — Safe Initialization">
+      <TryCatch.Try>
+        <Sequence DisplayName="Initialize Settings and Applications">
+          <ui:InvokeWorkflowFile DisplayName="Invoke InitAllSettings" WorkflowFileName="InitAllSettings.xaml">
+            <ui:InvokeWorkflowFile.Arguments>
+              <OutArgument x:TypeArguments="scg:Dictionary(x:String, x:Object)" x:Key="out_Config">[dict_Config]</OutArgument>
+            </ui:InvokeWorkflowFile.Arguments>
+          </ui:InvokeWorkflowFile>
+          <Assign DisplayName="Store Config">
+            <Assign.To><OutArgument x:TypeArguments="scg:Dictionary(x:String, x:Object)">[io_Config]</OutArgument></Assign.To>
+            <Assign.Value><InArgument x:TypeArguments="scg:Dictionary(x:String, x:Object)">[dict_Config]</InArgument></Assign.Value>
+          </Assign>
+          <ui:LogMessage Level="Info" Message="[${sq}Configuration loaded successfully${sq}]" DisplayName="Log Config Loaded" />
+          <Assign DisplayName="Set Init Success">
+            <Assign.To><OutArgument x:TypeArguments="x:Boolean">[bool_InitSuccess]</OutArgument></Assign.To>
+            <Assign.Value><InArgument x:TypeArguments="x:Boolean">True</InArgument></Assign.Value>
+          </Assign>
+        </Sequence>
+      </TryCatch.Try>
+      <TryCatch.Catches>
+        <Catch x:TypeArguments="s:Exception">
+          <ActivityAction x:TypeArguments="s:Exception">
+            <ActivityAction.Argument>
+              <DelegateInArgument x:TypeArguments="s:Exception" Name="exception" />
+            </ActivityAction.Argument>
+            <Sequence DisplayName="Handle Init Exception">
+              <ui:LogMessage Level="Error" Message="[${sq}Initialization failed: ${sq}${concat}exception.Message]" DisplayName="Log Init Failure" />
+              <Assign DisplayName="Set Init Failed">
+                <Assign.To><OutArgument x:TypeArguments="x:Boolean">[bool_InitSuccess]</OutArgument></Assign.To>
+                <Assign.Value><InArgument x:TypeArguments="x:Boolean">False</InArgument></Assign.Value>
+              </Assign>
+            </Sequence>
+          </ActivityAction>
+        </Catch>
+      </TryCatch.Catches>
+    </TryCatch>
+    <If DisplayName="Check Init Result" Condition="[bool_InitSuccess]">
+      <If.Then>
+        <ui:LogMessage Level="Info" Message="[${sq}=== Initialization Complete ===${sq}]" DisplayName="Log Init Complete" />
+      </If.Then>
+      <If.Else>
+        <Sequence DisplayName="Handle Init Failure">
+          <ui:LogMessage Level="Error" Message="[${sq}=== Initialization FAILED — process cannot continue ===${sq}]" DisplayName="Log Init Failed" />
+          <Throw DisplayName="Throw Init Failure Exception">
+            <Throw.Exception>
+              <InArgument x:TypeArguments="s:Exception">[New System.Exception(${sq}Initialization failed — check logs for details${sq})]</InArgument>
+            </Throw.Exception>
+          </Throw>
+        </Sequence>
+      </If.Else>
+    </If>
+  </Sequence>
+</Activity>`;
+}
+
 export function generateReframeworkMainXaml(projectName: string, queueName: string, targetFramework?: TargetFramework): string {
   const isCSharp = targetFramework === "Portable";
   const concat = isCSharp ? " + " : " &amp; ";
@@ -3026,13 +3112,18 @@ export function generateReframeworkMainXaml(projectName: string, queueName: stri
       <Variable x:TypeArguments="x:String" Name="str_QueueName" Default="&quot;${escapeXml(queueName)}&quot;" />
       <Variable x:TypeArguments="ui:QueueItem" Name="qi_TransactionItem" />
       <Variable x:TypeArguments="x:Boolean" Name="bool_SystemReady" Default="False" />
+      <Variable x:TypeArguments="scg:Dictionary(x:String, x:Object)" Name="dict_Config" />
     </StateMachine.Variables>
 
     <State DisplayName="Init" x:Name="State_Init">
       <State.Entry>
         <Sequence DisplayName="Initialize Process">
           <ui:LogMessage Level="Info" Message="[&quot;=== Initializing ${safeName} ===&quot;]" DisplayName="Log Init Start" />
-          <ui:InvokeWorkflowFile DisplayName="Initialize Settings" WorkflowFileName="InitAllSettings.xaml" />
+          <ui:InvokeWorkflowFile DisplayName="Invoke Init" WorkflowFileName="Init.xaml">
+            <ui:InvokeWorkflowFile.Arguments>
+              <InOutArgument x:TypeArguments="scg:Dictionary(x:String, x:Object)" x:Key="io_Config">[dict_Config]</InOutArgument>
+            </ui:InvokeWorkflowFile.Arguments>
+          </ui:InvokeWorkflowFile>
           <Assign DisplayName="Set System Ready">
             <Assign.To><OutArgument x:TypeArguments="x:Boolean">[bool_SystemReady]</OutArgument></Assign.To>
             <Assign.Value><InArgument x:TypeArguments="x:Boolean">True</InArgument></Assign.Value>

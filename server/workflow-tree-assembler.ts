@@ -957,11 +957,13 @@ export function resolvePropertyValue(
   propertyName?: string,
 ): string {
   let isEnumProperty = false;
+  let clrType: string | undefined;
   if (activityClassName && propertyName) {
     const enumValues = catalogService.getEnumValues(activityClassName, propertyName);
     if (enumValues && enumValues.length > 0) {
       isEnumProperty = true;
     }
+    clrType = catalogService.getPropertyClrType(activityClassName, propertyName) || undefined;
   }
 
   if (isValueIntent(value)) {
@@ -974,6 +976,7 @@ export function resolvePropertyValue(
     propertyName,
     (cls, prop) => catalogService.getEnumValues(cls, prop),
     _activeDeclarationLookup || undefined,
+    clrType,
   );
   return resolveValueIntentToXaml(normalized, isEnumProperty);
 }
@@ -1705,7 +1708,8 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
   for (const [key, rawValue] of Object.entries(props)) {
     if (key.startsWith("_") || key === "displayName" || key === "DisplayName") continue;
 
-    let value = isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : normalizeStringToExpression(String(rawValue), _activeDeclarationLookup || undefined);
+    const propClrType = schema ? (schema.activity.properties.find((p: any) => p.name === key)?.clrType) : undefined;
+    let value = isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : normalizeStringToExpression(String(rawValue), _activeDeclarationLookup || undefined, propClrType);
 
     const enumMap = KNOWN_ENUM_PROPERTIES[key];
     if (enumMap) {
@@ -1767,7 +1771,13 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
         isChildElement = true;
         const wrapper = propDef.argumentWrapper || "InArgument";
         const typeArg = propDef.typeArguments ? ` x:TypeArguments="${propDef.typeArguments}"` : "";
-        const wrappedValue = validationResult ? effectiveValue : (isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : smartBracketWrap(lintAndFixVbExpression(effectiveValue), _activeDeclarationLookup || undefined));
+        let wrappedValue = validationResult ? effectiveValue : (isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : smartBracketWrap(lintAndFixVbExpression(effectiveValue), _activeDeclarationLookup || undefined));
+        if (propDef.typeArguments === "x:Boolean") {
+          const stripped = wrappedValue.replace(/^"+|"+$/g, "").replace(/^'+|'+$/g, "").trim();
+          if (stripped === "True" || stripped === "False") {
+            wrappedValue = stripped;
+          }
+        }
         const safeWrappedValue = escapeXmlTextContent(wrappedValue);
         childParts.push(
           `  <${tag}.${key}>\n` +
@@ -2924,11 +2934,14 @@ function normalizeSpecProperties(node: WorkflowNode): void {
     const templateName = node.template || "";
     for (const [key, value] of Object.entries(node.properties || {})) {
       if (!isValueIntent(value) && typeof value === "string") {
+        const clrType = catalogService.getPropertyClrType(templateName.replace(/^[a-z]+:/, ""), key) || undefined;
         const normalized = normalizePropertyToValueIntent(
           value,
           templateName,
           key,
           (cls, prop) => catalogService.getEnumValues(cls, prop),
+          undefined,
+          clrType,
         );
         (node.properties as Record<string, any>)[key] = normalized;
       }
@@ -2955,6 +2968,17 @@ function normalizeSpecProperties(node: WorkflowNode): void {
   if (node.kind === "retryScope") {
     for (const child of node.bodyChildren) normalizeSpecProperties(child);
   }
+}
+
+function sanitizeBooleanInArguments(xml: string): string {
+  return xml.replace(
+    /<(InArgument|OutArgument)\s+x:TypeArguments="x:Boolean">"(True|False)"<\/(InArgument|OutArgument)>/g,
+    (match, openTag, boolVal, closeTag) => {
+      if (openTag !== closeTag) return match;
+      console.log(`[Boolean Sanitizer] Stripped quotes from boolean InArgument: "${boolVal}" → ${boolVal}`);
+      return `<${openTag} x:TypeArguments="x:Boolean">${boolVal}</${closeTag}>`;
+    }
+  );
 }
 
 function demoteUndeclaredBracketReferences(xml: string, registry: DeclarationRegistry): string {
@@ -3115,6 +3139,8 @@ export function assembleWorkflowFromSpec(
   }
 
   activitiesXml = demoteUndeclaredBracketReferences(activitiesXml, registry);
+
+  activitiesXml = sanitizeBooleanInArguments(activitiesXml);
 
   activitiesXml = injectTransactionItemNullGuard(activitiesXml, finalVariables);
 

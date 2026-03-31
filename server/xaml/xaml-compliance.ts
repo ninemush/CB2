@@ -200,6 +200,9 @@ export function getActivityPrefixStrict(templateName: string): string | null {
   }
 
   if (catalogService.isLoaded()) {
+    const nsInfo = catalogService.getNamespaceInfoForActivity(templateName);
+    if (nsInfo) return nsInfo.prefix;
+
     const schema = catalogService.getActivitySchema(templateName);
     if (schema) {
       const pkgInfo = PACKAGE_NAMESPACE_MAP[schema.packageId];
@@ -218,13 +221,44 @@ export function getActivityTag(templateName: string): string {
   return strictPrefix ? `${strictPrefix}:${templateName}` : templateName;
 }
 
+function resolvePackageNamespaceInfo(packageId: string): PackageNamespaceInfo | null {
+  if (catalogService.isLoaded()) {
+    const catalogInfo = catalogService.getPackageNamespaceInfo(packageId);
+    if (catalogInfo) {
+      return {
+        prefix: catalogInfo.prefix,
+        clrNamespace: catalogInfo.clrNamespace,
+        assembly: catalogInfo.assembly,
+        xmlns: `clr-namespace:${catalogInfo.clrNamespace};assembly=${catalogInfo.assembly}`,
+      };
+    }
+  }
+  return PACKAGE_NAMESPACE_MAP[packageId] || null;
+}
+
 export function collectUsedPackages(xaml: string): Set<string> {
   const usedPackages = new Set<string>();
 
   const canonicalPrefixToPackage = new Map<string, string>();
+
+  if (catalogService.isLoaded()) {
+    for (const entry of catalogService.getAllPackageNamespaceEntries()) {
+      if (!entry.prefix || entry.prefix === "ui") continue;
+      if (!canonicalPrefixToPackage.has(entry.prefix)) {
+        canonicalPrefixToPackage.set(entry.prefix, entry.packageId);
+      }
+      const prefixPattern = new RegExp(`<${entry.prefix}:`, "g");
+      if (prefixPattern.test(xaml)) {
+        usedPackages.add(entry.packageId);
+      }
+    }
+  }
+
   for (const [packageId, info] of Object.entries(PACKAGE_NAMESPACE_MAP)) {
     if (!info.prefix || info.prefix === "ui") continue;
-    canonicalPrefixToPackage.set(info.prefix, packageId);
+    if (!canonicalPrefixToPackage.has(info.prefix)) {
+      canonicalPrefixToPackage.set(info.prefix, packageId);
+    }
     const prefixPattern = new RegExp(`<${info.prefix}:`, "g");
     if (prefixPattern.test(xaml)) {
       usedPackages.add(packageId);
@@ -261,7 +295,7 @@ export function buildDynamicXmlnsDeclarations(usedPackages: Set<string>, isCross
   }
 
   Array.from(usedPackages).forEach(packageId => {
-    const info = PACKAGE_NAMESPACE_MAP[packageId];
+    const info = resolvePackageNamespaceInfo(packageId);
     if (!info || !info.prefix || info.prefix === "ui" || info.prefix === "") return;
     if (existingPrefixes.has(info.prefix)) return;
     lines.push(`  xmlns:${info.prefix}="${info.xmlns}"`);
@@ -283,7 +317,7 @@ export function buildDynamicAssemblyRefs(usedPackages: Set<string>, existingXml?
   }
 
   Array.from(usedPackages).forEach(packageId => {
-    const info = PACKAGE_NAMESPACE_MAP[packageId];
+    const info = resolvePackageNamespaceInfo(packageId);
     if (!info) return;
     if (info.assembly === "System.Activities" || info.assembly === "UiPath.Core.Activities") return;
     if (existingRefs.has(info.assembly)) return;
@@ -301,7 +335,7 @@ export function buildDynamicNamespaceImports(usedPackages: Set<string>): string 
   const imports: string[] = [];
 
   Array.from(usedPackages).forEach(packageId => {
-    const info = PACKAGE_NAMESPACE_MAP[packageId];
+    const info = resolvePackageNamespaceInfo(packageId);
     if (!info) return;
     if (info.clrNamespace === "System.Activities" || info.clrNamespace === "UiPath.Core.Activities") return;
     imports.push(`      <x:String>${info.clrNamespace}</x:String>`);

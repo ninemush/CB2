@@ -16,6 +16,50 @@ import type {
 
 const CATALOG_VERSION = "2.0.0";
 
+const PACKAGE_NAMESPACE_DEFAULTS: Record<string, { prefix: string; clrNamespace: string; assembly: string }> = {
+  "UiPath.UIAutomation.Activities": { prefix: "ui", clrNamespace: "UiPath.Core.Activities", assembly: "UiPath.UIAutomation.Activities" },
+  "UiPath.System.Activities": { prefix: "ui", clrNamespace: "UiPath.Core.Activities", assembly: "UiPath.System.Activities" },
+  "UiPath.WebAPI.Activities": { prefix: "uweb", clrNamespace: "UiPath.WebAPI.Activities", assembly: "UiPath.WebAPI.Activities" },
+  "UiPath.DataService.Activities": { prefix: "uds", clrNamespace: "UiPath.DataService.Activities", assembly: "UiPath.DataService.Activities" },
+  "UiPath.Persistence.Activities": { prefix: "upers", clrNamespace: "UiPath.Persistence.Activities", assembly: "UiPath.Persistence.Activities" },
+  "UiPath.Excel.Activities": { prefix: "uexcel", clrNamespace: "UiPath.Excel.Activities", assembly: "UiPath.Excel.Activities" },
+  "UiPath.Mail.Activities": { prefix: "umail", clrNamespace: "UiPath.Mail.Activities", assembly: "UiPath.Mail.Activities" },
+  "UiPath.Database.Activities": { prefix: "udb", clrNamespace: "UiPath.Database.Activities", assembly: "UiPath.Database.Activities" },
+  "UiPath.MLActivities": { prefix: "uml", clrNamespace: "UiPath.MLActivities", assembly: "UiPath.MLActivities" },
+  "UiPath.IntelligentOCR.Activities": { prefix: "uocr", clrNamespace: "UiPath.IntelligentOCR.Activities", assembly: "UiPath.IntelligentOCR.Activities" },
+  "System.Activities": { prefix: "", clrNamespace: "System.Activities", assembly: "System.Activities" },
+  "UiPath.PDF.Activities": { prefix: "updf", clrNamespace: "UiPath.PDF.Activities", assembly: "UiPath.PDF.Activities" },
+  "UiPath.Word.Activities": { prefix: "uword", clrNamespace: "UiPath.Word.Activities", assembly: "UiPath.Word.Activities" },
+  "UiPath.GSuite.Activities": { prefix: "ugs", clrNamespace: "UiPath.GSuite.Activities", assembly: "UiPath.GSuite.Activities" },
+  "UiPath.MicrosoftOffice365.Activities": { prefix: "uo365", clrNamespace: "UiPath.MicrosoftOffice365.Activities", assembly: "UiPath.MicrosoftOffice365.Activities" },
+  "UiPath.Testing.Activities": { prefix: "utest", clrNamespace: "UiPath.Testing.Activities", assembly: "UiPath.Testing.Activities" },
+  "UiPath.Form.Activities": { prefix: "uform", clrNamespace: "UiPath.Form.Activities", assembly: "UiPath.Form.Activities" },
+  "UiPath.Cryptography.Activities": { prefix: "ucrypt", clrNamespace: "UiPath.Cryptography.Activities", assembly: "UiPath.Cryptography.Activities" },
+  "UiPath.ComplexScenarios.Activities": { prefix: "ucs", clrNamespace: "UiPath.ComplexScenarios.Activities", assembly: "UiPath.ComplexScenarios.Activities" },
+  "UiPath.AmazonWebServices.Activities": { prefix: "uaws", clrNamespace: "UiPath.AmazonWebServices.Activities", assembly: "UiPath.AmazonWebServices.Activities" },
+  "UiPath.Amazon.Textract.Activities": { prefix: "utxt", clrNamespace: "UiPath.Amazon.Textract.Activities", assembly: "UiPath.Amazon.Textract.Activities" },
+  "UiPath.Amazon.Comprehend.Activities": { prefix: "ucmp", clrNamespace: "UiPath.Amazon.Comprehend.Activities", assembly: "UiPath.Amazon.Comprehend.Activities" },
+  "UiPath.Amazon.Rekognition.Activities": { prefix: "urek", clrNamespace: "UiPath.Amazon.Rekognition.Activities", assembly: "UiPath.Amazon.Rekognition.Activities" },
+  "UiPath.Azure.Activities": { prefix: "uaz", clrNamespace: "UiPath.Azure.Activities", assembly: "UiPath.Azure.Activities" },
+  "UiPath.AzureFormRecognizerV3.Activities": { prefix: "uafr", clrNamespace: "UiPath.AzureFormRecognizerV3.Activities", assembly: "UiPath.AzureFormRecognizerV3.Activities" },
+  "UiPath.GoogleCloud.Activities": { prefix: "ugc", clrNamespace: "UiPath.GoogleCloud.Activities", assembly: "UiPath.GoogleCloud.Activities" },
+  "UiPath.GoogleVision.Activities": { prefix: "ugv", clrNamespace: "UiPath.GoogleVision.Activities", assembly: "UiPath.GoogleVision.Activities" },
+  "UiPath.Salesforce.Activities": { prefix: "usf", clrNamespace: "UiPath.Salesforce.Activities", assembly: "UiPath.Salesforce.Activities" },
+  "UiPath.ServiceNow.Activities": { prefix: "usnow", clrNamespace: "UiPath.ServiceNow.Activities", assembly: "UiPath.ServiceNow.Activities" },
+  "UiPath.Slack.Activities": { prefix: "uslack", clrNamespace: "UiPath.Slack.Activities", assembly: "UiPath.Slack.Activities" },
+  "UiPath.Jira.Activities": { prefix: "ujira", clrNamespace: "UiPath.Jira.Activities", assembly: "UiPath.Jira.Activities" },
+  "UiPath.MicrosoftTeams.Activities": { prefix: "uteams", clrNamespace: "UiPath.MicrosoftTeams.Activities", assembly: "UiPath.MicrosoftTeams.Activities" },
+  "UiPath.FTP.Activities": { prefix: "uftp", clrNamespace: "UiPath.FTP.Activities", assembly: "UiPath.FTP.Activities" },
+  "UiPath.Presentations.Activities": { prefix: "upres", clrNamespace: "UiPath.Presentations.Activities", assembly: "UiPath.Presentations.Activities" },
+  "UiPath.Credentials.Activities": { prefix: "ucred", clrNamespace: "UiPath.Credentials.Activities", assembly: "UiPath.Credentials.Activities" },
+  "UiPath.DocumentUnderstanding.Activities": { prefix: "udu", clrNamespace: "UiPath.DocumentUnderstanding.Activities", assembly: "UiPath.DocumentUnderstanding.Activities" },
+  "UiPath.GenAI.Activities": { prefix: "ugenai", clrNamespace: "UiPath.GenAI.Activities", assembly: "UiPath.IntegrationService.Activities" },
+  "UiPath.IntegrationService.Activities": { prefix: "uis", clrNamespace: "UiPath.IntegrationService.Activities", assembly: "UiPath.IntegrationService.Activities" },
+  "UiPath.CommunicationsMining.Activities": { prefix: "ucm", clrNamespace: "UiPath.CommunicationsMining.Activities", assembly: "UiPath.CommunicationsMining.Activities" },
+  "UiPath.WorkflowEvents.Activities": { prefix: "uwfe", clrNamespace: "UiPath.WorkflowEvents.Activities", assembly: "UiPath.WorkflowEvents.Activities" },
+  "UiPath.Box.Activities": { prefix: "ubox", clrNamespace: "UiPath.Box.Activities", assembly: "UiPath.Box.Activities" },
+};
+
 function convertProperty(p: ActivityPropertyDef): CatalogProperty {
   const result: CatalogProperty = {
     name: p.name,
@@ -131,6 +175,7 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
   for (const regPkg of ACTIVITY_DEFINITIONS_REGISTRY) {
     const vInfo = resolveVersion(regPkg.packageId, metadataPackages);
     const existingPkg = existingPackageMap.get(regPkg.packageId);
+    const nsDefaults = PACKAGE_NAMESPACE_DEFAULTS[regPkg.packageId];
 
     if (existingPkg) {
       const registryClassNames = new Set(regPkg.activities.map(a => a.className));
@@ -142,6 +187,7 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
         version: vInfo.version,
         feedStatus: vInfo.feedStatus,
         preferredVersion: vInfo.preferred,
+        ...(nsDefaults ? { prefix: nsDefaults.prefix, clrNamespace: nsDefaults.clrNamespace, assembly: nsDefaults.assembly } : {}),
         activities: [...preservedExisting, ...registryActivities],
       });
     } else {
@@ -150,6 +196,7 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
         version: vInfo.version,
         feedStatus: vInfo.feedStatus,
         preferredVersion: vInfo.preferred,
+        ...(nsDefaults ? { prefix: nsDefaults.prefix, clrNamespace: nsDefaults.clrNamespace, assembly: nsDefaults.assembly } : {}),
         activities: regPkg.activities.map(convertActivity),
       });
     }
