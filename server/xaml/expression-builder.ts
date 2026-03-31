@@ -171,3 +171,33 @@ export function isValueIntent(value: unknown): value is ValueIntent {
       return false;
   }
 }
+
+function isEmptyOrInvalidOperand(val: unknown): boolean {
+  if (val == null) return true;
+  if (typeof val !== "string") return true;
+  return val.trim() === "";
+}
+
+export function sanitizeValueIntentExpressions(obj: any): void {
+  if (!obj || typeof obj !== "object") return;
+
+  if (Array.isArray(obj)) {
+    for (const item of obj) sanitizeValueIntentExpressions(item);
+    return;
+  }
+
+  if (obj.type === "expression") {
+    if (isEmptyOrInvalidOperand(obj.left)) {
+      obj.left = "Nothing";
+    }
+    if (isEmptyOrInvalidOperand(obj.right)) {
+      obj.right = "Nothing";
+    }
+  }
+
+  for (const key of Object.keys(obj)) {
+    if (typeof obj[key] === "object" && obj[key] !== null) {
+      sanitizeValueIntentExpressions(obj[key]);
+    }
+  }
+}

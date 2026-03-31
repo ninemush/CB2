@@ -4,6 +4,7 @@ import { uipathPackageSchema, type UiPathPackageSpec } from "./types/uipath-pack
 import { repairTruncatedPackageJson } from "./uipath-prompts";
 import { storage } from "./storage";
 import { RunLogger } from "./lib/run-logger";
+import { sanitizeValueIntentExpressions } from "./xaml/expression-builder";
 
 const SCAFFOLD_MAX_TOKENS = 4096;
 const SCAFFOLD_RETRY_LIMIT = 3;
@@ -189,6 +190,7 @@ Output a JSON object with this exact shape:
         "VariableRef": { "type": "variable", "name": "myVariable" },
         "ConditionExpr": { "type": "expression", "left": "variableName", "operator": "=", "right": "expectedValue" }
       },
+      // IMPORTANT: For "expression" type, both "left" and "right" MUST be non-empty strings. Never use "" for left or right — use a meaningful variable name or literal value (e.g. "0", "Nothing", "True").
       "selectorHint": "string or null (placeholder UI selector for UI activities)",
       "errorHandling": "retry|catch|escalate|none",
       "notes": "string (implementation notes)"
@@ -424,6 +426,8 @@ function parseWorkflowDetail(rawText: string, workflowName: string, runLogger?: 
     }
     parsed = repaired;
   }
+
+  sanitizeValueIntentExpressions(parsed);
 
   const wrapperResult = uipathPackageSchema.parse({
     projectName: "temp",

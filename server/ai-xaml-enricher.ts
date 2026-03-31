@@ -7,7 +7,7 @@ import { catalogService, type ProcessType, type PaletteEntry } from "./catalog/c
 import { getActivityPrefixStrict } from "./xaml/xaml-compliance";
 import { buildTemplateBlock, formatTemplateBlockForPrompt, formatCompactTemplateBlockForPrompt, shouldUseCompactFormat } from "./catalog/xaml-template-builder";
 import { validateWorkflowSpec, type WorkflowSpec as TreeWorkflowSpec, type WorkflowNode, type PropertyValue } from "./workflow-spec-types";
-import { isValueIntent, type ValueIntent } from "./xaml/expression-builder";
+import { isValueIntent, sanitizeValueIntentExpressions, type ValueIntent } from "./xaml/expression-builder";
 import { extractUiContext, formatUiContextForPrompt } from "./xaml/selector-quality-scorer";
 
 export interface EnrichedActivity {
@@ -194,6 +194,7 @@ Additional types (use sparingly):
 
 Rules:
 - "expression" left/right fields must be simple variable names or literals only.
+- "expression" left and right fields must NEVER be empty strings. Always provide a meaningful variable name or literal value (e.g. "0", "Nothing", "True").
 - All other property values should remain plain strings — do NOT convert everything to ValueIntent.`;
 
 export async function enrichWithAI(
@@ -335,6 +336,8 @@ Generate the enriched workflow specification. For each node, provide the specifi
           return null;
         }
       }
+
+      sanitizeValueIntentExpressions(parsed);
 
       if (!parsed.nodes || !Array.isArray(parsed.nodes)) {
         console.log("[AI XAML Enricher] Invalid response structure — missing nodes array");
@@ -679,6 +682,7 @@ IMPORTANT: The pre-mapped structure above is authoritative for workflow decompos
         }
 
         if (parsed && typeof parsed === "object") {
+          sanitizeValueIntentExpressions(parsed);
           if (parsed.reframeworkConfig == null || typeof parsed.reframeworkConfig !== "object") {
             parsed.reframeworkConfig = undefined;
             if (parsed.useReFramework) {
