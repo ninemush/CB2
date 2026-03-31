@@ -766,7 +766,14 @@ export function resolveActivityTemplate(
   }
 
   if (templateName === "LogMessage") {
-    const level = getPropString(props, "Level", "level") || "Info";
+    const ENUM_NORMALIZE: Record<string, string> = {
+      "information": "Info", "warning": "Warn", "debug": "Trace",
+      "info": "Info", "warn": "Warn", "error": "Error", "trace": "Trace", "fatal": "Fatal",
+      "verbose": "Trace", "critical": "Fatal",
+    };
+    const rawLevel = (getPropString(props, "Level", "level") || "Info")
+      .replace(/&quot;/g, "").replace(/^"+|"+$/g, "").trim();
+    const level = ENUM_NORMALIZE[rawLevel.toLowerCase()] || rawLevel;
     const message = getPropString(props, "Message", "message") || `"${displayName}"`;
     let wrappedMessage: string;
     if (looksLikeStringLiteral(message)) {
@@ -787,7 +794,8 @@ export function resolveActivityTemplate(
   }
 
   if (templateName === "InvokeWorkflowFile") {
-    const fileName = getPropString(props, "WorkflowFileName", "workflowFileName") || "Workflow.xaml";
+    const fileName = (getPropString(props, "WorkflowFileName", "workflowFileName") || "Workflow.xaml")
+      .replace(/&quot;/g, "").replace(/^"+|"+$/g, "").trim();
     return applyCatalogConformance(`<ui:InvokeWorkflowFile WorkflowFileName="${escapeXml(fileName)}" DisplayName="${displayName}">\n` +
       `  <ui:InvokeWorkflowFile.Arguments>\n` +
       `  </ui:InvokeWorkflowFile.Arguments>\n` +
@@ -1253,10 +1261,27 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
   const propertyFailures: PropertyRemediationRecord[] = [];
   const pendingPropertyRemediations: Array<{ propertyName: string; code: RemediationCode; reason: string }> = [];
 
+  const KNOWN_ENUM_PROPERTIES: Record<string, Record<string, string>> = {
+    "Level": {
+      "information": "Info", "warning": "Warn", "debug": "Trace",
+      "info": "Info", "warn": "Warn", "error": "Error", "trace": "Trace", "fatal": "Fatal",
+      "verbose": "Trace", "critical": "Fatal",
+    },
+    "Priority": {
+      "high": "High", "low": "Low", "normal": "Normal",
+    },
+  };
+
   for (const [key, rawValue] of Object.entries(props)) {
     if (key.startsWith("_") || key === "displayName" || key === "DisplayName") continue;
 
-    const value = isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : normalizeStringToExpression(String(rawValue));
+    let value = isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : normalizeStringToExpression(String(rawValue));
+
+    const enumMap = KNOWN_ENUM_PROPERTIES[key];
+    if (enumMap) {
+      const stripped = value.replace(/&quot;/g, "").replace(/^"+|"+$/g, "").trim();
+      value = enumMap[stripped.toLowerCase()] || stripped;
+    }
 
     const validationResult = validatePropertyValue(key, value, schema, templateName);
     if (validationResult && _activeRemediationContext) {

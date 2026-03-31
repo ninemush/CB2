@@ -3020,7 +3020,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         const pattern = /WorkflowFileName="([^"]+)"/g;
         let match;
         while ((match = pattern.exec(content)) !== null) {
-          const ref = match[1].replace(/\\/g, "/").replace(/^[./]+/, "");
+          const ref = match[1].replace(/\\/g, "/").replace(/^[./]+/, "")
+            .replace(/&quot;/g, "").replace(/^"+|"+$/g, "");
           referencedFiles.add(ref);
         }
       }
@@ -3028,15 +3029,26 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         const pattern = /WorkflowFileName="([^"]+)"/g;
         let match;
         while ((match = pattern.exec(entry.content)) !== null) {
-          const ref = match[1].replace(/\\/g, "/").replace(/^[./]+/, "");
+          const ref = match[1].replace(/\\/g, "/").replace(/^[./]+/, "")
+            .replace(/&quot;/g, "").replace(/^"+|"+$/g, "");
           referencedFiles.add(ref);
         }
+      }
+
+      const existingFilesNormalized = new Set<string>();
+      for (const f of existingFiles) {
+        existingFilesNormalized.add(f.replace(/\.xaml$/i, "").toLowerCase());
+      }
+      function isExistingFile(ref: string): boolean {
+        if (existingFiles.has(ref)) return true;
+        const norm = ref.replace(/\.xaml$/i, "").toLowerCase();
+        return existingFilesNormalized.has(norm);
       }
 
       let stubCount = 0;
       let retryCount = 0;
       for (const ref of referencedFiles) {
-        if (!existingFiles.has(ref)) {
+        if (!isExistingFile(ref)) {
           const baseName = ref.split("/").pop() || ref;
           const className = baseName.replace(/\.xaml$/i, "");
           let generated = false;
@@ -3060,6 +3072,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                 }
                 deferredWrites.set(`${libPath}/${ref}`, retryCompliant);
                 existingFiles.add(ref);
+                existingFilesNormalized.add(ref.replace(/\.xaml$/i, "").toLowerCase());
                 retryCount++;
                 generated = true;
                 console.log(`[Scaffold] Retry-generated XAML for missing referenced workflow: ${ref} (${matchingWfSpec.steps.length} steps)`);
@@ -3073,6 +3086,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         <ui:Comment DisplayName="TODO: Implement ${escapeXml(className)}" Text="This workflow was auto-generated as a stub. Open in UiPath Studio to implement the logic." />`);
             deferredWrites.set(`${libPath}/${ref}`, compliancePass(stubXaml, ref));
             existingFiles.add(ref);
+            existingFilesNormalized.add(ref.replace(/\.xaml$/i, "").toLowerCase());
             stubCount++;
             console.log(`[Scaffold] Generated stub XAML for referenced workflow: ${ref}`);
           }

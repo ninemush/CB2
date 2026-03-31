@@ -280,9 +280,9 @@ function validateFunctionCalls(expression: string, issues: LintIssue[]): void {
   }
 
   const METHOD_SIGNATURES: Record<string, { minArgs: number; maxArgs: number }> = {
-    "ToString": { minArgs: 0, maxArgs: 1 },
+    "ToString": { minArgs: 0, maxArgs: 2 },
     "Trim": { minArgs: 0, maxArgs: 1 },
-    "Split": { minArgs: 1, maxArgs: 3 },
+    "Split": { minArgs: 1, maxArgs: 6 },
     "Substring": { minArgs: 1, maxArgs: 2 },
     "Replace": { minArgs: 2, maxArgs: 2 },
     "Contains": { minArgs: 1, maxArgs: 1 },
@@ -312,13 +312,19 @@ function validateFunctionCalls(expression: string, issues: LintIssue[]): void {
     "Math.Round": { minArgs: 1, maxArgs: 2 },
     "Math.Max": { minArgs: 2, maxArgs: 2 },
     "Math.Min": { minArgs: 2, maxArgs: 2 },
+    "Regex.Replace": { minArgs: 3, maxArgs: 4 },
   };
 
+  const staticMatchPositions = new Set<number>();
   const staticPattern = /\b([A-Z]\w+\.\w+)\s*\(/g;
   while ((m = staticPattern.exec(expression)) !== null) {
     const fullName = m[1];
     const sig = STATIC_METHOD_SIGNATURES[fullName];
-    if (!sig) continue;
+    if (!sig) {
+      continue;
+    }
+    const dotIdx = fullName.indexOf(".");
+    staticMatchPositions.add(m.index + dotIdx);
 
     const startIdx = m.index + m[0].length;
     let depth = 1;
@@ -355,6 +361,7 @@ function validateFunctionCalls(expression: string, issues: LintIssue[]): void {
 
   const methodPattern = /\.(\w+)\s*\(/g;
   while ((m = methodPattern.exec(expression)) !== null) {
+    if (staticMatchPositions.has(m.index)) continue;
     const methodName = m[1];
     const startIdx = m.index + m[0].length;
     let depth = 1;
