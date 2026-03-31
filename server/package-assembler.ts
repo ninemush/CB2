@@ -5006,7 +5006,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
     {
       console.log(`[Tier 2 Argument Reconciliation] Scanning InvokeWorkflowFile argument bindings across all workflows...`);
-      const invokeArgContracts = new Map<string, Set<string>>();
+      const invokeArgContracts = new Map<string, Map<string, string>>();
       for (const [_path, content] of deferredWrites.entries()) {
         if (!_path.endsWith(".xaml")) continue;
         const invokePattern = /<ui:InvokeWorkflowFile[^>]*WorkflowFileName="([^"]+)"[^]*?<\/ui:InvokeWorkflowFile>/g;
@@ -5014,11 +5014,26 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         while ((invokeMatch = invokePattern.exec(content)) !== null) {
           const targetFile = invokeMatch[1].replace(/^.*[\\/]/, "");
           const argBlock = invokeMatch[0];
+          const argElementPattern = /<(InArgument|OutArgument|InOutArgument)\s+[^>]*>/g;
+          let adm;
+          while ((adm = argElementPattern.exec(argBlock)) !== null) {
+            const elemTag = adm[0];
+            const typeMatch = elemTag.match(/x:TypeArguments="([^"]+)"/);
+            const keyMatch = elemTag.match(/x:Key="([^"]+)"/);
+            if (keyMatch) {
+              const callerType = typeMatch ? typeMatch[1] : "";
+              const argName = keyMatch[1];
+              if (!invokeArgContracts.has(targetFile)) invokeArgContracts.set(targetFile, new Map());
+              invokeArgContracts.get(targetFile)!.set(argName, callerType);
+            }
+          }
           const argKeyPattern = /x:Key="((?:in_|out_|io_)[A-Za-z]\w*)"/g;
           let akm;
           while ((akm = argKeyPattern.exec(argBlock)) !== null) {
-            if (!invokeArgContracts.has(targetFile)) invokeArgContracts.set(targetFile, new Set());
-            invokeArgContracts.get(targetFile)!.add(akm[1]);
+            if (!invokeArgContracts.has(targetFile)) invokeArgContracts.set(targetFile, new Map());
+            if (!invokeArgContracts.get(targetFile)!.has(akm[1])) {
+              invokeArgContracts.get(targetFile)!.set(akm[1], "");
+            }
           }
         }
         const fileName = _path.split("/").pop() || _path;
@@ -5028,8 +5043,10 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           const xMemberCheck = new RegExp(`<x:Property\\s+Name="${bodyArg[1]}"`);
           const varCheck = new RegExp(`<Variable[^>]*\\bName="${bodyArg[1]}"`);
           if (!xMemberCheck.test(content) && !varCheck.test(content)) {
-            if (!invokeArgContracts.has(fileName)) invokeArgContracts.set(fileName, new Set());
-            invokeArgContracts.get(fileName)!.add(bodyArg[1]);
+            if (!invokeArgContracts.has(fileName)) invokeArgContracts.set(fileName, new Map());
+            if (!invokeArgContracts.get(fileName)!.has(bodyArg[1])) {
+              invokeArgContracts.get(fileName)!.set(bodyArg[1], "");
+            }
           }
         }
       }
@@ -5040,7 +5057,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         const neededArgs = invokeArgContracts.get(fileName);
         if (!neededArgs || neededArgs.size === 0) continue;
         let updatedContent = dContent;
-        for (const argName of neededArgs) {
+        for (const [argName, callerType] of neededArgs.entries()) {
           const alreadyDeclared = new RegExp(`<x:Property\\s+Name="${argName}"`).test(updatedContent);
           const isVariable = new RegExp(`<Variable[^>]*\\bName="${argName}"`).test(updatedContent);
           if (alreadyDeclared || isVariable) continue;
@@ -5052,14 +5069,34 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
             "dt_": "scg2:DataTable", "dict_": "scg:Dictionary(x:String, x:Object)",
             "sec_": "x:String", "dbl_": "x:Double",
           };
-          const prefix = argName.replace(/^(?:in_|out_|io_)/, "").match(/^[a-z]+_/)?.[0] || "";
-          const argType = typeMap[prefix] || "x:String";
+          let argType = callerType || "";
+          if (!argType) {
+            const prefix = argName.replace(/^(?:in_|out_|io_)/, "").match(/^[a-z]+_/)?.[0] || "";
+            argType = typeMap[prefix] || "x:String";
+          }
           const propXml = `    <x:Property Name="${argName}" Type="${direction}(${argType})" />\n`;
           const membersEnd = updatedContent.indexOf("</x:Members>");
           if (membersEnd >= 0) {
             updatedContent = updatedContent.slice(0, membersEnd) + propXml + updatedContent.slice(membersEnd);
             tier2Injections++;
-            console.log(`[Tier 2 Argument Reconciliation] Injected ${direction} "${argName}" into ${fileName}`);
+            console.log(`[Tier 2 Argument Reconciliation] Injected ${direction} "${argName}" (${argType}) into ${fileName}`);
+          } else {
+            const selfClosingMembers = updatedContent.match(/<x:Members\s*\/>/);
+            if (selfClosingMembers) {
+              const replacement = `<x:Members>\n${propXml}  </x:Members>`;
+              updatedContent = updatedContent.replace(selfClosingMembers[0], replacement);
+              tier2Injections++;
+              console.log(`[Tier 2 Argument Reconciliation] Expanded self-closing x:Members and injected ${direction} "${argName}" (${argType}) into ${fileName}`);
+            } else {
+              const activityTagMatch = updatedContent.match(/<Activity\b[^>]*>/);
+              if (activityTagMatch) {
+                const insertPos = activityTagMatch.index! + activityTagMatch[0].length;
+                const membersBlock = `\n  <x:Members>\n${propXml}  </x:Members>`;
+                updatedContent = updatedContent.slice(0, insertPos) + membersBlock + updatedContent.slice(insertPos);
+                tier2Injections++;
+                console.log(`[Tier 2 Argument Reconciliation] Created x:Members and injected ${direction} "${argName}" (${argType}) into ${fileName}`);
+              }
+            }
           }
         }
         if (updatedContent !== dContent) {

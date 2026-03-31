@@ -258,6 +258,91 @@ function countFunctionArgs(body: string): number {
   return count;
 }
 
+function splitFormatArgs(body: string): string[] {
+  const args: string[] = [];
+  let depth = 0;
+  let current = "";
+  let inQuote = false;
+
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (inQuote) {
+      current += ch;
+      if (ch === '"' && i + 1 < body.length && body[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuote = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inQuote = true;
+      current += ch;
+      continue;
+    }
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth--;
+
+    if (ch === ',' && depth === 0) {
+      args.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) args.push(current.trim());
+  return args;
+}
+
+function buildConcatFromStringFormat(formatStr: string, args: string[]): string {
+  let raw = formatStr.trim();
+  if (raw.startsWith('"') && raw.endsWith('"')) {
+    raw = raw.substring(1, raw.length - 1);
+  } else if (raw.startsWith('&quot;') && raw.endsWith('&quot;')) {
+    raw = raw.substring(6, raw.length - 6);
+  }
+
+  raw = raw.replace(/\{\{/g, "\x00LBRACE\x00").replace(/\}\}/g, "\x00RBRACE\x00");
+
+  const placeholderRegex = /\{(\d+)(?:,(-?\d+))?(?::([^}]*))?\}/g;
+  let lastEnd = 0;
+  const parts: string[] = [];
+  let match;
+
+  while ((match = placeholderRegex.exec(raw)) !== null) {
+    const literal = raw.substring(lastEnd, match.index)
+      .replace(/\x00LBRACE\x00/g, "{").replace(/\x00RBRACE\x00/g, "}");
+    if (literal) {
+      parts.push(`"${literal}"`);
+    }
+    const argIdx = parseInt(match[1], 10);
+    const alignment = match[2];
+    const formatSpec = match[3];
+    if (argIdx < args.length) {
+      if (formatSpec || alignment) {
+        const miniFormat = `{0${alignment ? "," + alignment : ""}${formatSpec ? ":" + formatSpec : ""}}`;
+        parts.push(`String.Format("${miniFormat}", ${args[argIdx]})`);
+      } else {
+        parts.push(`CStr(${args[argIdx]})`);
+      }
+    } else {
+      parts.push(`"[MISSING_ARG_${argIdx}]"`);
+    }
+    lastEnd = match.index + match[0].length;
+  }
+
+  const trailing = raw.substring(lastEnd)
+    .replace(/\x00LBRACE\x00/g, "{").replace(/\x00RBRACE\x00/g, "}");
+  if (trailing) {
+    parts.push(`"${trailing}"`);
+  }
+
+  if (parts.length === 0) return '""';
+
+  return parts.join(" & ");
+}
+
 function validateFunctionCalls(expression: string, issues: LintIssue[]): void {
   const funcCallPattern = /\b([A-Za-z_]\w*)\s*\(/g;
   let m;
@@ -810,8 +895,10 @@ export function lintExpression(expression: string): LintResult {
   }
 
   {
-    const sfMatch = corrected.match(/\bString\.Format\s*\(/);
-    if (sfMatch) {
+    const MAX_SF_REPAIRS = 5;
+    for (let sfPass = 0; sfPass < MAX_SF_REPAIRS; sfPass++) {
+      const sfMatch = corrected.match(/\bString\.Format\s*\(/);
+      if (!sfMatch) break;
       const startIdx = sfMatch.index! + sfMatch[0].length;
       let depth = 1;
       let endIdx = startIdx;
@@ -820,14 +907,37 @@ export function lintExpression(expression: string): LintResult {
         else if (corrected[i] === ")") depth--;
         if (depth === 0) { endIdx = i; break; }
       }
-      if (depth === 0) {
-        const body = corrected.substring(startIdx, endIdx);
-        const argCount = countFunctionArgs(body);
-        const formatStr = body.split(",")[0] || "";
-        const maxPlaceholder = [...formatStr.matchAll(/\{(\d+)/g)].reduce((max, m) => Math.max(max, parseInt(m[1], 10)), -1);
-        if (maxPlaceholder >= 10 || argCount > 11) {
+      if (depth !== 0) break;
+      const body = corrected.substring(startIdx, endIdx);
+      const argCount = countFunctionArgs(body);
+      const formatStr = body.split(",")[0] || "";
+      const maxPlaceholder = [...formatStr.matchAll(/\{(\d+)/g)].reduce((max, m) => Math.max(max, parseInt(m[1], 10)), -1);
+      if (maxPlaceholder < 10 && argCount <= 11) break;
+      const allArgs = splitFormatArgs(body);
+      if (allArgs.length >= 2) {
+        const fmtStr = allArgs[0];
+        const valueArgs = allArgs.slice(1);
+        try {
+          const concatExpr = buildConcatFromStringFormat(fmtStr, valueArgs);
+          const fullCallStart = sfMatch.index!;
+          const fullCallEnd = endIdx + 1;
+          const before = corrected;
+          corrected = corrected.substring(0, fullCallStart) + concatExpr + corrected.substring(fullCallEnd);
+          if (corrected !== before) {
+            issues.push({
+              code: "STRING_FORMAT_OVERFLOW",
+              message: `String.Format with ${argCount} arguments (highest placeholder {${maxPlaceholder}}) auto-converted to string concatenation for UiPath Studio compatibility`,
+              autoFixed: true,
+            });
+            wasModified = true;
+          }
+        } catch {
           reportOnly("STRING_FORMAT_OVERFLOW", `String.Format has ${argCount} total arguments with highest placeholder index {${maxPlaceholder}} — UiPath Studio may have issues with >10 format arguments. Consider splitting into multiple Format calls or using string concatenation.`);
+          break;
         }
+      } else {
+        reportOnly("STRING_FORMAT_OVERFLOW", `String.Format has ${argCount} total arguments with highest placeholder index {${maxPlaceholder}} — UiPath Studio may have issues with >10 format arguments. Consider splitting into multiple Format calls or using string concatenation.`);
+        break;
       }
     }
   }
