@@ -19,13 +19,18 @@
     },
     "UiPath.Mail.Activities": {
       "preferred": "2.7.12",
-      "lastVerifiedAt": "2026-03-31T09:19:13.001Z",
+      "lastVerifiedAt": "2026-03-31T09:05:47.818Z",
       "verificationSource": "uipath-official-feed"
     },
     "UiPath.Excel.Activities": {
       "preferred": "3.4.1",
       "lastVerifiedAt": "2026-03-25T19:32:48.794Z",
       "verificationSource": "uipath-official-feed"
+    },
+    "UiPath.Web.Activities": {
+      "preferred": "1.21.0",
+      "lastVerifiedAt": "2026-03-25T00:00:00Z",
+      "verificationSource": "studio-bundled"
     },
     "UiPath.Database.Activities": {
       "preferred": "2.0.0",
@@ -746,7 +751,7 @@
   "minimumRequiredPackages": [
     "UiPath.System.Activities"
   ],
-  "lastRefreshedAt": "2026-03-31T09:19:32.871Z",
+  "lastRefreshedAt": "2026-03-31T09:06:09.445Z",
   "lastVerifiedAt": "2026-03-21T09:00:00.000Z",
   "sourceVersion": "1.0.0",
   "snapshotVersion": "1.0.0"

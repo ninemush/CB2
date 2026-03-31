@@ -1,7 +1,7 @@
 {
   "catalogVersion": "2.0.0",
-  "generatedAt": "2026-03-31T09:19:32.882Z",
-  "lastVerifiedAt": "2026-03-31T09:19:32.882Z",
+  "generatedAt": "2026-03-31T09:06:09.457Z",
+  "lastVerifiedAt": "2026-03-31T09:06:09.457Z",
   "studioVersion": "25.10.0",
   "packages": [
     {
@@ -9875,10 +9875,7 @@
       ]
     },
     {
-      "packageId": "UiPath.WebAPI.Activities",
-      "version": "2.4.0",
-      "feedStatus": "verified",
-      "preferredVersion": "2.4.0",
+      "packageId": "UiPath.Web.Activities",
       "activities": [
         {
           "className": "HttpClient",
@@ -10115,7 +10112,18 @@
               "typeArguments": "x:String"
             }
           ]
-        },
+        }
+      ],
+      "version": "1.21.0",
+      "feedStatus": "unverified",
+      "preferredVersion": "1.21.0"
+    },
+    {
+      "packageId": "UiPath.WebAPI.Activities",
+      "version": "2.4.0",
+      "feedStatus": "verified",
+      "preferredVersion": "2.4.0",
+      "activities": [
         {
           "className": "HttpClientRequest",
           "displayName": "HTTP Client Request",

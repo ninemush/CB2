@@ -22,6 +22,7 @@ import { getActivityTag, getActivityPrefixStrict } from "./xaml/xaml-compliance"
 import { lintExpression } from "./xaml/vbnet-expression-linter";
 import type { RemediationEntry, RemediationCode } from "./uipath-pipeline";
 import { PROPERTY_REMEDIATION_ESCALATION_THRESHOLD } from "./uipath-pipeline";
+import { DeclarationRegistry, scopeIdMatchesStackEntryExternal } from "./declaration-registry";
 
 export interface PropertyRemediationRecord {
   propertyName: string;
@@ -319,9 +320,139 @@ const IMPLICIT_OUTPUT_ACTIVITY_TYPES: Record<string, { outputPropNames: string[]
   "MatchPattern": { outputPropNames: ["Matches", "Result"], defaultVar: "obj_Matches", defaultType: "System.Text.RegularExpressions.MatchCollection" },
 };
 
-function collectImplicitOutputVariables(children: WorkflowNode[], allVariables: VariableDeclaration[]): void {
-  const existingNames = new Set(allVariables.map(v => v.name));
+function extractArgumentRefsFromString(str: string): string[] {
+  const refs: string[] = [];
+  const pattern = /\b(in_[A-Za-z]\w*|out_[A-Za-z]\w*|io_[A-Za-z]\w*)\b/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(str)) !== null) {
+    refs.push(match[1]);
+  }
+  return refs;
+}
 
+function discoverAndRegisterArgRef(argName: string, registry: DeclarationRegistry, workflowName: string): void {
+  if (registry.hasVariableName(argName)) return;
+  if (registry.hasNameInScope(argName) && !registry.hasArgumentName(argName)) return;
+  const direction = argName.startsWith("out_") ? "OutArgument" as const
+    : argName.startsWith("io_") ? "InOutArgument" as const
+    : "InArgument" as const;
+  const inferredType = inferTypeFromPrefix(argName) || "x:String";
+  registry.registerArgument({
+    name: argName,
+    direction,
+    type: inferredType,
+    source: "discovered-reference",
+  });
+  if (!registry.hasArgumentName(argName)) return;
+  console.log(`[Argument Declaration] Pre-emission walk: auto-declared ${direction} "${argName}" (${inferredType}) in "${workflowName}"`);
+}
+
+function walkNodeForArgumentRefs(node: WorkflowNode, registry: DeclarationRegistry, workflowName: string): void {
+  if (node.kind === "activity") {
+    const actNode = node as ActivityNode;
+    const allStrings: string[] = [];
+
+    if (actNode.outputVar) allStrings.push(actNode.outputVar);
+
+    for (const [, val] of Object.entries(actNode.properties || {})) {
+      if (typeof val === "string") {
+        allStrings.push(val);
+      } else if (isValueIntent(val)) {
+        const built = buildExpression(val as ValueIntent);
+        allStrings.push(built);
+      }
+    }
+
+    for (const str of allStrings) {
+      const refs = extractArgumentRefsFromString(str);
+      for (const argName of refs) {
+        discoverAndRegisterArgRef(argName, registry, workflowName);
+      }
+    }
+  }
+
+  if (node.kind === "if") {
+    const ifNode = node as IfNode;
+    const condStr = typeof ifNode.condition === "string"
+      ? ifNode.condition
+      : buildExpression(ifNode.condition as ValueIntent);
+    const refs = extractArgumentRefsFromString(condStr);
+    for (const argName of refs) {
+      discoverAndRegisterArgRef(argName, registry, workflowName);
+    }
+  }
+
+  if (node.kind === "while") {
+    const whileNode = node as WhileNode;
+    const condStr = typeof whileNode.condition === "string"
+      ? whileNode.condition
+      : buildExpression(whileNode.condition as ValueIntent);
+    const refs = extractArgumentRefsFromString(condStr);
+    for (const argName of refs) {
+      discoverAndRegisterArgRef(argName, registry, workflowName);
+    }
+  }
+
+  if (node.kind === "forEach") {
+    const forEachNode = node as ForEachNode;
+    const scopeId = `forEach::${forEachNode.displayName}`;
+    registry.pushScope(scopeId);
+
+    const refs = extractArgumentRefsFromString(forEachNode.valuesExpression);
+    for (const argName of refs) {
+      discoverAndRegisterArgRef(argName, registry, workflowName);
+    }
+
+    if (forEachNode.bodyChildren) {
+      for (const child of forEachNode.bodyChildren) {
+        walkNodeForArgumentRefs(child, registry, workflowName);
+      }
+    }
+
+    registry.popScope();
+    return;
+  }
+
+  if (node.kind === "tryCatch") {
+    const tryCatchNode = node as TryCatchNode;
+    const scopeId = `tryCatch::${tryCatchNode.displayName}`;
+
+    if (tryCatchNode.tryChildren) {
+      for (const child of tryCatchNode.tryChildren) {
+        walkNodeForArgumentRefs(child, registry, workflowName);
+      }
+    }
+
+    registry.pushScope(scopeId);
+    if (tryCatchNode.catchChildren) {
+      for (const child of tryCatchNode.catchChildren) {
+        walkNodeForArgumentRefs(child, registry, workflowName);
+      }
+    }
+    registry.popScope();
+
+    if (tryCatchNode.finallyChildren) {
+      for (const child of tryCatchNode.finallyChildren) {
+        walkNodeForArgumentRefs(child, registry, workflowName);
+      }
+    }
+    return;
+  }
+
+  const childArrays: WorkflowNode[][] = [];
+  if ("children" in node && Array.isArray((node as any).children)) childArrays.push((node as any).children);
+  if ("thenChildren" in node && Array.isArray((node as any).thenChildren)) childArrays.push((node as any).thenChildren);
+  if ("elseChildren" in node && Array.isArray((node as any).elseChildren)) childArrays.push((node as any).elseChildren);
+  if ("bodyChildren" in node && Array.isArray((node as any).bodyChildren)) childArrays.push((node as any).bodyChildren);
+
+  for (const arr of childArrays) {
+    for (const child of arr) {
+      walkNodeForArgumentRefs(child, registry, workflowName);
+    }
+  }
+}
+
+function registerImplicitOutputVariables(children: WorkflowNode[], registry: DeclarationRegistry): void {
   function scanNode(node: WorkflowNode): void {
     if (node.kind === "activity") {
       const actNode = node as ActivityNode;
@@ -367,19 +498,27 @@ function collectImplicitOutputVariables(children: WorkflowNode[], allVariables: 
           const passwordVar = (props.Password || props.password || "sec_Password") as string;
           const cleanUser = usernameVar.replace(/^\[|\]$/g, "");
           const cleanPass = passwordVar.replace(/^\[|\]$/g, "");
-          if (!existingNames.has(cleanUser)) {
-            allVariables.push({ name: cleanUser, type: "String" });
-            existingNames.add(cleanUser);
+          if (!registry.hasName(cleanUser)) {
+            registry.registerVariable({
+              name: cleanUser,
+              type: "String",
+              source: "implicit-output",
+              scope: "workflow",
+            });
           }
-          if (!existingNames.has(cleanPass)) {
-            allVariables.push({ name: cleanPass, type: "System.Security.SecureString" });
-            existingNames.add(cleanPass);
+          if (!registry.hasName(cleanPass)) {
+            registry.registerVariable({
+              name: cleanPass,
+              type: "System.Security.SecureString",
+              source: "implicit-output",
+              scope: "workflow",
+            });
           }
         }
 
         for (const varName of varNames) {
           const cleanName = varName.replace(/^\[|\]$/g, "");
-          if (!cleanName || existingNames.has(cleanName)) continue;
+          if (!cleanName || registry.hasName(cleanName)) continue;
 
           const PREFIX_TO_CLR: Record<string, string> = {
             "x:String": "String",
@@ -410,15 +549,19 @@ function collectImplicitOutputVariables(children: WorkflowNode[], allVariables: 
             varType = "String";
           }
 
-          allVariables.push({ name: cleanName, type: varType });
-          existingNames.add(cleanName);
+          registry.registerVariable({
+            name: cleanName,
+            type: varType,
+            source: "implicit-output",
+            scope: "workflow",
+          });
           console.log(`[Implicit Variable] Auto-declared "${cleanName}" (type: ${varType}) from ${templateName} activity`);
         }
       }
 
       if (actNode.outputVar) {
         const cleanName = actNode.outputVar.replace(/^\[|\]$/g, "");
-        if (cleanName && !existingNames.has(cleanName)) {
+        if (cleanName && !registry.hasName(cleanName)) {
           let varType = "Object";
           const prefixType = inferTypeFromPrefix(cleanName);
           if (prefixType) {
@@ -431,8 +574,12 @@ function collectImplicitOutputVariables(children: WorkflowNode[], allVariables: 
             };
             varType = PREFIX_TO_CLR[prefixType] || varType;
           }
-          allVariables.push({ name: cleanName, type: varType });
-          existingNames.add(cleanName);
+          registry.registerVariable({
+            name: cleanName,
+            type: varType,
+            source: "implicit-output",
+            scope: "workflow",
+          });
           console.log(`[Implicit Variable] Auto-declared "${cleanName}" (type: ${varType}) from generic outputVar`);
         }
       }
@@ -463,6 +610,236 @@ function collectImplicitOutputVariables(children: WorkflowNode[], allVariables: 
 
   for (const child of children) {
     scanNode(child);
+  }
+}
+
+function resolveTryCatchExceptionName(tryCatchNode: TryCatchNode): string {
+  const defaultName = "exception";
+  for (const child of tryCatchNode.catchChildren) {
+    if (child.kind === "activity") {
+      const actNode = child as ActivityNode;
+      for (const [, val] of Object.entries(actNode.properties || {})) {
+        if (typeof val === "string") {
+          const exVarMatch = val.match(/\b([a-zA-Z_]\w*)\.(?:Message|GetType|StackTrace|InnerException|ToString)\b/);
+          if (exVarMatch && exVarMatch[1] !== defaultName) {
+            return exVarMatch[1];
+          }
+        }
+      }
+    }
+  }
+  return defaultName;
+}
+
+function resolveForEachIteratorName(node: ForEachNode, registry?: DeclarationRegistry): string {
+  const fallback = node.iteratorName || "item";
+  if (!registry) return fallback;
+  const entry = registry.findScopedVariableByTypeAndName("forEach", node.displayName);
+  return entry ? entry.name : fallback;
+}
+
+function registerScopedDeclarations(children: WorkflowNode[], registry: DeclarationRegistry): void {
+  const scopeCounters = { forEach: 0, tryCatch: 0 };
+
+  function scanNode(node: WorkflowNode, pathPrefix: string): void {
+    if (node.kind === "forEach") {
+      const forEachNode = node as ForEachNode;
+      const iteratorName = forEachNode.iteratorName || "item";
+      const idx = scopeCounters.forEach++;
+      const scopeId = `forEach[${idx}]::${pathPrefix}/${forEachNode.displayName}`;
+      registry.registerScopedVariable({
+        name: iteratorName,
+        type: forEachNode.itemType || "x:Object",
+        source: "iterator",
+        scope: "block",
+        scopeId,
+      });
+    }
+
+    if (node.kind === "tryCatch") {
+      const tryCatchNode = node as TryCatchNode;
+      const exceptionName = resolveTryCatchExceptionName(tryCatchNode);
+      const idx = scopeCounters.tryCatch++;
+      const scopeId = `tryCatch[${idx}]::${pathPrefix}/${tryCatchNode.displayName}`;
+      registry.registerScopedVariable({
+        name: exceptionName,
+        type: "s:Exception",
+        source: "catch-exception",
+        scope: "block",
+        scopeId,
+      });
+    }
+
+    const childArrays: WorkflowNode[][] = [];
+    if ("children" in node && Array.isArray((node as any).children)) childArrays.push((node as any).children);
+    if ("thenChildren" in node && Array.isArray((node as any).thenChildren)) childArrays.push((node as any).thenChildren);
+    if ("elseChildren" in node && Array.isArray((node as any).elseChildren)) childArrays.push((node as any).elseChildren);
+    if ("tryChildren" in node && Array.isArray((node as any).tryChildren)) childArrays.push((node as any).tryChildren);
+    if ("catchChildren" in node && Array.isArray((node as any).catchChildren)) childArrays.push((node as any).catchChildren);
+    if ("finallyChildren" in node && Array.isArray((node as any).finallyChildren)) childArrays.push((node as any).finallyChildren);
+    if ("bodyChildren" in node && Array.isArray((node as any).bodyChildren)) childArrays.push((node as any).bodyChildren);
+
+    for (const arr of childArrays) {
+      for (const child of arr) scanNode(child, `${pathPrefix}/${node.displayName}`);
+    }
+  }
+
+  for (let i = 0; i < children.length; i++) {
+    scanNode(children[i], `root[${i}]`);
+  }
+}
+
+function extractAllVariableRefsFromExpression(expr: string): string[] {
+  const refs: string[] = [];
+  const stripped = expr.replace(/^\[|\]$/g, "").trim();
+  if (!stripped) return refs;
+  const identifierPattern = /\b([a-zA-Z_]\w*)\b/g;
+  const vbKeywords = new Set([
+    "True", "False", "Nothing", "Not", "And", "Or", "AndAlso", "OrAlso",
+    "Is", "IsNot", "Like", "Mod", "New", "If", "Then", "Else", "ElseIf",
+    "End", "Select", "Case", "For", "Each", "Next", "While", "Do", "Loop",
+    "Until", "To", "Step", "In", "Throw", "Try", "Catch", "Finally",
+    "Dim", "As", "Of", "Imports", "Return", "Exit", "Continue",
+    "String", "Integer", "Boolean", "Object", "Double", "Decimal",
+    "Date", "Byte", "Short", "Long", "Single", "Char",
+    "CStr", "CInt", "CBool", "CDbl", "CDec", "CDate", "CLng", "CSng", "CType",
+    "GetType", "TypeOf", "DirectCast", "TryCast",
+    "AddressOf", "RaiseEvent", "WithEvents", "Handles",
+    "Me", "MyBase", "MyClass",
+    "Len", "Mid", "Left", "Right", "Trim", "UCase", "LCase",
+    "Now", "Today", "TimeOfDay",
+    "Math", "Convert", "Environment", "System", "DateTime",
+    "TimeSpan", "Array", "Console",
+  ]);
+  const dotPropertyPattern = /\.(\w+)/g;
+  const dotProperties = new Set<string>();
+  let dotMatch;
+  while ((dotMatch = dotPropertyPattern.exec(stripped)) !== null) {
+    dotProperties.add(dotMatch[1]);
+  }
+  let match;
+  while ((match = identifierPattern.exec(stripped)) !== null) {
+    const name = match[1];
+    if (vbKeywords.has(name)) continue;
+    if (dotProperties.has(name) && stripped.indexOf(`.${name}`) >= 0) {
+      const beforeIdx = match.index - 1;
+      if (beforeIdx >= 0 && stripped[beforeIdx] === ".") continue;
+    }
+    if (/^\d/.test(name)) continue;
+    refs.push(name);
+  }
+  return refs;
+}
+
+function validateReferencesBeforeEmission(
+  children: WorkflowNode[],
+  registry: DeclarationRegistry,
+  workflowName: string,
+): void {
+  const unresolvedRefs: string[] = [];
+
+  function checkRef(ref: string, scopeStack: string[]): void {
+    if (registry.hasName(ref)) return;
+    const scopedEntries = registry.findAllScopedVariablesByName(ref);
+    if (scopedEntries.length > 0) {
+      for (const entry of scopedEntries) {
+        for (let i = scopeStack.length - 1; i >= 0; i--) {
+          if (entry.scopeId && scopeIdMatchesStackEntryExternal(entry.scopeId, scopeStack[i])) return;
+        }
+      }
+    }
+    unresolvedRefs.push(ref);
+  }
+
+  function extractAndCheckStrings(strings: string[], scopeStack: string[]): void {
+    for (const str of strings) {
+      const argRefs = extractArgumentRefsFromString(str);
+      for (const ref of argRefs) checkRef(ref, scopeStack);
+      const allRefs = extractAllVariableRefsFromExpression(str);
+      for (const ref of allRefs) checkRef(ref, scopeStack);
+    }
+  }
+
+  function collectRefs(node: WorkflowNode, scopeStack: string[]): void {
+    if (node.kind === "activity") {
+      const actNode = node as ActivityNode;
+      const allStrings: string[] = [];
+      if (actNode.outputVar) allStrings.push(actNode.outputVar);
+      for (const [, val] of Object.entries(actNode.properties || {})) {
+        if (typeof val === "string") {
+          allStrings.push(val);
+        } else if (isValueIntent(val)) {
+          allStrings.push(buildExpression(val as ValueIntent));
+        }
+      }
+      extractAndCheckStrings(allStrings, scopeStack);
+    }
+
+    if (node.kind === "if") {
+      const ifNode = node as IfNode;
+      if (ifNode.condition) {
+        const condStr = typeof ifNode.condition === "string" ? ifNode.condition : "";
+        if (condStr) extractAndCheckStrings([condStr], scopeStack);
+      }
+    }
+
+    if (node.kind === "while") {
+      const whileNode = node as WhileNode;
+      if (whileNode.condition) {
+        const condStr = typeof whileNode.condition === "string" ? whileNode.condition : "";
+        if (condStr) extractAndCheckStrings([condStr], scopeStack);
+      }
+    }
+
+    if (node.kind === "forEach") {
+      const forEachNode = node as ForEachNode;
+      if (forEachNode.valuesExpression) {
+        extractAndCheckStrings([forEachNode.valuesExpression], scopeStack);
+      }
+      const newStack = [...scopeStack, `forEach::${forEachNode.displayName}`];
+      if (forEachNode.bodyChildren) {
+        for (const child of forEachNode.bodyChildren) collectRefs(child, newStack);
+      }
+      return;
+    }
+
+    if (node.kind === "tryCatch") {
+      const tryCatchNode = node as TryCatchNode;
+      if (tryCatchNode.tryChildren) {
+        for (const child of tryCatchNode.tryChildren) collectRefs(child, scopeStack);
+      }
+      const catchStack = [...scopeStack, `tryCatch::${tryCatchNode.displayName}`];
+      if (tryCatchNode.catchChildren) {
+        for (const child of tryCatchNode.catchChildren) collectRefs(child, catchStack);
+      }
+      if (tryCatchNode.finallyChildren) {
+        for (const child of tryCatchNode.finallyChildren) collectRefs(child, scopeStack);
+      }
+      return;
+    }
+
+    const childArrays: WorkflowNode[][] = [];
+    if ("children" in node && Array.isArray((node as any).children)) childArrays.push((node as any).children);
+    if ("thenChildren" in node && Array.isArray((node as any).thenChildren)) childArrays.push((node as any).thenChildren);
+    if ("elseChildren" in node && Array.isArray((node as any).elseChildren)) childArrays.push((node as any).elseChildren);
+    if ("bodyChildren" in node && Array.isArray((node as any).bodyChildren)) childArrays.push((node as any).bodyChildren);
+
+    for (const arr of childArrays) {
+      for (const child of arr) collectRefs(child, scopeStack);
+    }
+  }
+
+  for (const child of children) {
+    collectRefs(child, []);
+  }
+
+  const unique = Array.from(new Set(unresolvedRefs));
+  if (unique.length > 0) {
+    console.warn(
+      `[DeclarationRegistry] Pre-emission validation for "${workflowName}": ` +
+      `${unique.length} unresolved reference(s) detected: ${unique.join(", ")}. ` +
+      `These names are not registered as arguments, variables, or scoped declarations.`
+    );
   }
 }
 
@@ -1465,22 +1842,23 @@ export function assembleNode(
   processType: ProcessType = "general",
   depthLevel: number = 0,
   emissionContext: EmissionContext = "normal",
+  registry?: DeclarationRegistry,
 ): string {
   switch (node.kind) {
     case "activity":
       return assembleActivityNode(node, allVariables, processType, emissionContext);
     case "sequence":
-      return assembleSequenceNode(node, allVariables, processType, depthLevel, emissionContext);
+      return assembleSequenceNode(node, allVariables, processType, depthLevel, emissionContext, registry);
     case "tryCatch":
-      return assembleTryCatchNode(node, allVariables, processType, depthLevel, emissionContext);
+      return assembleTryCatchNode(node, allVariables, processType, depthLevel, emissionContext, registry);
     case "if":
-      return assembleIfNode(node, allVariables, processType, depthLevel, emissionContext);
+      return assembleIfNode(node, allVariables, processType, depthLevel, emissionContext, registry);
     case "while":
-      return assembleWhileNode(node, allVariables, processType, depthLevel, emissionContext);
+      return assembleWhileNode(node, allVariables, processType, depthLevel, emissionContext, registry);
     case "forEach":
-      return assembleForEachNode(node, allVariables, processType, depthLevel, emissionContext);
+      return assembleForEachNode(node, allVariables, processType, depthLevel, emissionContext, registry);
     case "retryScope":
-      return assembleRetryScopeNode(node, allVariables, processType, depthLevel, emissionContext);
+      return assembleRetryScopeNode(node, allVariables, processType, depthLevel, emissionContext, registry);
     default:
       return `<!-- Unknown node kind -->`;
   }
@@ -1511,10 +1889,11 @@ function assembleSequenceNode(
   processType: ProcessType,
   depthLevel: number,
   emissionContext: EmissionContext = "normal",
+  registry?: DeclarationRegistry,
 ): string {
   const displayName = escapeXml(node.displayName);
   const childrenXml = node.children
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext, registry))
     .join("\n");
 
   let varsBlock = "";
@@ -1650,10 +2029,17 @@ function assembleTryCatchNode(
   processType: ProcessType,
   depthLevel: number,
   _parentEmissionContext: EmissionContext = "normal",
+  registry?: DeclarationRegistry,
 ): string {
   const displayName = escapeXml(node.displayName);
+
+  const exceptionVarName = node.catchVariableName || inferExceptionVariableName(node.catchChildren) || "exception";
+  const resolvedExceptionName = registry
+    ? (registry.findScopedVariableByTypeAndName("tryCatch", node.displayName)?.name ?? exceptionVarName)
+    : exceptionVarName;
+
   let tryXml = node.tryChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, "inside-trycatch"))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, "inside-trycatch", registry))
     .join("\n");
 
   if (!tryXml.trim()) {
@@ -1670,20 +2056,18 @@ function assembleTryCatchNode(
     tryXml = `<ui:Comment DisplayName="TODO: Implement ${escapeXml(stepContext)}" Text="TryCatch step &quot;${escapeXml(stepContext)}&quot; was generated without try content — implement the business logic for this step.${escapeXml(systemNote)}" />`;
   }
 
-  const exceptionVarName = node.catchVariableName || inferExceptionVariableName(node.catchChildren) || "exception";
-
   let catchXml = node.catchChildren.length > 0
     ? node.catchChildren
-        .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, "mandatory-catch"))
+        .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, "mandatory-catch", registry))
         .join("\n")
-    : `<ui:LogMessage Level="Error" Message="[&quot;Error: &quot; &amp; ${escapeXml(exceptionVarName)}.Message]" DisplayName="Log Exception" />\n<Rethrow DisplayName="Rethrow Exception" />`;
+    : `<ui:LogMessage Level="Error" Message="[&quot;Error: &quot; &amp; ${escapeXml(resolvedExceptionName)}.Message]" DisplayName="Log Exception" />\n<Rethrow DisplayName="Rethrow Exception" />`;
 
-  if (exceptionVarName !== "exception" && node.catchChildren.length > 0) {
-    catchXml = catchXml.replace(/\bexception\b/g, exceptionVarName);
+  if (resolvedExceptionName !== "exception" && node.catchChildren.length > 0) {
+    catchXml = catchXml.replace(/\bexception\b/g, resolvedExceptionName);
   }
 
   const finallyXml = node.finallyChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, "mandatory-finally"))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, "mandatory-finally", registry))
     .join("\n");
 
   let xml = `<TryCatch DisplayName="${displayName}">\n`;
@@ -1696,7 +2080,7 @@ function assembleTryCatchNode(
   xml += `    <Catch x:TypeArguments="s:Exception">\n`;
   xml += `      <ActivityAction x:TypeArguments="s:Exception">\n`;
   xml += `        <ActivityAction.Argument>\n`;
-  xml += `          <DelegateInArgument x:TypeArguments="s:Exception" Name="${escapeXml(exceptionVarName)}" />\n`;
+  xml += `          <DelegateInArgument x:TypeArguments="s:Exception" Name="${escapeXml(resolvedExceptionName)}" />\n`;
   xml += `        </ActivityAction.Argument>\n`;
   xml += `        <Sequence DisplayName="Handle Exception">\n`;
   xml += `          ${catchXml}\n`;
@@ -1777,16 +2161,17 @@ function assembleIfNode(
   processType: ProcessType,
   depthLevel: number,
   emissionContext: EmissionContext = "normal",
+  registry?: DeclarationRegistry,
 ): string {
   const displayName = escapeXml(node.displayName);
   const condition = resolveConditionValue(node.condition);
 
   const thenXml = node.thenChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext, registry))
     .join("\n");
 
   const elseXml = node.elseChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext, registry))
     .join("\n");
 
   const thenContent = thenXml.trim()
@@ -1817,12 +2202,13 @@ function assembleWhileNode(
   processType: ProcessType,
   depthLevel: number,
   emissionContext: EmissionContext = "normal",
+  registry?: DeclarationRegistry,
 ): string {
   const displayName = escapeXml(node.displayName);
   const condition = resolveConditionValue(node.condition);
 
   const bodyXml = node.bodyChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext, registry))
     .join("\n");
 
   const bodyContent = bodyXml.trim()
@@ -1939,6 +2325,7 @@ function assembleForEachNode(
   processType: ProcessType,
   depthLevel: number,
   emissionContext: EmissionContext = "normal",
+  registry?: DeclarationRegistry,
 ): string {
   const displayName = escapeXml(node.displayName);
   const inferredType = inferForEachItemType(node.itemType || "x:Object", node.valuesExpression, allVariables);
@@ -1948,7 +2335,7 @@ function assembleForEachNode(
   const effectiveIteratorName = inferForEachIteratorFromBody(node, allVariables);
 
   const bodyXml = node.bodyChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext, registry))
     .join("\n");
 
   const bodyContent = bodyXml.trim()
@@ -1961,7 +2348,7 @@ function assembleForEachNode(
   return `<ForEach x:TypeArguments="${itemType}" Values="${valuesInner}" DisplayName="${displayName}">\n` +
     `  <ActivityAction x:TypeArguments="${itemType}">\n` +
     `    <ActivityAction.Argument>\n` +
-    `      <DelegateInArgument x:TypeArguments="${itemType}" Name="${escapeXml(effectiveIteratorName)}" />\n` +
+    `      <DelegateInArgument x:TypeArguments="${itemType}" Name="${escapeXml(registry ? (resolveForEachIteratorName(node, registry)) : effectiveIteratorName)}" />\n` +
     `    </ActivityAction.Argument>\n` +
     `    <Sequence DisplayName="Body">\n` +
     `      ${bodyContent}\n` +
@@ -1976,11 +2363,12 @@ function assembleRetryScopeNode(
   processType: ProcessType,
   depthLevel: number,
   emissionContext: EmissionContext = "normal",
+  registry?: DeclarationRegistry,
 ): string {
   const displayName = escapeXml(node.displayName);
 
   const bodyXml = node.bodyChildren
-    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
+    .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext, registry))
     .join("\n");
 
   const bodyContent = bodyXml.trim()
@@ -2091,6 +2479,51 @@ function crossCheckGetCredentialVariableTypes(
     const unDecl = allVariables.find(v => v.name === usernameVar);
     if (!unDecl) {
       allVariables.push({ name: usernameVar, type: "String" });
+      console.log(`[CrossCheck] Added missing variable ${usernameVar} as String for GetCredential.Username`);
+    }
+  }
+}
+
+function crossCheckGetCredentialVariableTypesRegistry(
+  rootSequence: { children: WorkflowNode[]; variables?: VariableDeclaration[] },
+  registry: DeclarationRegistry,
+): void {
+  const credNodes: ActivityNode[] = [];
+  for (const child of rootSequence.children) {
+    credNodes.push(...collectGetCredentialNodes(child));
+  }
+
+  for (const node of credNodes) {
+    const props = node.properties || {};
+    const passwordVar = (props.Password as string) || (props.password as string) || "sec_Password";
+    const usernameVar = (props.Username as string) || (props.username as string) || "str_Username";
+
+    if (registry.hasVariableName(passwordVar)) {
+      const existing = registry.getVariable(passwordVar);
+      if (existing) {
+        const mapped = mapClrType(existing.type);
+        if (mapped !== "s:Security.SecureString") {
+          console.log(`[CrossCheck] Fixing variable ${passwordVar} type from ${existing.type} to SecureString for GetCredential.Password`);
+          registry.updateVariableType(passwordVar, "SecureString", "auto-injected");
+        }
+      }
+    } else {
+      registry.registerVariable({
+        name: passwordVar,
+        type: "SecureString",
+        source: "auto-injected",
+        scope: "workflow",
+      });
+      console.log(`[CrossCheck] Added missing variable ${passwordVar} as SecureString for GetCredential.Password`);
+    }
+
+    if (!registry.hasVariableName(usernameVar)) {
+      registry.registerVariable({
+        name: usernameVar,
+        type: "String",
+        source: "auto-injected",
+        scope: "workflow",
+      });
       console.log(`[CrossCheck] Added missing variable ${usernameVar} as String for GetCredential.Username`);
     }
   }
@@ -2368,6 +2801,36 @@ function extractTopLevelXmlElements(xml: string): string[] {
   return elements;
 }
 
+function hasNodeReference(nodes: WorkflowNode[], name: string): boolean {
+  for (const node of nodes) {
+    if (node.kind === "activity") {
+      const actNode = node as ActivityNode;
+      for (const [, val] of Object.entries(actNode.properties || {})) {
+        if (typeof val === "string" && val.includes(name)) return true;
+        if (isValueIntent(val)) {
+          const built = buildExpression(val as ValueIntent);
+          if (built.includes(name)) return true;
+        }
+      }
+      if (actNode.outputVar && actNode.outputVar.includes(name)) return true;
+    }
+
+    const childArrays: WorkflowNode[][] = [];
+    if ("children" in node && Array.isArray((node as any).children)) childArrays.push((node as any).children);
+    if ("thenChildren" in node && Array.isArray((node as any).thenChildren)) childArrays.push((node as any).thenChildren);
+    if ("elseChildren" in node && Array.isArray((node as any).elseChildren)) childArrays.push((node as any).elseChildren);
+    if ("tryChildren" in node && Array.isArray((node as any).tryChildren)) childArrays.push((node as any).tryChildren);
+    if ("catchChildren" in node && Array.isArray((node as any).catchChildren)) childArrays.push((node as any).catchChildren);
+    if ("finallyChildren" in node && Array.isArray((node as any).finallyChildren)) childArrays.push((node as any).finallyChildren);
+    if ("bodyChildren" in node && Array.isArray((node as any).bodyChildren)) childArrays.push((node as any).bodyChildren);
+
+    for (const arr of childArrays) {
+      if (hasNodeReference(arr, name)) return true;
+    }
+  }
+  return false;
+}
+
 export function assembleWorkflowFromSpec(
   spec: WorkflowSpec,
   processType: ProcessType = "general",
@@ -2381,21 +2844,47 @@ export function assembleWorkflowFromSpec(
     : undefined;
   const sanitizedRootChildren = spec.rootSequence.children.map(c => sanitizeNodeVariableRefs(c, renameMap));
 
-  const allVariables = [...sanitizedTopVars];
+  const registry = new DeclarationRegistry();
+
+  for (const v of sanitizedTopVars) {
+    registry.registerVariable({
+      name: v.name,
+      type: v.type,
+      default: v.default,
+      source: "explicit-spec",
+      scope: "workflow",
+    });
+  }
 
   if (sanitizedRootVars) {
     for (const v of sanitizedRootVars) {
-      if (!allVariables.find(av => av.name === v.name)) {
-        allVariables.push(v);
-      }
+      registry.registerVariable({
+        name: v.name,
+        type: v.type,
+        default: v.default,
+        source: "explicit-spec",
+        scope: "workflow",
+      });
     }
   }
 
-  if (!allVariables.find(v => v.name === "str_ScreenshotPath")) {
-    allVariables.push({
+  if (!registry.hasVariableName("str_ScreenshotPath")) {
+    registry.registerVariable({
       name: "str_ScreenshotPath",
       type: "String",
       default: '"screenshots/error_" & DateTime.Now.ToString("yyyyMMdd_HHmmss") & ".png"',
+      source: "auto-injected",
+      scope: "workflow",
+    });
+  }
+
+  for (const arg of (spec.arguments || [])) {
+    registry.registerArgument({
+      name: arg.name,
+      direction: arg.direction as "InArgument" | "OutArgument" | "InOutArgument",
+      type: arg.type,
+      source: "explicit-spec",
+      required: arg.required,
     });
   }
 
@@ -2404,14 +2893,46 @@ export function assembleWorkflowFromSpec(
     variables: sanitizedRootVars,
     children: sanitizedRootChildren,
   };
-  crossCheckGetCredentialVariableTypes(sanitizedRootSequence, allVariables);
+  crossCheckGetCredentialVariableTypesRegistry(sanitizedRootSequence, registry);
 
-  collectImplicitOutputVariables(sanitizedRootChildren, allVariables);
+  registerImplicitOutputVariables(sanitizedRootChildren, registry);
+
+  registerScopedDeclarations(sanitizedRootChildren, registry);
+
+  const syntheticRoot: SequenceNode = { kind: "sequence", displayName: workflowName, children: sanitizedRootChildren };
+  walkNodeForArgumentRefs(syntheticRoot, registry, workflowName);
+
+  const isMainWorkflow = workflowName.toLowerCase() === "main" || workflowName.toLowerCase() === "main.xaml";
+  const isInitAllSettings = workflowName.toLowerCase().includes("initallsettings");
+
+  const hasDictConfigRefInSpec = !isMainWorkflow && !isInitAllSettings && hasNodeReference(sanitizedRootChildren, "dict_Config");
+  if (hasDictConfigRefInSpec && !registry.hasArgumentName("in_Config")) {
+    registry.registerArgument({
+      name: "in_Config",
+      direction: "InArgument",
+      type: "scg:Dictionary(x:String, x:Object)",
+      source: "auto-injected",
+    });
+  }
+  if (hasDictConfigRefInSpec && !registry.hasVariableName("dict_Config")) {
+    registry.registerVariable({
+      name: "dict_Config",
+      type: "scg:Dictionary(x:String, x:Object)",
+      default: "[in_Config]",
+      source: "auto-injected",
+      scope: "workflow",
+    });
+  }
+
+  validateReferencesBeforeEmission(sanitizedRootChildren, registry, workflowName);
+
+  const finalVariables = registry.getAllVariables();
+  const wfArgs = registry.getAllArgumentsAsSpec();
 
   let activitiesXml: string;
   try {
     activitiesXml = sanitizedRootChildren
-      .map(child => assembleNode(child, allVariables, processType))
+      .map(child => assembleNode(child, finalVariables, processType, 0, "normal", registry))
       .join("\n    ");
   } catch (e) {
     if (e instanceof CSharpExpressionBlockedError) {
@@ -2428,42 +2949,24 @@ export function assembleWorkflowFromSpec(
     <ui:Comment Text="[VB_EXPRESSION_BLOCKED] Workflow generation was blocked because an expression contained unconvertible C# syntax: ${escapeXml(e.message)}. The expression must be rewritten in VB.NET before this workflow can be generated." DisplayName="BLOCKED — C# Expression Not Convertible" />
   </Sequence>
 </Activity>`;
-      return { xaml: blockedFallbackXaml, variables: allVariables };
+      return { xaml: blockedFallbackXaml, variables: finalVariables };
     }
     throw e;
   }
 
-  activitiesXml = injectTransactionItemNullGuard(activitiesXml, allVariables);
+  activitiesXml = injectTransactionItemNullGuard(activitiesXml, finalVariables);
 
-  const isMainWorkflow = workflowName.toLowerCase() === "main" || workflowName.toLowerCase() === "main.xaml";
-  const isInitAllSettings = workflowName.toLowerCase().includes("initallsettings");
-  const wfArgs = [...(spec.arguments || [])];
-  const hasDictConfigRef = !isMainWorkflow && !isInitAllSettings && activitiesXml.includes("dict_Config");
-  if (hasDictConfigRef && !wfArgs.some(a => a.name === "in_Config")) {
-    wfArgs.push({ name: "in_Config", direction: "InArgument", type: "scg:Dictionary(x:String, x:Object)" });
-  }
-  if (hasDictConfigRef && !allVariables.find(v => v.name === "dict_Config")) {
-    allVariables.push({ name: "dict_Config", type: "scg:Dictionary(x:String, x:Object)", default: "[in_Config]" });
+  const resolvedVariables = finalVariables;
+  const resolvedArgs = wfArgs;
+
+  if (registry.hasConflicts()) {
+    for (const conflict of registry.getConflicts()) {
+      console.warn(`[DeclarationRegistry] Conflict detected for "${conflict.name}": ${conflict.existingType} (${conflict.existingSource}) vs ${conflict.incomingType} (${conflict.incomingSource})`);
+    }
   }
 
-  const existingArgNames = new Set(wfArgs.map(a => a.name));
-  const existingVarNames = new Set(allVariables.map(v => v.name));
-  const argRefPattern = /\b(in_[A-Za-z]\w*|out_[A-Za-z]\w*|io_[A-Za-z]\w*)\b/g;
-  let argMatch: RegExpExecArray | null;
-  while ((argMatch = argRefPattern.exec(activitiesXml)) !== null) {
-    const argName = argMatch[1];
-    if (existingArgNames.has(argName) || existingVarNames.has(argName)) continue;
-    const direction = argName.startsWith("out_") ? "OutArgument"
-      : argName.startsWith("io_") ? "InOutArgument"
-      : "InArgument";
-    const inferredType = inferTypeFromPrefix(argName) || "x:String";
-    wfArgs.push({ name: argName, direction, type: inferredType });
-    existingArgNames.add(argName);
-    console.log(`[Argument Declaration] Tier 3 (expression scan): auto-declared ${direction} "${argName}" (${inferredType}) in "${workflowName}"`);
-  }
-
-  const variablesBlock = buildVariablesBlock(allVariables);
-  const xMembersBlock = buildXMembersBlock(wfArgs);
+  const variablesBlock = buildVariablesBlock(resolvedVariables);
+  const xMembersBlock = buildXMembersBlock(resolvedArgs);
 
   let xaml = `<?xml version="1.0" encoding="utf-8"?>
 <Activity mc:Ignorable="sap sap2010" x:Class="${escapeXml(workflowName)}"
@@ -2508,7 +3011,7 @@ ${xMembersBlock}  <Sequence DisplayName="${escapeXml(workflowName)}">
     <ui:Comment Text="[CONTAINER_VALIDATION_FAILED] Irrecoverable container structure error(s): ${escapeXml(errorSummary)}. Manual implementation required." DisplayName="Container Validation Failed — ${escapeXml(workflowName)}" />
   </Sequence>
 </Activity>`;
-    return { xaml: fallbackXaml, variables: allVariables };
+    return { xaml: fallbackXaml, variables: resolvedVariables };
   }
 
   xaml = sanitizeUnescapedAmpersands(xaml);
@@ -2535,10 +3038,10 @@ ${xMembersBlock}  <Sequence DisplayName="${escapeXml(workflowName)}">
     <ui:Comment Text="[ASSEMBLY_FAILED] Tree assembly produced malformed XML: ${escapeXml(err.msg)} at line ${err.line}, col ${err.col}. Manual implementation required." DisplayName="Assembly Failed — ${escapeXml(workflowName)}" />
   </Sequence>
 </Activity>`;
-    return { xaml: fallbackXaml, variables: allVariables };
+    return { xaml: fallbackXaml, variables: resolvedVariables };
   }
 
-  return { xaml, variables: allVariables };
+  return { xaml, variables: resolvedVariables };
 }
 
 export interface ContainerValidationResult {
