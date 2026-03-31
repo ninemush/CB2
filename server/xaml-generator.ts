@@ -1384,6 +1384,35 @@ function isSchemaIntegerProperty(propName: string): boolean {
   return false;
 }
 
+const TIMESPAN_PROPERTY_NAMES = new Set([
+  "RetryInterval", "Timeout", "DelayBefore", "DelayAfter",
+  "TimeoutMS", "DelayBetween", "WaitTime", "Duration",
+]);
+
+function trySerializeTimeSpan(key: string, value: any): string | null {
+  if (!TIMESPAN_PROPERTY_NAMES.has(key)) return null;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+
+  const hours = parseInt(value.hours || value.Hours || "0", 10) || 0;
+  const minutes = parseInt(value.minutes || value.Minutes || "0", 10) || 0;
+  const seconds = parseInt(value.seconds || value.Seconds || "0", 10) || 0;
+  const totalMs = parseInt(value.milliseconds || value.Milliseconds || value.ms || "0", 10) || 0;
+
+  if (hours === 0 && minutes === 0 && seconds === 0 && totalMs === 0) {
+    return null;
+  }
+
+  if (hours === 0 && minutes === 0 && seconds === 0 && totalMs > 0) {
+    const totalSec = Math.floor(totalMs / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 export function sanitizePropertyValue(key: string, value: any): string {
   if (value === null || value === undefined) {
     return "";
@@ -1432,10 +1461,12 @@ export function sanitizePropertyValue(key: string, value: any): string {
       const kvPairs = entries.map(([k, v]) => `{"${k}", "${String(v)}"}`).join(", ");
       return `New Dictionary(Of String, String) From {${kvPairs}}`;
     }
+    const timeSpanResult = trySerializeTimeSpan(key, value);
+    if (timeSpanResult !== null) return timeSpanResult;
     const jsonStr = JSON.stringify(value);
     return escapeXml(jsonStr);
   }
-  return String(value);
+  return `ERROR_UNSERIALIZABLE_${key}`;
 }
 
 const PSEUDO_XAML_ATTR_KEYS = new Set(["Then", "Else", "Cases", "Body", "Finally", "Try", "_convertedInputArgs", "_convertedOutputArgs", "DisplayName"]);

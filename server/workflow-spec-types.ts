@@ -11,9 +11,18 @@ export type VariableDeclaration = z.infer<typeof VariableDeclarationSchema>;
 
 const PrimitivePropertySchema = z.union([z.string(), z.number(), z.boolean()]).transform(v => String(v));
 
+const PlainObjectFallbackSchema = z.record(z.any()).transform((val) => {
+  if (val.type && typeof val.type === "string" && ["literal", "variable", "expression", "url_with_params", "vb_expression"].includes(val.type)) {
+    const viResult = ValueIntentSchema.safeParse(val);
+    if (viResult.success) return viResult.data;
+  }
+  return `OBJECT_SERIALIZED:${JSON.stringify(val)}`;
+});
+
 const PropertyValueSchema = z.union([
   ValueIntentSchema,
   PrimitivePropertySchema,
+  PlainObjectFallbackSchema,
 ]);
 
 export type PropertyValue = string | ValueIntent;

@@ -37,11 +37,16 @@ function mapProperties(props: Record<string, unknown>): Record<string, PropertyV
 
 function propertyToString(val: PropertyValue): string {
   if (typeof val === "string") return val;
-  if (val.type === "literal") return val.value;
-  if (val.type === "variable") return val.name;
-  if (val.type === "expression") return `${val.left} ${val.operator} ${val.right}`;
-  if (val.type === "url_with_params") return val.baseUrl;
-  return String(val);
+  if (typeof val === "object" && val !== null) {
+    if ("type" in val) {
+      if (val.type === "literal") return val.value;
+      if (val.type === "variable") return val.name;
+      if (val.type === "expression") return `${val.left} ${val.operator} ${val.right}`;
+      if (val.type === "url_with_params") return val.baseUrl;
+    }
+    return JSON.stringify(val);
+  }
+  return typeof val === "number" || typeof val === "boolean" ? String(val) : `ERROR_UNSERIALIZABLE_PROPERTY`;
 }
 
 function isControlFlowActivity(activityType: string): boolean {

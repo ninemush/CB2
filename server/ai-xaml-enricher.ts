@@ -10,6 +10,95 @@ import { validateWorkflowSpec, type WorkflowSpec as TreeWorkflowSpec, type Workf
 import { isValueIntent, sanitizeValueIntentExpressions, type ValueIntent } from "./xaml/expression-builder";
 import { extractUiContext, formatUiContextForPrompt } from "./xaml/selector-quality-scorer";
 
+const TIMESPAN_PROPERTY_NAMES = new Set([
+  "RetryInterval", "Timeout", "DelayBefore", "DelayAfter",
+  "TimeoutMS", "DelayBetween", "WaitTime", "Duration",
+]);
+
+function objectToTimeSpan(val: Record<string, any>): string | null {
+  const hours = parseInt(val.hours || val.Hours || "0", 10) || 0;
+  const minutes = parseInt(val.minutes || val.Minutes || "0", 10) || 0;
+  const seconds = parseInt(val.seconds || val.Seconds || "0", 10) || 0;
+  const totalMs = parseInt(val.milliseconds || val.Milliseconds || val.ms || "0", 10) || 0;
+
+  if (hours === 0 && minutes === 0 && seconds === 0 && totalMs === 0) {
+    return null;
+  }
+
+  if (hours === 0 && minutes === 0 && seconds === 0 && totalMs > 0) {
+    const totalSec = Math.floor(totalMs / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function sanitizeObjectProperties(obj: any): void {
+  if (!obj || typeof obj !== "object") return;
+  if (Array.isArray(obj)) {
+    for (const item of obj) sanitizeObjectProperties(item);
+    return;
+  }
+
+  if (obj.properties && typeof obj.properties === "object" && !Array.isArray(obj.properties)) {
+    for (const [key, val] of Object.entries(obj.properties)) {
+      if (val === null || val === undefined) {
+        delete obj.properties[key];
+        continue;
+      }
+      if (typeof val === "object" && !Array.isArray(val)) {
+        if (isValueIntent(val as any)) continue;
+        if (TIMESPAN_PROPERTY_NAMES.has(key)) {
+          const ts = objectToTimeSpan(val as Record<string, any>);
+          if (ts !== null) {
+            obj.properties[key] = ts;
+            continue;
+          }
+        }
+        if (key.toLowerCase().includes("header")) {
+          const entries = Object.entries(val as Record<string, any>);
+          if (entries.length === 0) {
+            obj.properties[key] = "New Dictionary(Of String, String)()";
+          } else {
+            const kvPairs = entries.map(([k, v]) => `{"${k}", "${String(v)}"}`).join(", ");
+            obj.properties[key] = `New Dictionary(Of String, String) From {${kvPairs}}`;
+          }
+          continue;
+        }
+        obj.properties[key] = JSON.stringify(val);
+      }
+    }
+  }
+
+  if (obj.children && Array.isArray(obj.children)) {
+    for (const child of obj.children) sanitizeObjectProperties(child);
+  }
+  if (obj.tryChildren && Array.isArray(obj.tryChildren)) {
+    for (const child of obj.tryChildren) sanitizeObjectProperties(child);
+  }
+  if (obj.catchChildren && Array.isArray(obj.catchChildren)) {
+    for (const child of obj.catchChildren) sanitizeObjectProperties(child);
+  }
+  if (obj.finallyChildren && Array.isArray(obj.finallyChildren)) {
+    for (const child of obj.finallyChildren) sanitizeObjectProperties(child);
+  }
+  if (obj.bodyChildren && Array.isArray(obj.bodyChildren)) {
+    for (const child of obj.bodyChildren) sanitizeObjectProperties(child);
+  }
+  if (obj.thenChildren && Array.isArray(obj.thenChildren)) {
+    for (const child of obj.thenChildren) sanitizeObjectProperties(child);
+  }
+  if (obj.elseChildren && Array.isArray(obj.elseChildren)) {
+    for (const child of obj.elseChildren) sanitizeObjectProperties(child);
+  }
+  if (obj.rootSequence) {
+    sanitizeObjectProperties(obj.rootSequence);
+  }
+}
+
 export interface EnrichedActivity {
   activityType: string;
   displayName: string;
@@ -447,6 +536,13 @@ Generate the enriched workflow specification. For each node, provide the specifi
                     const kvPairs = entries.map(([k, v]) => `{"${k}", "${String(v)}"}`).join(", ");
                     act.properties[propKey] = `New Dictionary(Of String, String) From {${kvPairs}}`;
                   }
+                } else if (TIMESPAN_PROPERTY_NAMES.has(propKey)) {
+                  const ts = objectToTimeSpan(propVal as Record<string, any>);
+                  if (ts !== null) {
+                    act.properties[propKey] = ts;
+                  } else {
+                    act.properties[propKey] = `INVALID_TIMESPAN_${propKey}:${JSON.stringify(propVal)}`;
+                  }
                 } else {
                   act.properties[propKey] = JSON.stringify(propVal);
                 }
@@ -702,6 +798,7 @@ IMPORTANT: The pre-mapped structure above is authoritative for workflow decompos
         }
 
         if (parsed && typeof parsed === "object") {
+          sanitizeObjectProperties(parsed);
           sanitizeValueIntentExpressions(parsed);
           if (parsed.reframeworkConfig == null || typeof parsed.reframeworkConfig !== "object") {
             parsed.reframeworkConfig = undefined;
