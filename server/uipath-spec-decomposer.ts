@@ -223,6 +223,15 @@ IMPORTANT RULES:
 - Map loops to ForEach/While activities
 - Be as specific and production-ready as possible
 
+OUTPUT FORMAT RULES (strict):
+- Workflow names must NOT include file extensions (no ".xaml") or surrounding quotes
+- Enum values for LogMessage Level must be bare keywords from: Trace, Info, Warn, Error, Fatal — never use "Information", "Warning", or "Debug"
+- Expression "left" and "right" fields must NEVER be empty strings — use a variable name or literal value
+- GetAsset output must be a simple variable name (e.g. "str_MaxRetry"), never a dictionary key access like dict_Config("key")
+- ForEach "iteratorName" must be a valid identifier matching variables used in body expressions
+- InvokeWorkflowFile "WorkflowFileName" must be a plain filename like Init.xaml without surrounding quotes
+- Property values must never be wrapped in extra quotes unless they are genuine string literals
+
 ERROR HANDLING:
 - Use the "errorHandling" field on each step to declare retry/catch intent. The build system handles TryCatch/RetryScope wrapping automatically.
 - Prefer flat step sequences over deeply nested control flow. Do NOT manually nest TryCatch or RetryScope activities — the builder does this for you based on the errorHandling field.

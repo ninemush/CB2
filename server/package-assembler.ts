@@ -33,6 +33,7 @@ import archiver from "archiver";
   import { enrichWithAITree, type EnrichmentResult, type TreeEnrichmentResult } from "./ai-xaml-enricher";
   import { assembleWorkflowFromSpec } from "./workflow-tree-assembler";
   import type { WorkflowSpec as TreeWorkflowSpec, WorkflowNode as TreeWorkflowNode } from "./workflow-spec-types";
+  import { normalizeWorkflowSpec } from "./normalize-workflow-spec";
   import { analyzeAndFix, setGovernancePolicies, type AnalysisReport } from "./workflow-analyzer";
   import { runQualityGate, validatePackage, formatQualityGateViolations, classifyQualityIssues, getBlockingFiles, hasOnlyWarnings, hasBlockingIssues, type QualityGateResult, type ClassifiedIssue, type PackageReadiness } from "./uipath-quality-gate";
   import { escapeXml } from "./lib/xml-utils";
@@ -2481,6 +2482,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
       for (const enrichEntry of enrichmentsToProcess) {
         let spec = enrichEntry.spec;
+        spec = normalizeWorkflowSpec(spec);
         const validationResult = validateSpec(spec, _studioProfile);
         spec = validationResult.spec;
         const report = validationResult.report;

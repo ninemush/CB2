@@ -195,7 +195,15 @@ Additional types (use sparingly):
 Rules:
 - "expression" left/right fields must be simple variable names or literals only.
 - "expression" left and right fields must NEVER be empty strings. Always provide a meaningful variable name or literal value (e.g. "0", "Nothing", "True").
-- All other property values should remain plain strings — do NOT convert everything to ValueIntent.`;
+- All other property values should remain plain strings — do NOT convert everything to ValueIntent.
+
+OUTPUT FORMAT RULES (strict):
+- Property values must NEVER be wrapped in quotes unless they are genuine string literals. For example, use Info not "Info".
+- Enum values for LogMessage Level must be bare keywords from: Trace, Info, Warn, Error, Fatal — never "Information", "Warning", or "Debug".
+- InvokeWorkflowFile "WorkflowFileName" must be a plain filename like Init.xaml without surrounding quotes.
+- GetAsset outputVar must be a simple variable name (e.g. str_MaxRetry), never a dictionary key access like dict_Config("key").
+- Workflow names must not include ".xaml" extensions or surrounding quotes.
+- ForEach "iteratorName" must be a valid identifier that matches variables referenced in body expressions.`;
 
 export async function enrichWithAI(
   nodes: ProcessNode[],
