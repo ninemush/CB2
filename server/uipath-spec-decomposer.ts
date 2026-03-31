@@ -122,8 +122,8 @@ IMPORTANT RULES:
 - Only create a dedicated utility/helper workflow when the logic is genuinely reused by 2+ caller workflows (e.g., a shared login sequence)
 - Separate workflows ARE appropriate for: dispatcher/performer patterns, REFramework structure (Init/Process/End), Action Center / HITL boundaries, and genuinely distinct business sub-processes
 - The invokes array defines the invocation graph: which workflows call which via InvokeWorkflowFile
-- sharedArguments are input/output arguments that cross workflow boundaries. Use CONCRETE types (String, Int32, Boolean, DataTable, etc.) — never "Object" unless genuinely polymorphic. Every argument MUST specify name, direction, and type.
-- When workflow A invokes workflow B, every argument that A passes MUST be declared in B's sharedArguments with matching name, compatible direction, and same type. Callers and callees must agree exactly on argument contracts.
+- sharedArguments are input/output arguments that define a workflow's interface to ITS callers. Use CONCRETE types (String, Int32, Boolean, DataTable, etc.) — never bare "Object" unless genuinely polymorphic (generic container types like Dictionary<String,Object> are fine). Every argument MUST specify name, direction, and type.
+- A workflow's sharedArguments define its own public interface — callers pass data via local variables, config entries, or computed values. Do NOT duplicate callee arguments into the caller's sharedArguments unless the caller genuinely needs to expose them to its own callers.
 - executionOrder should be topological: invoked (dependency) workflows should come BEFORE the workflows that call them, so dependencies are generated first
 - List ALL required UiPath package dependencies
 - Keep it concise — this is the project skeleton, not full workflow details
@@ -286,20 +286,46 @@ function makeStubWorkflow(entry: ScaffoldWorkflowEntry): UiPathPackageSpec["work
   };
 }
 
-function validateScaffoldArgumentContracts(scaffold: ScaffoldResult): string[] {
+interface ScaffoldValidationResult {
+  errors: string[];
+  warnings: string[];
+}
+
+function isBareObjectType(type: string): boolean {
+  const trimmed = type.trim();
+  return trimmed === "Object" && !/<|>/.test(type);
+}
+
+function validateScaffoldArgumentContracts(scaffold: ScaffoldResult): ScaffoldValidationResult {
   const errors: string[] = [];
+  const warnings: string[] = [];
   const workflowNames = new Set(scaffold.workflows.map(w => w.name));
-  const argsByWorkflow = new Map<string, Map<string, { direction: string; type: string }>>();
+  const seenWorkflowNames = new Set<string>();
 
   for (const wf of scaffold.workflows) {
-    const argMap = new Map<string, { direction: string; type: string }>();
-    for (const arg of wf.sharedArguments || []) {
-      if (arg.type === "Object") {
-        errors.push(`Generic type: "${wf.name}" argument "${arg.name}" uses "Object" — specify a concrete type (String, Int32, DataTable, etc.)`);
-      }
-      argMap.set(arg.name, { direction: arg.direction, type: arg.type });
+    if (seenWorkflowNames.has(wf.name)) {
+      errors.push(`Duplicate workflow name: "${wf.name}" appears more than once in the scaffold`);
     }
-    argsByWorkflow.set(wf.name, argMap);
+    seenWorkflowNames.add(wf.name);
+
+    if (!wf.name || !/^[A-Za-z][A-Za-z0-9_]*$/.test(wf.name)) {
+      errors.push(`Invalid workflow name: "${wf.name}" — must be a valid identifier (alphanumeric and underscores, starting with a letter)`);
+    }
+
+    for (const arg of wf.sharedArguments || []) {
+      if (!arg.name || !arg.direction || !arg.type) {
+        errors.push(`Malformed argument in "${wf.name}": missing required field(s) (name, direction, or type) — got ${JSON.stringify(arg)}`);
+        continue;
+      }
+      if (isBareObjectType(arg.type)) {
+        const likelySpecific = /path|file|name|url|id|email|date|count|flag|status|message|text|folder|dir/i.test(arg.name);
+        if (likelySpecific) {
+          warnings.push(`Suspicious type: "${wf.name}" argument "${arg.name}" uses bare "Object" but the name suggests a more specific type (e.g., String, Int32, Boolean)`);
+        } else {
+          warnings.push(`Generic type: "${wf.name}" argument "${arg.name}" uses bare "Object" — consider a concrete type if possible`);
+        }
+      }
+    }
   }
 
   for (const caller of scaffold.workflows) {
@@ -307,46 +333,33 @@ function validateScaffoldArgumentContracts(scaffold: ScaffoldResult): string[] {
     for (const calleeName of caller.invokes) {
       if (!workflowNames.has(calleeName)) {
         errors.push(`"${caller.name}" invokes undeclared workflow "${calleeName}" — add it to the scaffold or remove the reference`);
-        continue;
-      }
-
-      const calleeArgs = argsByWorkflow.get(calleeName);
-      if (!calleeArgs) continue;
-      const callerArgs = argsByWorkflow.get(caller.name);
-      if (!callerArgs) continue;
-
-      for (const [argName, calleeArg] of Array.from(calleeArgs)) {
-        const callerArg = callerArgs.get(argName);
-        if (!callerArg) {
-          if (calleeArg.direction === "in" || calleeArg.direction === "in_out") {
-            errors.push(`Argument mismatch: "${caller.name}" invokes "${calleeName}" but does not declare argument "${argName}" (required ${calleeArg.direction} ${calleeArg.type})`);
-          }
-          continue;
-        }
-        if (callerArg.type !== calleeArg.type && calleeArg.type !== "Object" && callerArg.type !== "Object") {
-          errors.push(`Type mismatch: argument "${argName}" is "${callerArg.type}" in "${caller.name}" but "${calleeArg.type}" in "${calleeName}"`);
-        }
-        const directionCompatible = (
-          (calleeArg.direction === "in" && (callerArg.direction === "in" || callerArg.direction === "in_out")) ||
-          (calleeArg.direction === "out" && (callerArg.direction === "out" || callerArg.direction === "in_out")) ||
-          (calleeArg.direction === "in_out" && callerArg.direction === "in_out")
-        );
-        if (!directionCompatible) {
-          errors.push(`Direction mismatch: argument "${argName}" is "${callerArg.direction}" in "${caller.name}" but "${calleeArg.direction}" in "${calleeName}"`);
-        }
-      }
-
-      for (const [argName, callerArg] of Array.from(callerArgs)) {
-        if (!calleeArgs.has(argName)) {
-          if (callerArg.direction === "out" || callerArg.direction === "in_out") {
-            errors.push(`Argument mismatch: "${caller.name}" declares argument "${argName}" (${callerArg.direction} ${callerArg.type}) but callee "${calleeName}" does not declare it — caller cannot write to undeclared callee argument`);
-          }
-        }
       }
     }
   }
 
-  return errors;
+  const allArgs = new Map<string, Array<{ workflow: string; direction: string; type: string }>>();
+  for (const wf of scaffold.workflows) {
+    for (const arg of wf.sharedArguments || []) {
+      if (!arg.name || !arg.direction || !arg.type) continue;
+      if (!allArgs.has(arg.name)) allArgs.set(arg.name, []);
+      allArgs.get(arg.name)!.push({ workflow: wf.name, direction: arg.direction, type: arg.type });
+    }
+  }
+  for (const [argName, entries] of Array.from(allArgs)) {
+    if (entries.length < 2) continue;
+    const types = new Set(entries.map(e => e.type));
+    if (types.size > 1) {
+      const details = entries.map(e => `"${e.workflow}" (${e.type})`).join(", ");
+      warnings.push(`Type inconsistency: argument "${argName}" has different types across workflows: ${details}`);
+    }
+    const directions = new Set(entries.map(e => e.direction));
+    if (directions.size > 1) {
+      const details = entries.map(e => `"${e.workflow}" (${e.direction})`).join(", ");
+      warnings.push(`Direction inconsistency: argument "${argName}" has different directions across workflows: ${details}`);
+    }
+  }
+
+  return { errors, warnings };
 }
 
 function parseScaffold(rawText: string): ScaffoldResult {
@@ -577,18 +590,94 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
     throw new Error(`Scaffold parse failed: ${err?.message}`);
   }
 
-  const argumentErrors = validateScaffoldArgumentContracts(scaffold);
-  if (argumentErrors.length > 0) {
-    const errorSummary = argumentErrors.join("; ");
-    console.error(`[SpecDecomposer] Run ${runId}: Scaffold argument contract violations (${argumentErrors.length}): ${errorSummary}`);
-    runLogger.stageEnd("spec_scaffold", "failed", undefined, `Argument contract violations: ${errorSummary}`);
+  let validation = validateScaffoldArgumentContracts(scaffold);
+
+  if (validation.warnings.length > 0) {
+    const warnSummary = validation.warnings.join("; ");
+    console.warn(`[SpecDecomposer] Run ${runId}: Scaffold validation warnings (${validation.warnings.length}): ${warnSummary}`);
     onPipelineProgress?.({
-      type: "failed",
+      type: "warning",
       stage: "spec_scaffold",
-      message: `Scaffold has ${argumentErrors.length} argument contract violation(s) — halting before detail generation`,
-      context: { errors: argumentErrors },
+      message: `Scaffold has ${validation.warnings.length} non-blocking warning(s)`,
+      context: { warnings: validation.warnings },
     });
-    throw new Error(`Scaffold argument contract violations (${argumentErrors.length}): ${errorSummary}`);
+  }
+
+  if (validation.errors.length > 0) {
+    const errorSummary = validation.errors.join("; ");
+    console.warn(`[SpecDecomposer] Run ${runId}: Scaffold has ${validation.errors.length} blocking error(s), attempting feedback retry: ${errorSummary}`);
+    onPipelineProgress?.({
+      type: "warning",
+      stage: "spec_scaffold",
+      message: `Scaffold has ${validation.errors.length} blocking error(s) — retrying with feedback`,
+      context: { errors: validation.errors },
+    });
+    onProgress?.("Scaffold had structural errors, retrying with corrections...");
+
+    try {
+      metrics.totalLlmCalls++;
+      const correctionPrompt = `The scaffold you generated has the following structural errors that must be fixed:\n\n${validation.errors.map((e, i) => `${i + 1}. ${e}`).join("\n")}\n\nPlease regenerate the complete scaffold JSON, fixing all listed errors. Return ONLY the corrected JSON object, no other text.`;
+      const retryResponse = await getCodeLLM().create({
+        maxTokens: SCAFFOLD_MAX_TOKENS,
+        system: systemContext,
+        messages: [
+          { role: "user", content: buildScaffoldPrompt(complexityGuidance) },
+          { role: "assistant", content: scaffoldResponse!.text || "{}" },
+          { role: "user", content: correctionPrompt },
+        ],
+        timeoutMs: SDD_LLM_TIMEOUT_MS + SCAFFOLD_TIMEOUT_ESCALATION_MS,
+      });
+
+      const retryScaffold = parseScaffold(retryResponse.text || "{}");
+      const retryValidation = validateScaffoldArgumentContracts(retryScaffold);
+
+      if (retryValidation.warnings.length > 0) {
+        const warnSummary = retryValidation.warnings.join("; ");
+        console.warn(`[SpecDecomposer] Run ${runId}: Retry scaffold warnings (${retryValidation.warnings.length}): ${warnSummary}`);
+        onPipelineProgress?.({
+          type: "warning",
+          stage: "spec_scaffold",
+          message: `Retry scaffold has ${retryValidation.warnings.length} non-blocking warning(s)`,
+          context: { warnings: retryValidation.warnings },
+        });
+      }
+
+      if (retryValidation.errors.length > 0) {
+        const retryErrorSummary = retryValidation.errors.join("; ");
+        console.error(`[SpecDecomposer] Run ${runId}: Scaffold still has ${retryValidation.errors.length} blocking error(s) after feedback retry: ${retryErrorSummary}`);
+        runLogger.stageEnd("spec_scaffold", "failed", undefined, `Argument contract violations after retry: ${retryErrorSummary}`);
+        onPipelineProgress?.({
+          type: "failed",
+          stage: "spec_scaffold",
+          message: `Scaffold has ${retryValidation.errors.length} blocking error(s) after feedback retry — halting`,
+          context: { errors: retryValidation.errors },
+        });
+        throw new Error(`Scaffold argument contract violations after feedback retry (${retryValidation.errors.length}): ${retryErrorSummary}`);
+      }
+
+      scaffold = retryScaffold;
+      validation = retryValidation;
+      console.log(`[SpecDecomposer] Run ${runId}: Scaffold feedback retry succeeded — errors resolved`);
+      onPipelineProgress?.({
+        type: "progress",
+        stage: "spec_scaffold",
+        message: "Scaffold feedback retry succeeded — all blocking errors resolved",
+      });
+    } catch (retryErr: any) {
+      if (retryErr?.message?.startsWith("Scaffold argument contract violations after feedback retry")) {
+        throw retryErr;
+      }
+      const originalErrorSummary = validation.errors.join("; ");
+      console.error(`[SpecDecomposer] Run ${runId}: Scaffold feedback retry failed (${retryErr?.message}), failing with original errors`);
+      runLogger.stageEnd("spec_scaffold", "failed", undefined, `Argument contract violations: ${originalErrorSummary}`);
+      onPipelineProgress?.({
+        type: "failed",
+        stage: "spec_scaffold",
+        message: `Scaffold has ${validation.errors.length} blocking error(s) — feedback retry also failed`,
+        context: { errors: validation.errors, retryError: retryErr?.message },
+      });
+      throw new Error(`Scaffold argument contract violations (${validation.errors.length}): ${originalErrorSummary}`);
+    }
   }
 
   let executionOrder: string[];
