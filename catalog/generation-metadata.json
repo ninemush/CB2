@@ -18,8 +18,8 @@
       "verificationSource": "uipath-official-feed"
     },
     "UiPath.Mail.Activities": {
-      "preferred": "2.7.11",
-      "lastVerifiedAt": "2026-03-25T19:32:48.637Z",
+      "preferred": "2.7.12",
+      "lastVerifiedAt": "2026-03-31T09:19:13.001Z",
       "verificationSource": "uipath-official-feed"
     },
     "UiPath.Excel.Activities": {
@@ -751,7 +751,7 @@
   "minimumRequiredPackages": [
     "UiPath.System.Activities"
   ],
-  "lastRefreshedAt": "2026-03-28T04:15:00.839Z",
+  "lastRefreshedAt": "2026-03-31T09:19:32.871Z",
   "lastVerifiedAt": "2026-03-21T09:00:00.000Z",
   "sourceVersion": "1.0.0",
   "snapshotVersion": "1.0.0"
