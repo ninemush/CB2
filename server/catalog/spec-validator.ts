@@ -147,8 +147,14 @@ function validateActivityNode(
   const filteredProperties: Record<string, any> = {};
   const strippedNames: string[] = [];
 
+  const isAddQueueItem = node.template === "AddQueueItem";
+
   for (const [key, value] of Object.entries(node.properties || {})) {
     if (!knownProps.has(key) && !INHERITED_BASE_PROPERTIES.has(key)) {
+      if (isAddQueueItem && (key === "ItemInformation" || key.startsWith("ItemInformation_"))) {
+        filteredProperties[key] = value;
+        continue;
+      }
       strippedNames.push(key);
       report.strippedProperties++;
       continue;

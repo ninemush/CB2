@@ -829,11 +829,59 @@ function checkVariableArgumentDeclarations(input: QualityGateInput, violations: 
       const stringPattern = /"(?:[^"\\]|\\.)*"/g;
       const exprWithoutStrings = expr.replace(stringPattern, (m) => " ".repeat(m.length));
 
+      const XML_ENTITY_NAMES = new Set(["gt", "lt", "amp", "quot", "apos"]);
+      const CLR_TYPE_NAMESPACE_NAMES = new Set([
+        "HttpClient", "Newtonsoft", "JObject", "JArray", "JToken", "JValue",
+        "Regex", "Match", "StringBuilder", "StreamReader", "StreamWriter",
+        "File", "Path", "Directory", "Uri", "WebClient", "HttpWebRequest",
+        "DataTable", "DataRow", "DataColumn", "DataSet",
+        "List", "Dictionary", "HashSet", "Queue", "Stack",
+        "Task", "Thread", "Guid", "Decimal", "Double", "Single",
+        "Int16", "Int32", "Int64", "Byte", "Char", "Object",
+        "Information", "Trace", "Warning", "Error",
+        "Json", "Xml", "Linq", "Text", "IO", "Net", "Threading",
+        "Globalization", "Collections", "Generic", "Runtime",
+        "Serialization", "Configuration", "ComponentModel",
+      ]);
+
       const identPattern = /\b([a-zA-Z_]\w*)\b/g;
       let idMatch;
       while ((idMatch = identPattern.exec(exprWithoutStrings)) !== null) {
         const ident = idMatch[1];
         if (keywords.has(ident)) continue;
+        if (XML_ENTITY_NAMES.has(ident)) continue;
+        if (ident === "c") {
+          const precedingInExpr = expr.substring(Math.max(0, idMatch.index - 3), idMatch.index);
+          if (/"\s*$/.test(precedingInExpr)) continue;
+          if (/"\w\s*$/.test(precedingInExpr)) continue;
+        }
+        if (CLR_TYPE_NAMESPACE_NAMES.has(ident)) continue;
+        if (rawExpr.includes("@")) {
+          const emailPattern = /[\w.+-]+@[\w.-]+/;
+          if (emailPattern.test(rawExpr)) {
+            const emailParts = rawExpr.match(/[\w.+-]+@[\w.-]+/g) || [];
+            const allTokenParts = new Set<string>();
+            for (const ep of emailParts) {
+              for (const part of ep.split(/[@.+-]/)) {
+                if (part) allTokenParts.add(part);
+              }
+            }
+            if (allTokenParts.has(ident)) continue;
+          }
+        }
+        if (rawExpr.includes("-") && rawExpr.includes(".")) {
+          const filenamePattern = /[\w]+-[\w]+\.[\w]+/;
+          if (filenamePattern.test(rawExpr)) {
+            const filenameParts = rawExpr.match(/[\w]+-[\w]+\.[\w]+/g) || [];
+            const allTokenParts = new Set<string>();
+            for (const fp of filenameParts) {
+              for (const part of fp.split(/[-._]/)) {
+                if (part) allTokenParts.add(part);
+              }
+            }
+            if (allTokenParts.has(ident)) continue;
+          }
+        }
         if (/^[A-Z][a-z]/.test(ident) && expr.includes(`${ident}.`) && !allDeclared.has(ident)) continue;
         const prefixes = ["str_", "int_", "bool_", "dt_", "qi_", "obj_", "dbl_", "sec_", "io_", "in_", "out_", "list_", "arr_", "dict_"];
         if (prefixes.some(p => ident.startsWith(p)) && !allDeclared.has(ident)) {

@@ -44,6 +44,7 @@ const BaseWorkflowNodeSchema = z.discriminatedUnion("kind", [
     tryChildren: z.lazy(() => WorkflowNodeSchema.array()).default([]),
     catchChildren: z.lazy(() => WorkflowNodeSchema.array()).default([]),
     finallyChildren: z.lazy(() => WorkflowNodeSchema.array()).default([]),
+    catchVariableName: z.string().optional(),
   }),
   z.object({
     kind: z.literal("if"),
@@ -90,6 +91,7 @@ export type TryCatchNode = {
   tryChildren: WorkflowNode[];
   catchChildren: WorkflowNode[];
   finallyChildren: WorkflowNode[];
+  catchVariableName?: string;
 };
 
 export type IfNode = {

@@ -1331,7 +1331,7 @@ function isHighRiskTemplate(templateName: string): boolean {
   return HIGH_RISK_TEMPLATES.has(templateName);
 }
 
-function wrapInTryCatch(innerXml: string, displayName: string): string {
+function wrapInTryCatch(innerXml: string, displayName: string, exceptionVarName: string = "exception"): string {
   const effectiveInnerXml = innerXml.trim()
     ? innerXml
     : `<ui:Comment DisplayName="TODO: Implement try block logic" Text="This TryCatch was generated without try content — add activities here." />`;
@@ -1345,10 +1345,10 @@ function wrapInTryCatch(innerXml: string, displayName: string): string {
     <Catch x:TypeArguments="s:Exception">
       <ActivityAction x:TypeArguments="s:Exception">
         <ActivityAction.Argument>
-          <DelegateInArgument x:TypeArguments="s:Exception" Name="exception" />
+          <DelegateInArgument x:TypeArguments="s:Exception" Name="${escapeXml(exceptionVarName)}" />
         </ActivityAction.Argument>
         <Sequence DisplayName="Handle Exception">
-          <ui:LogMessage Level="Error" Message="[&quot;Error in ${escapeXml(displayName)} (&quot; &amp; exception.GetType().Name &amp; &quot;): &quot; &amp; exception.Message]" DisplayName="Log Exception" />
+          <ui:LogMessage Level="Error" Message="[&quot;Error in ${escapeXml(displayName)} (&quot; &amp; ${escapeXml(exceptionVarName)}.GetType().Name &amp; &quot;): &quot; &amp; ${escapeXml(exceptionVarName)}.Message]" DisplayName="Log Exception" />
           <Rethrow DisplayName="Rethrow Exception" />
         </Sequence>
       </ActivityAction>
@@ -1480,6 +1480,101 @@ function assembleSequenceNode(
   return `<Sequence DisplayName="${displayName}">\n${varsBlock}  ${childrenXml}\n</Sequence>`;
 }
 
+function inferExceptionVariableName(catchChildren: WorkflowNode[]): string | null {
+  const exceptionVarPattern = /\b(\w+)\.(Message|StackTrace|InnerException|GetType|Source|HResult|Data|ToString)\b/;
+  for (const child of catchChildren) {
+    const propsStr = JSON.stringify(child);
+    const match = propsStr.match(exceptionVarPattern);
+    if (match && match[1] !== "exception") {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+const NON_EXPRESSION_PROPERTY_NAMES = new Set([
+  "DisplayName", "Text", "Message", "Level", "Annotation", "AnnotationText",
+]);
+
+function collectExpressionReferences(nodes: WorkflowNode[]): Set<string> {
+  const refs = new Set<string>();
+
+  function extractIdents(str: string): void {
+    const pattern = /\b([a-zA-Z_]\w*)\b/g;
+    let m;
+    while ((m = pattern.exec(str)) !== null) {
+      refs.add(m[1]);
+    }
+  }
+
+  function extractFromValue(val: PropertyValue): void {
+    if (typeof val === "string") {
+      extractIdents(val);
+    } else if (isValueIntent(val)) {
+      if (val.type === "variable") refs.add(val.name);
+      if (val.type === "expression") {
+        extractIdents(val.left);
+        extractIdents(val.right);
+      }
+    }
+  }
+
+  function scanNode(node: WorkflowNode): void {
+    if (node.kind === "activity") {
+      for (const [key, val] of Object.entries(node.properties || {})) {
+        if (NON_EXPRESSION_PROPERTY_NAMES.has(key)) continue;
+        extractFromValue(val);
+      }
+    } else if (node.kind === "sequence") {
+      for (const child of node.children) scanNode(child);
+    } else if (node.kind === "tryCatch") {
+      for (const child of [...node.tryChildren, ...node.catchChildren, ...node.finallyChildren]) scanNode(child);
+    } else if (node.kind === "if") {
+      if (typeof node.condition === "string") extractIdents(node.condition);
+      for (const child of [...node.thenChildren, ...node.elseChildren]) scanNode(child);
+    } else if (node.kind === "while") {
+      if (typeof node.condition === "string") extractIdents(node.condition);
+      for (const child of node.bodyChildren) scanNode(child);
+    } else if (node.kind === "forEach") {
+      extractIdents(node.valuesExpression);
+      for (const child of node.bodyChildren) scanNode(child);
+    } else if (node.kind === "retryScope") {
+      for (const child of node.bodyChildren) scanNode(child);
+    }
+  }
+
+  for (const n of nodes) scanNode(n);
+  return refs;
+}
+
+function inferForEachIteratorFromBody(node: ForEachNode, allVariables: VariableDeclaration[]): string {
+  const declaredIterator = node.iteratorName || "item";
+  const declaredVarNames = new Set(allVariables.map(v => v.name));
+  declaredVarNames.add(declaredIterator);
+
+  const referencedIdents = collectExpressionReferences(node.bodyChildren);
+
+  if (referencedIdents.has(declaredIterator)) {
+    return declaredIterator;
+  }
+
+  for (const ident of Array.from(referencedIdents)) {
+    if (!declaredVarNames.has(ident) &&
+        !ident.startsWith("str_") && !ident.startsWith("int_") &&
+        !ident.startsWith("bool_") && !ident.startsWith("dt_") && !ident.startsWith("obj_") &&
+        !ident.startsWith("dict_") && !ident.startsWith("list_") && !ident.startsWith("arr_") &&
+        !ident.startsWith("in_") && !ident.startsWith("out_") && !ident.startsWith("io_")) {
+      if (ident.toLowerCase().includes("row") || ident.toLowerCase().includes("item") ||
+          ident.toLowerCase().includes("element") || ident.toLowerCase().includes("entry") ||
+          ident.toLowerCase().includes("current") || ident.toLowerCase().includes("iterator")) {
+        return ident;
+      }
+    }
+  }
+
+  return declaredIterator;
+}
+
 function assembleTryCatchNode(
   node: TryCatchNode,
   allVariables: VariableDeclaration[],
@@ -1506,11 +1601,17 @@ function assembleTryCatchNode(
     tryXml = `<ui:Comment DisplayName="TODO: Implement ${escapeXml(stepContext)}" Text="TryCatch step &quot;${escapeXml(stepContext)}&quot; was generated without try content — implement the business logic for this step.${escapeXml(systemNote)}" />`;
   }
 
-  const catchXml = node.catchChildren.length > 0
+  const exceptionVarName = node.catchVariableName || inferExceptionVariableName(node.catchChildren) || "exception";
+
+  let catchXml = node.catchChildren.length > 0
     ? node.catchChildren
         .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, "mandatory-catch"))
         .join("\n")
-    : `<ui:LogMessage Level="Error" Message="[&quot;Error: &quot; &amp; exception.Message]" DisplayName="Log Exception" />\n<Rethrow DisplayName="Rethrow Exception" />`;
+    : `<ui:LogMessage Level="Error" Message="[&quot;Error: &quot; &amp; ${escapeXml(exceptionVarName)}.Message]" DisplayName="Log Exception" />\n<Rethrow DisplayName="Rethrow Exception" />`;
+
+  if (exceptionVarName !== "exception" && node.catchChildren.length > 0) {
+    catchXml = catchXml.replace(/\bexception\b/g, exceptionVarName);
+  }
 
   const finallyXml = node.finallyChildren
     .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, "mandatory-finally"))
@@ -1526,7 +1627,7 @@ function assembleTryCatchNode(
   xml += `    <Catch x:TypeArguments="s:Exception">\n`;
   xml += `      <ActivityAction x:TypeArguments="s:Exception">\n`;
   xml += `        <ActivityAction.Argument>\n`;
-  xml += `          <DelegateInArgument x:TypeArguments="s:Exception" Name="exception" />\n`;
+  xml += `          <DelegateInArgument x:TypeArguments="s:Exception" Name="${escapeXml(exceptionVarName)}" />\n`;
   xml += `        </ActivityAction.Argument>\n`;
   xml += `        <Sequence DisplayName="Handle Exception">\n`;
   xml += `          ${catchXml}\n`;
@@ -1775,6 +1876,8 @@ function assembleForEachNode(
   const itemType = validateForEachTypeConsistency(inferredType, node.valuesExpression);
   const wrappedValues = ensureBracketWrapped(node.valuesExpression);
 
+  const effectiveIteratorName = inferForEachIteratorFromBody(node, allVariables);
+
   const bodyXml = node.bodyChildren
     .map(child => assembleNode(child, allVariables, processType, depthLevel + 1, emissionContext))
     .join("\n");
@@ -1789,7 +1892,7 @@ function assembleForEachNode(
   return `<ForEach x:TypeArguments="${itemType}" Values="${valuesInner}" DisplayName="${displayName}">\n` +
     `  <ActivityAction x:TypeArguments="${itemType}">\n` +
     `    <ActivityAction.Argument>\n` +
-    `      <DelegateInArgument x:TypeArguments="${itemType}" Name="${escapeXml(node.iteratorName || "item")}" />\n` +
+    `      <DelegateInArgument x:TypeArguments="${itemType}" Name="${escapeXml(effectiveIteratorName)}" />\n` +
     `    </ActivityAction.Argument>\n` +
     `    <Sequence DisplayName="Body">\n` +
     `      ${bodyContent}\n` +

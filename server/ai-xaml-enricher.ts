@@ -155,7 +155,7 @@ VARIABLE PRE-DECLARATION: ALL variables MUST be listed in the top-level "variabl
    { "kind": "sequence", "displayName": "<name>", "children": [<WorkflowNode>...] }
 
 3. TryCatchNode — wrap activities that can fail:
-   { "kind": "tryCatch", "displayName": "<name>", "tryChildren": [<WorkflowNode>...], "catchChildren": [<WorkflowNode>...], "finallyChildren": [<WorkflowNode>...] }
+   { "kind": "tryCatch", "displayName": "<name>", "tryChildren": [<WorkflowNode>...], "catchChildren": [<WorkflowNode>...], "finallyChildren": [<WorkflowNode>...], "catchVariableName": "<exception variable name, default: exception>" }
 
 4. IfNode — conditional branch:
    { "kind": "if", "displayName": "<name>", "condition": "<VB.NET boolean expression>", "thenChildren": [<WorkflowNode>...], "elseChildren": [<WorkflowNode>...] }

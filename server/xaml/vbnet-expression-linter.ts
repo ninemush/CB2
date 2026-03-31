@@ -879,6 +879,21 @@ function decodeXmlEntities(s: string): string {
     .replace(/&apos;/g, "'");
 }
 
+const COMPLIANCE_XML_ENTITY_NAMES = new Set(["gt", "lt", "amp", "quot", "apos"]);
+const COMPLIANCE_CLR_EXTRA_NAMES = new Set([
+  "HttpClient", "Newtonsoft", "JObject", "JArray", "JToken", "JValue",
+  "Regex", "Match", "StringBuilder", "StreamReader", "StreamWriter",
+  "File", "Path", "Directory", "Uri", "WebClient", "HttpWebRequest",
+  "DataTable", "DataRow", "DataColumn", "DataSet",
+  "List", "Dictionary", "HashSet", "Queue", "Stack",
+  "Task", "Thread", "Guid", "Decimal", "Double", "Single",
+  "Int16", "Int32", "Int64", "Byte", "Char", "Object",
+  "Information", "Trace", "Warning", "Error",
+  "Json", "Xml", "Linq", "Text", "IO", "Net", "Threading",
+  "Globalization", "Collections", "Generic", "Runtime",
+  "Serialization", "Configuration", "ComponentModel",
+]);
+
 export function findUndeclaredVariables(expression: string, declaredVars: Set<string>): string[] {
   const undeclared: string[] = [];
   const trimmedExpr = expression.trim();
@@ -913,6 +928,43 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
     if (VB_BUILTIN_TYPES.has(ident)) continue;
     if (VB_BUILTIN_FUNCTIONS.has(ident)) continue;
     if (declaredVars.has(ident)) continue;
+
+    if (COMPLIANCE_XML_ENTITY_NAMES.has(ident)) continue;
+
+    if (ident === "c" && m.index > 0) {
+      const precedingInDecoded = decoded.substring(Math.max(0, m.index - 3), m.index);
+      if (/"\s*$/.test(precedingInDecoded)) continue;
+      if (/"\w\s*$/.test(precedingInDecoded)) continue;
+    }
+
+    if (COMPLIANCE_CLR_EXTRA_NAMES.has(ident)) continue;
+
+    if (expression.includes("@")) {
+      const emailPattern = /[\w.+-]+@[\w.-]+/;
+      if (emailPattern.test(expression)) {
+        const emailParts = expression.match(/[\w.+-]+@[\w.-]+/g) || [];
+        const allTokenParts = new Set<string>();
+        for (const ep of emailParts) {
+          for (const part of ep.split(/[@.+-]/)) {
+            if (part) allTokenParts.add(part);
+          }
+        }
+        if (allTokenParts.has(ident)) continue;
+      }
+    }
+    if (expression.includes("-") && expression.includes(".")) {
+      const filenamePattern = /[\w]+-[\w]+\.[\w]+/;
+      if (filenamePattern.test(expression)) {
+        const filenameParts = expression.match(/[\w]+-[\w]+\.[\w]+/g) || [];
+        const allTokenParts = new Set<string>();
+        for (const fp of filenameParts) {
+          for (const part of fp.split(/[-._]/)) {
+            if (part) allTokenParts.add(part);
+          }
+        }
+        if (allTokenParts.has(ident)) continue;
+      }
+    }
 
     const charBefore = m.index > 0 ? exprWithoutStrings[m.index - 1] : "";
     if (charBefore === ".") continue;
