@@ -782,6 +782,50 @@ export function lintExpression(expression: string): LintResult {
     );
   }
 
+  {
+    const sfMatch = corrected.match(/\bString\.Format\s*\(/);
+    if (sfMatch) {
+      const startIdx = sfMatch.index! + sfMatch[0].length;
+      let depth = 1;
+      let endIdx = startIdx;
+      for (let i = startIdx; i < corrected.length && depth > 0; i++) {
+        if (corrected[i] === "(") depth++;
+        else if (corrected[i] === ")") depth--;
+        if (depth === 0) { endIdx = i; break; }
+      }
+      if (depth === 0) {
+        const body = corrected.substring(startIdx, endIdx);
+        const argCount = countFunctionArgs(body);
+        const formatStr = body.split(",")[0] || "";
+        const maxPlaceholder = [...formatStr.matchAll(/\{(\d+)/g)].reduce((max, m) => Math.max(max, parseInt(m[1], 10)), -1);
+        if (maxPlaceholder >= 10 || argCount > 11) {
+          reportOnly("STRING_FORMAT_OVERFLOW", `String.Format has ${argCount} total arguments with highest placeholder index {${maxPlaceholder}} — UiPath Studio may have issues with >10 format arguments. Consider splitting into multiple Format calls or using string concatenation.`);
+        }
+      }
+    }
+  }
+
+  {
+    const stripped = corrected.replace(/"(?:[^"\\]|\\.)*"/g, (m) => " ".repeat(m.length))
+      .replace(/&quot;[^&]*&quot;/g, (m) => " ".repeat(m.length));
+    if (/\bDynamic\b/.test(stripped) && !VB_KEYWORDS.has("Dynamic") && !VB_BUILTIN_TYPES.has("Dynamic")) {
+      reportOnly("CSHARP_DYNAMIC_TYPE", `C# "Dynamic" type detected — VB.NET uses "Object" instead. Replace "Dynamic" with "Object".`);
+    }
+    if (/\bFrom\b/.test(stripped) && /\bFrom\s*[^(]/.test(stripped)) {
+      const isLinqFrom = /\bFrom\s+\w+\s+In\b/i.test(stripped);
+      const isLambdaOrAggregate = /\b(Select|Where|Aggregate|Group|Order\s+By|Join|Let)\b/i.test(stripped);
+      if (!isLinqFrom && !isLambdaOrAggregate) {
+        const fromContext = stripped.match(/\b(From\s+\w+)/);
+        if (fromContext) {
+          reportOnly("VB_KEYWORD_AS_VARIABLE", `"From" is a VB.NET collection initializer keyword and cannot be used as a variable name. Rename to a non-reserved identifier.`);
+        }
+      }
+    }
+    if (/\b[a-z]\s*=>/.test(stripped)) {
+      reportOnly("CSHARP_LAMBDA_VARIABLE", `C#-style lambda variable detected (single-character variable before "=>"). VB.NET uses "Function(x)" syntax instead. This expression needs manual conversion.`);
+    }
+  }
+
   corrected = corrected.replace(/\s{2,}/g, " ").trim();
   if (corrected !== expression.replace(/\s{2,}/g, " ").trim()) {
     wasModified = true;
@@ -969,10 +1013,24 @@ export function lintXamlExpressions(
           patchedContent = patchedContent.replace(exprAttrPattern, `$1${result.corrected}$2`);
         }
 
+        const DEDICATED_CHECK_CODES = new Set([
+          "STRING_FORMAT_OVERFLOW",
+          "CSHARP_DYNAMIC_TYPE",
+          "VB_KEYWORD_AS_VARIABLE",
+          "CSHARP_LAMBDA_VARIABLE",
+        ]);
         for (const issue of result.issues) {
           let severity: "warning" | "error" = issue.autoFixed ? "warning" : "error";
-          let check = issue.autoFixed ? "EXPRESSION_SYNTAX" : "EXPRESSION_SYNTAX_UNFIXABLE";
-          if (!issue.autoFixed && isLiteralDefaultFalsePositive(loc, issue)) {
+          let check: string;
+          if (DEDICATED_CHECK_CODES.has(issue.code)) {
+            check = issue.code;
+            severity = "error";
+          } else if (issue.autoFixed) {
+            check = "EXPRESSION_SYNTAX";
+          } else {
+            check = "EXPRESSION_SYNTAX_UNFIXABLE";
+          }
+          if (!issue.autoFixed && !DEDICATED_CHECK_CODES.has(issue.code) && isLiteralDefaultFalsePositive(loc, issue)) {
             severity = "warning";
             check = "EXPRESSION_SYNTAX";
           }

@@ -146,6 +146,14 @@ function getSafeDefaultForProperty(key: string, code: RemediationCode): string {
   return `[TODO: Fix ${key}]`;
 }
 
+const XAML_PROTECTED_STRUCTURAL_NAMES = new Set([
+  "Try", "Then", "Else", "Body", "Condition", "Catches", "Finally",
+  "Cases", "Default", "Values", "Username", "Password",
+  "Implementation", "Variables", "Activities", "Arguments",
+  "Handler", "Trigger", "Action", "Content", "Result",
+  "Header", "Headers", "Branches", "Constraints",
+]);
+
 const VBNET_RESERVED_WORDS = new Set([
   "addhandler", "addressof", "alias", "and", "andalso", "as", "boolean", "byref",
   "byte", "byval", "call", "case", "catch", "cbool", "cbyte", "cchar", "cdate",
@@ -169,14 +177,21 @@ const VBNET_RESERVED_WORDS = new Set([
   "xor",
 ]);
 
+export function isProtectedXamlStructuralName(name: string): boolean {
+  return XAML_PROTECTED_STRUCTURAL_NAMES.has(name);
+}
+
 export function sanitizeVariableName(name: string): string {
+  if (XAML_PROTECTED_STRUCTURAL_NAMES.has(name)) {
+    return name;
+  }
   let sanitized = name.replace(/\./g, "_");
   sanitized = sanitized.replace(/[^a-zA-Z0-9_]/g, "_");
   sanitized = sanitized.replace(/^[0-9]+/, "");
   sanitized = sanitized.replace(/_+/g, "_");
   sanitized = sanitized.replace(/^_|_$/g, "");
   if (!sanitized) sanitized = "var1";
-  if (VBNET_RESERVED_WORDS.has(sanitized.toLowerCase())) {
+  if (VBNET_RESERVED_WORDS.has(sanitized.toLowerCase()) && !XAML_PROTECTED_STRUCTURAL_NAMES.has(sanitized)) {
     sanitized = `_${sanitized}`;
   }
   return sanitized;
@@ -317,19 +332,34 @@ function collectImplicitOutputVariables(children: WorkflowNode[], allVariables: 
         const props = actNode.properties || {};
         const varNames: string[] = [];
 
-        if (actNode.outputVar) {
-          varNames.push(actNode.outputVar);
-        }
-
-        for (const propName of actConfig.outputPropNames) {
-          const val = props[propName] || props[propName.charAt(0).toLowerCase() + propName.slice(1)];
-          if (val && typeof val === "string" && /^[a-zA-Z_]\w*$/.test(val.replace(/^\[|\]$/g, ""))) {
-            varNames.push(val.replace(/^\[|\]$/g, ""));
+        if (templateName === "GetAsset" || templateName === "GetRobotAsset") {
+          const rawOutputVar = actNode.outputVar || (props.AssetValue as string) || (props.Value as string) || "";
+          if (rawOutputVar && isValidOutputVariableName(rawOutputVar)) {
+            varNames.push(rawOutputVar);
+          } else {
+            const assetName = (props.AssetName as string) || (props.assetName as string) || "";
+            const assetType = (props.AssetType as string) || (props.assetType as string) || "String";
+            if (assetName && !assetName.startsWith("PLACEHOLDER_")) {
+              varNames.push(deriveAssetOutputVariable(assetName, assetType));
+            } else {
+              varNames.push("str_REVIEW_AssetOutput");
+            }
           }
-        }
+        } else {
+          if (actNode.outputVar) {
+            varNames.push(actNode.outputVar);
+          }
 
-        if (varNames.length === 0) {
-          varNames.push(actConfig.defaultVar);
+          for (const propName of actConfig.outputPropNames) {
+            const val = props[propName] || props[propName.charAt(0).toLowerCase() + propName.slice(1)];
+            if (val && typeof val === "string" && /^[a-zA-Z_]\w*$/.test(val.replace(/^\[|\]$/g, ""))) {
+              varNames.push(val.replace(/^\[|\]$/g, ""));
+            }
+          }
+
+          if (varNames.length === 0) {
+            varNames.push(actConfig.defaultVar);
+          }
         }
 
         if (templateName === "GetCredential") {
@@ -499,7 +529,14 @@ function isVbExpression(val: string): boolean {
 function wrapVariableDefault(val: string, varType: string): string {
   const trimmed = val.trim();
   if (!trimmed) return trimmed;
-  if (isVbExpression(trimmed)) return trimmed;
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
+  if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing" || trimmed === "null") return trimmed;
+  if (/^[0-9]+(\.[0-9]+)?$/.test(trimmed)) return trimmed;
+  if (trimmed.startsWith("\"") || trimmed.startsWith("&quot;")) return trimmed;
+
+  if (isVbExpression(trimmed)) {
+    return `[${trimmed}]`;
+  }
   const typeNorm = varType.toLowerCase();
   const isStringType = typeNorm.includes("string") && !typeNorm.includes("secure");
   if (isStringType) {
@@ -863,15 +900,58 @@ function resolveAssignTemplate(node: ActivityNode, allVariables: VariableDeclara
     `</Assign>`;
 }
 
+function isValidOutputVariableName(val: string): boolean {
+  if (!val || val === "Nothing") return false;
+  if (/[()."'\[\]]/.test(val)) return false;
+  if (/^dict_\w+\(/.test(val)) return false;
+  if (val.includes("dict_Config(")) return false;
+  if (/\.\w+\(/.test(val)) return false;
+  return /^[a-zA-Z_]\w*$/.test(val);
+}
+
+function deriveAssetOutputVariable(assetName: string, assetType: string = "String"): string {
+  if (!assetName || assetName.startsWith("PLACEHOLDER_")) return "str_REVIEW_AssetOutput";
+  let cleanName = assetName;
+  const dotIdx = cleanName.indexOf(".");
+  if (dotIdx >= 0) {
+    cleanName = cleanName.substring(dotIdx + 1);
+  }
+  cleanName = cleanName.replace(/[^a-zA-Z0-9_]/g, "");
+  if (!cleanName) return "str_REVIEW_AssetOutput";
+  const typePrefix = assetType.toLowerCase().startsWith("int") ? "int_"
+    : assetType.toLowerCase().startsWith("bool") ? "bool_"
+    : "str_";
+  return `${typePrefix}${cleanName}`;
+}
+
 function resolveGetAssetTemplate(node: ActivityNode): string {
   const props = node.properties || {};
   const displayName = escapeXml(node.displayName);
   const assetName = getPropString(props, "AssetName", "assetName") || "PLACEHOLDER_AssetName";
-  const outputVar = node.outputVar || getPropString(props, "AssetValue", "Value") || "str_AssetValue";
+  const assetType = getPropString(props, "AssetType", "assetType") || "String";
+
+  const rawOutputVar = node.outputVar || getPropString(props, "AssetValue", "Value");
+
+  let outputVar: string;
+  if (rawOutputVar && isValidOutputVariableName(rawOutputVar)) {
+    outputVar = rawOutputVar;
+  } else if (assetName && !assetName.startsWith("PLACEHOLDER_")) {
+    outputVar = deriveAssetOutputVariable(assetName, assetType);
+    console.log(`[GetAsset] Tier 2: derived output variable "${outputVar}" from asset name "${assetName}"`);
+  } else {
+    outputVar = "str_REVIEW_AssetOutput";
+    console.warn(`[GetAsset] Tier 3: using stub variable "str_REVIEW_AssetOutput" for asset "${assetName}" — needs manual binding`);
+    console.warn(`[DHG_REMEDIATION] GetAsset output binding unresolved: asset="${assetName}", activity="${node.displayName}", stub_var="str_REVIEW_AssetOutput" — developer must create a correctly-named output variable and bind it to this GetAsset activity`);
+  }
+
+  const outArgType = outputVar.startsWith("int_") ? "x:Int32"
+    : outputVar.startsWith("bool_") ? "x:Boolean"
+    : outputVar.startsWith("dbl_") ? "x:Double"
+    : "x:String";
 
   return `<ui:GetAsset DisplayName="${displayName}" AssetName="${escapeXml(assetName)}">\n` +
     `  <ui:GetAsset.AssetValue>\n` +
-    `    <OutArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(outputVar))}</OutArgument>\n` +
+    `    <OutArgument x:TypeArguments="${outArgType}">${escapeXmlTextContent(ensureBracketWrapped(outputVar))}</OutArgument>\n` +
     `  </ui:GetAsset.AssetValue>\n` +
     `</ui:GetAsset>`;
 }
@@ -1258,11 +1338,30 @@ function wrapInTryCatch(innerXml: string, displayName: string): string {
 </TryCatch>`;
 }
 
+function sanitizeRetryInterval(val: string): string {
+  if (!val) return "00:00:05";
+  const trimmed = val.trim();
+  if (/^\d{2}:\d{2}:\d{2}$/.test(trimmed)) return trimmed;
+  if (/^\d{1,2}:\d{2}:\d{2}\.\d+$/.test(trimmed)) return trimmed;
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
+  if (/^[a-zA-Z_]/.test(trimmed) && /[.()\s]/.test(trimmed)) {
+    console.warn(`[RetryInterval] Bracket-wrapping VB expression: ${trimmed}`);
+    return `[${trimmed}]`;
+  }
+  if (/^[a-zA-Z_]\w*$/.test(trimmed)) {
+    console.warn(`[RetryInterval] Bracket-wrapping variable reference: ${trimmed}`);
+    return `[${trimmed}]`;
+  }
+  console.warn(`[RetryInterval] Unrecognized value "${trimmed}" — replacing with safe default 00:00:05`);
+  return "00:00:05";
+}
+
 function wrapInRetryScope(innerXml: string, displayName: string, retries: number = 3, interval: string = "00:00:05"): string {
+  const safeInterval = sanitizeRetryInterval(interval);
   const effectiveInnerXml = innerXml.trim()
     ? innerXml
     : `<ui:LogMessage Level="Trace" DisplayName="TODO: Implement RetryScope body" Message="[&quot;Placeholder — RetryScope body has no activities yet&quot;]" />`;
-  return `<ui:RetryScope NumberOfRetries="${retries}" RetryInterval="${interval}" DisplayName="Retry: ${escapeXml(displayName)}">
+  return `<ui:RetryScope NumberOfRetries="${retries}" RetryInterval="${safeInterval}" DisplayName="Retry: ${escapeXml(displayName)}">
   <ui:RetryScope.Condition>
     <ui:ShouldRetry />
   </ui:RetryScope.Condition>
@@ -1693,7 +1792,8 @@ function assembleRetryScopeNode(
     ? bodyXml
     : `<ui:LogMessage Level="Trace" DisplayName="TODO: Implement RetryScope body" Message="[&quot;Placeholder — RetryScope body has no activities yet&quot;]" />`;
 
-  return `<ui:RetryScope NumberOfRetries="${node.numberOfRetries}" RetryInterval="${node.retryInterval}" DisplayName="${displayName}">\n` +
+  const safeInterval = sanitizeRetryInterval(node.retryInterval);
+  return `<ui:RetryScope NumberOfRetries="${node.numberOfRetries}" RetryInterval="${safeInterval}" DisplayName="${displayName}">\n` +
     `  <ui:RetryScope.Condition>\n` +
     `    <ui:ShouldRetry />\n` +
     `  </ui:RetryScope.Condition>\n` +
@@ -2149,6 +2249,22 @@ export function assembleWorkflowFromSpec(
   }
   if (hasDictConfigRef && !allVariables.find(v => v.name === "dict_Config")) {
     allVariables.push({ name: "dict_Config", type: "scg:Dictionary(x:String, x:Object)", default: "[in_Config]" });
+  }
+
+  const existingArgNames = new Set(wfArgs.map(a => a.name));
+  const existingVarNames = new Set(allVariables.map(v => v.name));
+  const argRefPattern = /\b(in_[A-Za-z]\w*|out_[A-Za-z]\w*|io_[A-Za-z]\w*)\b/g;
+  let argMatch: RegExpExecArray | null;
+  while ((argMatch = argRefPattern.exec(activitiesXml)) !== null) {
+    const argName = argMatch[1];
+    if (existingArgNames.has(argName) || existingVarNames.has(argName)) continue;
+    const direction = argName.startsWith("out_") ? "OutArgument"
+      : argName.startsWith("io_") ? "InOutArgument"
+      : "InArgument";
+    const inferredType = inferTypeFromPrefix(argName) || "x:String";
+    wfArgs.push({ name: argName, direction, type: inferredType });
+    existingArgNames.add(argName);
+    console.log(`[Argument Declaration] Tier 3 (expression scan): auto-declared ${direction} "${argName}" (${inferredType}) in "${workflowName}"`);
   }
 
   const variablesBlock = buildVariablesBlock(allVariables);

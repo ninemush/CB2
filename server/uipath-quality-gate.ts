@@ -2199,6 +2199,88 @@ export function validatePackage(input: QualityGateInput): QualityGateResult {
     }
   }
 
+  const expressionInLiteralViolations: QualityGateViolation[] = [];
+  for (const entry of input.xamlEntries) {
+    const shortName = entry.name.split("/").pop() || entry.name;
+    const lines = entry.content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const defaultMatch = /Default="([^"]+)"/g;
+      let dm;
+      while ((dm = defaultMatch.exec(line)) !== null) {
+        const val = dm[1];
+        if (val === "True" || val === "False" || val === "Nothing" || val === "null") continue;
+        if (/^[0-9]+(\.[0-9]+)?$/.test(val)) continue;
+        if (val.startsWith("[") && val.endsWith("]")) continue;
+        if (val.startsWith("&quot;") && val.endsWith("&quot;")) continue;
+        if (val.startsWith('"') && val.endsWith('"')) continue;
+        if (/^\d{1,2}:\d{2}:\d{2}/.test(val)) continue;
+        if (/^[a-zA-Z][\w\s.,!?;:'-]*$/.test(val) && !/[()]/.test(val) && !/^(in_|out_|io_)/.test(val)) continue;
+
+        const looksLikeExpression = /^(in_|out_|io_|str_|int_|bool_|dict_|dt_|sec_)\w+$/.test(val) ||
+          /\w+\.\w+\(/.test(val) ||
+          /\bNew\s/.test(val) ||
+          /\bDirectCast\b/.test(val) ||
+          /\bCType\b/.test(val) ||
+          /\bCStr\b/.test(val) ||
+          /\bCInt\b/.test(val) ||
+          /\bNothing\b/.test(val) ||
+          (/\(.*\)/.test(val) && /^[a-zA-Z_]\w*/.test(val));
+        if (looksLikeExpression) {
+          expressionInLiteralViolations.push({
+            category: "accuracy",
+            severity: "error",
+            check: "EXPRESSION_IN_LITERAL_SLOT",
+            file: shortName,
+            detail: `Line ${i + 1}: Variable Default="${val}" contains a VB expression that is not bracket-wrapped — Studio will treat it as a literal string, not an expression`,
+          });
+        }
+      }
+      const retryMatch = /RetryInterval="([^"]+)"/g;
+      let rm;
+      while ((rm = retryMatch.exec(line)) !== null) {
+        const val = rm[1];
+        if (/^\d{1,2}:\d{2}:\d{2}(\.\d+)?$/.test(val)) continue;
+        if (val.startsWith("[") && val.endsWith("]")) continue;
+        if (/[a-zA-Z_]/.test(val) && !/^\d/.test(val)) {
+          expressionInLiteralViolations.push({
+            category: "accuracy",
+            severity: "error",
+            check: "EXPRESSION_IN_LITERAL_SLOT",
+            file: shortName,
+            detail: `Line ${i + 1}: RetryInterval="${val}" contains a VB expression or variable that is not bracket-wrapped — must be hh:mm:ss literal or [expression]`,
+          });
+        }
+      }
+    }
+    const xPropNames = new Set<string>();
+    const xPropPattern = /<x:Property\s+Name="([^"]+)"/g;
+    let xpm;
+    while ((xpm = xPropPattern.exec(entry.content)) !== null) {
+      xPropNames.add(xpm[1]);
+    }
+    const argRefPattern = /\b(in_[A-Za-z]\w*|out_[A-Za-z]\w*|io_[A-Za-z]\w*)\b/g;
+    const allArgRefs = new Set<string>();
+    let argRefM;
+    while ((argRefM = argRefPattern.exec(entry.content)) !== null) {
+      allArgRefs.add(argRefM[1]);
+    }
+    for (const argRef of allArgRefs) {
+      if (!xPropNames.has(argRef)) {
+        const varDeclared = new RegExp(`Name="${argRef}"`).test(entry.content);
+        if (!varDeclared) {
+          expressionInLiteralViolations.push({
+            category: "accuracy",
+            severity: "error",
+            check: "UNDECLARED_ARGUMENT",
+            file: shortName,
+            detail: `Argument "${argRef}" is referenced in expressions but not declared in <x:Members> or as a <Variable>`,
+          });
+        }
+      }
+    }
+  }
+
   const transitiveDependencyViolations = checkTransitiveDependencies(input);
 
   const allViolations = [
@@ -2214,6 +2296,7 @@ export function validatePackage(input: QualityGateInput): QualityGateResult {
     ...doubleEncodingViolations,
     ...unprefixedActivityViolations,
     ...transitiveDependencyViolations,
+    ...expressionInLiteralViolations,
   ];
 
   const hasErrors = allViolations.some(v => v.severity === "error");

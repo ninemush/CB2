@@ -3758,7 +3758,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           .replace(/<(ui:)?(?:TODO_|PLACEHOLDER_)(\w+)\b[^>]*?>[\s\S]*?<\/\1?(?:TODO_|PLACEHOLDER_)\2>/g, commentReplacement)
           .replace(/<(ui:)?(?:TODO_|PLACEHOLDER_)\w+\b[^>]*?\/>/g, commentReplacement);
         const cleaned = afterTagSafety
-          .replace(/\[[^\]]*(?:PLACEHOLDER_\w*|TODO_\w*)[^\]]*\]/g, '[Nothing]')
+          .replace(/\[(?:PLACEHOLDER_\w*|TODO_\w*)\]/g, '[Nothing]')
+          .replace(/="(?:PLACEHOLDER_\w*|TODO_\w*)"/g, '="[Nothing]"')
           .replace(/PLACEHOLDER_\w*/g, '')
           .replace(/TODO_\w*/g, '');
         xamlEntries[i] = { ...xamlEntries[i], content: cleaned };
@@ -3999,13 +4000,6 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                   const propName = correction.property;
                   const className2 = fullTag.includes(":") ? fullTag.split(":").pop()! : fullTag;
                   if (className2 === "Assign" && (propName === "To" || propName === "Value")) {
-                    continue;
-                  }
-                  if ((className2 === "ExcelApplicationScope" && propName === "WorkbookPath") ||
-                      (className2 === "ExcelReadRange" && propName === "DataTable") ||
-                      (className2 === "ExcelWriteRange" && propName === "DataTable") ||
-                      (className2 === "ExcelReadRange" && propName === "SheetName") ||
-                      (className2 === "ExcelWriteRange" && propName === "SheetName")) {
                     continue;
                   }
                   const propVal = attrs[propName];
@@ -4801,12 +4795,26 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         console.log(`[Studio-Loadability] ${shortName}: NOT loadable — ${loadability.reason}`);
       }
     }
+    const dhgFilesWithBlockingFindings = new Set<string>();
+    for (const v of qualityGateResult.violations) {
+      if (v.severity === "error") {
+        dhgFilesWithBlockingFindings.add(v.file || "unknown");
+      }
+    }
+    const dhgFilesWithCatalogViolations = new Set<string>();
+    for (const v of qualityGateResult.violations) {
+      if (v.check === "CATALOG_STRUCTURAL_VIOLATION" || v.check === "CATALOG_VIOLATION") {
+        dhgFilesWithCatalogViolations.add(v.file || "unknown");
+      }
+    }
     const dhgFullyGenerated = Array.from(dhgAllFiles).filter(f =>
       !dhgRemediatedFileSet.has(f) &&
       !earlyStubFallbacks.includes(f) &&
       !dhgFilesWithStructuralDefects.has(f) &&
       !dhgFilesWithStubContent.has(f) &&
-      !dhgStudioNonLoadableFiles.has(f)
+      !dhgStudioNonLoadableFiles.has(f) &&
+      !dhgFilesWithBlockingFindings.has(f) &&
+      !dhgFilesWithCatalogViolations.has(f)
     );
 
     const dhgQualityWarnings = qualityGateResult.violations
@@ -4827,6 +4835,8 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       "invalid-default-value", "policy-blocked-activity", "pseudo-xaml",
       "fake-trycatch", "object-object", "EXPRESSION_SYNTAX_UNFIXABLE",
       "TYPE_MISMATCH", "FOREACH_TYPE_MISMATCH", "LITERAL_TYPE_ERROR",
+      "CATALOG_STRUCTURAL_VIOLATION", "STRING_FORMAT_OVERFLOW",
+      "EXPRESSION_IN_LITERAL_SLOT", "UNDECLARED_ARGUMENT",
     ]);
     const dhgStudioWarningChecks = new Set([
       "placeholder-value", "expression-syntax-mismatch", "invoke-arg-type-mismatch",
@@ -4960,6 +4970,215 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         const hasDeferredKey = deferredXamlKeys.some(p => (p.split("/").pop() || p) === basename);
         if (!hasDeferredKey) {
           console.warn(`[Parity Pre-Check] XAML "${basename}" exists in xamlEntries but not in deferredWrites — orphaned entry`);
+        }
+      }
+    }
+
+    {
+      console.log(`[Tier 2 Argument Reconciliation] Scanning InvokeWorkflowFile argument bindings across all workflows...`);
+      const invokeArgContracts = new Map<string, Set<string>>();
+      for (const [_path, content] of deferredWrites.entries()) {
+        if (!_path.endsWith(".xaml")) continue;
+        const invokePattern = /<ui:InvokeWorkflowFile[^>]*WorkflowFileName="([^"]+)"[^]*?<\/ui:InvokeWorkflowFile>/g;
+        let invokeMatch;
+        while ((invokeMatch = invokePattern.exec(content)) !== null) {
+          const targetFile = invokeMatch[1].replace(/^.*[\\/]/, "");
+          const argBlock = invokeMatch[0];
+          const argKeyPattern = /x:Key="((?:in_|out_|io_)[A-Za-z]\w*)"/g;
+          let akm;
+          while ((akm = argKeyPattern.exec(argBlock)) !== null) {
+            if (!invokeArgContracts.has(targetFile)) invokeArgContracts.set(targetFile, new Set());
+            invokeArgContracts.get(targetFile)!.add(akm[1]);
+          }
+        }
+        const fileName = _path.split("/").pop() || _path;
+        const bodyArgRefs = /\b(in_[A-Za-z]\w*|out_[A-Za-z]\w*|io_[A-Za-z]\w*)\b/g;
+        let bodyArg;
+        while ((bodyArg = bodyArgRefs.exec(content)) !== null) {
+          const xMemberCheck = new RegExp(`<x:Property\\s+Name="${bodyArg[1]}"`);
+          const varCheck = new RegExp(`<Variable[^>]*\\bName="${bodyArg[1]}"`);
+          if (!xMemberCheck.test(content) && !varCheck.test(content)) {
+            if (!invokeArgContracts.has(fileName)) invokeArgContracts.set(fileName, new Set());
+            invokeArgContracts.get(fileName)!.add(bodyArg[1]);
+          }
+        }
+      }
+      let tier2Injections = 0;
+      for (const [dPath, dContent] of deferredWrites.entries()) {
+        if (!dPath.endsWith(".xaml")) continue;
+        const fileName = dPath.split("/").pop() || dPath;
+        const neededArgs = invokeArgContracts.get(fileName);
+        if (!neededArgs || neededArgs.size === 0) continue;
+        let updatedContent = dContent;
+        for (const argName of neededArgs) {
+          const alreadyDeclared = new RegExp(`<x:Property\\s+Name="${argName}"`).test(updatedContent);
+          const isVariable = new RegExp(`<Variable[^>]*\\bName="${argName}"`).test(updatedContent);
+          if (alreadyDeclared || isVariable) continue;
+          const direction = argName.startsWith("out_") ? "OutArgument"
+            : argName.startsWith("io_") ? "InOutArgument"
+            : "InArgument";
+          const typeMap: Record<string, string> = {
+            "str_": "x:String", "int_": "x:Int32", "bool_": "x:Boolean",
+            "dt_": "scg2:DataTable", "dict_": "scg:Dictionary(x:String, x:Object)",
+            "sec_": "x:String", "dbl_": "x:Double",
+          };
+          const prefix = argName.replace(/^(?:in_|out_|io_)/, "").match(/^[a-z]+_/)?.[0] || "";
+          const argType = typeMap[prefix] || "x:String";
+          const propXml = `    <x:Property Name="${argName}" Type="${direction}(${argType})" />\n`;
+          const membersEnd = updatedContent.indexOf("</x:Members>");
+          if (membersEnd >= 0) {
+            updatedContent = updatedContent.slice(0, membersEnd) + propXml + updatedContent.slice(membersEnd);
+            tier2Injections++;
+            console.log(`[Tier 2 Argument Reconciliation] Injected ${direction} "${argName}" into ${fileName}`);
+          }
+        }
+        if (updatedContent !== dContent) {
+          deferredWrites.set(dPath, updatedContent);
+          const matchingEntry = xamlEntries.find(e => (e.name.split("/").pop() || e.name) === fileName);
+          if (matchingEntry) matchingEntry.content = updatedContent;
+        }
+      }
+      console.log(`[Tier 2 Argument Reconciliation] Complete: ${tier2Injections} argument(s) injected across ${invokeArgContracts.size} workflow(s)`);
+      if (tier2Injections > 0) {
+        const beforeCount = qualityGateResult.violations.length;
+        qualityGateResult.violations = qualityGateResult.violations.filter(v => {
+          if (v.check !== "UNDECLARED_ARGUMENT") return true;
+          const argMatch = v.detail.match(/Argument "([^"]+)"/);
+          if (!argMatch) return true;
+          const argName = argMatch[1];
+          const fileName = v.file;
+          const dKey = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === fileName);
+          if (!dKey) return true;
+          const currentContent = deferredWrites.get(dKey)!;
+          return !new RegExp(`<x:Property\\s+Name="${argName}"`).test(currentContent);
+        });
+        const removed = beforeCount - qualityGateResult.violations.length;
+        if (removed > 0) {
+          console.log(`[Tier 2 Argument Reconciliation] Removed ${removed} stale UNDECLARED_ARGUMENT violation(s) resolved by injection`);
+        }
+      }
+    }
+
+    {
+      console.log(`[Post-Repair Validation] Running final XAML validation pass after all post-processing...`);
+      const postRepairViolations: Array<{ category: "blocked-pattern" | "completeness" | "accuracy" | "runtime-safety" | "logic-location"; severity: "error" | "warning"; check: string; file: string; detail: string }> = [];
+
+      for (const [dPath, content] of deferredWrites.entries()) {
+        if (!dPath.endsWith(".xaml")) continue;
+        const shortName = dPath.split("/").pop() || dPath;
+
+        const xmlWellFormed = validateXmlWellFormedness(content);
+        if (!xmlWellFormed.valid) {
+          postRepairViolations.push({ category: "accuracy", severity: "error", check: "INVALID_XML_CONTENT", file: shortName, detail: `Post-repair: XML is not well-formed: ${xmlWellFormed.errors.slice(0, 2).join("; ")}` });
+        }
+
+        const bareExprPattern = /Default="([^"]+)"/g;
+        let bem;
+        while ((bem = bareExprPattern.exec(content)) !== null) {
+          const val = bem[1];
+          if (val === "True" || val === "False" || val === "Nothing" || val === "null") continue;
+          if (/^[0-9]+(\.[0-9]+)?$/.test(val)) continue;
+          if (val.startsWith("[") && val.endsWith("]")) continue;
+          if (val.startsWith("&quot;") || val.startsWith('"')) continue;
+          if (/^\d{1,2}:\d{2}:\d{2}/.test(val)) continue;
+          if (/^[a-zA-Z][\w\s.,!?;:'-]*$/.test(val) && !/[()]/.test(val) && !/^(in_|out_|io_)/.test(val)) continue;
+          const looksLikeExpr = /^(in_|out_|io_|str_|int_|bool_|dict_|dt_|sec_)\w+$/.test(val) ||
+            /\w+\.\w+\(/.test(val) || /\bNew\s/.test(val) || /\bDirectCast\b/.test(val) ||
+            (/\(.*\)/.test(val) && /^[a-zA-Z_]\w*/.test(val));
+          if (looksLikeExpr) {
+            postRepairViolations.push({ category: "accuracy", severity: "error", check: "EXPRESSION_IN_LITERAL_SLOT", file: shortName, detail: `Post-repair: Variable Default="${val}" still contains an unwrapped VB expression` });
+          }
+        }
+
+        const xPropNames = new Set<string>();
+        const xpp = /<x:Property\s+Name="([^"]+)"/g;
+        let xppm;
+        while ((xppm = xpp.exec(content)) !== null) {
+          xPropNames.add(xppm[1]);
+        }
+        const varNames = new Set<string>();
+        const vp = /<Variable[^>]*\bName="([^"]+)"/g;
+        let vpm;
+        while ((vpm = vp.exec(content)) !== null) {
+          varNames.add(vpm[1]);
+        }
+        const argRefs = /\b(in_[A-Za-z]\w*|out_[A-Za-z]\w*|io_[A-Za-z]\w*)\b/g;
+        let arm;
+        while ((arm = argRefs.exec(content)) !== null) {
+          if (!xPropNames.has(arm[1]) && !varNames.has(arm[1])) {
+            postRepairViolations.push({ category: "accuracy", severity: "error", check: "UNDECLARED_ARGUMENT", file: shortName, detail: `Post-repair: Argument "${arm[1]}" referenced but not declared in x:Members or Variables` });
+            break;
+          }
+        }
+
+        const prefixedStructuralPattern = /<[A-Za-z]+:?[A-Za-z]*\.(_(?:Try|Then|Else|Body|Condition|Catches|Finally|Cases|Default))\b/g;
+        let psm;
+        while ((psm = prefixedStructuralPattern.exec(content)) !== null) {
+          postRepairViolations.push({ category: "accuracy", severity: "error", check: "STRUCTURAL_NAME_MUTATED", file: shortName, detail: `Post-repair: XAML structural member name mutated to "${psm[1]}" — Studio will fail to load this element` });
+        }
+
+        const retryIntervalPattern = /RetryInterval="([^"]+)"/g;
+        let rim;
+        while ((rim = retryIntervalPattern.exec(content)) !== null) {
+          const riVal = rim[1];
+          if (riVal === "00:00:05") {
+            postRepairViolations.push({ category: "accuracy", severity: "warning", check: "RETRY_INTERVAL_DEFAULTED", file: shortName, detail: `Post-repair: RetryInterval defaulted to "00:00:05" — verify this is appropriate for the workflow context` });
+          } else if (riVal.startsWith("[") && riVal.endsWith("]")) {
+            postRepairViolations.push({ category: "accuracy", severity: "warning", check: "RETRY_INTERVAL_EXPRESSION_WRAPPED", file: shortName, detail: `Post-repair: RetryInterval="${riVal}" was bracket-wrapped from a variable/expression — verify the referenced variable is declared` });
+          }
+        }
+      }
+
+      if (postRepairViolations.length > 0) {
+        console.warn(`[Post-Repair Validation] Found ${postRepairViolations.length} issue(s) — injecting into quality gate violations`);
+        for (const v of postRepairViolations) {
+          qualityGateResult.violations.push(v);
+        }
+        for (const compat of dhgStudioCompatibility) {
+          const filePostRepairBlockers = postRepairViolations.filter(v => v.file === compat.file && v.severity === "error");
+          if (filePostRepairBlockers.length > 0 && compat.level !== "studio-blocked") {
+            compat.level = "studio-blocked" as StudioCompatibilityLevel;
+            for (const b of filePostRepairBlockers) {
+              compat.blockers.push(`[${b.check}] ${b.detail}`);
+            }
+          }
+        }
+        assemblerOutcomeReport.studioCompatibility = dhgStudioCompatibility;
+        const postRepairBlockedFiles = new Set(
+          postRepairViolations.filter(v => v.severity === "error").map(v => v.file)
+        );
+        if (postRepairBlockedFiles.size > 0) {
+          const beforeCount = assemblerOutcomeReport.fullyGeneratedFiles.length;
+          assemblerOutcomeReport.fullyGeneratedFiles = assemblerOutcomeReport.fullyGeneratedFiles.filter(
+            f => !postRepairBlockedFiles.has(f.split("/").pop() || f)
+          );
+          const removedCount = beforeCount - assemblerOutcomeReport.fullyGeneratedFiles.length;
+          if (removedCount > 0) {
+            console.log(`[Post-Repair Validation] Removed ${removedCount} file(s) from fullyGeneratedFiles due to post-repair blocking violations`);
+          }
+        }
+        console.log(`[Post-Repair Validation] Studio compatibility recomputed from post-repair violations`);
+      }
+      console.log(`[Post-Repair Validation] Complete: ${postRepairViolations.length} issue(s) found across deferred XAML entries`);
+    }
+
+    {
+      console.log(`[Post-Repair Dependency Reconciliation] Re-scanning packages after all cleanup/repair passes...`);
+      const allDeferredXaml = Array.from(deferredWrites.entries()).filter(([p]) => p.endsWith(".xaml")).map(([_, c]) => c).join("\n");
+      const finalDeps = scanXamlForRequiredPackages(allDeferredXaml);
+      const removedDeps: string[] = [];
+      for (const depName of Object.keys(deps)) {
+        if (depName === "UiPath.System.Activities" || depName === "UiPath.UIAutomation.Activities") continue;
+        const isUsed = Array.from(finalDeps).some(d => normalizePackageName(d) === depName);
+        const isRefInXaml = allDeferredXaml.includes(depName.split(".").pop() || depName);
+        if (!isUsed && !isRefInXaml) {
+          removedDeps.push(depName);
+        }
+      }
+      if (removedDeps.length > 0) {
+        for (const rd of removedDeps) {
+          console.log(`[Post-Repair Dependency Reconciliation] Removing unused dependency: ${rd}`);
+          delete deps[rd];
         }
       }
     }
@@ -5205,6 +5424,7 @@ ${depEntries}
       .filter(v => v.severity === "error" && structuralDefectChecks.has(v.check))
       .map(v => v.file)
   );
+
   const STUB_CONTENT_PATTERNS = [
     "STUB_BLOCKING_FALLBACK",
     "STUB: ",
@@ -5239,12 +5459,29 @@ ${depEntries}
     }
   }
 
+  const filesWithBlockingFindings = new Set<string>();
+  for (const v of qualityGateResult.violations) {
+    if (v.severity === "error") {
+      const file = v.file || "unknown";
+      filesWithBlockingFindings.add(file);
+    }
+  }
+
+  const filesWithCatalogViolations = new Set<string>();
+  for (const v of qualityGateResult.violations) {
+    if (v.check === "CATALOG_STRUCTURAL_VIOLATION" || v.check === "CATALOG_VIOLATION") {
+      filesWithCatalogViolations.add(v.file || "unknown");
+    }
+  }
+
   const fullyGenerated = Array.from(allFiles).filter(f =>
     !remediatedFiles.has(f) &&
     !earlyStubFallbacks.includes(f) &&
     !filesWithStructuralDefects.has(f) &&
     !filesWithStubContent.has(f) &&
-    !studioNonLoadableFiles.has(f)
+    !studioNonLoadableFiles.has(f) &&
+    !filesWithBlockingFindings.has(f) &&
+    !filesWithCatalogViolations.has(f)
   );
 
   const qualityWarnings = qualityGateResult.violations
@@ -5277,6 +5514,14 @@ ${depEntries}
     "TYPE_MISMATCH",
     "FOREACH_TYPE_MISMATCH",
     "LITERAL_TYPE_ERROR",
+    "CATALOG_STRUCTURAL_VIOLATION",
+    "STRING_FORMAT_OVERFLOW",
+    "EXPRESSION_IN_LITERAL_SLOT",
+    "UNDECLARED_ARGUMENT",
+    "CSHARP_DYNAMIC_TYPE",
+    "VB_KEYWORD_AS_VARIABLE",
+    "CSHARP_LAMBDA_VARIABLE",
+    "STRUCTURAL_NAME_MUTATED",
   ]);
   const studioWarningChecks = new Set([
     "placeholder-value",
