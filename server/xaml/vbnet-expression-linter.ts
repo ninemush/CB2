@@ -109,6 +109,22 @@ function testOutsideStrings(input: string, pattern: RegExp): boolean {
   return pattern.test(withoutStrings);
 }
 
+function looksLikeLogMessageText(expr: string): boolean {
+  if (/\u2014/.test(expr)) return true;
+  if (/^\[[\w]+\]\s+[A-Z]+\s/.test(expr)) return true;
+  if (/\b(WARN|INFO|ERROR|DEBUG|TRACE|FATAL)\b/.test(expr) && /\s{2,}|\u2014|—/.test(expr)) return true;
+  const words = expr.split(/\s+/);
+  if (words.length >= 5 && /[a-z]/.test(expr) && !/[()=<>&|]/.test(expr) && /[.,!?;:'"…\-]/.test(expr)) return true;
+  return false;
+}
+
+function looksLikeFilenameOrUrl(expr: string): boolean {
+  if (/^[\w./-]+\.\w{1,5}$/.test(expr.trim())) return true;
+  if (/^[\w./-]+(\/[\w./-]+){2,}/.test(expr.trim())) return true;
+  if (/^\w+\/v\d+\//.test(expr.trim())) return true;
+  return false;
+}
+
 export function extractExpressions(xamlContent: string, fileName: string): ExpressionLocation[] {
   const results: ExpressionLocation[] = [];
   const lines = xamlContent.split("\n");
@@ -122,6 +138,8 @@ export function extractExpressions(xamlContent: string, fileName: string): Expre
       const expr = m[1];
       if (!expr || expr.startsWith("&quot;") || expr.startsWith("\"")) continue;
       if (/^x:|^xmlns:|^mc:|^sap/.test(expr)) continue;
+      if (looksLikeLogMessageText(expr)) continue;
+      if (looksLikeFilenameOrUrl(expr)) continue;
       results.push({
         file: fileName,
         line: i + 1,
@@ -197,6 +215,8 @@ export function extractExpressions(xamlContent: string, fileName: string): Expre
     const expr = mm[2];
     if (!expr) continue;
     if (expr.startsWith("&quot;") || expr.startsWith("\"")) continue;
+    if (looksLikeLogMessageText(expr)) continue;
+    if (looksLikeFilenameOrUrl(expr)) continue;
     const lineNum = xamlContent.substring(0, mm.index).split("\n").length;
     const alreadyFound = results.some(r => r.expression === expr && Math.abs(r.line - lineNum) <= 2);
     if (!alreadyFound) {
@@ -911,7 +931,7 @@ const COMPLIANCE_CLR_EXTRA_NAMES = new Set([
 export function findUndeclaredVariables(expression: string, declaredVars: Set<string>): string[] {
   const undeclared: string[] = [];
   const trimmedExpr = expression.trim();
-  if (/^"[^"]*"$/.test(trimmedExpr) || /^&quot;.*&quot;$/.test(trimmedExpr)) return undeclared;
+  if (/^"(?:[^"]|"")*"$/.test(trimmedExpr) || /^&quot;.*&quot;$/.test(trimmedExpr)) return undeclared;
 
   if (/^\[[\w]+\]\s*(WARN|INFO|ERROR|DEBUG)\b/.test(trimmedExpr) && /\s—\s/.test(trimmedExpr)) return undeclared;
   if (/^\[[\w]+\]/.test(trimmedExpr) && /\s—\s/.test(trimmedExpr)) return undeclared;
@@ -919,20 +939,6 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
   const decoded = decodeXmlEntities(expression);
   const vbStringPattern = /"(?:[^"]|"")*"/g;
   const exprWithoutStrings = decoded.replace(vbStringPattern, (m) => " ".repeat(m.length));
-
-  const lambdaParams = new Set<string>();
-  const lambdaPattern = /\bFunction\s*\(([^)]*)\)/gi;
-  let lm;
-  while ((lm = lambdaPattern.exec(exprWithoutStrings)) !== null) {
-    const paramList = lm[1];
-    const params = paramList.split(",");
-    for (const p of params) {
-      const paramName = p.trim().split(/\s+/)[0];
-      if (paramName && /^[a-zA-Z_]\w*$/.test(paramName)) {
-        lambdaParams.add(paramName);
-      }
-    }
-  }
 
   const memberAccessTokens = new Set<string>();
   const memberPattern = /\.([a-zA-Z_]\w*)/g;
@@ -945,6 +951,20 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
   const invokePattern = /\b([a-zA-Z_]\w*)\s*\(/g;
   while ((mm = invokePattern.exec(exprWithoutStrings)) !== null) {
     invokedTokens.add(mm[1]);
+  }
+
+  const lambdaParams = new Set<string>();
+  const lambdaPattern = /\b(?:Function|Sub)\s*\(([^)]*)\)/gi;
+  let lm;
+  while ((lm = lambdaPattern.exec(exprWithoutStrings)) !== null) {
+    const paramList = lm[1];
+    for (const param of paramList.split(",")) {
+      const parts = param.trim().split(/\s+/);
+      const name = /^(byval|byref)$/i.test(parts[0]) ? parts[1] : parts[0];
+      if (name && /^[a-zA-Z_]\w*$/.test(name)) {
+        lambdaParams.add(name);
+      }
+    }
   }
 
   const COMMON_FILE_EXTENSIONS = new Set([
@@ -1006,7 +1026,6 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
     if (VB_BUILTIN_TYPES_LOWER.has(identLower)) continue;
     if (VB_BUILTIN_FUNCTIONS_LOWER.has(identLower)) continue;
     if (declaredVars.has(ident)) continue;
-
     if (lambdaParams.has(ident)) continue;
 
     if (COMPLIANCE_XML_ENTITY_NAMES.has(ident)) continue;

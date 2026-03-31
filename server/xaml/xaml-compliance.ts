@@ -319,6 +319,13 @@ export function ensureBracketWrapped(val: string): string {
   const trimmed = val.trim();
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
   if (trimmed.startsWith("<InArgument") || trimmed.startsWith("<OutArgument")) return trimmed;
+  if (trimmed.startsWith("\"") || trimmed.startsWith("'")) return trimmed;
+  if (/^\d+$/.test(trimmed)) return trimmed;
+  if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing" || trimmed === "null") return trimmed;
+  if (looksLikePlainText(trimmed)) {
+    const escaped = trimmed.replace(/"/g, '""');
+    return `"${escaped}"`;
+  }
   return `[${trimmed}]`;
 }
 
@@ -361,8 +368,11 @@ export function smartBracketWrap(val: string): string {
 function looksLikePlainText(val: string): boolean {
   if (/^[a-zA-Z_]\w*\(/.test(val)) return false;
   if (/[+\-*/&=<>]/.test(val) && !/[.,!?;:'"…]/.test(val)) return false;
-  if (/^[a-zA-Z_]\w*\.[a-zA-Z_]\w*/.test(val)) return false;
   if (/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_)/i.test(val)) return false;
+  if (/\b[\w_]+\.(json|xml|xlsx|csv|txt|log|config|pdf|html|xaml)\b/i.test(val)) return true;
+  if (/\w+\/\w+\/\w+/.test(val)) return true;
+  if (/\u2014/.test(val)) return true;
+  if (/^[a-zA-Z_]\w*\.[a-zA-Z_]\w*/.test(val) && !/\s/.test(val)) return false;
   if (/\s/.test(val) || /[.,!?;:()'"…]/.test(val)) return true;
   if (/^[a-zA-Z_]\w*$/.test(val) && !/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_)/i.test(val)) {
     return false;

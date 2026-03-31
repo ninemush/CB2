@@ -855,6 +855,10 @@ function ensureBracketWrapped(expr: string): string {
   if (trimmed.startsWith("\"") || trimmed.startsWith("'")) return trimmed;
   if (/^\d+$/.test(trimmed)) return trimmed;
   if (trimmed === "True" || trimmed === "False") return trimmed;
+  if (looksLikeStringLiteral(trimmed)) {
+    const escaped = trimmed.replace(/"/g, '""');
+    return `"${escaped}"`;
+  }
   return `[${trimmed}]`;
 }
 
@@ -876,13 +880,19 @@ function looksLikeVbExpression(val: string): boolean {
   if (/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_)/i.test(trimmed)) return true;
   if (/^[a-zA-Z_]\w*\(/.test(trimmed)) return true;
   if (/[+\-*/&=<>]/.test(trimmed) && !/[.,!?;:'"…]/.test(trimmed)) return true;
-  if (/^[a-zA-Z_]\w*\.[a-zA-Z_]\w*/.test(trimmed)) return true;
+  if (/^[a-zA-Z_]\w*\.[a-zA-Z_]\w*/.test(trimmed)) {
+    if (/\.(json|xml|xlsx|csv|txt|log|config|pdf|html|xaml|dll|exe|zip|png|jpg)$/i.test(trimmed)) return false;
+    return true;
+  }
   return false;
 }
 
 function looksLikeStringLiteral(val: string): boolean {
   const trimmed = val.trim();
   if (!trimmed) return false;
+  if (/\b[\w_]+\.(json|xml|xlsx|csv|txt|log|config|pdf|html|xaml|dll|exe|zip|png|jpg)\b/i.test(trimmed)) return true;
+  if (/\w+\/\w+\/\w+/.test(trimmed) && !/[()=<>]/.test(trimmed)) return true;
+  if (/\u2014/.test(trimmed)) return true;
   if (looksLikeVbExpression(trimmed)) return false;
   return true;
 }
@@ -896,7 +906,10 @@ function isVbExpression(val: string): boolean {
   if (/^[0-9]+(\.[0-9]+)?$/.test(trimmed)) return true;
   if (/^New\s/.test(trimmed)) return true;
   if (/[()=<>&|+*/^]/.test(trimmed)) return true;
-  if (/\b\w+\.\w+/.test(trimmed)) return true;
+  if (/\b\w+\.\w+/.test(trimmed)) {
+    if (/\.(json|xml|xlsx|csv|txt|log|config|pdf|html|xaml|dll|exe|zip|png|jpg)$/i.test(trimmed)) return false;
+    return true;
+  }
   if (/\b(AndAlso|OrElse|Not|Mod|Xor|Is|IsNot|Like)\b/.test(trimmed)) return true;
   if (trimmed.startsWith("in_") || trimmed.startsWith("out_") || trimmed.startsWith("io_")) return true;
   if (/^(str|int|bool|dbl|dec|obj|dt|ts|drow|qi|arr|dict|list|sec)_/i.test(trimmed)) return true;
