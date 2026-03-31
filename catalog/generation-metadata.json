@@ -63,9 +63,9 @@
       "verificationSource": "uipath-official-feed"
     },
     "UiPath.GenAI.Activities": {
-      "preferred": "1.0.0",
-      "lastVerifiedAt": "2026-03-25T00:00:00Z",
-      "verificationSource": "studio-bundled"
+      "preferred": "1.1.0",
+      "lastVerifiedAt": "2026-03-31T00:00:00Z",
+      "verificationSource": "uipath-official-feed"
     },
     "UiPath.WebAPI.Activities": {
       "preferred": "2.4.0",

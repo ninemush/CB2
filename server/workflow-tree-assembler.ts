@@ -1528,13 +1528,14 @@ function resolveHttpClientTemplate(node: ActivityNode): string {
 
   let wrappedEndpoint: string;
   if (endpointResolved.startsWith("[") && endpointResolved.endsWith("]")) {
-    wrappedEndpoint = endpointResolved;
+    const inner = endpointResolved.slice(1, -1);
+    wrappedEndpoint = `[${escapeXmlExpression(inner)}]`;
   } else if (/^[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*$/.test(endpointResolved)) {
     wrappedEndpoint = `[${endpointResolved}]`;
   } else if (/^https?:\/\//.test(endpointResolved) || endpointResolved.includes("://")) {
     wrappedEndpoint = `[&quot;${escapeXml(endpointResolved)}&quot;]`;
   } else {
-    wrappedEndpoint = `[${endpointResolved}]`;
+    wrappedEndpoint = `[${escapeXmlExpression(endpointResolved)}]`;
   }
 
   let xml = `<${tag} DisplayName="${displayName}" Endpoint="${wrappedEndpoint}" Method="${escapeXml(method)}"`;

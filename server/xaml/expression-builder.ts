@@ -1,9 +1,5 @@
 import { z } from "zod";
-import { escapeXml, escapeXmlExpression } from "../lib/xml-utils";
 
-function escapeXmlInner(str: string): string {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 const VARIABLE_NAME_ONLY = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
@@ -84,7 +80,7 @@ export function buildExpression(intent: ValueIntent): string {
       return buildComparisonExpression(intent.left, intent.operator, intent.right);
 
     case "vb_expression":
-      return `[${escapeXmlInner(intent.value)}]`;
+      return `[${intent.value}]`;
   }
 }
 
@@ -116,17 +112,17 @@ export function buildUrlExpression(baseUrl: string, params: Record<string, strin
     }
   }
 
-  return `[${escapeXmlInner(parts.join(" & "))}]`;
+  return `[${parts.join(" & ")}]`;
 }
 
 function buildComparisonExpression(left: string, operator: string, right: string): string {
   const normalizedOp = OPERATOR_NORMALIZE[operator] || operator;
   if (isAllowedLeft(left) && isAllowedRight(right)) {
-    return `[${escapeXmlInner(`${left.trim()} ${normalizedOp} ${right.trim()}`)}]`;
+    return `[${left.trim()} ${normalizedOp} ${right.trim()}]`;
   }
 
   const rawExpression = `${left.trim()} ${normalizedOp} ${right.trim()}`;
-  return `[${escapeXmlExpression(rawExpression)}]`;
+  return `[${rawExpression}]`;
 }
 
 const ALLOWED_OPERATOR_SET = new Set<string>(ALLOWED_OPERATORS);

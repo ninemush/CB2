@@ -1165,6 +1165,38 @@ export function resolveDependencies(
     deps[pkgName] = version;
   }
 
+  const basePackages = new Set<string>([
+    "UiPath.System.Activities",
+    "UiPath.Excel.Activities",
+    "UiPath.UIAutomation.Activities",
+  ]);
+  if (studioProfile) {
+    for (const requiredPkg of studioProfile.minimumRequiredPackages) {
+      basePackages.add(normalizePackageName(requiredPkg));
+    }
+  }
+
+  const prunedPackages: string[] = [];
+  for (const pkgName of Object.keys(deps)) {
+    if (basePackages.has(pkgName)) continue;
+    const prov = packageProvenance[pkgName];
+    const hasActivityReference = prov && prov.activities.length > 0;
+    const hasSpecPrediction = specPredictedPackages.has(pkgName);
+    if (!hasActivityReference && !hasSpecPrediction) {
+      prunedPackages.push(pkgName);
+      delete deps[pkgName];
+    }
+  }
+  if (prunedPackages.length > 0) {
+    console.log(`[Dependency Resolution] Pruned ${prunedPackages.length} unreferenced packages: ${prunedPackages.join(", ")}`);
+    warnings.push({
+      code: "PRUNED_UNREFERENCED_PACKAGES",
+      message: `Removed ${prunedPackages.length} packages not referenced by any activity: ${prunedPackages.join(", ")}`,
+      stage: "dependency-resolution",
+      recoverable: true,
+    });
+  }
+
   validateAndEnforceDependencyCompatibility(deps, warnings);
 
   console.log(`[Dependency Resolution] Resolved ${Object.keys(deps).length} dependencies proactively from ${referencedPackages.size} referenced packages (${specPredictedPackages.size} spec-predicted)`);

@@ -77,7 +77,7 @@ describe("ValueIntent Expression Builder", () => {
       expect(result).toContain("[");
       expect(result).toContain("]");
       expect(result).toContain("str_CityName");
-      expect(result).toContain('"&amp;"');
+      expect(result).toContain('"&"');
       expect(result).not.toContain("&&");
     });
 
@@ -109,7 +109,7 @@ describe("ValueIntent Expression Builder", () => {
         operator: "<>",
         right: "200",
       });
-      expect(result).toBe("[int_StatusCode &lt;&gt; 200]");
+      expect(result).toBe("[int_StatusCode <> 200]");
     });
 
     it("builds a > comparison", () => {
@@ -119,7 +119,7 @@ describe("ValueIntent Expression Builder", () => {
         operator: ">",
         right: "0",
       });
-      expect(result).toBe("[int_Count &gt; 0]");
+      expect(result).toBe("[int_Count > 0]");
     });
 
     it("builds a >= comparison", () => {
@@ -129,7 +129,7 @@ describe("ValueIntent Expression Builder", () => {
         operator: ">=",
         right: "100.5",
       });
-      expect(result).toBe("[dbl_Amount &gt;= 100.5]");
+      expect(result).toBe("[dbl_Amount >= 100.5]");
     });
 
     it("builds equality with string literal on right", () => {
@@ -142,7 +142,7 @@ describe("ValueIntent Expression Builder", () => {
       expect(result).toBe("[str_Status = \"Active\"]");
     });
 
-    it("falls back to escaped bracket-wrapping for complex left operand", () => {
+    it("falls back to raw bracket-wrapping for complex left operand", () => {
       const result = buildExpression({
         type: "expression",
         left: "obj.GetValue(\"key\")",
@@ -150,11 +150,11 @@ describe("ValueIntent Expression Builder", () => {
         right: "Nothing",
       });
       expect(result).toMatch(/^\[.*\]$/);
-      expect(result).toContain("&lt;&gt;");
-      expect(result).toContain("&quot;");
+      expect(result).toContain("<>");
+      expect(result).toContain('"key"');
     });
 
-    it("falls back to escaped bracket-wrapping for dotted left operand", () => {
+    it("falls back to raw bracket-wrapping for dotted left operand", () => {
       const result = buildExpression({
         type: "expression",
         left: "obj.Property",
@@ -162,7 +162,7 @@ describe("ValueIntent Expression Builder", () => {
         right: '"Active"',
       });
       expect(result).toMatch(/^\[.*\]$/);
-      expect(result).toContain("obj.Property = &quot;Active&quot;");
+      expect(result).toContain('obj.Property = "Active"');
     });
 
     it("falls back when right contains function call", () => {
@@ -173,7 +173,7 @@ describe("ValueIntent Expression Builder", () => {
         right: "CStr(obj_X)",
       });
       expect(result).toMatch(/^\[.*\]$/);
-      expect(result).toContain("&lt;&gt;");
+      expect(result).toContain("<>");
     });
   });
 
@@ -401,7 +401,7 @@ describe("ValueIntent Expression Builder", () => {
       const result = ValueIntentSchema.safeParse({ type: "expression", left: "x", operator: "!=", right: "5" });
       expect(result.success).toBe(true);
       const built = buildExpression({ type: "expression", left: "x", operator: "!=", right: "5" });
-      expect(built).toBe("[x &lt;&gt; 5]");
+      expect(built).toBe("[x <> 5]");
     });
 
     it("rejects unsupported operators like + or *", () => {
@@ -559,35 +559,35 @@ describe("ValueIntent Expression Builder", () => {
     });
   });
 
-  describe("buildExpression XML escaping", () => {
-    it("expression type escapes <> to &lt;&gt; for not-equals", () => {
+  describe("buildExpression returns raw (unescaped) expressions", () => {
+    it("expression type returns raw <> for not-equals", () => {
       const result = buildExpression({
         type: "expression",
         left: "int_StatusCode",
         operator: "<>",
         right: "200",
       });
-      expect(result).toBe("[int_StatusCode &lt;&gt; 200]");
+      expect(result).toBe("[int_StatusCode <> 200]");
     });
 
-    it("expression type escapes < to &lt; for less-than", () => {
+    it("expression type returns raw < for less-than", () => {
       const result = buildExpression({
         type: "expression",
         left: "int_Count",
         operator: "<",
         right: "100",
       });
-      expect(result).toBe("[int_Count &lt; 100]");
+      expect(result).toBe("[int_Count < 100]");
     });
 
-    it("url type escapes & concatenation operators to &amp;", () => {
+    it("url type returns raw & concatenation operators", () => {
       const result = buildExpression({
         type: "url_with_params",
         baseUrl: "https://api.example.com/data",
         params: { city: "str_City", key: "str_Key" },
       });
-      expect(result).toContain("&amp;");
-      expect(result).not.toMatch(/(?<![&])&(?!amp;)/);
+      expect(result).toContain("&");
+      expect(result).not.toContain("&amp;");
     });
   });
 
@@ -612,7 +612,7 @@ describe("ValueIntent Expression Builder", () => {
 
     it("buildExpression bracket-wraps vb_expression value", () => {
       const result = buildExpression({ type: "vb_expression", value: '"Hello " & in_Name' });
-      expect(result).toBe('["Hello " &amp; in_Name]');
+      expect(result).toBe('["Hello " & in_Name]');
     });
 
     it("buildExpression handles String.Format in vb_expression", () => {
