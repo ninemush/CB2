@@ -79,7 +79,7 @@ const VB_BUILTIN_FUNCTIONS = new Set([
 function replaceOutsideStrings(input: string, pattern: RegExp, replacement: string | ((...args: string[]) => string)): string {
   const segments: { text: string; isString: boolean }[] = [];
   let current = 0;
-  const stringPattern = /"(?:[^"\\]|\\.)*"/g;
+  const stringPattern = /"(?:[^"]|"")*"/g;
   let sm;
   while ((sm = stringPattern.exec(input)) !== null) {
     if (sm.index > current) {
@@ -104,7 +104,7 @@ function replaceOutsideStrings(input: string, pattern: RegExp, replacement: stri
 }
 
 function testOutsideStrings(input: string, pattern: RegExp): boolean {
-  const stringPattern = /"(?:[^"\\]|\\.)*"/g;
+  const stringPattern = /"(?:[^"]|"")*"/g;
   const withoutStrings = input.replace(stringPattern, (m) => " ".repeat(m.length));
   return pattern.test(withoutStrings);
 }
@@ -886,6 +886,13 @@ function decodeXmlEntities(s: string): string {
     .replace(/&apos;/g, "'");
 }
 
+const VB_KEYWORDS_LOWER = new Set<string>();
+VB_KEYWORDS.forEach(k => VB_KEYWORDS_LOWER.add(k.toLowerCase()));
+const VB_BUILTIN_TYPES_LOWER = new Set<string>();
+VB_BUILTIN_TYPES.forEach(k => VB_BUILTIN_TYPES_LOWER.add(k.toLowerCase()));
+const VB_BUILTIN_FUNCTIONS_LOWER = new Set<string>();
+VB_BUILTIN_FUNCTIONS.forEach(k => VB_BUILTIN_FUNCTIONS_LOWER.add(k.toLowerCase()));
+
 const COMPLIANCE_XML_ENTITY_NAMES = new Set(["gt", "lt", "amp", "quot", "apos"]);
 const COMPLIANCE_CLR_EXTRA_NAMES = new Set([
   "HttpClient", "Newtonsoft", "JObject", "JArray", "JToken", "JValue",
@@ -905,9 +912,27 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
   const undeclared: string[] = [];
   const trimmedExpr = expression.trim();
   if (/^"[^"]*"$/.test(trimmedExpr) || /^&quot;.*&quot;$/.test(trimmedExpr)) return undeclared;
+
+  if (/^\[[\w]+\]\s*(WARN|INFO|ERROR|DEBUG)\b/.test(trimmedExpr) && /\s—\s/.test(trimmedExpr)) return undeclared;
+  if (/^\[[\w]+\]/.test(trimmedExpr) && /\s—\s/.test(trimmedExpr)) return undeclared;
+
   const decoded = decodeXmlEntities(expression);
-  const stringPattern = /"(?:[^"\\]|\\.)*"/g;
-  const exprWithoutStrings = decoded.replace(stringPattern, (m) => " ".repeat(m.length));
+  const vbStringPattern = /"(?:[^"]|"")*"/g;
+  const exprWithoutStrings = decoded.replace(vbStringPattern, (m) => " ".repeat(m.length));
+
+  const lambdaParams = new Set<string>();
+  const lambdaPattern = /\bFunction\s*\(([^)]*)\)/gi;
+  let lm;
+  while ((lm = lambdaPattern.exec(exprWithoutStrings)) !== null) {
+    const paramList = lm[1];
+    const params = paramList.split(",");
+    for (const p of params) {
+      const paramName = p.trim().split(/\s+/)[0];
+      if (paramName && /^[a-zA-Z_]\w*$/.test(paramName)) {
+        lambdaParams.add(paramName);
+      }
+    }
+  }
 
   const memberAccessTokens = new Set<string>();
   const memberPattern = /\.([a-zA-Z_]\w*)/g;
@@ -922,6 +947,51 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
     invokedTokens.add(mm[1]);
   }
 
+  const COMMON_FILE_EXTENSIONS = new Set([
+    "json", "xlsx", "xml", "txt", "csv", "pdf", "docx", "html", "htm",
+    "log", "zip", "png", "jpg", "jpeg", "gif", "bmp", "yaml", "yml",
+    "config", "xaml", "dll", "exe", "bat", "ps1", "sql", "xls", "doc",
+  ]);
+
+  const stringLiterals: string[] = [];
+  const vbStrExtract = /"(?:[^"]|"")*"/g;
+  let sl;
+  while ((sl = vbStrExtract.exec(decoded)) !== null) {
+    stringLiterals.push(sl[0]);
+  }
+  const stringContent = stringLiterals.join(" ");
+
+  const filenameParts = new Set<string>();
+  const filenameExtPattern = /([\w][\w\-]*)\.(\w+)\b/g;
+  let fm;
+  while ((fm = filenameExtPattern.exec(stringContent)) !== null) {
+    if (COMMON_FILE_EXTENSIONS.has(fm[2].toLowerCase())) {
+      const fullMatch = fm[0];
+      const startIdx = fm.index;
+      let extendedStart = startIdx;
+      while (extendedStart > 0 && /[\w\-]/.test(stringContent[extendedStart - 1])) {
+        extendedStart--;
+      }
+      const fullFilename = stringContent.substring(extendedStart, startIdx) + fullMatch;
+      const dotIdx = fullFilename.lastIndexOf(".");
+      if (dotIdx > 0) {
+        filenameParts.add(fullFilename.substring(0, dotIdx));
+      }
+      for (const part of fullFilename.split(/[._\-]/)) {
+        if (part) filenameParts.add(part);
+      }
+    }
+  }
+
+  const urlPathParts = new Set<string>();
+  const urlPathPattern = /\b\w+\/\w+(?:\/\w+)*(?::[\w]+)?/g;
+  let um;
+  while ((um = urlPathPattern.exec(stringContent)) !== null) {
+    for (const part of um[0].split(/[/:]/)) {
+      if (part) urlPathParts.add(part);
+    }
+  }
+
   const identPattern = /\b([a-zA-Z_]\w*)\b/g;
   let m;
   const seen = new Set<string>();
@@ -931,10 +1001,13 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
     if (seen.has(ident)) continue;
     seen.add(ident);
 
-    if (VB_KEYWORDS.has(ident)) continue;
-    if (VB_BUILTIN_TYPES.has(ident)) continue;
-    if (VB_BUILTIN_FUNCTIONS.has(ident)) continue;
+    const identLower = ident.toLowerCase();
+    if (VB_KEYWORDS_LOWER.has(identLower)) continue;
+    if (VB_BUILTIN_TYPES_LOWER.has(identLower)) continue;
+    if (VB_BUILTIN_FUNCTIONS_LOWER.has(identLower)) continue;
     if (declaredVars.has(ident)) continue;
+
+    if (lambdaParams.has(ident)) continue;
 
     if (COMPLIANCE_XML_ENTITY_NAMES.has(ident)) continue;
 
@@ -960,11 +1033,11 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
       }
     }
     if (expression.includes("-") && expression.includes(".")) {
-      const filenamePattern = /[\w]+-[\w]+\.[\w]+/;
-      if (filenamePattern.test(expression)) {
-        const filenameParts = expression.match(/[\w]+-[\w]+\.[\w]+/g) || [];
+      const fnPattern = /[\w]+-[\w]+\.[\w]+/;
+      if (fnPattern.test(expression)) {
+        const fnParts = expression.match(/[\w]+-[\w]+\.[\w]+/g) || [];
         const allTokenParts = new Set<string>();
-        for (const fp of filenameParts) {
+        for (const fp of fnParts) {
           for (const part of fp.split(/[-._]/)) {
             if (part) allTokenParts.add(part);
           }
@@ -973,13 +1046,16 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
       }
     }
 
+    if (filenameParts.has(ident)) continue;
+    if (urlPathParts.has(ident)) continue;
+
     const charBefore = m.index > 0 ? exprWithoutStrings[m.index - 1] : "";
     if (charBefore === ".") continue;
 
     if (/^[A-Z][a-z]/.test(ident) && (expression.includes(`${ident}.`) || decoded.includes(`${ident}.`))) continue;
     if (/^[A-Z][a-z]/.test(ident) && (expression.includes(`${ident}(`) || decoded.includes(`${ident}(`))) continue;
 
-    if (/^[A-Z]{2,}$/.test(ident)) continue;
+    if (/^[A-Z][A-Z0-9_]{1,}$/.test(ident)) continue;
 
     if (/^(x|s|ui|scg|scg2|mva|sap|sap2010|mc|sads|local|p)$/.test(ident)) continue;
 
