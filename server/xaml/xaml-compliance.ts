@@ -21,7 +21,7 @@ export interface PackageNamespaceInfo {
 export const PACKAGE_NAMESPACE_MAP: Record<string, PackageNamespaceInfo> = {
   "UiPath.UIAutomation.Activities": { prefix: "ui", xmlns: "http://schemas.uipath.com/workflow/activities", clrNamespace: "UiPath.Core.Activities", assembly: "UiPath.UIAutomation.Activities" },
   "UiPath.System.Activities": { prefix: "ui", xmlns: "http://schemas.uipath.com/workflow/activities", clrNamespace: "UiPath.Core.Activities", assembly: "UiPath.System.Activities" },
-  "UiPath.Web.Activities": { prefix: "uweb", xmlns: "clr-namespace:UiPath.Web.Activities;assembly=UiPath.Web.Activities", clrNamespace: "UiPath.Web.Activities", assembly: "UiPath.Web.Activities" },
+  "UiPath.WebAPI.Activities": { prefix: "uweb", xmlns: "clr-namespace:UiPath.WebAPI.Activities;assembly=UiPath.WebAPI.Activities", clrNamespace: "UiPath.WebAPI.Activities", assembly: "UiPath.WebAPI.Activities" },
   "UiPath.DataService.Activities": { prefix: "uds", xmlns: "clr-namespace:UiPath.DataService.Activities;assembly=UiPath.DataService.Activities", clrNamespace: "UiPath.DataService.Activities", assembly: "UiPath.DataService.Activities" },
   "UiPath.Persistence.Activities": { prefix: "upers", xmlns: "clr-namespace:UiPath.Persistence.Activities;assembly=UiPath.Persistence.Activities", clrNamespace: "UiPath.Persistence.Activities", assembly: "UiPath.Persistence.Activities" },
   "UiPath.Excel.Activities": { prefix: "uexcel", xmlns: "clr-namespace:UiPath.Excel.Activities;assembly=UiPath.Excel.Activities", clrNamespace: "UiPath.Excel.Activities", assembly: "UiPath.Excel.Activities" },
@@ -37,7 +37,6 @@ export const PACKAGE_NAMESPACE_MAP: Record<string, PackageNamespaceInfo> = {
   "UiPath.Testing.Activities": { prefix: "utest", xmlns: "clr-namespace:UiPath.Testing.Activities;assembly=UiPath.Testing.Activities", clrNamespace: "UiPath.Testing.Activities", assembly: "UiPath.Testing.Activities" },
   "UiPath.Form.Activities": { prefix: "uform", xmlns: "clr-namespace:UiPath.Form.Activities;assembly=UiPath.Form.Activities", clrNamespace: "UiPath.Form.Activities", assembly: "UiPath.Form.Activities" },
   "UiPath.Cryptography.Activities": { prefix: "ucrypt", xmlns: "clr-namespace:UiPath.Cryptography.Activities;assembly=UiPath.Cryptography.Activities", clrNamespace: "UiPath.Cryptography.Activities", assembly: "UiPath.Cryptography.Activities" },
-  "UiPath.WebAPI.Activities": { prefix: "uwapi", xmlns: "clr-namespace:UiPath.WebAPI.Activities;assembly=UiPath.WebAPI.Activities", clrNamespace: "UiPath.WebAPI.Activities", assembly: "UiPath.WebAPI.Activities" },
   "UiPath.ComplexScenarios.Activities": { prefix: "ucs", xmlns: "clr-namespace:UiPath.ComplexScenarios.Activities;assembly=UiPath.ComplexScenarios.Activities", clrNamespace: "UiPath.ComplexScenarios.Activities", assembly: "UiPath.ComplexScenarios.Activities" },
   "UiPath.AmazonWebServices.Activities": { prefix: "uaws", xmlns: "clr-namespace:UiPath.AmazonWebServices.Activities;assembly=UiPath.AmazonWebServices.Activities", clrNamespace: "UiPath.AmazonWebServices.Activities", assembly: "UiPath.AmazonWebServices.Activities" },
   "UiPath.Amazon.Textract.Activities": { prefix: "utxt", xmlns: "clr-namespace:UiPath.Amazon.Textract.Activities;assembly=UiPath.Amazon.Textract.Activities", clrNamespace: "UiPath.Amazon.Textract.Activities", assembly: "UiPath.Amazon.Textract.Activities" },
@@ -291,7 +290,7 @@ export function buildDynamicAssemblyRefs(usedPackages: Set<string>, existingXml?
     refs.push(`      <AssemblyReference>${info.assembly}</AssemblyReference>`);
   });
 
-  if (usedPackages.has("UiPath.Web.Activities") && !existingRefs.has("Newtonsoft.Json")) {
+  if (usedPackages.has("UiPath.WebAPI.Activities") && !existingRefs.has("Newtonsoft.Json")) {
     refs.push(`      <AssemblyReference>Newtonsoft.Json</AssemblyReference>`);
   }
 
@@ -308,7 +307,7 @@ export function buildDynamicNamespaceImports(usedPackages: Set<string>): string 
     imports.push(`      <x:String>${info.clrNamespace}</x:String>`);
   });
 
-  if (usedPackages.has("UiPath.Web.Activities")) {
+  if (usedPackages.has("UiPath.WebAPI.Activities")) {
     imports.push(`      <x:String>Newtonsoft.Json</x:String>`);
     imports.push(`      <x:String>Newtonsoft.Json.Linq</x:String>`);
   }
@@ -966,7 +965,7 @@ function injectDynamicNamespaceDeclarations(xml: string, isCrossPlatform: boolea
 
   const hasNewtonsoftTypes = /JObject|JToken|JArray|JsonConvert|Newtonsoft/i.test(xml);
   if (hasNewtonsoftTypes) {
-    usedPackages.add("UiPath.Web.Activities");
+    usedPackages.add("UiPath.WebAPI.Activities");
   }
 
   const additionalXmlns = buildDynamicXmlnsDeclarations(usedPackages, isCrossPlatform, xml);

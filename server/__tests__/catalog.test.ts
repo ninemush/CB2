@@ -126,7 +126,7 @@ describe("Activity Catalog", () => {
       const schema = catalogService.getActivitySchema("HttpClient");
       expect(schema).not.toBeNull();
       expect(schema!.activity.className).toBe("HttpClient");
-      expect(schema!.packageId).toBe("UiPath.Web.Activities");
+      expect(schema!.packageId).toBe("UiPath.WebAPI.Activities");
       const methodProp = schema!.activity.properties.find(p => p.name === "Method");
       expect(methodProp).toBeDefined();
       expect(methodProp!.required).toBe(true);
@@ -286,7 +286,7 @@ describe("Activity Catalog", () => {
 
     it("returns package for HttpClient", () => {
       const pkg = catalogService.getPackageForActivity("HttpClient");
-      expect(pkg).toBe("UiPath.Web.Activities");
+      expect(pkg).toBe("UiPath.WebAPI.Activities");
     });
 
     it("returns null for unknown activity", () => {
@@ -505,8 +505,8 @@ describe("Activity Catalog", () => {
   });
 
   describe("Catalog Service - package versions", () => {
-    it("returns a valid version for UiPath.Web.Activities", () => {
-      const version = catalogService.getConfirmedVersion("UiPath.Web.Activities");
+    it("returns a valid version for UiPath.WebAPI.Activities", () => {
+      const version = catalogService.getConfirmedVersion("UiPath.WebAPI.Activities");
       expect(version).not.toBeNull();
       expect(version).toMatch(/^\d+\.\d+\.\d+$/);
     });
@@ -696,7 +696,7 @@ describe("Activity Catalog", () => {
       expect(result.violations.filter(v => v.severity === "error")).toHaveLength(0);
     });
 
-    it("detects invalid enum value for LogMessage Level", () => {
+    it("auto-corrects normalizable enum values so no violation for LogMessage Level=Information", () => {
       const badXaml = `
         <Activity x:Class="TestWorkflow" xmlns:ui="http://schemas.uipath.com/workflow/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
           <Sequence DisplayName="Main">
@@ -705,18 +705,16 @@ describe("Activity Catalog", () => {
         </Activity>
       `;
       const result = calculateTemplateCompliance(badXaml);
-      expect(result.score).toBeLessThan(1.0);
-      expect(result.violations.length).toBeGreaterThan(0);
-      expect(result.violations.some(v => v.issue.includes("Information") && v.severity === "error")).toBe(true);
+      expect(result.violations.filter(v => v.issue.includes("ENUM_VIOLATION"))).toHaveLength(0);
     });
 
-    it("calculates low score for XAML with multiple violations", () => {
+    it("detects truly invalid enum values that cannot be normalized", () => {
       const badXaml = `
         <Activity x:Class="TestWorkflow" xmlns:ui="http://schemas.uipath.com/workflow/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
           <Sequence DisplayName="Main">
-            <ui:LogMessage Level="Information" Message="[&quot;Bad level 1&quot;]" DisplayName="Log 1" />
-            <ui:LogMessage Level="Warning" Message="[&quot;Bad level 2&quot;]" DisplayName="Log 2" />
-            <ui:LogMessage Level="Debug" Message="[&quot;Bad level 3&quot;]" DisplayName="Log 3" />
+            <ui:LogMessage Level="Nonsense1" Message="[&quot;Bad level 1&quot;]" DisplayName="Log 1" />
+            <ui:LogMessage Level="Nonsense2" Message="[&quot;Bad level 2&quot;]" DisplayName="Log 2" />
+            <ui:LogMessage Level="Nonsense3" Message="[&quot;Bad level 3&quot;]" DisplayName="Log 3" />
           </Sequence>
         </Activity>
       `;
@@ -752,15 +750,27 @@ describe("Activity Catalog", () => {
   });
 
   describe("Enum Violation Handling", () => {
-    it("flags enum violations as generation failures without auto-correcting", () => {
+    it("auto-corrects normalizable enum values like Information → Info", () => {
       const result = catalogService.validateEmittedActivity(
         "ui:LogMessage",
         { Level: "Information", Message: "test" },
         []
       );
+      expect(result.valid).toBe(true);
+      expect(result.violations.filter(v => v.includes("ENUM_VIOLATION"))).toHaveLength(0);
+      const correction = result.corrections.find(c => c.property === "Level");
+      expect(correction).toBeDefined();
+      expect(correction!.correctedValue).toBe("Info");
+    });
+
+    it("flags truly invalid enum values as ENUM_VIOLATION", () => {
+      const result = catalogService.validateEmittedActivity(
+        "ui:LogMessage",
+        { Level: "Nonsense", Message: "test" },
+        []
+      );
       expect(result.valid).toBe(false);
       expect(result.violations.some(v => v.includes("ENUM_VIOLATION"))).toBe(true);
-      expect(result.corrections.some(c => c.detail.includes("GENERATION_FAILURE"))).toBe(true);
       const correction = result.corrections.find(c => c.property === "Level");
       expect(correction).toBeDefined();
       expect(correction!.correctedValue).toBeUndefined();

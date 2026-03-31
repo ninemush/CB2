@@ -12,10 +12,10 @@ export class QualityGateError extends Error {
 }
 
 export const UIPATH_PACKAGE_ALIAS_MAP: Record<string, string> = {
-  "UiPath.WebAPI.Activities": "UiPath.Web.Activities",
-  "UiPath.HTTP.Activities": "UiPath.Web.Activities",
-  "UiPath.REST.Activities": "UiPath.Web.Activities",
-  "UiPath.HttpClient.Activities": "UiPath.Web.Activities",
+  "UiPath.Web.Activities": "UiPath.WebAPI.Activities",
+  "UiPath.HTTP.Activities": "UiPath.WebAPI.Activities",
+  "UiPath.REST.Activities": "UiPath.WebAPI.Activities",
+  "UiPath.HttpClient.Activities": "UiPath.WebAPI.Activities",
   "UiPath.Orchestrator.Activities": "UiPath.System.Activities",
   "UiPath.OrchestratorAPI.Activities": "UiPath.System.Activities",
   "UiPath.Core.Activities": "UiPath.System.Activities",

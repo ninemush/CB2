@@ -218,19 +218,19 @@ const FALLBACK_REGISTRY: Record<string, ActivityRegistryEntry> = {
     },
   },
   "ui:HttpClient": {
-    package: "UiPath.Web.Activities",
+    package: "UiPath.WebAPI.Activities",
     properties: {
       optional: ["EndPoint", "Endpoint", "Method", "AcceptFormat", "Body", "BodyFormat", "Headers", "ResponseContent", "ResponseStatus", "TimeoutMS", "Url"],
     },
   },
   "ui:DeserializeJson": {
-    package: "UiPath.Web.Activities",
+    package: "UiPath.WebAPI.Activities",
     properties: {
       optional: ["JsonString", "JsonObject"],
     },
   },
   "ui:SerializeJson": {
-    package: "UiPath.Web.Activities",
+    package: "UiPath.WebAPI.Activities",
     properties: {
       optional: ["JsonObject", "JsonString"],
     },
@@ -424,7 +424,7 @@ const FALLBACK_REGISTRY: Record<string, ActivityRegistryEntry> = {
     },
   },
   "ui:DeserializeJSON": {
-    package: "UiPath.Web.Activities",
+    package: "UiPath.WebAPI.Activities",
     properties: {
       optional: ["JsonString", "JsonObject"],
     },
@@ -694,7 +694,7 @@ const TYPE_ARGUMENT_PACKAGE_MAP: Record<string, string> = {
   "System.Net.Mail.MailMessage": "UiPath.Mail.Activities",
   "UiPath.Excel.Activities": "UiPath.Excel.Activities",
   "UiPath.Mail.Activities": "UiPath.Mail.Activities",
-  "UiPath.Web.Activities": "UiPath.Web.Activities",
+  "UiPath.WebAPI.Activities": "UiPath.WebAPI.Activities",
   "UiPath.Database.Activities": "UiPath.Database.Activities",
   "UiPath.Persistence.Activities": "UiPath.Persistence.Activities",
   "UiPath.Persistence.Activities.Models.TaskData": "UiPath.Persistence.Activities",
@@ -752,7 +752,7 @@ function inferPackageFromNamespace(ns: string): string | null {
 
 export const NAMESPACE_PREFIX_TO_PACKAGE: Record<string, string> = {
   "uexcel": "UiPath.Excel.Activities",
-  "uweb": "UiPath.Web.Activities",
+  "uweb": "UiPath.WebAPI.Activities",
   "umail": "UiPath.Mail.Activities",
   "udb": "UiPath.Database.Activities",
   "uml": "UiPath.MLActivities",

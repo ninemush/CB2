@@ -683,6 +683,50 @@ function applyCatalogConformance(xml: string): string {
       console.log(`[Catalog Conformance] Moved ${tag}.${propName} from attribute to child-element at emission time`);
     } else if (correction.type === "move-to-attribute") {
       console.log(`[Catalog Conformance] Property ${tag}.${correction.property} should be attribute, not child-element (logged for review)`);
+    } else if (correction.type === "fix-invalid-value" && correction.correctedValue) {
+      const propName = correction.property;
+      const currentVal = parsed.attributes[propName];
+      if (currentVal !== undefined) {
+        const escapedPropName = propName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const escapedVal = currentVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const attrRegex = new RegExp(`${escapedPropName}="${escapedVal}"`);
+        corrected = corrected.replace(attrRegex, `${propName}="${correction.correctedValue}"`);
+        console.log(`[Catalog Conformance] Auto-corrected ${tag}.${propName} enum value: "${currentVal}" → "${correction.correctedValue}"`);
+      }
+    } else if (correction.type === "add-missing-required" && correction.correctedValue) {
+      const propName = correction.property;
+      const catalogProp = schema?.activity.properties.find(p => p.name === propName);
+      const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+      if (catalogProp?.xamlSyntax === "child-element") {
+        const wrapper = catalogProp.argumentWrapper || "InArgument";
+        const xType = catalogProp.typeArguments || "x:String";
+        const wrappedVal = escapeXmlTextContent(ensureBracketWrapped(correction.correctedValue));
+        const childElement = `<${tag}.${propName}>\n    <${wrapper} x:TypeArguments="${xType}">${wrappedVal}</${wrapper}>\n  </${tag}.${propName}>`;
+
+        const selfClosingRegex = new RegExp(`(<${escapedTag}\\s[^>]*?)\\s*\\/>`);
+        if (selfClosingRegex.test(corrected)) {
+          corrected = corrected.replace(selfClosingRegex, `$1>\n  ${childElement}\n</${tag}>`);
+        } else {
+          const closingTag = `</${tag}>`;
+          const closingIdx = corrected.lastIndexOf(closingTag);
+          if (closingIdx >= 0) {
+            corrected = corrected.substring(0, closingIdx) + `  ${childElement}\n` + corrected.substring(closingIdx);
+          }
+        }
+        console.log(`[Catalog Conformance] Injected required child-element property ${tag}.${propName}`);
+      } else {
+        const selfClosingRegex = new RegExp(`(<${escapedTag}\\s[^>]*?)\\s*\\/>`);
+        if (selfClosingRegex.test(corrected)) {
+          corrected = corrected.replace(selfClosingRegex, `$1 ${propName}="${correction.correctedValue}" />`);
+        } else {
+          const openRegex = new RegExp(`(<${escapedTag}\\s[^>]*?)(>)`);
+          if (openRegex.test(corrected)) {
+            corrected = corrected.replace(openRegex, `$1 ${propName}="${correction.correctedValue}"$2`);
+          }
+        }
+        console.log(`[Catalog Conformance] Injected required attribute property ${tag}.${propName}="${correction.correctedValue}"`);
+      }
     }
   }
 

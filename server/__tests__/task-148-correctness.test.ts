@@ -40,19 +40,19 @@ function runQG(
 describe("Task 148 — UiPath Package Generator Correctness", () => {
 
   describe("1. Dependency version alignment", () => {
-    it("generation-metadata.json has UiPath.Web.Activities preferred 1.21.0", () => {
+    it("generation-metadata.json has UiPath.WebAPI.Activities preferred 2.4.0", () => {
       const meta = JSON.parse(
         fs.readFileSync(path.resolve(__dirname, "../../catalog/generation-metadata.json"), "utf-8")
       );
-      expect(meta.packageVersionRanges["UiPath.Web.Activities"].preferred).toBe("1.21.0");
+      expect(meta.packageVersionRanges["UiPath.WebAPI.Activities"].preferred).toBe("2.4.0");
     });
 
     it("generation-metadata.json is the single version authority", () => {
       const meta = JSON.parse(
         fs.readFileSync(path.resolve(__dirname, "../../catalog/generation-metadata.json"), "utf-8")
       );
-      const metaVersion = meta.packageVersionRanges["UiPath.Web.Activities"].preferred;
-      expect(metaVersion).toBe("1.21.0");
+      const metaVersion = meta.packageVersionRanges["UiPath.WebAPI.Activities"].preferred;
+      expect(metaVersion).toBe("2.4.0");
     });
 
     it("test fixtures use 'Development' (not 'Developement' typo)", () => {
@@ -190,7 +190,7 @@ describe("Task 148 — UiPath Package Generator Correctness", () => {
     <ui:HttpClient DisplayName="Call API" Endpoint="" Method="GET" />
   </Sequence>
 </Activity>`;
-      const deps = { "UiPath.System.Activities": "25.10.0", "UiPath.Web.Activities": "1.21.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0", "UiPath.WebAPI.Activities": "2.4.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const endpointViolations = result.violations.filter(v => v.check === "empty-http-endpoint");
       expect(endpointViolations.length).toBeGreaterThan(0);
@@ -222,7 +222,7 @@ describe("Task 148 — UiPath Package Generator Correctness", () => {
     <ui:HttpClient DisplayName="Call API" Endpoint="" Method="GET" />
   </Sequence>
 </Activity>`;
-      const deps = { "UiPath.System.Activities": "25.10.0", "UiPath.Web.Activities": "1.21.0" };
+      const deps = { "UiPath.System.Activities": "25.10.0", "UiPath.WebAPI.Activities": "2.4.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       expect(result.passed).toBe(false);
       expect(result.completenessLevel).toBe("incomplete");

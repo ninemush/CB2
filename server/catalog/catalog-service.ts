@@ -474,12 +474,14 @@ class CatalogService {
       const hasChild = children.some(c => c === prop.name || c === `${tag.split(":").pop()}.${prop.name}`);
 
       if (prop.required && !hasAttribute && !hasChild) {
+        const defaultValue = prop.default || `[REVIEW_REQUIRED: ${prop.name}]`;
         result.valid = false;
         result.violations.push(`Missing required property "${prop.name}" on ${tag}`);
         result.corrections.push({
           type: "add-missing-required",
           property: prop.name,
-          detail: `Add required property "${prop.name}" (${prop.clrType}) to ${tag}`,
+          detail: `Injecting required property "${prop.name}" with ${prop.default ? "catalog default" : "placeholder"} value "${defaultValue}" on ${tag}`,
+          correctedValue: defaultValue,
         });
       }
 
@@ -518,19 +520,65 @@ class CatalogService {
       if (hasAttribute && prop.validValues && prop.validValues.length > 0) {
         const currentVal = attributes[prop.name];
         if (currentVal && !prop.validValues.includes(currentVal)) {
-          result.valid = false;
-          result.violations.push(`ENUM_VIOLATION: Invalid value "${currentVal}" for "${prop.name}" on ${tag} — valid values: ${prop.validValues.join(", ")}. This is a generation failure — enum violations must not be auto-corrected.`);
-          result.corrections.push({
-            type: "fix-invalid-value",
-            property: prop.name,
-            detail: `GENERATION_FAILURE: "${prop.name}" value "${currentVal}" is not a valid enum value on ${tag}. Valid values: ${prop.validValues.join(", ")}`,
-            correctedValue: undefined,
-          });
+          const normalized = this.normalizeEnumValue(currentVal, prop.validValues);
+          if (normalized) {
+            result.corrections.push({
+              type: "fix-invalid-value",
+              property: prop.name,
+              detail: `Auto-corrected "${prop.name}" value "${currentVal}" → "${normalized}" on ${tag}`,
+              correctedValue: normalized,
+            });
+          } else {
+            result.valid = false;
+            result.violations.push(`ENUM_VIOLATION: Invalid value "${currentVal}" for "${prop.name}" on ${tag} — valid values: ${prop.validValues.join(", ")}. No normalization match found.`);
+            result.corrections.push({
+              type: "fix-invalid-value",
+              property: prop.name,
+              detail: `ENUM_VIOLATION: "${prop.name}" value "${currentVal}" is not a valid enum value on ${tag}. Valid values: ${prop.validValues.join(", ")}`,
+              correctedValue: undefined,
+            });
+          }
         }
       }
+
     }
 
     return result;
+  }
+
+  private normalizeEnumValue(value: string, validValues: string[]): string | null {
+    const SYNONYM_MAP: Record<string, string> = {
+      "information": "Info",
+      "warning": "Warn",
+      "debug": "Trace",
+      "error": "Error",
+      "critical": "Fatal",
+      "verbose": "Verbose",
+      "get": "GET",
+      "post": "POST",
+      "put": "PUT",
+      "delete": "DELETE",
+      "patch": "PATCH",
+      "json": "JSON",
+      "xml": "XML",
+      "text": "TEXT",
+      "html": "HTML",
+      "csv": "CSV",
+      "application/json": "JSON",
+      "application/xml": "XML",
+      "text/plain": "TEXT",
+      "text/html": "HTML",
+    };
+
+    const lowerVal = value.toLowerCase();
+    for (const valid of validValues) {
+      if (valid.toLowerCase() === lowerVal) return valid;
+    }
+
+    const synonym = SYNONYM_MAP[lowerVal];
+    if (synonym && validValues.includes(synonym)) return synonym;
+
+    return null;
   }
 }
 

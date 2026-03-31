@@ -637,7 +637,7 @@ function classifyApi(ctx: ActivityContext, combined: string): ReturnType<typeof 
 
   return {
     activityType: "ui:HttpClient",
-    activityPackage: "UiPath.Web.Activities",
+    activityPackage: "UiPath.WebAPI.Activities",
     properties: {
       EndPoint: "TODO: Set API endpoint URL",
       Method: method,

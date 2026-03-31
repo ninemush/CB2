@@ -9875,7 +9875,10 @@
       ]
     },
     {
-      "packageId": "UiPath.Web.Activities",
+      "packageId": "UiPath.WebAPI.Activities",
+      "version": "2.4.0",
+      "feedStatus": "verified",
+      "preferredVersion": "2.4.0",
       "activities": [
         {
           "className": "HttpClient",
@@ -10112,18 +10115,7 @@
               "typeArguments": "x:String"
             }
           ]
-        }
-      ],
-      "version": "1.21.0",
-      "feedStatus": "unverified",
-      "preferredVersion": "1.21.0"
-    },
-    {
-      "packageId": "UiPath.WebAPI.Activities",
-      "version": "2.4.0",
-      "feedStatus": "verified",
-      "preferredVersion": "2.4.0",
-      "activities": [
+        },
         {
           "className": "HttpClientRequest",
           "displayName": "HTTP Client Request",

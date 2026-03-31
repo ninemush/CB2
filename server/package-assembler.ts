@@ -4414,14 +4414,24 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           autoFixSummary.push(`Proactively added Newtonsoft.Json@${resolvedVersion} — Newtonsoft types detected in XAML`);
           console.log(`[Dependency Proactive] Added Newtonsoft.Json@${resolvedVersion} — JObject/JToken/JArray/JsonConvert types detected in XAML`);
         }
-        if ((deps["UiPath.Web.Activities"] || deps["UiPath.WebAPI.Activities"]) && !deps["Newtonsoft.Json"]) {
+        const hasWebAPIPackage = deps["UiPath.WebAPI.Activities"] || deps["UiPath.Web.Activities"];
+        if (deps["UiPath.Web.Activities"] && !deps["UiPath.WebAPI.Activities"]) {
+          const webVersion = deps["UiPath.Web.Activities"];
+          delete deps["UiPath.Web.Activities"];
+          deps["UiPath.WebAPI.Activities"] = catalogService.isLoaded()
+            ? (catalogService.getPreferredVersion("UiPath.WebAPI.Activities") || "2.4.0")
+            : "2.4.0";
+          autoFixSummary.push(`Migrated legacy UiPath.Web.Activities@${webVersion} → UiPath.WebAPI.Activities@${deps["UiPath.WebAPI.Activities"]}`);
+          console.log(`[Dependency Migration] Migrated UiPath.Web.Activities → UiPath.WebAPI.Activities`);
+        }
+        if (hasWebAPIPackage && !deps["Newtonsoft.Json"]) {
           const newtonsoftVersion = catalogService.isLoaded()
             ? catalogService.getPreferredVersion("Newtonsoft.Json")
             : null;
           const resolvedVersion = newtonsoftVersion || "13.0.3";
           deps["Newtonsoft.Json"] = resolvedVersion;
-          autoFixSummary.push(`Proactively added Newtonsoft.Json@${resolvedVersion} — required by UiPath.Web.Activities`);
-          console.log(`[Dependency Proactive] Added Newtonsoft.Json@${resolvedVersion} — required by UiPath.Web.Activities dependency`);
+          autoFixSummary.push(`Proactively added Newtonsoft.Json@${resolvedVersion} — required by UiPath.WebAPI.Activities`);
+          console.log(`[Dependency Proactive] Added Newtonsoft.Json@${resolvedVersion} — required by UiPath.WebAPI.Activities dependency`);
         }
       }
 

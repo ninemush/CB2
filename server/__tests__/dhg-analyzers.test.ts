@@ -597,7 +597,7 @@ describe("runDhgAnalysis", () => {
       "UiPath.Excel.Activities": "[2.24.2]",
       "UiPath.UIAutomation.Activities": "[25.10.17127]",
       "UiPath.Mail.Activities": "[1.23.11]",
-      "UiPath.Web.Activities": "[1.21.0]",
+      "UiPath.WebAPI.Activities": "[2.4.0]",
       "UiPath.Persistence.Activities": "[3.0.3]",
       "UiPath.IntelligentOCR.Activities": "[6.13.0]",
     };

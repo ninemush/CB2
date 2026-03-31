@@ -515,7 +515,7 @@ describe("UiPath Generation Regression Tests", () => {
       const xaml = makeApiDrivenXaml();
       const required = scanXamlForRequiredPackages(xaml);
       const requiredList = [...required].sort();
-      const expectedForApiXaml = ["UiPath.System.Activities", "UiPath.Web.Activities"].sort();
+      const expectedForApiXaml = ["UiPath.System.Activities", "UiPath.WebAPI.Activities"].sort();
       expect(requiredList).toEqual(expectedForApiXaml);
       expect(required.has("UiPath.UIAutomation.Activities")).toBe(false);
       expect(required.has("UiPath.Excel.Activities")).toBe(false);
@@ -755,8 +755,8 @@ describe("UiPath Generation Regression Tests", () => {
     });
 
     it("normalizePackageName resolves aliases consistently", () => {
-      expect(normalizePackageName("UiPath.WebAPI.Activities")).toBe("UiPath.Web.Activities");
-      expect(normalizePackageName("UiPath.HTTP.Activities")).toBe("UiPath.Web.Activities");
+      expect(normalizePackageName("UiPath.Web.Activities")).toBe("UiPath.WebAPI.Activities");
+      expect(normalizePackageName("UiPath.HTTP.Activities")).toBe("UiPath.WebAPI.Activities");
       expect(normalizePackageName("UiPath.Core.Activities")).toBe("UiPath.System.Activities");
       expect(normalizePackageName("UiPath.UI.Activities")).toBe("UiPath.UIAutomation.Activities");
       expect(normalizePackageName("UiPath.System.Activities")).toBe("UiPath.System.Activities");
@@ -1380,7 +1380,7 @@ describe("UiPath Generation Regression Tests", () => {
         projectName: "TestApiDriven",
         description: "Test API driven automation",
         workflows: [{ name: "Main", steps: [{ name: "Call API", description: "HTTP request step" }] }],
-        dependencies: ["UiPath.System.Activities", "UiPath.Web.Activities"],
+        dependencies: ["UiPath.System.Activities", "UiPath.WebAPI.Activities"],
         internal: { processNodes: apiDataDrivenNodes, processEdges: apiDataDrivenEdges },
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
@@ -1550,7 +1550,7 @@ describe("UiPath Generation Regression Tests", () => {
     it("ui:DeserializeJSON (uppercase) is recognized by quality gate", () => {
       const xaml = makeValidXaml("Main", `
         <ui:DeserializeJSON DisplayName="Parse JSON" JsonString="[str_Json]" />`);
-      const deps = { "UiPath.System.Activities": "25.10.0", "UiPath.Web.Activities": "1.20.1" };
+      const deps = { "UiPath.System.Activities": "25.10.0", "UiPath.WebAPI.Activities": "2.4.0" };
       const result = runQG([{ name: "Main.xaml", content: xaml }], deps);
       const unknownActs = result.violations.filter(v => v.check === "unknown-activity");
       expect(unknownActs.length).toBe(0);
@@ -1585,7 +1585,7 @@ describe("UiPath Generation Regression Tests", () => {
             { name: "Call REST API", description: "HTTP GET request to external API", activity: "HttpClient" },
           ],
         }],
-        dependencies: ["UiPath.System.Activities", "UiPath.Web.Activities"],
+        dependencies: ["UiPath.System.Activities", "UiPath.WebAPI.Activities"],
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
       for (const entry of result.xamlEntries) {
@@ -1635,7 +1635,7 @@ describe("UiPath Generation Regression Tests", () => {
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
       const depKeys = Object.keys(result.dependencyMap);
       expect(depKeys).toContain("UiPath.System.Activities");
-      expect(depKeys).not.toContain("UiPath.Web.Activities");
+      expect(depKeys).not.toContain("UiPath.WebAPI.Activities");
       expect(depKeys).not.toContain("UiPath.Database.Activities");
     });
 
@@ -1647,7 +1647,7 @@ describe("UiPath Generation Regression Tests", () => {
           { name: "Main", steps: [{ name: "Log", description: "Log message" }] },
           { name: "ApiCall", steps: [{ name: "Call REST API", description: "HTTP GET", activity: "HttpClient" }] },
         ],
-        dependencies: ["UiPath.System.Activities", "UiPath.Web.Activities"],
+        dependencies: ["UiPath.System.Activities", "UiPath.WebAPI.Activities"],
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
       for (const [key, val] of Object.entries(result.dependencyMap)) {
@@ -1665,11 +1665,11 @@ describe("UiPath Generation Regression Tests", () => {
         workflows: [
           { name: "ApiWorkflow", steps: [{ name: "Call REST API", description: "HTTP GET request", activity: "HttpClient" }] },
         ],
-        dependencies: ["UiPath.System.Activities", "UiPath.Web.Activities"],
+        dependencies: ["UiPath.System.Activities", "UiPath.WebAPI.Activities"],
       };
       const result = await buildNuGetPackage(pkg, "1.0.0-test", undefined, "baseline_openable");
-      if (result.dependencyMap["UiPath.Web.Activities"]) {
-        expect(result.dependencyMap["UiPath.Web.Activities"]).toMatch(/^\d+\.\d+\.\d+/);
+      if (result.dependencyMap["UiPath.WebAPI.Activities"]) {
+        expect(result.dependencyMap["UiPath.WebAPI.Activities"]).toMatch(/^\d+\.\d+\.\d+/);
       }
       if (result.dependencyMap["UiPath.Excel.Activities"]) {
         expect(result.dependencyMap["UiPath.Excel.Activities"]).toMatch(/^\d+\.\d+\.\d+/);
@@ -1820,7 +1820,7 @@ describe("UiPath Generation Regression Tests", () => {
 
     it("OutArgument child elements pass through read-only compliance without bracket mutations (Issue 5)", () => {
       const xaml = `<?xml version="1.0" encoding="utf-8"?>
-<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities" xmlns:uweb="clr-namespace:UiPath.Web.Activities;assembly=UiPath.Web.Activities">
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities" xmlns:uweb="clr-namespace:UiPath.WebAPI.Activities;assembly=UiPath.WebAPI.Activities">
   <Sequence DisplayName="Main">
     <ui:GetAsset DisplayName="Get Asset">
       <ui:GetAsset.Value>
@@ -1841,7 +1841,7 @@ describe("UiPath Generation Regression Tests", () => {
 
     it("InArgument child elements pass through read-only compliance without bracket mutations (Issue 5)", () => {
       const xaml = `<?xml version="1.0" encoding="utf-8"?>
-<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:uweb="clr-namespace:UiPath.Web.Activities;assembly=UiPath.Web.Activities">
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:uweb="clr-namespace:UiPath.WebAPI.Activities;assembly=UiPath.WebAPI.Activities">
   <Sequence DisplayName="Main">
     <uweb:HttpClient DisplayName="Call API">
       <uweb:HttpClient.Body>
@@ -1884,7 +1884,7 @@ describe("UiPath Generation Regression Tests", () => {
 
     it("makeUiPathCompliant passes InArgument child elements through read-only compliance (Issue 5 integration)", () => {
       const xaml = `<?xml version="1.0" encoding="utf-8"?>
-<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:uweb="clr-namespace:UiPath.Web.Activities;assembly=UiPath.Web.Activities">
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:uweb="clr-namespace:UiPath.WebAPI.Activities;assembly=UiPath.WebAPI.Activities">
   <Sequence DisplayName="Main">
     <uweb:HttpClient DisplayName="Call API">
       <uweb:HttpClient.EndpointUrl>
