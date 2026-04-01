@@ -39,6 +39,7 @@ import archiver from "archiver";
   import { runQualityGate, validatePackage, formatQualityGateViolations, classifyQualityIssues, getBlockingFiles, hasOnlyWarnings, hasBlockingIssues, type QualityGateResult, type ClassifiedIssue, type PackageReadiness } from "./uipath-quality-gate";
   import { escapeXml } from "./lib/xml-utils";
   import { computePackageFingerprint, computeEnrichmentFingerprint, computeXamlFingerprint, computeQualityGateFingerprint } from "./lib/utils";
+  import { buildDeterministicScaffold as buildGenericDeterministicScaffold } from "./deterministic-scaffold";
   import { computeDhgAccuracy } from "./pipeline-health";
   import { scanXamlForRequiredPackages, classifyAutomationPattern, shouldUseReFramework, type AutomationPattern, ACTIVITY_NAME_ALIAS_MAP, normalizeActivityName, NAMESPACE_PREFIX_TO_PACKAGE, getActivityPackage } from "./uipath-activity-registry";
   import { filterBlockedActivitiesFromXaml } from "./uipath-activity-policy";
@@ -1583,295 +1584,14 @@ function extractVariablesFromSDD(sddContent: string): Array<{ name: string; type
   return vars;
 }
 
-function selectSystemActivity(system: string, description: string): { template: string; displayName: string; properties: Record<string, string> } | null {
-  const sysLower = (system || "").toLowerCase();
-  const descLower = (description || "").toLowerCase();
-
-  if (sysLower.includes("api") || sysLower.includes("rest") || sysLower.includes("web service") || descLower.includes("api call") || descLower.includes("http request")) {
-    return { template: "HttpClient", displayName: `HTTP Request - ${system}`, properties: { Method: "GET", Endpoint: `"https://${system.replace(/\s+/g, "").toLowerCase()}.example.com/api"`, AcceptFormat: "JSON" } };
-  }
-  if (sysLower.includes("excel") || sysLower.includes("spreadsheet")) {
-    return { template: "ExcelApplicationScope", displayName: `Open Excel - ${system}`, properties: { WorkbookPath: '"C:\\Data\\Workbook.xlsx"' } };
-  }
-  if (sysLower.includes("email") || sysLower.includes("outlook") || sysLower.includes("mail")) {
-    return { template: "SendOutlookMailMessage", displayName: `Send Email - ${system}`, properties: { To: '""', Subject: '""', Body: '""' } };
-  }
-  if (sysLower.includes("sap")) {
-    return { template: "TypeInto", displayName: `Type Into SAP - ${system}`, properties: { Text: '""', Target: '{ "type": "selector", "value": "<wnd app=\'saplogon.exe\' />" }' } };
-  }
-  if (sysLower.includes("browser") || sysLower.includes("web") || sysLower.includes("chrome") || sysLower.includes("portal") || sysLower.includes("website")) {
-    return { template: "OpenBrowser", displayName: `Open Browser - ${system}`, properties: { Url: `"https://${system.replace(/\s+/g, "").toLowerCase()}.example.com"`, BrowserType: "Chrome" } };
-  }
-  if (sysLower.includes("database") || sysLower.includes("sql") || sysLower.includes("db")) {
-    return { template: "ExecuteQuery", displayName: `Query Database - ${system}`, properties: { Sql: '"SELECT * FROM table"', ConnectionString: '""' } };
-  }
-  if (descLower.includes("click") || descLower.includes("type") || descLower.includes("enter") || descLower.includes("input") || descLower.includes("fill")) {
-    return { template: "TypeInto", displayName: `Type Into - ${system}`, properties: { Text: '""' } };
-  }
-  if (descLower.includes("download") || descLower.includes("save file") || descLower.includes("export")) {
-    return { template: "MoveFile", displayName: `Save File - ${system}`, properties: { Path: '""', Destination: '""' } };
-  }
-  return null;
-}
 
 function buildDeterministicScaffold(
   processNodes: any[],
   projectName: string,
   sddContent?: string,
   processEdges?: any[],
-): { treeEnrichment: TreeEnrichmentResult; usedAIFallback: boolean } {
-  const actionNodes = processNodes.filter((n: any) => n.nodeType !== "start" && n.nodeType !== "end");
-  const children: TreeWorkflowSpec["rootSequence"]["children"] = [];
-  const variables: Array<{ name: string; type: string; default?: string }> = [];
-  const decomposition: Array<{ name: string; nodeIds: number[]; description?: string; isDispatcher?: boolean; isPerformer?: boolean }> = [];
-
-  variables.push({ name: "str_Status", type: "String", default: '"Success"' });
-  variables.push({ name: "int_RetryCount", type: "Int32", default: "0" });
-  variables.push({ name: "bool_ProcessComplete", type: "Boolean", default: "False" });
-
-  if (sddContent) {
-    const sddVars = extractVariablesFromSDD(sddContent);
-    for (const v of sddVars) {
-      if (!variables.find(ev => ev.name === v.name)) {
-        variables.push(v);
-      }
-    }
-  }
-
-  const edges = processEdges || [];
-  const edgeMap = new Map<number, Array<{ targetNodeId: number; label: string }>>();
-  for (const edge of edges) {
-    const sourceId = edge.sourceNodeId;
-    if (!edgeMap.has(sourceId)) edgeMap.set(sourceId, []);
-    edgeMap.get(sourceId)!.push({ targetNodeId: edge.targetNodeId, label: edge.label || "" });
-  }
-
-  const nodeMap = new Map<number, any>();
-  for (const node of processNodes) {
-    nodeMap.set(node.id, node);
-  }
-
-  children.push({
-    kind: "activity" as const,
-    template: "LogMessage",
-    displayName: "Log Process Start",
-    properties: { Level: "Info", Message: `"Starting ${projectName} process"` },
-    outputVar: null,
-    outputType: null,
-    errorHandling: "none" as const,
-  });
-
-  let todoCount = 0;
-  const complexNodeThreshold = 5;
-  for (const node of actionNodes) {
-    const outEdges = edgeMap.get(node.id) || [];
-    const labeledEdges = outEdges.filter(e => e.label && e.label.trim().length > 0);
-
-    if (node.nodeType === "decision") {
-      const yesEdge = labeledEdges.find(e => /yes|true|approve|success|valid/i.test(e.label));
-      const noEdge = labeledEdges.find(e => /no|false|reject|fail|invalid/i.test(e.label));
-      const conditionHint = node.description || node.name;
-
-      const thenTarget = yesEdge ? nodeMap.get(yesEdge.targetNodeId) : null;
-      const elseTarget = noEdge ? nodeMap.get(noEdge.targetNodeId) : null;
-
-      const thenChildren: any[] = [{
-        kind: "activity" as const,
-        template: "LogMessage",
-        displayName: `Log: ${yesEdge?.label || "Yes"} path`,
-        properties: { Level: "Info", Message: `"Decision '${node.name}' — taking ${yesEdge?.label || "Yes"} path${thenTarget ? " → " + thenTarget.name : ""}"` },
-        outputVar: null,
-        outputType: null,
-        errorHandling: "none" as const,
-      }];
-
-      const elseChildren: any[] = [{
-        kind: "activity" as const,
-        template: "LogMessage",
-        displayName: `Log: ${noEdge?.label || "No"} path`,
-        properties: { Level: "Info", Message: `"Decision '${node.name}' — taking ${noEdge?.label || "No"} path${elseTarget ? " → " + elseTarget.name : ""}"` },
-        outputVar: null,
-        outputType: null,
-        errorHandling: "none" as const,
-      }];
-
-      children.push({
-        kind: "if" as const,
-        displayName: `Decision: ${node.name}`,
-        condition: `True ' TODO: Replace with actual condition for: ${conditionHint}`,
-        thenChildren,
-        elseChildren,
-      });
-      continue;
-    }
-
-    const isLoopPattern = /loop|iterate|for each|repeat|batch|process all|process each/i.test(
-      `${node.name} ${node.description || ""}`
-    );
-
-    if (isLoopPattern) {
-      const collectionVar = `col_${node.name.replace(/\s+/g, "_")}`;
-      if (!variables.find(v => v.name === collectionVar)) {
-        variables.push({ name: collectionVar, type: "String[]", default: "New String(){}" });
-      }
-
-      const bodyChildren: any[] = [{
-        kind: "activity" as const,
-        template: "LogMessage",
-        displayName: `Log: Processing item in ${node.name}`,
-        properties: { Level: "Info", Message: `"Processing item in ${node.name}: " & item.ToString()` },
-        outputVar: null,
-        outputType: null,
-        errorHandling: "none" as const,
-      }];
-
-      const sysActivity = selectSystemActivity(node.system || "", node.description || "");
-      if (sysActivity) {
-        bodyChildren.push({
-          kind: "activity" as const,
-          template: sysActivity.template,
-          displayName: sysActivity.displayName,
-          properties: sysActivity.properties,
-          outputVar: null,
-          outputType: null,
-          errorHandling: "none" as const,
-        });
-      }
-
-      children.push({
-        kind: "forEach" as const,
-        displayName: `ForEach: ${node.name}`,
-        itemType: "x:String",
-        valuesExpression: collectionVar,
-        iteratorName: "item",
-        bodyChildren,
-      });
-      continue;
-    }
-
-    const sysActivity = selectSystemActivity(node.system || "", node.description || "");
-
-    if (sysActivity) {
-      const nodeChildren: any[] = [
-        {
-          kind: "activity" as const,
-          template: "LogMessage",
-          displayName: `Log: ${node.name}`,
-          properties: { Level: "Info", Message: `"Executing step: ${node.name}"` },
-          outputVar: null,
-          outputType: null,
-          errorHandling: "none" as const,
-        },
-        {
-          kind: "activity" as const,
-          template: sysActivity.template,
-          displayName: sysActivity.displayName,
-          properties: sysActivity.properties,
-          outputVar: null,
-          outputType: null,
-          errorHandling: "none" as const,
-        },
-      ];
-
-      children.push({
-        kind: "tryCatch" as const,
-        displayName: `TryCatch: ${node.name}`,
-        tryChildren: nodeChildren,
-        catchChildren: [
-          {
-            kind: "activity" as const,
-            template: "LogMessage",
-            displayName: `Log Error: ${node.name}`,
-            properties: { Level: "Error", Message: `"Error in step ${node.name}: " & exception.Message` },
-            outputVar: null,
-            outputType: null,
-            errorHandling: "none" as const,
-          },
-          {
-            kind: "activity" as const,
-            template: "Assign",
-            displayName: "Set Status to Failed",
-            properties: { To: "str_Status", Value: '"Failed"' },
-            outputVar: null,
-            outputType: null,
-            errorHandling: "none" as const,
-          },
-        ],
-        finallyChildren: [],
-      });
-
-      if (actionNodes.length > complexNodeThreshold) {
-        const subName = `${node.name.replace(/\s+/g, "_")}_SubWorkflow`;
-        if (decomposition.length < 3) {
-          decomposition.push({ name: subName, nodeIds: [node.id], description: `Sub-workflow for: ${node.name}${node.description ? " — " + node.description : ""}` });
-        }
-      }
-      continue;
-    }
-
-    todoCount++;
-    const stepDesc = `TODO: Implement ${node.name}${node.description ? " - " + node.description : ""}${node.system ? " (System: " + node.system + ")" : ""}`;
-    children.push({
-      kind: "activity" as const,
-      template: "Comment",
-      displayName: `Step: ${node.name}`,
-      properties: { Text: stepDesc },
-      outputVar: null,
-      outputType: null,
-      errorHandling: "none" as const,
-    });
-    children.push({
-      kind: "activity" as const,
-      template: "LogMessage",
-      displayName: `Log: ${node.name}`,
-      properties: { Level: "Info", Message: `"Executing step: ${node.name}"` },
-      outputVar: null,
-      outputType: null,
-      errorHandling: "none" as const,
-    });
-  }
-
-  children.push({
-    kind: "activity" as const,
-    template: "LogMessage",
-    displayName: "Log Process Complete",
-    properties: { Level: "Info", Message: `"${projectName} process completed with status: " & str_Status` },
-    outputVar: null,
-    outputType: null,
-    errorHandling: "none" as const,
-  });
-
-  const dhgNotes = ["This workflow was generated as a deterministic scaffold because AI enrichment was unavailable"];
-  if (sddContent) {
-    dhgNotes.push("SDD context was available but could not be processed by AI — review SDD for implementation details");
-  }
-  if (todoCount > 0) {
-    dhgNotes.push(`${todoCount} of ${actionNodes.length} nodes could not be mapped to specific activities — search for TODO comments`);
-  } else {
-    dhgNotes.push(`All ${actionNodes.length} action nodes were mapped to system-specific activities or control flow structures`);
-  }
-
-  const spec: TreeWorkflowSpec = {
-    name: projectName,
-    description: `Deterministic scaffold for ${projectName}`,
-    variables,
-    arguments: [],
-    rootSequence: {
-      kind: "sequence" as const,
-      displayName: `${projectName} - Main Sequence`,
-      children,
-    },
-    useReFramework: false,
-    dhgNotes,
-    decomposition,
-  };
-
-  console.log(`[UiPath] Built deterministic scaffold for "${projectName}": ${actionNodes.length} action nodes → ${children.length} tree nodes, ${todoCount} TODO stubs, ${variables.length} variables, ${decomposition.length} sub-workflows`);
-
-  return {
-    treeEnrichment: { status: "success", workflowSpec: spec, processType: "general" as ProcessType },
-    usedAIFallback: true,
-  };
+): { treeEnrichment: TreeEnrichmentResult; usedAIFallback: boolean; allTreeEnrichments?: Map<string, { spec: TreeWorkflowSpec; processType: ProcessType }> } {
+  return buildGenericDeterministicScaffold(processNodes, projectName, sddContent, processEdges, extractVariablesFromSDD);
 }
 
 
@@ -2030,6 +1750,9 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         const scaffold = buildDeterministicScaffold(processNodes, projectName, sddContent || undefined, processEdges);
         treeEnrichment = scaffold.treeEnrichment;
         _usedAIFallback = scaffold.usedAIFallback;
+        if (scaffold.allTreeEnrichments && scaffold.allTreeEnrichments.size > 0) {
+          allTreeEnrichments = scaffold.allTreeEnrichments;
+        }
         if (onProgress) onProgress({ type: "completed", stage: "deterministic_scaffold", message: "Deterministic scaffold generated" });
       }
     } else if (processNodes.length > 0 && !sddContent) {
@@ -2037,6 +1760,9 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       const scaffold = buildDeterministicScaffold(processNodes, projectName, undefined, processEdges);
       treeEnrichment = scaffold.treeEnrichment;
       _usedAIFallback = scaffold.usedAIFallback;
+      if (scaffold.allTreeEnrichments && scaffold.allTreeEnrichments.size > 0) {
+        allTreeEnrichments = scaffold.allTreeEnrichments;
+      }
     }
   }
 
