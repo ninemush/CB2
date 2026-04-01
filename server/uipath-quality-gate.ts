@@ -2172,13 +2172,25 @@ export function validatePackage(input: QualityGateInput): QualityGateResult {
   const positiveEvidence = collectPositiveEvidence(input);
 
   if (expressionLintResult.correctedEntries.length > 0) {
-    console.log(`[Quality Gate READ-ONLY] Expression linter found ${expressionLintResult.correctedEntries.length} entries to correct (not mutated — quality gate is read-only)`);
+    for (const corrected of expressionLintResult.correctedEntries) {
+      const idx = input.xamlEntries.findIndex(e => e.name === corrected.name);
+      if (idx !== -1) {
+        input.xamlEntries[idx] = corrected;
+      }
+    }
+    console.log(`[Quality Gate] Expression lint: applied ${expressionLintResult.correctedEntries.length} corrections`);
   }
 
   const typeCompatResult = validateTypeCompatibility(input.xamlEntries);
 
   if (typeCompatResult.correctedEntries.length > 0) {
-    console.log(`[Quality Gate READ-ONLY] Type compatibility found ${typeCompatResult.correctedEntries.length} entries to correct (not mutated — quality gate is read-only)`);
+    for (const corrected of typeCompatResult.correctedEntries) {
+      const idx = input.xamlEntries.findIndex(e => e.name === corrected.name);
+      if (idx !== -1) {
+        input.xamlEntries[idx] = corrected;
+      }
+    }
+    console.log(`[Quality Gate] Type compatibility: applied ${typeCompatResult.correctedEntries.length} corrections`);
   }
 
   const selectorScores = scoreSelectorQuality(input.xamlEntries);
@@ -2381,7 +2393,13 @@ export function validatePackage(input: QualityGateInput): QualityGateResult {
 export function runQualityGate(input: QualityGateInput): QualityGateResult {
   const resilienceCorrected = injectResilienceDefaults(input.xamlEntries);
   if (resilienceCorrected.length > 0) {
-    console.log(`[Quality Gate READ-ONLY] injectResilienceDefaults found ${resilienceCorrected.length} entries to correct (not mutated — quality gate is read-only)`);
+    for (const corrected of resilienceCorrected) {
+      const idx = input.xamlEntries.findIndex(e => e.name === corrected.name);
+      if (idx !== -1) {
+        input.xamlEntries[idx] = corrected;
+      }
+    }
+    console.log(`[Quality Gate] Resilience defaults: applied ${resilienceCorrected.length} corrections`);
   }
 
   return validatePackage(input);
