@@ -58,6 +58,9 @@ const PACKAGE_NAMESPACE_DEFAULTS: Record<string, { prefix: string; clrNamespace:
   "UiPath.CommunicationsMining.Activities": { prefix: "ucm", clrNamespace: "UiPath.CommunicationsMining.Activities", assembly: "UiPath.CommunicationsMining.Activities" },
   "UiPath.WorkflowEvents.Activities": { prefix: "uwfe", clrNamespace: "UiPath.WorkflowEvents.Activities", assembly: "UiPath.WorkflowEvents.Activities" },
   "UiPath.Box.Activities": { prefix: "ubox", clrNamespace: "UiPath.Box.Activities", assembly: "UiPath.Box.Activities" },
+  "UiPath.MicrosoftDynamics.Activities": { prefix: "udyn", clrNamespace: "UiPath.MicrosoftDynamics.Activities", assembly: "UiPath.MicrosoftDynamics.Activities" },
+  "UiPath.Workday.Activities": { prefix: "uwd", clrNamespace: "UiPath.Workday.Activities", assembly: "UiPath.Workday.Activities" },
+  "UiPath.Coupa.IntegrationService.Activities": { prefix: "ucoupa", clrNamespace: "UiPath.Coupa.IntegrationService.Activities", assembly: "UiPath.Coupa.IntegrationService.Activities" },
 };
 
 function convertProperty(p: ActivityPropertyDef): CatalogProperty {

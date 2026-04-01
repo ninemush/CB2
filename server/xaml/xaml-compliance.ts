@@ -60,6 +60,9 @@ export const PACKAGE_NAMESPACE_MAP: Record<string, PackageNamespaceInfo> = {
   "UiPath.CommunicationsMining.Activities": { prefix: "ucm", xmlns: "clr-namespace:UiPath.CommunicationsMining.Activities;assembly=UiPath.CommunicationsMining.Activities", clrNamespace: "UiPath.CommunicationsMining.Activities", assembly: "UiPath.CommunicationsMining.Activities" },
   "UiPath.WorkflowEvents.Activities": { prefix: "uwfe", xmlns: "clr-namespace:UiPath.WorkflowEvents.Activities;assembly=UiPath.WorkflowEvents.Activities", clrNamespace: "UiPath.WorkflowEvents.Activities", assembly: "UiPath.WorkflowEvents.Activities" },
   "UiPath.Box.Activities": { prefix: "ubox", xmlns: "clr-namespace:UiPath.Box.Activities;assembly=UiPath.Box.Activities", clrNamespace: "UiPath.Box.Activities", assembly: "UiPath.Box.Activities" },
+  "UiPath.MicrosoftDynamics.Activities": { prefix: "udyn", xmlns: "clr-namespace:UiPath.MicrosoftDynamics.Activities;assembly=UiPath.MicrosoftDynamics.Activities", clrNamespace: "UiPath.MicrosoftDynamics.Activities", assembly: "UiPath.MicrosoftDynamics.Activities" },
+  "UiPath.Workday.Activities": { prefix: "uwd", xmlns: "clr-namespace:UiPath.Workday.Activities;assembly=UiPath.Workday.Activities", clrNamespace: "UiPath.Workday.Activities", assembly: "UiPath.Workday.Activities" },
+  "UiPath.Coupa.IntegrationService.Activities": { prefix: "ucoupa", xmlns: "clr-namespace:UiPath.Coupa.IntegrationService.Activities;assembly=UiPath.Coupa.IntegrationService.Activities", clrNamespace: "UiPath.Coupa.IntegrationService.Activities", assembly: "UiPath.Coupa.IntegrationService.Activities" },
 };
 
 const EXTRA_PREFIX_ALIASES: Record<string, string> = {
@@ -258,6 +261,11 @@ const GUARANTEED_ACTIVITY_PREFIX_MAP: Record<string, string> = {
   "CommunicationsMiningScope": "ucm", "AnalyzeMessage": "ucm", "UploadCommunications": "ucm",
   "RaiseAlert": "uwfe", "TriggerJob": "uwfe",
   "BoxScope": "ubox", "BoxUploadFile": "ubox", "BoxDownloadFile": "ubox", "BoxDeleteFile": "ubox", "BoxSearchFiles": "ubox",
+  "GoogleCalendarGetEvents": "ugs", "GoogleCalendarCreateEvent": "ugs",
+  "GoogleContactsSearchContacts": "ugs", "GoogleContactsGetContact": "ugs",
+  "DynamicsScope": "udyn", "DynamicsGetRecords": "udyn", "DynamicsCreateRecord": "udyn", "DynamicsUpdateRecord": "udyn",
+  "WorkdayScope": "uwd", "WorkdayGetWorkers": "uwd", "WorkdayGetWorkerById": "uwd",
+  "CoupaScope": "ucoupa", "CoupaGetPurchaseOrders": "ucoupa", "CoupaCreateRequisition": "ucoupa", "CoupaGetInvoices": "ucoupa",
 };
 
 export function resolveActivityToPackage(activityName: string): string | null {

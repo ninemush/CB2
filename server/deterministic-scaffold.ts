@@ -184,19 +184,19 @@ export function selectSystemActivity(system: string, description: string): Syste
   }
 
   if (sysLower.includes("genai") || sysLower.includes("gen ai") || sysLower.includes("generative ai") || combined.includes("llm") || combined.includes("gpt") || combined.includes("prompt")) {
-    return { template: "LogMessage", displayName: `GenAI Prompt - ${system || "GenAI"}`, properties: { Level: "Info", Message: '"TODO: Configure GenAI prompt activity — install UiPath.GenAI.Activities"' } };
+    return { template: "UseGenAI", displayName: `GenAI Prompt - ${system || "GenAI"}`, properties: { ModelName: '"gpt-4o"', MaxTokens: "4096", Temperature: "0.7" } };
   }
 
   if (sysLower.includes("google calendar") || combined.includes("calendar event")) {
-    return { template: "LogMessage", displayName: `Calendar - ${system || "Google Calendar"}`, properties: { Level: "Info", Message: '"TODO: Configure Google Calendar activity — install UiPath.GSuite.Activities"' } };
+    return { template: "GoogleCalendarGetEvents", displayName: `Calendar - ${system || "Google Calendar"}`, properties: { CalendarId: '"primary"', MaxResults: "10" } };
   }
 
   if (sysLower.includes("google contacts") || combined.includes("contact lookup")) {
-    return { template: "LogMessage", displayName: `Contacts - ${system || "Google Contacts"}`, properties: { Level: "Info", Message: '"TODO: Configure Google Contacts activity — install UiPath.GSuite.Activities"' } };
+    return { template: "GoogleContactsSearchContacts", displayName: `Contacts - ${system || "Google Contacts"}`, properties: { MaxResults: "10" } };
   }
 
   if (sysLower.includes("gmail") || (sysLower.includes("google") && combined.includes("email"))) {
-    return { template: "LogMessage", displayName: `Gmail - ${system || "Gmail"}`, properties: { Level: "Info", Message: '"TODO: Configure Gmail activity — install UiPath.GSuite.Activities"' } };
+    return { template: "GmailSendMessage", displayName: `Gmail - ${system || "Gmail"}`, properties: { To: '""', Subject: '""', Body: '""' } };
   }
 
   if (sysLower.includes("api") || sysLower.includes("rest") || sysLower.includes("http") || sysLower.includes("web service") || combined.includes("api call") || combined.includes("http request")) {
@@ -224,39 +224,39 @@ export function selectSystemActivity(system: string, description: string): Syste
   }
 
   if (sysLower.includes("coupa") || sysLower.includes("erp") || sysLower.includes("procurement") || combined.includes("coupa") || combined.includes("purchase order") || combined.includes("procurement")) {
-    return { template: "HttpClient", displayName: `ERP/Procurement API - ${system || "Coupa"}`, properties: { Method: "GET", Endpoint: '"https://TODO.coupahost.com/api/v1/"', AcceptFormat: "JSON" } };
+    return { template: "CoupaGetPurchaseOrders", displayName: `Procurement - ${system || "Coupa"}`, properties: { Status: '"approved"', Limit: "50" } };
   }
 
   if (sysLower.includes("document understanding") || combined.includes("document understanding") || combined.includes("intelligent ocr") || sysLower.includes("ocr") || combined.includes("digitize") || combined.includes("classify document") || combined.includes("extract data from document")) {
-    return { template: "LogMessage", displayName: `Document Understanding - ${system || "DU"}`, properties: { Level: "Info", Message: '"TODO: Configure Document Understanding taxonomy and extractors — install UiPath.DocumentUnderstanding.ML.Activities"' } };
+    return { template: "DigitizeScope", displayName: `Document Understanding - ${system || "DU"}`, properties: { FilePath: '""' } };
   }
 
   if (sysLower.includes("integration service") || combined.includes("integration service") || combined.includes("connector")) {
-    return { template: "LogMessage", displayName: `Integration Service - ${system || "Integration Service"}`, properties: { Level: "Info", Message: '"TODO: Configure Integration Service connector — select connector from Orchestrator"' } };
+    return { template: "IntegrationServiceScope", displayName: `Integration Service - ${system || "Integration Service"}`, properties: { ConnectionId: '""' } };
   }
 
   if (sysLower.includes("servicenow") || sysLower.includes("service now") || sysLower.includes("snow") || combined.includes("servicenow") || combined.includes("incident ticket") || combined.includes("snow record")) {
-    return { template: "HttpClient", displayName: `ServiceNow API - ${system || "ServiceNow"}`, properties: { Method: "GET", Endpoint: '"https://TODO.service-now.com/api/now/table/"', AcceptFormat: "JSON" } };
+    return { template: "ServiceNowGetRecords", displayName: `ServiceNow - ${system || "ServiceNow"}`, properties: { TableName: '"incident"', Limit: "100" } };
   }
 
   if (sysLower.includes("workday") || combined.includes("workday") || combined.includes("hcm system")) {
-    return { template: "HttpClient", displayName: `Workday API - ${system || "Workday"}`, properties: { Method: "GET", Endpoint: '"https://TODO.workday.com/api/v1/"', AcceptFormat: "JSON" } };
+    return { template: "WorkdayGetWorkers", displayName: `Workday - ${system || "Workday"}`, properties: { Count: "100", WorkerType: '"Both"' } };
   }
 
   if (sysLower.includes("salesforce") || sysLower.includes("sfdc") || combined.includes("salesforce") || combined.includes("sfdc")) {
-    return { template: "HttpClient", displayName: `Salesforce API - ${system || "Salesforce"}`, properties: { Method: "GET", Endpoint: '"https://TODO.salesforce.com/services/data/v58.0/"', AcceptFormat: "JSON" } };
+    return { template: "SalesforceGetRecords", displayName: `Salesforce - ${system || "Salesforce"}`, properties: { ObjectType: '""', MaxRecords: "200" } };
   }
 
   if (sysLower.includes("sharepoint")) {
-    return { template: "HttpClient", displayName: `SharePoint API - ${system || "SharePoint"}`, properties: { Method: "GET", Endpoint: '"https://TODO.sharepoint.com/_api/web/"', AcceptFormat: "JSON" } };
+    return { template: "SharePointDownloadFile", displayName: `SharePoint - ${system || "SharePoint"}`, properties: { SiteUrl: '""', FilePath: '""', LocalFolderPath: '""' } };
   }
 
   if (sysLower.includes("jira") || sysLower.includes("atlassian")) {
-    return { template: "HttpClient", displayName: `Jira API - ${system || "Jira"}`, properties: { Method: "GET", Endpoint: '"https://TODO.atlassian.net/rest/api/3/"', AcceptFormat: "JSON" } };
+    return { template: "JiraSearchIssues", displayName: `Jira - ${system || "Jira"}`, properties: { MaxResults: "50" } };
   }
 
   if (sysLower.includes("dynamics") || sysLower.includes("d365")) {
-    return { template: "HttpClient", displayName: `Dynamics 365 API - ${system || "Dynamics 365"}`, properties: { Method: "GET", Endpoint: '"https://TODO.crm.dynamics.com/api/data/v9.2/"', AcceptFormat: "JSON" } };
+    return { template: "DynamicsGetRecords", displayName: `Dynamics 365 - ${system || "Dynamics 365"}`, properties: { EntityName: '""', MaxRecords: "100" } };
   }
 
   if (sysLower.includes("pdf") || combined.includes("pdf") || combined.includes("read pdf") || combined.includes("extract pdf") || combined.includes("generate pdf")) {

@@ -1,7 +1,7 @@
 {
   "catalogVersion": "2.0.0",
-  "generatedAt": "2026-04-01T07:59:25.699Z",
-  "lastVerifiedAt": "2026-04-01T07:59:25.699Z",
+  "generatedAt": "2026-04-01T09:37:17.107Z",
+  "lastVerifiedAt": "2026-04-01T09:37:17.107Z",
   "studioVersion": "25.10.0",
   "packages": [
     {
@@ -3710,6 +3710,164 @@
       ]
     },
     {
+      "packageId": "UiPath.Coupa.IntegrationService.Activities",
+      "version": "4.0.6",
+      "feedStatus": "verified",
+      "preferredVersion": "4.0.6",
+      "prefix": "ucoupa",
+      "clrNamespace": "UiPath.Coupa.IntegrationService.Activities",
+      "assembly": "UiPath.Coupa.IntegrationService.Activities",
+      "activities": [
+        {
+          "className": "CoupaScope",
+          "displayName": "Coupa Scope",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "ConnectionId",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "30000"
+            }
+          ]
+        },
+        {
+          "className": "CoupaGetPurchaseOrders",
+          "displayName": "Get Purchase Orders (Coupa)",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "Status",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "validValues": [
+                "draft",
+                "pending_approval",
+                "approved",
+                "closed"
+              ],
+              "default": "approved"
+            },
+            {
+              "name": "Limit",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "50"
+            },
+            {
+              "name": "PurchaseOrders",
+              "direction": "Out",
+              "clrType": "System.Collections.Generic.List",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "scg:List(x:Object)",
+              "required": false
+            }
+          ]
+        },
+        {
+          "className": "CoupaCreateRequisition",
+          "displayName": "Create Requisition (Coupa)",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "RequisitionData",
+              "direction": "In",
+              "clrType": "System.Object",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:Object",
+              "required": true
+            },
+            {
+              "name": "RequisitionId",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:String",
+              "required": false
+            }
+          ]
+        },
+        {
+          "className": "CoupaGetInvoices",
+          "displayName": "Get Invoices (Coupa)",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "Status",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "validValues": [
+                "draft",
+                "pending_approval",
+                "approved",
+                "voided"
+              ],
+              "default": "pending_approval"
+            },
+            {
+              "name": "Limit",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "50"
+            },
+            {
+              "name": "Invoices",
+              "direction": "Out",
+              "clrType": "System.Collections.Generic.List",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "scg:List(x:Object)",
+              "required": false
+            }
+          ]
+        }
+      ]
+    },
+    {
       "packageId": "UiPath.Credentials.Activities",
       "version": "3.0.0",
       "feedStatus": "verified",
@@ -6675,6 +6833,225 @@
               "required": false
             }
           ]
+        },
+        {
+          "className": "GoogleCalendarGetEvents",
+          "displayName": "Get Google Calendar Events",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "CalendarId",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "primary"
+            },
+            {
+              "name": "MaxResults",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "10"
+            },
+            {
+              "name": "TimeMin",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "TimeMax",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "SearchQuery",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "Events",
+              "direction": "Out",
+              "clrType": "System.Collections.Generic.List",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "scg:List(x:Object)",
+              "required": false
+            }
+          ]
+        },
+        {
+          "className": "GoogleCalendarCreateEvent",
+          "displayName": "Create Google Calendar Event",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "CalendarId",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "primary"
+            },
+            {
+              "name": "Summary",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": true
+            },
+            {
+              "name": "Description",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": false
+            },
+            {
+              "name": "Start",
+              "direction": "In",
+              "clrType": "System.DateTime",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "s:DateTime",
+              "required": true
+            },
+            {
+              "name": "End",
+              "direction": "In",
+              "clrType": "System.DateTime",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "s:DateTime",
+              "required": true
+            },
+            {
+              "name": "Attendees",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": false
+            },
+            {
+              "name": "Location",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "EventId",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:String",
+              "required": false
+            }
+          ]
+        },
+        {
+          "className": "GoogleContactsSearchContacts",
+          "displayName": "Search Google Contacts",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "Query",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "MaxResults",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "10"
+            },
+            {
+              "name": "Contacts",
+              "direction": "Out",
+              "clrType": "System.Collections.Generic.List",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "scg:List(x:Object)",
+              "required": false
+            }
+          ]
+        },
+        {
+          "className": "GoogleContactsGetContact",
+          "displayName": "Get Google Contact",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "ResourceName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "Contact",
+              "direction": "Out",
+              "clrType": "System.Object",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:Object",
+              "required": false
+            }
+          ]
         }
       ]
     },
@@ -8240,6 +8617,199 @@
               "typeArguments": null,
               "required": false,
               "default": "False"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "UiPath.MicrosoftDynamics.Activities",
+      "version": "1.0.5",
+      "feedStatus": "verified",
+      "preferredVersion": "1.0.5",
+      "prefix": "udyn",
+      "clrNamespace": "UiPath.MicrosoftDynamics.Activities",
+      "assembly": "UiPath.MicrosoftDynamics.Activities",
+      "activities": [
+        {
+          "className": "DynamicsScope",
+          "displayName": "Dynamics 365 Scope",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "OrganizationUrl",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": true
+            },
+            {
+              "name": "Username",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": true
+            },
+            {
+              "name": "Password",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": true
+            },
+            {
+              "name": "AuthenticationType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "validValues": [
+                "OAuth2",
+                "AD"
+              ],
+              "default": "OAuth2"
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "30000"
+            }
+          ]
+        },
+        {
+          "className": "DynamicsGetRecords",
+          "displayName": "Get Records (Dynamics 365)",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "EntityName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "FetchXml",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "MaxRecords",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "100"
+            },
+            {
+              "name": "Records",
+              "direction": "Out",
+              "clrType": "System.Data.DataTable",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "scg2:DataTable",
+              "required": false
+            }
+          ]
+        },
+        {
+          "className": "DynamicsCreateRecord",
+          "displayName": "Create Record (Dynamics 365)",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "EntityName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "Fields",
+              "direction": "In",
+              "clrType": "System.Collections.Generic.Dictionary",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "scg:Dictionary(x:String,x:String)",
+              "required": true
+            },
+            {
+              "name": "RecordId",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:String",
+              "required": false
+            }
+          ]
+        },
+        {
+          "className": "DynamicsUpdateRecord",
+          "displayName": "Update Record (Dynamics 365)",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "EntityName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "RecordId",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "Fields",
+              "direction": "In",
+              "clrType": "System.Collections.Generic.Dictionary",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "scg:Dictionary(x:String,x:String)",
+              "required": true
             }
           ]
         }
@@ -11534,6 +12104,145 @@
               "typeArguments": null,
               "required": false,
               "default": "False"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "UiPath.Workday.Activities",
+      "version": "2.0.6",
+      "feedStatus": "verified",
+      "preferredVersion": "2.0.6",
+      "prefix": "uwd",
+      "clrNamespace": "UiPath.Workday.Activities",
+      "assembly": "UiPath.Workday.Activities",
+      "activities": [
+        {
+          "className": "WorkdayScope",
+          "displayName": "Workday Scope",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "TenantUrl",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": true
+            },
+            {
+              "name": "Username",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": true
+            },
+            {
+              "name": "Password",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": true
+            },
+            {
+              "name": "IntegrationSystemId",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "30000"
+            }
+          ]
+        },
+        {
+          "className": "WorkdayGetWorkers",
+          "displayName": "Get Workers (Workday)",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "Count",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "100"
+            },
+            {
+              "name": "WorkerType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "validValues": [
+                "Employee",
+                "ContingentWorker",
+                "Both"
+              ],
+              "default": "Both"
+            },
+            {
+              "name": "Workers",
+              "direction": "Out",
+              "clrType": "System.Data.DataTable",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "scg2:DataTable",
+              "required": false
+            }
+          ]
+        },
+        {
+          "className": "WorkdayGetWorkerById",
+          "displayName": "Get Worker By ID (Workday)",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "WorkerId",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "Worker",
+              "direction": "Out",
+              "clrType": "System.Object",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:Object",
+              "required": false
             }
           ]
         }

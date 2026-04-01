@@ -335,6 +335,57 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
         childProp("Messages", { dir: "Out", type: "System.Collections.Generic.List", wrapper: "OutArgument", typeArgs: "scg:List(x:Object)" }),
       ],
     },
+    {
+      className: "GoogleCalendarGetEvents",
+      displayName: "Get Google Calendar Events",
+      browsable: true,
+      processTypes: ["general", "api-integration"],
+      properties: [
+        prop("CalendarId", { default: "primary" }),
+        prop("MaxResults", { type: "System.Int32", default: "10" }),
+        prop("TimeMin"),
+        prop("TimeMax"),
+        prop("SearchQuery"),
+        childProp("Events", { dir: "Out", type: "System.Collections.Generic.List", wrapper: "OutArgument", typeArgs: "scg:List(x:Object)" }),
+      ],
+    },
+    {
+      className: "GoogleCalendarCreateEvent",
+      displayName: "Create Google Calendar Event",
+      browsable: true,
+      processTypes: ["general", "api-integration"],
+      properties: [
+        prop("CalendarId", { default: "primary" }),
+        childProp("Summary", { required: true }),
+        childProp("Description"),
+        childProp("Start", { type: "System.DateTime", wrapper: "InArgument", typeArgs: "s:DateTime", required: true }),
+        childProp("End", { type: "System.DateTime", wrapper: "InArgument", typeArgs: "s:DateTime", required: true }),
+        childProp("Attendees"),
+        prop("Location"),
+        childProp("EventId", { dir: "Out", wrapper: "OutArgument", typeArgs: "x:String" }),
+      ],
+    },
+    {
+      className: "GoogleContactsSearchContacts",
+      displayName: "Search Google Contacts",
+      browsable: true,
+      processTypes: ["general", "api-integration"],
+      properties: [
+        prop("Query"),
+        prop("MaxResults", { type: "System.Int32", default: "10" }),
+        childProp("Contacts", { dir: "Out", type: "System.Collections.Generic.List", wrapper: "OutArgument", typeArgs: "scg:List(x:Object)" }),
+      ],
+    },
+    {
+      className: "GoogleContactsGetContact",
+      displayName: "Get Google Contact",
+      browsable: true,
+      processTypes: ["general", "api-integration"],
+      properties: [
+        prop("ResourceName", { required: true }),
+        childProp("Contact", { dir: "Out", type: "System.Object", wrapper: "OutArgument", typeArgs: "x:Object" }),
+      ],
+    },
   ],
 };
 
@@ -2264,6 +2315,147 @@ const BOX_ACTIVITIES: PackageActivityDefs = {
   ],
 };
 
+const DYNAMICS_ACTIVITIES: PackageActivityDefs = {
+  packageId: "UiPath.MicrosoftDynamics.Activities",
+  activities: [
+    {
+      className: "DynamicsScope",
+      displayName: "Dynamics 365 Scope",
+      browsable: true,
+      processTypes: ["api-integration"],
+      properties: [
+        childProp("OrganizationUrl", { required: true }),
+        childProp("Username", { required: true }),
+        childProp("Password", { required: true }),
+        prop("AuthenticationType", { validValues: ["OAuth2", "AD"], default: "OAuth2" }),
+        COMMON_TIMEOUT,
+      ],
+    },
+    {
+      className: "DynamicsGetRecords",
+      displayName: "Get Records (Dynamics 365)",
+      browsable: true,
+      processTypes: ["api-integration"],
+      properties: [
+        prop("EntityName", { required: true }),
+        prop("FetchXml"),
+        prop("MaxRecords", { type: "System.Int32", default: "100" }),
+        childProp("Records", { dir: "Out", type: "System.Data.DataTable", wrapper: "OutArgument", typeArgs: "scg2:DataTable" }),
+      ],
+    },
+    {
+      className: "DynamicsCreateRecord",
+      displayName: "Create Record (Dynamics 365)",
+      browsable: true,
+      processTypes: ["api-integration"],
+      properties: [
+        prop("EntityName", { required: true }),
+        childProp("Fields", { type: "System.Collections.Generic.Dictionary", wrapper: "InArgument", typeArgs: "scg:Dictionary(x:String,x:String)", required: true }),
+        childProp("RecordId", { dir: "Out", wrapper: "OutArgument", typeArgs: "x:String" }),
+      ],
+    },
+    {
+      className: "DynamicsUpdateRecord",
+      displayName: "Update Record (Dynamics 365)",
+      browsable: true,
+      processTypes: ["api-integration"],
+      properties: [
+        prop("EntityName", { required: true }),
+        prop("RecordId", { required: true }),
+        childProp("Fields", { type: "System.Collections.Generic.Dictionary", wrapper: "InArgument", typeArgs: "scg:Dictionary(x:String,x:String)", required: true }),
+      ],
+    },
+  ],
+};
+
+const WORKDAY_ACTIVITIES: PackageActivityDefs = {
+  packageId: "UiPath.Workday.Activities",
+  activities: [
+    {
+      className: "WorkdayScope",
+      displayName: "Workday Scope",
+      browsable: true,
+      processTypes: ["api-integration"],
+      properties: [
+        childProp("TenantUrl", { required: true }),
+        childProp("Username", { required: true }),
+        childProp("Password", { required: true }),
+        prop("IntegrationSystemId"),
+        COMMON_TIMEOUT,
+      ],
+    },
+    {
+      className: "WorkdayGetWorkers",
+      displayName: "Get Workers (Workday)",
+      browsable: true,
+      processTypes: ["api-integration"],
+      properties: [
+        prop("Count", { type: "System.Int32", default: "100" }),
+        prop("WorkerType", { validValues: ["Employee", "ContingentWorker", "Both"], default: "Both" }),
+        childProp("Workers", { dir: "Out", type: "System.Data.DataTable", wrapper: "OutArgument", typeArgs: "scg2:DataTable" }),
+      ],
+    },
+    {
+      className: "WorkdayGetWorkerById",
+      displayName: "Get Worker By ID (Workday)",
+      browsable: true,
+      processTypes: ["api-integration"],
+      properties: [
+        prop("WorkerId", { required: true }),
+        childProp("Worker", { dir: "Out", type: "System.Object", wrapper: "OutArgument", typeArgs: "x:Object" }),
+      ],
+    },
+  ],
+};
+
+const COUPA_ACTIVITIES: PackageActivityDefs = {
+  packageId: "UiPath.Coupa.IntegrationService.Activities",
+  activities: [
+    {
+      className: "CoupaScope",
+      displayName: "Coupa Scope",
+      browsable: true,
+      processTypes: ["api-integration"],
+      properties: [
+        prop("ConnectionId", { required: true }),
+        COMMON_TIMEOUT,
+      ],
+    },
+    {
+      className: "CoupaGetPurchaseOrders",
+      displayName: "Get Purchase Orders (Coupa)",
+      browsable: true,
+      processTypes: ["api-integration"],
+      properties: [
+        prop("Status", { validValues: ["draft", "pending_approval", "approved", "closed"], default: "approved" }),
+        prop("Limit", { type: "System.Int32", default: "50" }),
+        childProp("PurchaseOrders", { dir: "Out", type: "System.Collections.Generic.List", wrapper: "OutArgument", typeArgs: "scg:List(x:Object)" }),
+      ],
+    },
+    {
+      className: "CoupaCreateRequisition",
+      displayName: "Create Requisition (Coupa)",
+      browsable: true,
+      processTypes: ["api-integration"],
+      properties: [
+        childProp("RequisitionData", { type: "System.Object", wrapper: "InArgument", typeArgs: "x:Object", required: true }),
+        childProp("RequisitionId", { dir: "Out", wrapper: "OutArgument", typeArgs: "x:String" }),
+      ],
+    },
+    {
+      className: "CoupaGetInvoices",
+      displayName: "Get Invoices (Coupa)",
+      browsable: true,
+      processTypes: ["api-integration"],
+      properties: [
+        prop("Status", { validValues: ["draft", "pending_approval", "approved", "voided"], default: "pending_approval" }),
+        prop("Limit", { type: "System.Int32", default: "50" }),
+        childProp("Invoices", { dir: "Out", type: "System.Collections.Generic.List", wrapper: "OutArgument", typeArgs: "scg:List(x:Object)" }),
+      ],
+    },
+  ],
+};
+
 const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
   packageId: "UiPath.System.Activities",
   activities: [
@@ -2653,6 +2845,9 @@ export const ACTIVITY_DEFINITIONS_REGISTRY: PackageActivityDefs[] = [
   COMMUNICATIONS_MINING_ACTIVITIES,
   WORKFLOW_EVENTS_ACTIVITIES,
   BOX_ACTIVITIES,
+  DYNAMICS_ACTIVITIES,
+  WORKDAY_ACTIVITIES,
+  COUPA_ACTIVITIES,
 ];
 
 export function getRegistryPackageIds(): string[] {
