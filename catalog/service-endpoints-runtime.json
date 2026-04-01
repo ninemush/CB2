@@ -6,40 +6,40 @@
     },
     "PIMS": {
       "reachabilityStatus": "reachable",
-      "lastVerifiedAt": "2026-04-01T05:32:22.690Z"
+      "lastVerifiedAt": "2026-04-01T05:32:26.726Z"
     },
     "TM": {
       "reachabilityStatus": "reachable",
-      "lastVerifiedAt": "2026-04-01T05:07:44.554Z"
+      "lastVerifiedAt": "2026-04-01T05:32:26.726Z"
     },
     "OR": {
       "reachabilityStatus": "reachable",
-      "lastVerifiedAt": "2026-04-01T05:07:44.553Z"
+      "lastVerifiedAt": "2026-04-01T05:32:26.726Z"
     },
     "AGENTS": {
       "reachabilityStatus": "limited",
-      "lastVerifiedAt": "2026-04-01T05:07:44.554Z"
+      "lastVerifiedAt": "2026-04-01T05:32:26.726Z"
     },
     "IDENTITY": {
       "reachabilityStatus": "reachable",
-      "lastVerifiedAt": "2026-04-01T05:07:44.554Z"
+      "lastVerifiedAt": "2026-04-01T05:32:26.726Z"
     },
     "IXP": {
-      "reachabilityStatus": "limited",
-      "lastVerifiedAt": "2026-04-01T05:32:23.155Z"
+      "reachabilityStatus": "reachable",
+      "lastVerifiedAt": "2026-04-01T05:32:24.248Z"
     },
     "AI": {
       "reachabilityStatus": "reachable",
-      "lastVerifiedAt": "2026-04-01T05:07:42.956Z"
+      "lastVerifiedAt": "2026-04-01T05:32:24.976Z"
     },
     "REINFER": {
       "reachabilityStatus": "reachable",
-      "lastVerifiedAt": "2026-04-01T05:07:42.792Z"
+      "lastVerifiedAt": "2026-04-01T05:32:24.767Z"
     },
     "DU": {
       "reachabilityStatus": "reachable",
       "lastVerifiedAt": "2026-04-01T05:32:23.724Z"
     }
   },
-  "lastRefreshedAt": "2026-04-01T05:32:23.724Z"
+  "lastRefreshedAt": "2026-04-01T05:32:26.726Z"
 }
