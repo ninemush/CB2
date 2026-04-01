@@ -89,6 +89,7 @@ function convertActivity(a: ActivityDef): CatalogActivity {
     browsable: a.browsable,
     processTypes: a.processTypes,
     properties: a.properties.map(convertProperty),
+    emissionApproved: a.emissionApproved,
   };
   if (a.propertiesComplete) {
     result.propertiesComplete = true;
@@ -162,6 +163,14 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
 
   const packages: CatalogPackage[] = [];
 
+  function ensureEmissionApproved(act: CatalogActivity): CatalogActivity {
+    if (act.emissionApproved === undefined) {
+      // Preserved activities without explicit emissionApproved are not approved by default
+      return { ...act, emissionApproved: false };
+    }
+    return act;
+  }
+
   for (const [pkgId, existingPkg] of existingPackageMap) {
     const hasRegistryDef = ACTIVITY_DEFINITIONS_REGISTRY.some(r => r.packageId === pkgId);
     if (!hasRegistryDef) {
@@ -171,6 +180,7 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
         version: vInfo.version,
         feedStatus: vInfo.feedStatus,
         preferredVersion: vInfo.preferred,
+        activities: existingPkg.activities.map(ensureEmissionApproved),
       });
     }
   }
@@ -182,7 +192,7 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
 
     if (existingPkg) {
       const registryClassNames = new Set(regPkg.activities.map(a => a.className));
-      const preservedExisting = existingPkg.activities.filter(a => !registryClassNames.has(a.className));
+      const preservedExisting = existingPkg.activities.filter(a => !registryClassNames.has(a.className)).map(ensureEmissionApproved);
       const registryActivities = regPkg.activities.map(convertActivity);
 
       packages.push({

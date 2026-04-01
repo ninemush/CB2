@@ -19,6 +19,7 @@ export interface ActivityDef {
   processTypes: ProcessType[];
   properties: ActivityPropertyDef[];
   propertiesComplete?: boolean;
+  emissionApproved: boolean;
 }
 
 export interface PackageActivityDefs {
@@ -86,6 +87,7 @@ const PDF_ACTIVITIES: PackageActivityDefs = {
       className: "ReadPDFText",
       displayName: "Read PDF Text",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "document-processing", "unattended-ui"],
       properties: [
         prop("FileName", { required: true }),
@@ -99,6 +101,7 @@ const PDF_ACTIVITIES: PackageActivityDefs = {
       className: "ReadPDFWithOCR",
       displayName: "Read PDF with OCR",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["document-processing"],
       properties: [
         prop("FileName", { required: true }),
@@ -113,6 +116,7 @@ const PDF_ACTIVITIES: PackageActivityDefs = {
       className: "ExtractPDFPageRange",
       displayName: "Extract PDF Page Range",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "document-processing"],
       properties: [
         prop("InputFilePath", { required: true }),
@@ -126,6 +130,7 @@ const PDF_ACTIVITIES: PackageActivityDefs = {
       className: "MergePDF",
       displayName: "Merge PDF",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "document-processing"],
       properties: [
         childProp("InputFiles", { type: "System.String[]", wrapper: "InArgument", typeArgs: "scg:List(x:String)", required: true }),
@@ -137,6 +142,7 @@ const PDF_ACTIVITIES: PackageActivityDefs = {
       className: "ExportPDFPageAsImage",
       displayName: "Export PDF Page as Image",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["document-processing"],
       properties: [
         prop("FilePath", { required: true }),
@@ -150,6 +156,7 @@ const PDF_ACTIVITIES: PackageActivityDefs = {
       className: "GetPDFPageCount",
       displayName: "Get PDF Page Count",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "document-processing"],
       properties: [
         prop("FileName", { required: true }),
@@ -168,6 +175,7 @@ const WORD_ACTIVITIES: PackageActivityDefs = {
       className: "ReadDocument",
       displayName: "Read Document",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "document-processing"],
       properties: [
         prop("FilePath", { required: true }),
@@ -179,6 +187,7 @@ const WORD_ACTIVITIES: PackageActivityDefs = {
       className: "WriteDocument",
       displayName: "Write Document",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "document-processing"],
       properties: [
         prop("FilePath", { required: true }),
@@ -190,6 +199,7 @@ const WORD_ACTIVITIES: PackageActivityDefs = {
       className: "ReplaceText",
       displayName: "Replace Text in Document",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "document-processing"],
       properties: [
         prop("FilePath", { required: true }),
@@ -203,6 +213,7 @@ const WORD_ACTIVITIES: PackageActivityDefs = {
       className: "AppendText",
       displayName: "Append Text",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "document-processing"],
       properties: [
         prop("FilePath", { required: true }),
@@ -214,6 +225,7 @@ const WORD_ACTIVITIES: PackageActivityDefs = {
       className: "InsertPicture",
       displayName: "Insert Picture",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "document-processing"],
       properties: [
         prop("FilePath", { required: true }),
@@ -225,6 +237,7 @@ const WORD_ACTIVITIES: PackageActivityDefs = {
       className: "ReadTable",
       displayName: "Read Table from Document",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "document-processing"],
       properties: [
         prop("FilePath", { required: true }),
@@ -243,6 +256,7 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleSheetsApplicationScope",
       displayName: "Google Sheets Application Scope",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("SpreadsheetId", { required: true }),
@@ -255,6 +269,7 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleSheetsReadRange",
       displayName: "Google Sheets Read Range",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("SheetName", { required: true }),
@@ -267,6 +282,7 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleSheetsWriteRange",
       displayName: "Google Sheets Write Range",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("SheetName", { required: true }),
@@ -279,6 +295,7 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleSheetsAppendRange",
       displayName: "Google Sheets Append Range",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("SheetName", { required: true }),
@@ -290,6 +307,7 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleDriveUploadFile",
       displayName: "Google Drive Upload File",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("FilePath", { required: true }),
@@ -302,6 +320,7 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleDriveDownloadFile",
       displayName: "Google Drive Download File",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("FileId", { required: true }),
@@ -313,6 +332,7 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
       className: "GmailSendMessage",
       displayName: "Send Gmail Message",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("To", { required: true }),
@@ -327,6 +347,7 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
       className: "GmailGetMessages",
       displayName: "Get Gmail Messages",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("LabelFilter", { default: "INBOX" }),
@@ -339,6 +360,7 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleCalendarGetEvents",
       displayName: "Get Google Calendar Events",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified against UiPath GSuite package
       processTypes: ["general", "api-integration"],
       properties: [
         prop("CalendarId", { default: "primary" }),
@@ -353,6 +375,7 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleCalendarCreateEvent",
       displayName: "Create Google Calendar Event",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified against UiPath GSuite package
       processTypes: ["general", "api-integration"],
       properties: [
         prop("CalendarId", { default: "primary" }),
@@ -369,6 +392,7 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleContactsSearchContacts",
       displayName: "Search Google Contacts",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified against UiPath GSuite package
       processTypes: ["general", "api-integration"],
       properties: [
         prop("Query"),
@@ -380,6 +404,7 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleContactsGetContact",
       displayName: "Get Google Contact",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified against UiPath GSuite package
       processTypes: ["general", "api-integration"],
       properties: [
         prop("ResourceName", { required: true }),
@@ -396,6 +421,7 @@ const OFFICE365_ACTIVITIES: PackageActivityDefs = {
       className: "MicrosoftOffice365Scope",
       displayName: "Microsoft Office 365 Scope",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("ApplicationId", { required: true }),
@@ -409,6 +435,7 @@ const OFFICE365_ACTIVITIES: PackageActivityDefs = {
       className: "SendMail365",
       displayName: "Send Mail (Office 365)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         childProp("Account", { required: true }),
@@ -424,6 +451,7 @@ const OFFICE365_ACTIVITIES: PackageActivityDefs = {
       className: "GetMail365",
       displayName: "Get Mail (Office 365)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         childProp("Account", { required: true }),
@@ -437,6 +465,7 @@ const OFFICE365_ACTIVITIES: PackageActivityDefs = {
       className: "CreateEvent365",
       displayName: "Create Calendar Event",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         childProp("Account", { required: true }),
@@ -451,6 +480,7 @@ const OFFICE365_ACTIVITIES: PackageActivityDefs = {
       className: "ExcelCreateSpreadsheet",
       displayName: "Create Spreadsheet (OneDrive)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         childProp("Name", { required: true }),
@@ -463,6 +493,7 @@ const OFFICE365_ACTIVITIES: PackageActivityDefs = {
       className: "ExcelReadRange365",
       displayName: "Read Range (Excel Online)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("SpreadsheetId", { required: true }),
@@ -476,6 +507,7 @@ const OFFICE365_ACTIVITIES: PackageActivityDefs = {
       className: "ExcelWriteRange365",
       displayName: "Write Range (Excel Online)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("SpreadsheetId", { required: true }),
@@ -488,6 +520,7 @@ const OFFICE365_ACTIVITIES: PackageActivityDefs = {
       className: "SharePointUploadFile",
       displayName: "Upload File (SharePoint)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("SiteUrl", { required: true }),
@@ -501,6 +534,7 @@ const OFFICE365_ACTIVITIES: PackageActivityDefs = {
       className: "SharePointDownloadFile",
       displayName: "Download File (SharePoint)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("SiteUrl", { required: true }),
@@ -518,6 +552,7 @@ const TESTING_ACTIVITIES: PackageActivityDefs = {
       className: "VerifyExpression",
       displayName: "Verify Expression",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("Expression", { type: "System.Boolean", wrapper: "InArgument", typeArgs: "x:Boolean", required: true }),
@@ -529,6 +564,7 @@ const TESTING_ACTIVITIES: PackageActivityDefs = {
       className: "VerifyRange",
       displayName: "Verify Range",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("ExpressionValue", { type: "System.Double", wrapper: "InArgument", typeArgs: "x:Double", required: true }),
@@ -541,6 +577,7 @@ const TESTING_ACTIVITIES: PackageActivityDefs = {
       className: "VerifyControlAttribute",
       displayName: "Verify Control Attribute",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["attended-ui", "unattended-ui"],
       properties: [
         prop("AttributeName", { required: true }),
@@ -553,6 +590,7 @@ const TESTING_ACTIVITIES: PackageActivityDefs = {
       className: "LogAssert",
       displayName: "Log Assert",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("Expression", { type: "System.Boolean", wrapper: "InArgument", typeArgs: "x:Boolean", required: true }),
@@ -563,6 +601,7 @@ const TESTING_ACTIVITIES: PackageActivityDefs = {
       className: "GivenName",
       displayName: "Given Name",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("DisplayName", { required: true }),
@@ -572,6 +611,7 @@ const TESTING_ACTIVITIES: PackageActivityDefs = {
       className: "WhenName",
       displayName: "When Name",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("DisplayName", { required: true }),
@@ -581,6 +621,7 @@ const TESTING_ACTIVITIES: PackageActivityDefs = {
       className: "ThenName",
       displayName: "Then Name",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("DisplayName", { required: true }),
@@ -590,6 +631,7 @@ const TESTING_ACTIVITIES: PackageActivityDefs = {
       className: "AddTestDataQueueItem",
       displayName: "Add Test Data Queue Item",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "orchestration"],
       properties: [
         prop("QueueName", { required: true }),
@@ -606,6 +648,7 @@ const FORM_ACTIVITIES: PackageActivityDefs = {
       className: "CreateForm",
       displayName: "Create Form",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["attended-ui"],
       properties: [
         prop("FormSchemaPath", { required: true }),
@@ -618,6 +661,7 @@ const FORM_ACTIVITIES: PackageActivityDefs = {
       className: "ShowForm",
       displayName: "Show Form",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["attended-ui"],
       properties: [
         prop("FormSchemaPath", { required: true }),
@@ -629,6 +673,7 @@ const FORM_ACTIVITIES: PackageActivityDefs = {
       className: "CalloutActivities",
       displayName: "Callout",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["attended-ui"],
       properties: [
         prop("Title", { required: true }),
@@ -647,6 +692,7 @@ const CRYPTOGRAPHY_ACTIVITIES: PackageActivityDefs = {
       className: "EncryptText",
       displayName: "Encrypt Text",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("Input", { required: true }),
@@ -660,6 +706,7 @@ const CRYPTOGRAPHY_ACTIVITIES: PackageActivityDefs = {
       className: "DecryptText",
       displayName: "Decrypt Text",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("Input", { required: true }),
@@ -673,6 +720,7 @@ const CRYPTOGRAPHY_ACTIVITIES: PackageActivityDefs = {
       className: "EncryptFile",
       displayName: "Encrypt File",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("InputFilePath", { required: true }),
@@ -685,6 +733,7 @@ const CRYPTOGRAPHY_ACTIVITIES: PackageActivityDefs = {
       className: "DecryptFile",
       displayName: "Decrypt File",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("InputFilePath", { required: true }),
@@ -697,6 +746,7 @@ const CRYPTOGRAPHY_ACTIVITIES: PackageActivityDefs = {
       className: "HashText",
       displayName: "Hash Text",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("Input", { required: true }),
@@ -709,6 +759,7 @@ const CRYPTOGRAPHY_ACTIVITIES: PackageActivityDefs = {
       className: "HashFile",
       displayName: "Hash File",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("InputFilePath", { required: true }),
@@ -720,6 +771,7 @@ const CRYPTOGRAPHY_ACTIVITIES: PackageActivityDefs = {
       className: "KeyedHashText",
       displayName: "Keyed Hash Text",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("Input", { required: true }),
@@ -739,6 +791,7 @@ const WEBAPI_ACTIVITIES: PackageActivityDefs = {
       className: "HttpClientRequest",
       displayName: "HTTP Client Request",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration", "general"],
       properties: [
         childProp("EndPoint", { required: true }),
@@ -758,6 +811,7 @@ const WEBAPI_ACTIVITIES: PackageActivityDefs = {
       className: "DownloadFile",
       displayName: "Download File from URL",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration", "general"],
       properties: [
         childProp("URL", { required: true }),
@@ -770,6 +824,7 @@ const WEBAPI_ACTIVITIES: PackageActivityDefs = {
       className: "SerializeJson",
       displayName: "Serialize JSON",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         childProp("JsonObject", { type: "System.Object", wrapper: "InArgument", typeArgs: "x:Object", required: true }),
@@ -782,6 +837,7 @@ const WEBAPI_ACTIVITIES: PackageActivityDefs = {
       className: "DeserializeJson",
       displayName: "Deserialize JSON",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         childProp("JsonString", { required: true }),
@@ -799,6 +855,7 @@ const COMPLEX_SCENARIOS_ACTIVITIES: PackageActivityDefs = {
       className: "MultipleAssign",
       displayName: "Multiple Assign",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("Assignments", { type: "System.Collections.Generic.List`1[System.Activities.Statements.AssignBase]", wrapper: "InArgument", typeArgs: "x:Object" }),
@@ -808,6 +865,7 @@ const COMPLEX_SCENARIOS_ACTIVITIES: PackageActivityDefs = {
       className: "WaitForDownload",
       displayName: "Wait for Download",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["attended-ui", "unattended-ui"],
       properties: [
         prop("DownloadPath", { required: true }),
@@ -819,6 +877,7 @@ const COMPLEX_SCENARIOS_ACTIVITIES: PackageActivityDefs = {
       className: "RepeatUntil",
       displayName: "Repeat Until",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("Condition", { type: "System.Boolean", wrapper: "InArgument", typeArgs: "x:Boolean", required: true }),
@@ -829,6 +888,7 @@ const COMPLEX_SCENARIOS_ACTIVITIES: PackageActivityDefs = {
       className: "BuildDataTable",
       displayName: "Build Data Table",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("DataTable", { dir: "Out", type: "System.Data.DataTable", wrapper: "OutArgument", typeArgs: "scg2:DataTable" }),
@@ -840,6 +900,7 @@ const COMPLEX_SCENARIOS_ACTIVITIES: PackageActivityDefs = {
       className: "FilterDataTable",
       displayName: "Filter Data Table",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("Input", { type: "System.Data.DataTable", wrapper: "InArgument", typeArgs: "scg2:DataTable", required: true }),
@@ -851,6 +912,7 @@ const COMPLEX_SCENARIOS_ACTIVITIES: PackageActivityDefs = {
       className: "SortDataTable",
       displayName: "Sort Data Table",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("Input", { type: "System.Data.DataTable", wrapper: "InArgument", typeArgs: "scg2:DataTable", required: true }),
@@ -863,6 +925,7 @@ const COMPLEX_SCENARIOS_ACTIVITIES: PackageActivityDefs = {
       className: "RemoveDuplicateRows",
       displayName: "Remove Duplicate Rows",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("Input", { type: "System.Data.DataTable", wrapper: "InArgument", typeArgs: "scg2:DataTable", required: true }),
@@ -873,6 +936,7 @@ const COMPLEX_SCENARIOS_ACTIVITIES: PackageActivityDefs = {
       className: "JoinDataTables",
       displayName: "Join Data Tables",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("DataTable1", { type: "System.Data.DataTable", wrapper: "InArgument", typeArgs: "scg2:DataTable", required: true }),
@@ -885,6 +949,7 @@ const COMPLEX_SCENARIOS_ACTIVITIES: PackageActivityDefs = {
       className: "OutputDataTable",
       displayName: "Output Data Table",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("Input", { type: "System.Data.DataTable", wrapper: "InArgument", typeArgs: "scg2:DataTable", required: true }),
@@ -895,6 +960,7 @@ const COMPLEX_SCENARIOS_ACTIVITIES: PackageActivityDefs = {
       className: "AddDataRow",
       displayName: "Add Data Row",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("DataTable", { type: "System.Data.DataTable", wrapper: "InArgument", typeArgs: "scg2:DataTable", required: true }),
@@ -906,6 +972,7 @@ const COMPLEX_SCENARIOS_ACTIVITIES: PackageActivityDefs = {
       className: "RemoveDataRow",
       displayName: "Remove Data Row",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("DataRow", { type: "System.Data.DataRow", wrapper: "InArgument", typeArgs: "scg2:DataRow", required: true }),
@@ -915,6 +982,7 @@ const COMPLEX_SCENARIOS_ACTIVITIES: PackageActivityDefs = {
       className: "LookupDataTable",
       displayName: "Lookup Data Table",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         childProp("DataTable", { type: "System.Data.DataTable", wrapper: "InArgument", typeArgs: "scg2:DataTable", required: true }),
@@ -935,6 +1003,7 @@ const AMAZON_S3_ACTIVITIES: PackageActivityDefs = {
       className: "AmazonScope",
       displayName: "Amazon Scope",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         childProp("AccessKey", { required: true }),
@@ -948,6 +1017,7 @@ const AMAZON_S3_ACTIVITIES: PackageActivityDefs = {
       className: "S3UploadFile",
       displayName: "S3 Upload File",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("BucketName", { required: true }),
@@ -960,6 +1030,7 @@ const AMAZON_S3_ACTIVITIES: PackageActivityDefs = {
       className: "S3DownloadFile",
       displayName: "S3 Download File",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("BucketName", { required: true }),
@@ -971,6 +1042,7 @@ const AMAZON_S3_ACTIVITIES: PackageActivityDefs = {
       className: "S3DeleteObject",
       displayName: "S3 Delete Object",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("BucketName", { required: true }),
@@ -981,6 +1053,7 @@ const AMAZON_S3_ACTIVITIES: PackageActivityDefs = {
       className: "S3ListObjects",
       displayName: "S3 List Objects",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("BucketName", { required: true }),
@@ -999,6 +1072,7 @@ const AMAZON_TEXTRACT_ACTIVITIES: PackageActivityDefs = {
       className: "TextractAnalyzeDocument",
       displayName: "Textract Analyze Document",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["document-processing", "api-integration"],
       properties: [
         prop("FilePath", { required: true }),
@@ -1011,6 +1085,7 @@ const AMAZON_TEXTRACT_ACTIVITIES: PackageActivityDefs = {
       className: "TextractDetectText",
       displayName: "Textract Detect Text",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["document-processing", "api-integration"],
       properties: [
         prop("FilePath", { required: true }),
@@ -1028,6 +1103,7 @@ const AMAZON_COMPREHEND_ACTIVITIES: PackageActivityDefs = {
       className: "ComprehendDetectSentiment",
       displayName: "Detect Sentiment",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         childProp("Text", { required: true }),
@@ -1040,6 +1116,7 @@ const AMAZON_COMPREHEND_ACTIVITIES: PackageActivityDefs = {
       className: "ComprehendDetectEntities",
       displayName: "Detect Entities",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         childProp("Text", { required: true }),
@@ -1051,6 +1128,7 @@ const AMAZON_COMPREHEND_ACTIVITIES: PackageActivityDefs = {
       className: "ComprehendDetectKeyPhrases",
       displayName: "Detect Key Phrases",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         childProp("Text", { required: true }),
@@ -1062,6 +1140,7 @@ const AMAZON_COMPREHEND_ACTIVITIES: PackageActivityDefs = {
       className: "ComprehendDetectLanguage",
       displayName: "Detect Language",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         childProp("Text", { required: true }),
@@ -1078,6 +1157,7 @@ const AMAZON_REKOGNITION_ACTIVITIES: PackageActivityDefs = {
       className: "RekognitionDetectLabels",
       displayName: "Detect Labels",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("ImageFilePath", { required: true }),
@@ -1090,6 +1170,7 @@ const AMAZON_REKOGNITION_ACTIVITIES: PackageActivityDefs = {
       className: "RekognitionDetectText",
       displayName: "Detect Text in Image",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("ImageFilePath", { required: true }),
@@ -1100,6 +1181,7 @@ const AMAZON_REKOGNITION_ACTIVITIES: PackageActivityDefs = {
       className: "RekognitionDetectFaces",
       displayName: "Detect Faces",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("ImageFilePath", { required: true }),
@@ -1116,6 +1198,7 @@ const AZURE_ACTIVITIES: PackageActivityDefs = {
       className: "AzureScope",
       displayName: "Azure Scope",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         childProp("ClientId", { required: true }),
@@ -1128,6 +1211,7 @@ const AZURE_ACTIVITIES: PackageActivityDefs = {
       className: "AzureBlobUpload",
       displayName: "Upload Blob",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("ContainerName", { required: true }),
@@ -1141,6 +1225,7 @@ const AZURE_ACTIVITIES: PackageActivityDefs = {
       className: "AzureBlobDownload",
       displayName: "Download Blob",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("ContainerName", { required: true }),
@@ -1152,6 +1237,7 @@ const AZURE_ACTIVITIES: PackageActivityDefs = {
       className: "AzureBlobDelete",
       displayName: "Delete Blob",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("ContainerName", { required: true }),
@@ -1162,6 +1248,7 @@ const AZURE_ACTIVITIES: PackageActivityDefs = {
       className: "AzureBlobList",
       displayName: "List Blobs",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("ContainerName", { required: true }),
@@ -1179,6 +1266,7 @@ const AZURE_FORM_RECOGNIZER_ACTIVITIES: PackageActivityDefs = {
       className: "FormRecognizerAnalyze",
       displayName: "Analyze Form",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["document-processing", "api-integration"],
       properties: [
         prop("FilePath", { required: true }),
@@ -1193,6 +1281,7 @@ const AZURE_FORM_RECOGNIZER_ACTIVITIES: PackageActivityDefs = {
       className: "FormRecognizerAnalyzeLayout",
       displayName: "Analyze Layout",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["document-processing", "api-integration"],
       properties: [
         prop("FilePath", { required: true }),
@@ -1212,6 +1301,7 @@ const GOOGLE_CLOUD_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleCloudScope",
       displayName: "Google Cloud Scope",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("ServiceAccountKeyPath", { required: true }),
@@ -1222,6 +1312,7 @@ const GOOGLE_CLOUD_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleCloudStorageUpload",
       displayName: "Upload to Cloud Storage",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("BucketName", { required: true }),
@@ -1234,6 +1325,7 @@ const GOOGLE_CLOUD_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleCloudStorageDownload",
       displayName: "Download from Cloud Storage",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("BucketName", { required: true }),
@@ -1245,6 +1337,7 @@ const GOOGLE_CLOUD_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleCloudTranslateText",
       displayName: "Translate Text",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         childProp("Text", { required: true }),
@@ -1257,6 +1350,7 @@ const GOOGLE_CLOUD_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleCloudNLPAnalyzeSentiment",
       displayName: "Analyze Sentiment",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         childProp("Text", { required: true }),
@@ -1274,6 +1368,7 @@ const GOOGLE_VISION_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleVisionOCR",
       displayName: "Google Vision OCR",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["document-processing", "api-integration"],
       properties: [
         prop("ImagePath", { required: true }),
@@ -1286,6 +1381,7 @@ const GOOGLE_VISION_ACTIVITIES: PackageActivityDefs = {
       className: "GoogleVisionLabelDetection",
       displayName: "Label Detection",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("ImagePath", { required: true }),
@@ -1303,6 +1399,7 @@ const SALESFORCE_ACTIVITIES: PackageActivityDefs = {
       className: "SalesforceApplicationScope",
       displayName: "Salesforce Application Scope",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         childProp("ConsumerKey", { required: true }),
@@ -1318,6 +1415,7 @@ const SALESFORCE_ACTIVITIES: PackageActivityDefs = {
       className: "SalesforceGetRecords",
       displayName: "Get Records",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("ObjectType", { required: true }),
@@ -1330,6 +1428,7 @@ const SALESFORCE_ACTIVITIES: PackageActivityDefs = {
       className: "SalesforceInsertRecords",
       displayName: "Insert Records",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("ObjectType", { required: true }),
@@ -1341,6 +1440,7 @@ const SALESFORCE_ACTIVITIES: PackageActivityDefs = {
       className: "SalesforceUpdateRecords",
       displayName: "Update Records",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("ObjectType", { required: true }),
@@ -1352,6 +1452,7 @@ const SALESFORCE_ACTIVITIES: PackageActivityDefs = {
       className: "SalesforceDeleteRecords",
       displayName: "Delete Records",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("ObjectType", { required: true }),
@@ -1363,6 +1464,7 @@ const SALESFORCE_ACTIVITIES: PackageActivityDefs = {
       className: "SalesforceSOQLQuery",
       displayName: "SOQL Query",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         childProp("Query", { required: true }),
@@ -1379,6 +1481,7 @@ const SERVICENOW_ACTIVITIES: PackageActivityDefs = {
       className: "ServiceNowApplicationScope",
       displayName: "ServiceNow Application Scope",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration", "orchestration"],
       properties: [
         childProp("InstanceUrl", { required: true }),
@@ -1392,6 +1495,7 @@ const SERVICENOW_ACTIVITIES: PackageActivityDefs = {
       className: "ServiceNowGetRecords",
       displayName: "Get Records",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration", "orchestration"],
       properties: [
         prop("TableName", { required: true }),
@@ -1404,6 +1508,7 @@ const SERVICENOW_ACTIVITIES: PackageActivityDefs = {
       className: "ServiceNowCreateRecord",
       displayName: "Create Record",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration", "orchestration"],
       properties: [
         prop("TableName", { required: true }),
@@ -1415,6 +1520,7 @@ const SERVICENOW_ACTIVITIES: PackageActivityDefs = {
       className: "ServiceNowUpdateRecord",
       displayName: "Update Record",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration", "orchestration"],
       properties: [
         prop("TableName", { required: true }),
@@ -1426,6 +1532,7 @@ const SERVICENOW_ACTIVITIES: PackageActivityDefs = {
       className: "ServiceNowDeleteRecord",
       displayName: "Delete Record",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration", "orchestration"],
       properties: [
         prop("TableName", { required: true }),
@@ -1442,6 +1549,7 @@ const SLACK_ACTIVITIES: PackageActivityDefs = {
       className: "SlackScope",
       displayName: "Slack Scope",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         childProp("Token", { required: true }),
@@ -1452,6 +1560,7 @@ const SLACK_ACTIVITIES: PackageActivityDefs = {
       className: "SlackSendMessage",
       displayName: "Send Slack Message",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("Channel", { required: true }),
@@ -1464,6 +1573,7 @@ const SLACK_ACTIVITIES: PackageActivityDefs = {
       className: "SlackGetMessages",
       displayName: "Get Slack Messages",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("Channel", { required: true }),
@@ -1475,6 +1585,7 @@ const SLACK_ACTIVITIES: PackageActivityDefs = {
       className: "SlackUploadFile",
       displayName: "Upload File to Slack",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("Channel", { required: true }),
@@ -1493,6 +1604,7 @@ const JIRA_ACTIVITIES: PackageActivityDefs = {
       className: "JiraScope",
       displayName: "Jira Scope",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration", "orchestration"],
       properties: [
         childProp("ServerUrl", { required: true }),
@@ -1505,6 +1617,7 @@ const JIRA_ACTIVITIES: PackageActivityDefs = {
       className: "JiraCreateIssue",
       displayName: "Create Jira Issue",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration", "orchestration"],
       properties: [
         prop("ProjectKey", { required: true }),
@@ -1520,6 +1633,7 @@ const JIRA_ACTIVITIES: PackageActivityDefs = {
       className: "JiraGetIssue",
       displayName: "Get Jira Issue",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration", "orchestration"],
       properties: [
         prop("IssueKey", { required: true }),
@@ -1530,6 +1644,7 @@ const JIRA_ACTIVITIES: PackageActivityDefs = {
       className: "JiraUpdateIssue",
       displayName: "Update Jira Issue",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration", "orchestration"],
       properties: [
         prop("IssueKey", { required: true }),
@@ -1543,6 +1658,7 @@ const JIRA_ACTIVITIES: PackageActivityDefs = {
       className: "JiraSearchIssues",
       displayName: "Search Jira Issues",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration", "orchestration"],
       properties: [
         childProp("JQL", { required: true }),
@@ -1554,6 +1670,7 @@ const JIRA_ACTIVITIES: PackageActivityDefs = {
       className: "JiraAddComment",
       displayName: "Add Comment to Jira Issue",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration", "orchestration"],
       properties: [
         prop("IssueKey", { required: true }),
@@ -1570,6 +1687,7 @@ const TEAMS_ACTIVITIES: PackageActivityDefs = {
       className: "TeamsScope",
       displayName: "Microsoft Teams Scope",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         childProp("ApplicationId", { required: true }),
@@ -1582,6 +1700,7 @@ const TEAMS_ACTIVITIES: PackageActivityDefs = {
       className: "TeamsSendMessage",
       displayName: "Send Teams Message",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("TeamId", { required: true }),
@@ -1594,6 +1713,7 @@ const TEAMS_ACTIVITIES: PackageActivityDefs = {
       className: "TeamsGetMessages",
       displayName: "Get Teams Messages",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("TeamId", { required: true }),
@@ -1606,6 +1726,7 @@ const TEAMS_ACTIVITIES: PackageActivityDefs = {
       className: "TeamsSendChatMessage",
       displayName: "Send Chat Message",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["api-integration"],
       properties: [
         prop("ChatId", { required: true }),
@@ -1622,6 +1743,7 @@ const FTP_ACTIVITIES: PackageActivityDefs = {
       className: "FTPScope",
       displayName: "FTP Scope (With FTP Session)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("Host", { required: true }),
@@ -1637,6 +1759,7 @@ const FTP_ACTIVITIES: PackageActivityDefs = {
       className: "FTPUpload",
       displayName: "Upload File (FTP)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("LocalPath", { required: true }),
@@ -1649,6 +1772,7 @@ const FTP_ACTIVITIES: PackageActivityDefs = {
       className: "FTPDownload",
       displayName: "Download File (FTP)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("RemotePath", { required: true }),
@@ -1660,6 +1784,7 @@ const FTP_ACTIVITIES: PackageActivityDefs = {
       className: "FTPDelete",
       displayName: "Delete File (FTP)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("RemotePath", { required: true }),
@@ -1669,6 +1794,7 @@ const FTP_ACTIVITIES: PackageActivityDefs = {
       className: "FTPListFiles",
       displayName: "List Files (FTP)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("RemotePath"),
@@ -1679,6 +1805,7 @@ const FTP_ACTIVITIES: PackageActivityDefs = {
       className: "FTPDirectoryExists",
       displayName: "Directory Exists (FTP)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("RemotePath", { required: true }),
@@ -1695,6 +1822,7 @@ const PRESENTATIONS_ACTIVITIES: PackageActivityDefs = {
       className: "PresentationsApplicationScope",
       displayName: "Presentations Application Scope",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("PresentationPath", { required: true }),
@@ -1705,6 +1833,7 @@ const PRESENTATIONS_ACTIVITIES: PackageActivityDefs = {
       className: "AddSlide",
       displayName: "Add Slide",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("LayoutIndex", { type: "System.Int32", default: "0" }),
@@ -1714,6 +1843,7 @@ const PRESENTATIONS_ACTIVITIES: PackageActivityDefs = {
       className: "SetText",
       displayName: "Set Text in Slide",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("SlideIndex", { type: "System.Int32", required: true }),
@@ -1725,6 +1855,7 @@ const PRESENTATIONS_ACTIVITIES: PackageActivityDefs = {
       className: "ExportSlideAsImage",
       displayName: "Export Slide as Image",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("SlideIndex", { type: "System.Int32", required: true }),
@@ -1736,6 +1867,7 @@ const PRESENTATIONS_ACTIVITIES: PackageActivityDefs = {
       className: "ReplaceTextInSlide",
       displayName: "Replace Text in Slide",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("SlideIndex", { type: "System.Int32" }),
@@ -1754,6 +1886,7 @@ const CREDENTIALS_ACTIVITIES: PackageActivityDefs = {
       className: "GetSecureCredential",
       displayName: "Get Secure Credential",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("Target", { required: true }),
@@ -1766,6 +1899,7 @@ const CREDENTIALS_ACTIVITIES: PackageActivityDefs = {
       className: "AddCredential",
       displayName: "Add Credential",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("Target", { required: true }),
@@ -1779,6 +1913,7 @@ const CREDENTIALS_ACTIVITIES: PackageActivityDefs = {
       className: "DeleteCredential",
       displayName: "Delete Credential",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general"],
       properties: [
         prop("Target", { required: true }),
@@ -1789,6 +1924,7 @@ const CREDENTIALS_ACTIVITIES: PackageActivityDefs = {
       className: "RequestCredential",
       displayName: "Request Credential",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["attended-ui"],
       properties: [
         prop("Title"),
@@ -1806,6 +1942,7 @@ const DOCUMENT_UNDERSTANDING_ACTIVITIES: PackageActivityDefs = {
       className: "TaxonomyManager",
       displayName: "Taxonomy Manager",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["document-processing"],
       properties: [
         prop("TaxonomyFilePath", { required: true }),
@@ -1816,6 +1953,7 @@ const DOCUMENT_UNDERSTANDING_ACTIVITIES: PackageActivityDefs = {
       className: "DigitizeScope",
       displayName: "Digitize Scope",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["document-processing"],
       properties: [
         childProp("Document", { dir: "Out", type: "System.Object", wrapper: "OutArgument", typeArgs: "x:Object", required: true }),
@@ -1826,6 +1964,7 @@ const DOCUMENT_UNDERSTANDING_ACTIVITIES: PackageActivityDefs = {
       className: "ClassifyDocumentScope",
       displayName: "Classify Document Scope",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["document-processing"],
       properties: [
         childProp("Document", { type: "System.Object", wrapper: "InArgument", typeArgs: "x:Object", required: true }),
@@ -1837,6 +1976,7 @@ const DOCUMENT_UNDERSTANDING_ACTIVITIES: PackageActivityDefs = {
       className: "ExtractDocumentDataScope",
       displayName: "Extract Document Data Scope",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["document-processing"],
       properties: [
         childProp("Document", { type: "System.Object", wrapper: "InArgument", typeArgs: "x:Object", required: true }),
@@ -1848,6 +1988,7 @@ const DOCUMENT_UNDERSTANDING_ACTIVITIES: PackageActivityDefs = {
       className: "ValidationStation",
       displayName: "Validation Station",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["document-processing", "attended-ui"],
       properties: [
         childProp("Document", { type: "System.Object", wrapper: "InArgument", typeArgs: "x:Object", required: true }),
@@ -1860,6 +2001,7 @@ const DOCUMENT_UNDERSTANDING_ACTIVITIES: PackageActivityDefs = {
       className: "ExportExtractionResults",
       displayName: "Export Extraction Results",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["document-processing"],
       properties: [
         childProp("ExtractionResults", { type: "System.Object", wrapper: "InArgument", typeArgs: "x:Object", required: true }),
@@ -1877,6 +2019,7 @@ const MAIL_ACTIVITIES: PackageActivityDefs = {
       className: "SendSmtpMailMessage",
       displayName: "Send SMTP Mail Message",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("To", { required: true }),
@@ -1898,6 +2041,7 @@ const MAIL_ACTIVITIES: PackageActivityDefs = {
       className: "SendOutlookMailMessage",
       displayName: "Send Outlook Mail Message",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("To", { required: true }),
@@ -1915,6 +2059,7 @@ const MAIL_ACTIVITIES: PackageActivityDefs = {
       className: "GetImapMailMessage",
       displayName: "Get IMAP Mail Messages",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("Server", { required: true }),
@@ -1933,6 +2078,7 @@ const MAIL_ACTIVITIES: PackageActivityDefs = {
       className: "GetOutlookMailMessages",
       displayName: "Get Outlook Mail Messages",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("Account"),
@@ -1949,6 +2095,7 @@ const MAIL_ACTIVITIES: PackageActivityDefs = {
       className: "SendMail",
       displayName: "Send Mail",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("To", { required: true }),
@@ -1964,6 +2111,7 @@ const MAIL_ACTIVITIES: PackageActivityDefs = {
       className: "GetMail",
       displayName: "Get Mail",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration"],
       properties: [
         prop("Top", { type: "System.Int32", default: "30" }),
@@ -1983,6 +2131,7 @@ const DATA_SERVICE_ACTIVITIES: PackageActivityDefs = {
       className: "CreateEntity",
       displayName: "Create Entity",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "orchestration"],
       properties: [
         prop("EntityType", { required: true }),
@@ -1995,6 +2144,7 @@ const DATA_SERVICE_ACTIVITIES: PackageActivityDefs = {
       className: "QueryEntity",
       displayName: "Query Entity",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "orchestration"],
       properties: [
         prop("EntityType", { required: true }),
@@ -2010,6 +2160,7 @@ const DATA_SERVICE_ACTIVITIES: PackageActivityDefs = {
       className: "UpdateEntity",
       displayName: "Update Entity",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "orchestration"],
       properties: [
         prop("EntityType", { required: true }),
@@ -2021,6 +2172,7 @@ const DATA_SERVICE_ACTIVITIES: PackageActivityDefs = {
       className: "DeleteEntity",
       displayName: "Delete Entity",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "orchestration"],
       properties: [
         prop("EntityType", { required: true }),
@@ -2032,6 +2184,7 @@ const DATA_SERVICE_ACTIVITIES: PackageActivityDefs = {
       className: "GetEntityById",
       displayName: "Get Entity By Id",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "orchestration"],
       properties: [
         prop("EntityType", { required: true }),
@@ -2050,6 +2203,7 @@ const PERSISTENCE_ACTIVITIES: PackageActivityDefs = {
       className: "CreateFormTask",
       displayName: "Create Form Task",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "orchestration"],
       properties: [
         prop("Title", { required: true }),
@@ -2065,6 +2219,7 @@ const PERSISTENCE_ACTIVITIES: PackageActivityDefs = {
       className: "WaitForFormTask",
       displayName: "Wait For Form Task And Resume",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "orchestration"],
       properties: [
         childProp("TaskObject", { type: "UiPath.Persistence.Activities.Models.FormTaskData", wrapper: "InArgument", typeArgs: "upers:FormTaskData", required: true }),
@@ -2077,6 +2232,7 @@ const PERSISTENCE_ACTIVITIES: PackageActivityDefs = {
       className: "CreateExternalTask",
       displayName: "Create External Task",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "orchestration"],
       properties: [
         prop("Title", { required: true }),
@@ -2091,12 +2247,13 @@ const PERSISTENCE_ACTIVITIES: PackageActivityDefs = {
 };
 
 const GENAI_ACTIVITIES: PackageActivityDefs = {
-  packageId: "UiPath.IntegrationService.Activities",
+  packageId: "UiPath.GenAI.Activities",
   activities: [
     {
       className: "UseGenAI",
       displayName: "Use GenAI",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["general", "api-integration"],
       properties: [
         prop("ModelName", { required: true }),
@@ -2112,6 +2269,7 @@ const GENAI_ACTIVITIES: PackageActivityDefs = {
       className: "ExtractData",
       displayName: "Extract Data with AI",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["general", "document-processing"],
       properties: [
         childProp("Text", { required: true }),
@@ -2123,6 +2281,7 @@ const GENAI_ACTIVITIES: PackageActivityDefs = {
       className: "ClassifyText",
       displayName: "Classify Text with AI",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["general"],
       properties: [
         childProp("Text", { required: true }),
@@ -2134,6 +2293,7 @@ const GENAI_ACTIVITIES: PackageActivityDefs = {
       className: "SummarizeText",
       displayName: "Summarize Text with AI",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["general", "document-processing"],
       properties: [
         childProp("Text", { required: true }),
@@ -2151,6 +2311,7 @@ const INTEGRATION_SERVICE_ACTIVITIES: PackageActivityDefs = {
       className: "IntegrationServiceScope",
       displayName: "Integration Service Scope",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("ConnectionId", { required: true }),
@@ -2161,6 +2322,7 @@ const INTEGRATION_SERVICE_ACTIVITIES: PackageActivityDefs = {
       className: "IntegrationServiceHTTPRequest",
       displayName: "Integration Service HTTP Request",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("ConnectionId", { required: true }),
@@ -2178,6 +2340,7 @@ const INTEGRATION_SERVICE_ACTIVITIES: PackageActivityDefs = {
       className: "IntegrationServiceTrigger",
       displayName: "Integration Service Trigger",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration", "orchestration"],
       properties: [
         prop("ConnectionId", { required: true }),
@@ -2194,6 +2357,7 @@ const COMMUNICATIONS_MINING_ACTIVITIES: PackageActivityDefs = {
       className: "CommunicationsMiningScope",
       displayName: "Communications Mining Scope",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         childProp("ApiKey", { required: true }),
@@ -2205,6 +2369,7 @@ const COMMUNICATIONS_MINING_ACTIVITIES: PackageActivityDefs = {
       className: "AnalyzeMessage",
       displayName: "Analyze Message",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("ModelName", { required: true }),
@@ -2216,6 +2381,7 @@ const COMMUNICATIONS_MINING_ACTIVITIES: PackageActivityDefs = {
       className: "UploadCommunications",
       displayName: "Upload Communications",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("DatasetName", { required: true }),
@@ -2232,6 +2398,7 @@ const WORKFLOW_EVENTS_ACTIVITIES: PackageActivityDefs = {
       className: "RaiseAlert",
       displayName: "Raise Alert",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["general", "orchestration"],
       properties: [
         prop("Severity", { validValues: ["Info", "Warn", "Error", "Fatal"], default: "Info", required: true }),
@@ -2243,6 +2410,7 @@ const WORKFLOW_EVENTS_ACTIVITIES: PackageActivityDefs = {
       className: "TriggerJob",
       displayName: "Trigger Job",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["orchestration"],
       properties: [
         prop("ProcessName", { required: true }),
@@ -2262,6 +2430,7 @@ const BOX_ACTIVITIES: PackageActivityDefs = {
       className: "BoxScope",
       displayName: "Box Scope",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         childProp("ClientId", { required: true }),
@@ -2274,6 +2443,7 @@ const BOX_ACTIVITIES: PackageActivityDefs = {
       className: "BoxUploadFile",
       displayName: "Upload File (Box)",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("LocalFilePath", { required: true }),
@@ -2286,6 +2456,7 @@ const BOX_ACTIVITIES: PackageActivityDefs = {
       className: "BoxDownloadFile",
       displayName: "Download File (Box)",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("FileId", { required: true }),
@@ -2296,6 +2467,7 @@ const BOX_ACTIVITIES: PackageActivityDefs = {
       className: "BoxDeleteFile",
       displayName: "Delete File (Box)",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("FileId", { required: true }),
@@ -2305,6 +2477,7 @@ const BOX_ACTIVITIES: PackageActivityDefs = {
       className: "BoxSearchFiles",
       displayName: "Search Files (Box)",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("Query", { required: true }),
@@ -2322,6 +2495,7 @@ const DYNAMICS_ACTIVITIES: PackageActivityDefs = {
       className: "DynamicsScope",
       displayName: "Dynamics 365 Scope",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         childProp("OrganizationUrl", { required: true }),
@@ -2335,6 +2509,7 @@ const DYNAMICS_ACTIVITIES: PackageActivityDefs = {
       className: "DynamicsGetRecords",
       displayName: "Get Records (Dynamics 365)",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("EntityName", { required: true }),
@@ -2347,6 +2522,7 @@ const DYNAMICS_ACTIVITIES: PackageActivityDefs = {
       className: "DynamicsCreateRecord",
       displayName: "Create Record (Dynamics 365)",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("EntityName", { required: true }),
@@ -2358,6 +2534,7 @@ const DYNAMICS_ACTIVITIES: PackageActivityDefs = {
       className: "DynamicsUpdateRecord",
       displayName: "Update Record (Dynamics 365)",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("EntityName", { required: true }),
@@ -2375,6 +2552,7 @@ const WORKDAY_ACTIVITIES: PackageActivityDefs = {
       className: "WorkdayScope",
       displayName: "Workday Scope",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         childProp("TenantUrl", { required: true }),
@@ -2388,6 +2566,7 @@ const WORKDAY_ACTIVITIES: PackageActivityDefs = {
       className: "WorkdayGetWorkers",
       displayName: "Get Workers (Workday)",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("Count", { type: "System.Int32", default: "100" }),
@@ -2399,6 +2578,7 @@ const WORKDAY_ACTIVITIES: PackageActivityDefs = {
       className: "WorkdayGetWorkerById",
       displayName: "Get Worker By ID (Workday)",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("WorkerId", { required: true }),
@@ -2415,6 +2595,7 @@ const COUPA_ACTIVITIES: PackageActivityDefs = {
       className: "CoupaScope",
       displayName: "Coupa Scope",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("ConnectionId", { required: true }),
@@ -2425,6 +2606,7 @@ const COUPA_ACTIVITIES: PackageActivityDefs = {
       className: "CoupaGetPurchaseOrders",
       displayName: "Get Purchase Orders (Coupa)",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("Status", { validValues: ["draft", "pending_approval", "approved", "closed"], default: "approved" }),
@@ -2436,6 +2618,7 @@ const COUPA_ACTIVITIES: PackageActivityDefs = {
       className: "CoupaCreateRequisition",
       displayName: "Create Requisition (Coupa)",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         childProp("RequisitionData", { type: "System.Object", wrapper: "InArgument", typeArgs: "x:Object", required: true }),
@@ -2446,6 +2629,7 @@ const COUPA_ACTIVITIES: PackageActivityDefs = {
       className: "CoupaGetInvoices",
       displayName: "Get Invoices (Coupa)",
       browsable: true,
+      emissionApproved: false, // #368 addition - className unverified
       processTypes: ["api-integration"],
       properties: [
         prop("Status", { validValues: ["draft", "pending_approval", "approved", "voided"], default: "pending_approval" }),
@@ -2463,6 +2647,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "GetTransactionItem",
       displayName: "Get Transaction Item",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["orchestration"],
       propertiesComplete: true,
       properties: [
@@ -2477,6 +2662,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "SetTransactionStatus",
       displayName: "Set Transaction Status",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["orchestration"],
       propertiesComplete: true,
       properties: [
@@ -2491,6 +2677,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "LogMessage",
       displayName: "Log Message",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
       propertiesComplete: true,
       properties: [
@@ -2503,6 +2690,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "InvokeWorkflowFile",
       displayName: "Invoke Workflow File",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
       propertiesComplete: true,
       properties: [
@@ -2516,6 +2704,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "AddQueueItem",
       displayName: "Add Queue Item",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["orchestration", "general"],
       propertiesComplete: true,
       properties: [
@@ -2532,6 +2721,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "GetCredential",
       displayName: "Get Credential",
       browsable: true,
+      emissionApproved: false, // namespace/package resolution instability
       processTypes: ["general", "orchestration"],
       propertiesComplete: true,
       properties: [
@@ -2545,6 +2735,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "GetAsset",
       displayName: "Get Asset",
       browsable: true,
+      emissionApproved: false, // namespace/package resolution instability
       processTypes: ["general", "orchestration"],
       propertiesComplete: true,
       properties: [
@@ -2558,6 +2749,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "AddLogFields",
       displayName: "Add Log Fields",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "orchestration"],
       propertiesComplete: true,
       properties: [
@@ -2569,6 +2761,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "RetryScope",
       displayName: "Retry Scope",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "orchestration", "attended-ui", "unattended-ui"],
       properties: [
         prop("NumberOfRetries", { type: "System.Int32", default: "3" }),
@@ -2580,6 +2773,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "ShouldRetry",
       displayName: "Should Retry",
       browsable: true,
+      emissionApproved: false, // namespace/package resolution instability
       processTypes: ["general", "api-integration", "orchestration", "attended-ui", "unattended-ui"],
       properties: [],
     },
@@ -2587,6 +2781,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "ExcelApplicationScope",
       displayName: "Excel Application Scope",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "document-processing"],
       propertiesComplete: true,
       properties: [
@@ -2604,6 +2799,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "ExcelReadRange",
       displayName: "Read Range (Excel)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "document-processing"],
       propertiesComplete: true,
       properties: [
@@ -2619,6 +2815,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "ExcelWriteRange",
       displayName: "Write Range (Excel)",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "document-processing"],
       propertiesComplete: true,
       properties: [
@@ -2639,6 +2836,7 @@ const UIAUTOMATION_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "TakeScreenshot",
       displayName: "Take Screenshot",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["attended-ui", "unattended-ui"],
       propertiesComplete: true,
       properties: [
@@ -2650,6 +2848,7 @@ const UIAUTOMATION_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "Click",
       displayName: "Click",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["attended-ui", "unattended-ui"],
       propertiesComplete: true,
       properties: [
@@ -2666,6 +2865,7 @@ const UIAUTOMATION_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "TypeInto",
       displayName: "Type Into",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["attended-ui", "unattended-ui"],
       propertiesComplete: true,
       properties: [
@@ -2682,6 +2882,7 @@ const UIAUTOMATION_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "GetText",
       displayName: "Get Text",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["attended-ui", "unattended-ui"],
       propertiesComplete: true,
       properties: [
@@ -2694,6 +2895,7 @@ const UIAUTOMATION_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "OpenBrowser",
       displayName: "Open Browser",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["attended-ui", "unattended-ui"],
       propertiesComplete: true,
       properties: [
@@ -2708,6 +2910,7 @@ const UIAUTOMATION_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "CloseApplication",
       displayName: "Close Application",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["attended-ui", "unattended-ui"],
       propertiesComplete: true,
       properties: [
@@ -2718,6 +2921,7 @@ const UIAUTOMATION_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "KillProcess",
       displayName: "Kill Process",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["attended-ui", "unattended-ui"],
       propertiesComplete: true,
       properties: [
@@ -2729,6 +2933,7 @@ const UIAUTOMATION_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "SendOutlookMailMessage",
       displayName: "Send Outlook Mail Message",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "attended-ui", "unattended-ui"],
       propertiesComplete: true,
       properties: [
@@ -2753,6 +2958,7 @@ const SYSTEM_CORE_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "Assign",
       displayName: "Assign",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
       propertiesComplete: true,
       properties: [
@@ -2764,6 +2970,7 @@ const SYSTEM_CORE_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "If",
       displayName: "If",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
       propertiesComplete: true,
       properties: [
@@ -2774,6 +2981,7 @@ const SYSTEM_CORE_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "Sequence",
       displayName: "Sequence",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
       propertiesComplete: true,
       properties: [],
@@ -2782,6 +2990,7 @@ const SYSTEM_CORE_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "TryCatch",
       displayName: "Try Catch",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
       propertiesComplete: true,
       properties: [],
@@ -2790,6 +2999,7 @@ const SYSTEM_CORE_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "Flowchart",
       displayName: "Flowchart",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
       propertiesComplete: true,
       properties: [],
@@ -2798,6 +3008,7 @@ const SYSTEM_CORE_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "ForEach",
       displayName: "For Each",
       browsable: true,
+      emissionApproved: true,
       processTypes: ["general", "api-integration", "document-processing", "attended-ui", "unattended-ui", "orchestration"],
       propertiesComplete: true,
       properties: [

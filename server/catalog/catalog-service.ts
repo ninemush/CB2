@@ -29,6 +29,7 @@ export interface CatalogActivity {
   processTypes: ProcessType[];
   properties: CatalogProperty[];
   propertiesComplete?: boolean;
+  emissionApproved: boolean;
 }
 
 export interface CatalogPackage {
@@ -335,6 +336,7 @@ class CatalogService {
     for (const pkg of this.catalog.packages) {
       for (const act of pkg.activities) {
         if (!act.browsable) continue;
+        if (!act.emissionApproved) continue;
         if (act.processTypes && act.processTypes.length > 0) {
           if (!act.processTypes.includes(processType) && !act.processTypes.includes("general")) {
             continue;
@@ -366,6 +368,7 @@ class CatalogService {
     for (const pkg of this.catalog.packages) {
       for (const act of pkg.activities) {
         if (!act.browsable) continue;
+        if (!act.emissionApproved) continue;
 
         entries.push({
           className: act.className,

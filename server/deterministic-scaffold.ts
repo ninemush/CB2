@@ -183,16 +183,19 @@ export function selectSystemActivity(system: string, description: string): Syste
     return { template: "QueryEntity", displayName: `Query Entity - ${system || "Data Service"}`, properties: { EntityType: '"TODO_EntityType"', Filter: '"TODO_Filter"' } };
   }
 
+  // GenAI activities not yet emission-approved - fall back to LogMessage TODO
   if (sysLower.includes("genai") || sysLower.includes("gen ai") || sysLower.includes("generative ai") || combined.includes("llm") || combined.includes("gpt") || combined.includes("prompt")) {
-    return { template: "UseGenAI", displayName: `GenAI Prompt - ${system || "GenAI"}`, properties: { ModelName: '"gpt-4o"', MaxTokens: "4096", Temperature: "0.7" } };
+    return { template: "LogMessage", displayName: `TODO: GenAI - ${system || "GenAI"}`, properties: { Level: "Warn", Message: `"TODO: Implement GenAI integration for ${system || "GenAI"}"` } };
   }
 
+  // Google Calendar activities not yet emission-approved - fall back to LogMessage TODO
   if (sysLower.includes("google calendar") || combined.includes("calendar event")) {
-    return { template: "GoogleCalendarGetEvents", displayName: `Calendar - ${system || "Google Calendar"}`, properties: { CalendarId: '"primary"', MaxResults: "10" } };
+    return { template: "LogMessage", displayName: `TODO: Calendar - ${system || "Google Calendar"}`, properties: { Level: "Warn", Message: `"TODO: Implement Google Calendar integration for ${system || "Google Calendar"}"` } };
   }
 
+  // Google Contacts activities not yet emission-approved - fall back to LogMessage TODO
   if (sysLower.includes("google contacts") || combined.includes("contact lookup")) {
-    return { template: "GoogleContactsSearchContacts", displayName: `Contacts - ${system || "Google Contacts"}`, properties: { MaxResults: "10" } };
+    return { template: "LogMessage", displayName: `TODO: Contacts - ${system || "Google Contacts"}`, properties: { Level: "Warn", Message: `"TODO: Implement Google Contacts integration for ${system || "Google Contacts"}"` } };
   }
 
   if (sysLower.includes("gmail") || (sysLower.includes("google") && combined.includes("email"))) {
@@ -223,40 +226,48 @@ export function selectSystemActivity(system: string, description: string): Syste
     return { template: "ExecuteQuery", displayName: `Query Database - ${system || "Database"}`, properties: { Sql: '"SELECT * FROM table"', ConnectionString: '""' } };
   }
 
+  // Coupa activities not yet emission-approved - fall back to HttpClient placeholder
   if (sysLower.includes("coupa") || sysLower.includes("erp") || sysLower.includes("procurement") || combined.includes("coupa") || combined.includes("purchase order") || combined.includes("procurement")) {
-    return { template: "CoupaGetPurchaseOrders", displayName: `Procurement - ${system || "Coupa"}`, properties: { Status: '"approved"', Limit: "50" } };
+    return { template: "HttpClient", displayName: `TODO: Procurement API - ${system || "Coupa"}`, properties: { Method: "GET", Endpoint: `"https://${(system || "coupa").replace(/\s+/g, "").toLowerCase()}.example.com/api/purchase_orders"`, AcceptFormat: "JSON" } };
   }
 
+  // Document Understanding activities not yet emission-approved - fall back to LogMessage TODO
   if (sysLower.includes("document understanding") || combined.includes("document understanding") || combined.includes("intelligent ocr") || sysLower.includes("ocr") || combined.includes("digitize") || combined.includes("classify document") || combined.includes("extract data from document")) {
-    return { template: "DigitizeScope", displayName: `Document Understanding - ${system || "DU"}`, properties: { FilePath: '""' } };
+    return { template: "LogMessage", displayName: `TODO: Document Understanding - ${system || "DU"}`, properties: { Level: "Warn", Message: `"TODO: Implement Document Understanding for ${system || "DU"}"` } };
   }
 
+  // Integration Service activities not yet emission-approved - fall back to HttpClient placeholder
   if (sysLower.includes("integration service") || combined.includes("integration service") || combined.includes("connector")) {
-    return { template: "IntegrationServiceScope", displayName: `Integration Service - ${system || "Integration Service"}`, properties: { ConnectionId: '""' } };
+    return { template: "HttpClient", displayName: `TODO: Integration Service - ${system || "Integration Service"}`, properties: { Method: "GET", Endpoint: `"https://${(system || "integration").replace(/\s+/g, "").toLowerCase()}.example.com/api"`, AcceptFormat: "JSON" } };
   }
 
+  // ServiceNow activities not yet emission-approved - fall back to HttpClient placeholder
   if (sysLower.includes("servicenow") || sysLower.includes("service now") || sysLower.includes("snow") || combined.includes("servicenow") || combined.includes("incident ticket") || combined.includes("snow record")) {
-    return { template: "ServiceNowGetRecords", displayName: `ServiceNow - ${system || "ServiceNow"}`, properties: { TableName: '"incident"', Limit: "100" } };
+    return { template: "HttpClient", displayName: `TODO: ServiceNow API - ${system || "ServiceNow"}`, properties: { Method: "GET", Endpoint: `"https://${(system || "servicenow").replace(/\s+/g, "").toLowerCase()}.service-now.com/api/now/table/incident"`, AcceptFormat: "JSON" } };
   }
 
+  // Workday activities not yet emission-approved - fall back to HttpClient placeholder
   if (sysLower.includes("workday") || combined.includes("workday") || combined.includes("hcm system")) {
-    return { template: "WorkdayGetWorkers", displayName: `Workday - ${system || "Workday"}`, properties: { Count: "100", WorkerType: '"Both"' } };
+    return { template: "HttpClient", displayName: `TODO: Workday API - ${system || "Workday"}`, properties: { Method: "GET", Endpoint: `"https://${(system || "workday").replace(/\s+/g, "").toLowerCase()}.example.com/api/workers"`, AcceptFormat: "JSON" } };
   }
 
+  // Salesforce activities not yet emission-approved - fall back to HttpClient placeholder
   if (sysLower.includes("salesforce") || sysLower.includes("sfdc") || combined.includes("salesforce") || combined.includes("sfdc")) {
-    return { template: "SalesforceGetRecords", displayName: `Salesforce - ${system || "Salesforce"}`, properties: { ObjectType: '""', MaxRecords: "200" } };
+    return { template: "HttpClient", displayName: `TODO: Salesforce API - ${system || "Salesforce"}`, properties: { Method: "GET", Endpoint: `"https://${(system || "salesforce").replace(/\s+/g, "").toLowerCase()}.my.salesforce.com/services/data/v58.0/query"`, AcceptFormat: "JSON" } };
   }
 
   if (sysLower.includes("sharepoint")) {
     return { template: "SharePointDownloadFile", displayName: `SharePoint - ${system || "SharePoint"}`, properties: { SiteUrl: '""', FilePath: '""', LocalFolderPath: '""' } };
   }
 
+  // Jira activities not yet emission-approved - fall back to HttpClient placeholder
   if (sysLower.includes("jira") || sysLower.includes("atlassian")) {
-    return { template: "JiraSearchIssues", displayName: `Jira - ${system || "Jira"}`, properties: { MaxResults: "50" } };
+    return { template: "HttpClient", displayName: `TODO: Jira API - ${system || "Jira"}`, properties: { Method: "GET", Endpoint: `"https://${(system || "jira").replace(/\s+/g, "").toLowerCase()}.atlassian.net/rest/api/3/search"`, AcceptFormat: "JSON" } };
   }
 
+  // Dynamics activities not yet emission-approved - fall back to HttpClient placeholder
   if (sysLower.includes("dynamics") || sysLower.includes("d365")) {
-    return { template: "DynamicsGetRecords", displayName: `Dynamics 365 - ${system || "Dynamics 365"}`, properties: { EntityName: '""', MaxRecords: "100" } };
+    return { template: "HttpClient", displayName: `TODO: Dynamics 365 API - ${system || "Dynamics 365"}`, properties: { Method: "GET", Endpoint: `"https://${(system || "dynamics").replace(/\s+/g, "").toLowerCase()}.crm.dynamics.com/api/data/v9.2"`, AcceptFormat: "JSON" } };
   }
 
   if (sysLower.includes("pdf") || combined.includes("pdf") || combined.includes("read pdf") || combined.includes("extract pdf") || combined.includes("generate pdf")) {

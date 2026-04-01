@@ -1,7 +1,7 @@
 {
   "catalogVersion": "2.0.0",
-  "generatedAt": "2026-04-01T09:37:17.107Z",
-  "lastVerifiedAt": "2026-04-01T09:37:17.107Z",
+  "generatedAt": "2026-04-01T10:10:56.410Z",
+  "lastVerifiedAt": "2026-04-01T10:10:56.410Z",
   "studioVersion": "25.10.0",
   "packages": [
     {
@@ -35,7 +35,8 @@
               "required": false,
               "typeArguments": "s:Exception"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "FlowDecision",
@@ -55,7 +56,8 @@
             }
           ],
           "displayName": "Flow Decision",
-          "browsable": true
+          "browsable": true,
+          "emissionApproved": true
         },
         {
           "className": "FlowSwitch",
@@ -75,7 +77,8 @@
             }
           ],
           "displayName": "Flow Switch",
-          "browsable": true
+          "browsable": true,
+          "emissionApproved": true
         },
         {
           "className": "While",
@@ -95,7 +98,8 @@
             }
           ],
           "displayName": "While",
-          "browsable": true
+          "browsable": true,
+          "emissionApproved": true
         },
         {
           "className": "DoWhile",
@@ -115,7 +119,8 @@
             }
           ],
           "displayName": "Do While",
-          "browsable": true
+          "browsable": true,
+          "emissionApproved": true
         },
         {
           "className": "Switch",
@@ -135,7 +140,8 @@
             }
           ],
           "displayName": "Switch",
-          "browsable": true
+          "browsable": true,
+          "emissionApproved": true
         },
         {
           "className": "Delay",
@@ -155,7 +161,8 @@
             }
           ],
           "displayName": "Delay",
-          "browsable": true
+          "browsable": true,
+          "emissionApproved": true
         },
         {
           "className": "Assign",
@@ -189,6 +196,7 @@
               "required": true
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -214,6 +222,7 @@
               "required": true
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -229,6 +238,7 @@
             "orchestration"
           ],
           "properties": [],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -244,6 +254,7 @@
             "orchestration"
           ],
           "properties": [],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -259,6 +270,7 @@
             "orchestration"
           ],
           "properties": [],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -284,6 +296,7 @@
               "required": true
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         }
       ]
@@ -338,7 +351,8 @@
                 "Default"
               ]
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "WriteTextFile",
@@ -390,7 +404,8 @@
                 "Default"
               ]
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "PathExists",
@@ -432,7 +447,8 @@
               "required": false,
               "typeArguments": "x:Boolean"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "Comment",
@@ -451,7 +467,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "Rethrow",
@@ -460,7 +477,8 @@
           "processTypes": [
             "general"
           ],
-          "properties": []
+          "properties": [],
+          "emissionApproved": true
         },
         {
           "className": "KillProcess",
@@ -490,7 +508,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "Delay",
@@ -521,7 +540,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GetTransactionItem",
@@ -578,6 +598,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -643,6 +664,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -695,6 +717,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -750,6 +773,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -831,6 +855,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -880,6 +905,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": false,
           "propertiesComplete": true
         },
         {
@@ -929,6 +955,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": false,
           "propertiesComplete": true
         },
         {
@@ -960,6 +987,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -1004,7 +1032,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ShouldRetry",
@@ -1017,7 +1046,8 @@
             "attended-ui",
             "unattended-ui"
           ],
-          "properties": []
+          "properties": [],
+          "emissionApproved": false
         },
         {
           "className": "ExcelApplicationScope",
@@ -1106,6 +1136,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -1176,6 +1207,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -1237,6 +1269,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         }
       ]
@@ -1292,7 +1325,8 @@
               "typeArguments": null,
               "addedInVersion": "23.4.0"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "NavigateTo",
@@ -1321,7 +1355,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "AttachBrowser",
@@ -1373,7 +1408,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "AttachWindow",
@@ -1393,7 +1429,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "UseApplicationBrowser",
@@ -1438,7 +1475,8 @@
               "typeArguments": null,
               "addedInVersion": "23.4.0"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ElementExists",
@@ -1476,7 +1514,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "UseApplication",
@@ -1505,7 +1544,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "TakeScreenshot",
@@ -1536,6 +1576,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -1633,6 +1674,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -1714,6 +1756,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -1755,6 +1798,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -1822,6 +1866,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -1844,6 +1889,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -1875,6 +1921,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         },
         {
@@ -1972,6 +2019,7 @@
               "default": "False"
             }
           ],
+          "emissionApproved": true,
           "propertiesComplete": true
         }
       ]
@@ -2044,7 +2092,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ComprehendDetectEntities",
@@ -2082,7 +2131,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ComprehendDetectKeyPhrases",
@@ -2120,7 +2170,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ComprehendDetectLanguage",
@@ -2148,7 +2199,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -2207,7 +2259,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "RekognitionDetectText",
@@ -2235,7 +2288,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "RekognitionDetectFaces",
@@ -2263,7 +2317,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -2328,7 +2383,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "TextractDetectText",
@@ -2367,7 +2423,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -2434,7 +2491,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "S3UploadFile",
@@ -2480,7 +2538,8 @@
               "typeArguments": null,
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "S3DownloadFile",
@@ -2517,7 +2576,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "S3DeleteObject",
@@ -2545,7 +2605,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "S3ListObjects",
@@ -2592,7 +2653,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -2649,7 +2711,8 @@
               "typeArguments": null,
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "AzureBlobUpload",
@@ -2705,7 +2768,8 @@
               "required": false,
               "default": "True"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "AzureBlobDownload",
@@ -2742,7 +2806,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "AzureBlobDelete",
@@ -2770,7 +2835,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "AzureBlobList",
@@ -2807,7 +2873,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -2884,7 +2951,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "FormRecognizerAnalyzeLayout",
@@ -2941,7 +3009,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -3004,7 +3073,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "BoxUploadFile",
@@ -3051,7 +3121,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "BoxDownloadFile",
@@ -3079,7 +3150,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "BoxDeleteFile",
@@ -3098,7 +3170,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "BoxSearchFiles",
@@ -3135,7 +3208,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         }
       ]
     },
@@ -3184,7 +3258,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "AnalyzeMessage",
@@ -3221,7 +3296,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "UploadCommunications",
@@ -3249,7 +3325,8 @@
               "typeArguments": "x:Object",
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": false
         }
       ]
     },
@@ -3279,7 +3356,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "WaitForDownload",
@@ -3318,7 +3396,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "RepeatUntil",
@@ -3347,7 +3426,8 @@
               "required": false,
               "default": "100"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "BuildDataTable",
@@ -3384,7 +3464,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "FilterDataTable",
@@ -3426,7 +3507,8 @@
               ],
               "default": "Keep"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "SortDataTable",
@@ -3477,7 +3559,8 @@
               ],
               "default": "Ascending"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "RemoveDuplicateRows",
@@ -3505,7 +3588,8 @@
               "typeArguments": "scg2:DataTable",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "JoinDataTables",
@@ -3557,7 +3641,8 @@
               ],
               "default": "Inner"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "OutputDataTable",
@@ -3585,7 +3670,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "AddDataRow",
@@ -3622,7 +3708,8 @@
               "typeArguments": "scg2:DataRow",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "RemoveDataRow",
@@ -3641,7 +3728,8 @@
               "typeArguments": "scg2:DataRow",
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "LookupDataTable",
@@ -3705,7 +3793,8 @@
               "typeArguments": "x:Int32",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -3745,7 +3834,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "CoupaGetPurchaseOrders",
@@ -3790,7 +3880,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "CoupaCreateRequisition",
@@ -3818,7 +3909,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "CoupaGetInvoices",
@@ -3863,7 +3955,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         }
       ]
     },
@@ -3925,7 +4018,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "AddCredential",
@@ -3991,7 +4085,8 @@
               ],
               "default": "Enterprise"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "DeleteCredential",
@@ -4024,7 +4119,8 @@
               ],
               "default": "Generic"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "RequestCredential",
@@ -4061,7 +4157,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -4142,7 +4239,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "DecryptText",
@@ -4212,7 +4310,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "EncryptFile",
@@ -4266,7 +4365,8 @@
               ],
               "default": "AES"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "DecryptFile",
@@ -4320,7 +4420,8 @@
               ],
               "default": "AES"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "HashText",
@@ -4382,7 +4483,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "HashFile",
@@ -4428,7 +4530,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "KeyedHashText",
@@ -4498,7 +4601,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -4569,7 +4673,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ExecuteNonQuery",
@@ -4626,7 +4731,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ConnectToDatabase",
@@ -4664,7 +4770,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ],
       "version": "2.0.0",
@@ -4727,7 +4834,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "QueryEntity",
@@ -4803,7 +4911,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "UpdateEntity",
@@ -4843,7 +4952,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "DeleteEntity",
@@ -4883,7 +4993,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GetEntityById",
@@ -4932,7 +5043,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -4971,7 +5083,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "DigitizeScope",
@@ -4999,7 +5112,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "ClassifyDocumentScope",
@@ -5036,7 +5150,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "ExtractDocumentDataScope",
@@ -5073,7 +5188,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "ValidationStation",
@@ -5120,7 +5236,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "ExportExtractionResults",
@@ -5163,7 +5280,8 @@
               ],
               "default": "JSON"
             }
-          ]
+          ],
+          "emissionApproved": false
         }
       ]
     },
@@ -5244,7 +5362,8 @@
               "typeArguments": "x:String",
               "addedInVersion": "2.0.0"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "UseExcel",
@@ -5292,7 +5411,8 @@
               "required": false,
               "typeArguments": "x:String"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ExcelReadRange",
@@ -5349,7 +5469,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ExcelWriteRange",
@@ -5397,7 +5518,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ExcelWriteCell",
@@ -5436,7 +5558,8 @@
               "required": false,
               "typeArguments": "x:String"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ReadRange",
@@ -5484,7 +5607,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "WriteRange",
@@ -5532,7 +5656,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ],
       "version": "3.4.1",
@@ -5594,7 +5719,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ShowForm",
@@ -5631,7 +5757,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "CalloutActivities",
@@ -5686,7 +5813,8 @@
               "required": false,
               "default": "5000"
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -5775,7 +5903,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "FTPUpload",
@@ -5824,7 +5953,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "FTPDownload",
@@ -5863,7 +5993,8 @@
               "required": false,
               "default": "True"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "FTPDelete",
@@ -5883,7 +6014,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "FTPListFiles",
@@ -5912,7 +6044,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "FTPDirectoryExists",
@@ -5941,7 +6074,8 @@
               "typeArguments": "x:Boolean",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -5950,6 +6084,9 @@
       "version": "1.1.0",
       "feedStatus": "verified",
       "preferredVersion": "1.1.0",
+      "prefix": "ugenai",
+      "clrNamespace": "UiPath.GenAI.Activities",
+      "assembly": "UiPath.IntegrationService.Activities",
       "activities": [
         {
           "className": "UseGenAI",
@@ -6015,8 +6152,18 @@
               "argumentWrapper": "OutArgument",
               "typeArguments": "x:String",
               "required": false
+            },
+            {
+              "name": "Result",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:String",
+              "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "ExtractData",
@@ -6054,7 +6201,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "ClassifyText",
@@ -6091,7 +6239,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "SummarizeText",
@@ -6129,7 +6278,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         }
       ]
     },
@@ -6168,7 +6318,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GoogleCloudStorageUpload",
@@ -6214,7 +6365,8 @@
               "typeArguments": null,
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GoogleCloudStorageDownload",
@@ -6251,7 +6403,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GoogleCloudTranslateText",
@@ -6297,7 +6450,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GoogleCloudNLPAnalyzeSentiment",
@@ -6334,7 +6488,8 @@
               "typeArguments": "x:Double",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -6392,7 +6547,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GoogleVisionLabelDetection",
@@ -6430,7 +6586,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -6495,7 +6652,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GoogleSheetsReadRange",
@@ -6544,7 +6702,8 @@
               "typeArguments": "scg2:DataTable",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GoogleSheetsWriteRange",
@@ -6593,7 +6752,8 @@
               "required": false,
               "default": "True"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GoogleSheetsAppendRange",
@@ -6632,7 +6792,8 @@
               "required": false,
               "default": "True"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GoogleDriveUploadFile",
@@ -6679,7 +6840,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GoogleDriveDownloadFile",
@@ -6717,7 +6879,8 @@
               "typeArguments": null,
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GmailSendMessage",
@@ -6783,7 +6946,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GmailGetMessages",
@@ -6832,7 +6996,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GoogleCalendarGetEvents",
@@ -6899,7 +7064,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "GoogleCalendarCreateEvent",
@@ -6983,7 +7149,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "GoogleContactsSearchContacts",
@@ -7022,7 +7189,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "GoogleContactsGetContact",
@@ -7051,7 +7219,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         }
       ]
     },
@@ -7091,7 +7260,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "IntegrationServiceHTTPRequest",
@@ -7190,7 +7360,8 @@
               "typeArguments": "x:Int32",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "IntegrationServiceTrigger",
@@ -7219,364 +7390,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
-        },
-        {
-          "className": "UseGenAI",
-          "displayName": "Use GenAI",
-          "browsable": true,
-          "processTypes": [
-            "general",
-            "api-integration"
           ],
-          "properties": [
-            {
-              "name": "ModelName",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": true
-            },
-            {
-              "name": "Prompt",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "typeArguments": "x:String",
-              "required": true
-            },
-            {
-              "name": "SystemPrompt",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "typeArguments": "x:String",
-              "required": false
-            },
-            {
-              "name": "MaxTokens",
-              "direction": "In",
-              "clrType": "System.Int32",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "4096"
-            },
-            {
-              "name": "Temperature",
-              "direction": "In",
-              "clrType": "System.Double",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "0.7"
-            },
-            {
-              "name": "Response",
-              "direction": "Out",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "x:String",
-              "required": false
-            },
-            {
-              "name": "Result",
-              "direction": "Out",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "x:String",
-              "required": false
-            }
-          ]
-        },
-        {
-          "className": "ExtractData",
-          "displayName": "Extract Data with AI",
-          "browsable": true,
-          "processTypes": [
-            "general",
-            "document-processing"
-          ],
-          "properties": [
-            {
-              "name": "Text",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "typeArguments": "x:String",
-              "required": true
-            },
-            {
-              "name": "ExtractionSchema",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "typeArguments": "x:String",
-              "required": true
-            },
-            {
-              "name": "Result",
-              "direction": "Out",
-              "clrType": "System.Object",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "x:Object",
-              "required": false
-            }
-          ]
-        },
-        {
-          "className": "ClassifyText",
-          "displayName": "Classify Text with AI",
-          "browsable": true,
-          "processTypes": [
-            "general"
-          ],
-          "properties": [
-            {
-              "name": "Text",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "typeArguments": "x:String",
-              "required": true
-            },
-            {
-              "name": "Categories",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "typeArguments": "x:String",
-              "required": true
-            },
-            {
-              "name": "Result",
-              "direction": "Out",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "x:String",
-              "required": false
-            }
-          ]
-        },
-        {
-          "className": "SummarizeText",
-          "displayName": "Summarize Text with AI",
-          "browsable": true,
-          "processTypes": [
-            "general",
-            "document-processing"
-          ],
-          "properties": [
-            {
-              "name": "Text",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "typeArguments": "x:String",
-              "required": true
-            },
-            {
-              "name": "MaxLength",
-              "direction": "In",
-              "clrType": "System.Int32",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false
-            },
-            {
-              "name": "Summary",
-              "direction": "Out",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "x:String",
-              "required": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "packageId": "UiPath.IntegrationService.Activities",
-      "version": "1.24.0",
-      "feedStatus": "verified",
-      "preferredVersion": "1.24.0",
-      "prefix": "uis",
-      "clrNamespace": "UiPath.IntegrationService.Activities",
-      "assembly": "UiPath.IntegrationService.Activities",
-      "activities": [
-        {
-          "className": "IntegrationServiceScope",
-          "displayName": "Integration Service Scope",
-          "browsable": true,
-          "processTypes": [
-            "api-integration"
-          ],
-          "properties": [
-            {
-              "name": "ConnectionId",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": true
-            },
-            {
-              "name": "TimeoutMS",
-              "direction": "In",
-              "clrType": "System.Int32",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "30000"
-            }
-          ]
-        },
-        {
-          "className": "IntegrationServiceHTTPRequest",
-          "displayName": "Integration Service HTTP Request",
-          "browsable": true,
-          "processTypes": [
-            "api-integration"
-          ],
-          "properties": [
-            {
-              "name": "ConnectionId",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": true
-            },
-            {
-              "name": "Endpoint",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "typeArguments": "x:String",
-              "required": true
-            },
-            {
-              "name": "Method",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": true,
-              "validValues": [
-                "GET",
-                "POST",
-                "PUT",
-                "DELETE",
-                "PATCH"
-              ],
-              "default": "GET"
-            },
-            {
-              "name": "Body",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "typeArguments": "x:String",
-              "required": false
-            },
-            {
-              "name": "QueryParameters",
-              "direction": "In",
-              "clrType": "System.Collections.Generic.Dictionary`2[System.String,System.String]",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "typeArguments": "scg:Dictionary(x:String, x:String)",
-              "required": false
-            },
-            {
-              "name": "ResponseContent",
-              "direction": "Out",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "x:String",
-              "required": false
-            },
-            {
-              "name": "ResponseOutput",
-              "direction": "Out",
-              "clrType": "System.Object",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "x:Object",
-              "required": false
-            },
-            {
-              "name": "Output",
-              "direction": "Out",
-              "clrType": "System.Object",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "x:Object",
-              "required": false
-            },
-            {
-              "name": "StatusCode",
-              "direction": "Out",
-              "clrType": "System.Int32",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "x:Int32",
-              "required": false
-            }
-          ]
-        },
-        {
-          "className": "IntegrationServiceTrigger",
-          "displayName": "Integration Service Trigger",
-          "browsable": true,
-          "processTypes": [
-            "api-integration",
-            "orchestration"
-          ],
-          "properties": [
-            {
-              "name": "ConnectionId",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": true
-            },
-            {
-              "name": "EventType",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": true
-            }
-          ]
+          "emissionApproved": false
         }
       ]
     },
@@ -7618,7 +7433,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ClassifyDocument",
@@ -7655,7 +7471,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ExtractDocumentData",
@@ -7692,7 +7509,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ValidateDocumentData",
@@ -7729,7 +7547,8 @@
               "required": false,
               "typeArguments": "x:Boolean"
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ],
       "version": "6.27.3",
@@ -7791,7 +7610,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "JiraCreateIssue",
@@ -7879,7 +7699,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "JiraGetIssue",
@@ -7908,7 +7729,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "JiraUpdateIssue",
@@ -7964,7 +7786,8 @@
               "typeArguments": null,
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "JiraSearchIssues",
@@ -8003,7 +7826,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "JiraAddComment",
@@ -8032,7 +7856,8 @@
               "typeArguments": "x:String",
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": false
         }
       ]
     },
@@ -8182,7 +8007,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "SendOutlookMailMessage",
@@ -8276,7 +8102,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GetImapMailMessage",
@@ -8390,7 +8217,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GetOutlookMailMessages",
@@ -8482,7 +8310,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "SendMail",
@@ -8558,7 +8387,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GetMail",
@@ -8618,7 +8448,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -8690,7 +8521,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "DynamicsGetRecords",
@@ -8737,7 +8569,8 @@
               "typeArguments": "scg2:DataTable",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "DynamicsCreateRecord",
@@ -8774,7 +8607,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "DynamicsUpdateRecord",
@@ -8811,7 +8645,8 @@
               "typeArguments": "scg:Dictionary(x:String,x:String)",
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": false
         }
       ]
     },
@@ -8884,7 +8719,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "SendMail365",
@@ -8959,7 +8795,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GetMail365",
@@ -9018,7 +8855,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "CreateEvent365",
@@ -9083,7 +8921,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ExcelCreateSpreadsheet",
@@ -9130,7 +8969,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ExcelReadRange365",
@@ -9188,7 +9028,8 @@
               "typeArguments": "scg2:DataTable",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ExcelWriteRange365",
@@ -9236,7 +9077,8 @@
               "typeArguments": "scg2:DataTable",
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "SharePointUploadFile",
@@ -9292,7 +9134,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "SharePointDownloadFile",
@@ -9330,7 +9173,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -9388,7 +9232,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "TeamsSendMessage",
@@ -9439,7 +9284,8 @@
               ],
               "default": "text"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "TeamsGetMessages",
@@ -9486,7 +9332,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "TeamsSendChatMessage",
@@ -9514,7 +9361,8 @@
               "typeArguments": "x:String",
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -9566,7 +9414,8 @@
               "required": false,
               "typeArguments": null
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "Predict",
@@ -9604,7 +9453,8 @@
               "required": false,
               "typeArguments": "x:String"
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ],
       "version": "2.0.4",
@@ -9677,7 +9527,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ReadPDFWithOCR",
@@ -9744,7 +9595,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ExtractPDFPageRange",
@@ -9801,7 +9653,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "MergePDF",
@@ -9840,7 +9693,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ExportPDFPageAsImage",
@@ -9904,7 +9758,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GetPDFPageCount",
@@ -9952,7 +9807,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -10000,7 +9856,8 @@
               "required": false,
               "typeArguments": "x:String"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "CreateFormTask",
@@ -10075,7 +9932,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "WaitForFormTask",
@@ -10123,7 +9981,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "CreateExternalTask",
@@ -10189,7 +10048,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -10229,7 +10089,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "AddSlide",
@@ -10249,7 +10110,8 @@
               "required": false,
               "default": "0"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "SetText",
@@ -10286,7 +10148,8 @@
               "typeArguments": "x:String",
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ExportSlideAsImage",
@@ -10329,7 +10192,8 @@
               ],
               "default": "PNG"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ReplaceTextInSlide",
@@ -10376,7 +10240,8 @@
               "required": false,
               "default": "True"
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -10462,7 +10327,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "SalesforceGetRecords",
@@ -10509,7 +10375,8 @@
               "typeArguments": "scg2:DataTable",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "SalesforceInsertRecords",
@@ -10546,7 +10413,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "SalesforceUpdateRecords",
@@ -10583,7 +10451,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "SalesforceDeleteRecords",
@@ -10620,7 +10489,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "SalesforceSOQLQuery",
@@ -10648,7 +10518,8 @@
               "typeArguments": "scg2:DataTable",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         }
       ]
     },
@@ -10721,7 +10592,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "ServiceNowGetRecords",
@@ -10769,7 +10641,8 @@
               "typeArguments": "scg2:DataTable",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "ServiceNowCreateRecord",
@@ -10807,7 +10680,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "ServiceNowUpdateRecord",
@@ -10845,7 +10719,8 @@
               "typeArguments": "scg:Dictionary(x:String,x:String)",
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "ServiceNowDeleteRecord",
@@ -10874,7 +10749,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": false
         }
       ]
     },
@@ -10914,7 +10790,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "SlackSendMessage",
@@ -10961,7 +10838,8 @@
               "typeArguments": "x:String",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "SlackGetMessages",
@@ -10999,7 +10877,8 @@
               "typeArguments": "scg:List(x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "SlackUploadFile",
@@ -11045,7 +10924,8 @@
               "typeArguments": null,
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         }
       ]
     },
@@ -11094,7 +10974,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "VerifyRange",
@@ -11140,7 +11021,8 @@
               "typeArguments": null,
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "VerifyControlAttribute",
@@ -11188,7 +11070,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "LogAssert",
@@ -11216,7 +11099,8 @@
               "typeArguments": null,
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "GivenName",
@@ -11235,7 +11119,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "WhenName",
@@ -11254,7 +11139,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ThenName",
@@ -11273,7 +11159,8 @@
               "typeArguments": null,
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "AddTestDataQueueItem",
@@ -11302,7 +11189,8 @@
               "typeArguments": "x:String",
               "required": true
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -11456,7 +11344,8 @@
               "required": false,
               "typeArguments": "x:String"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "DeserializeJson",
@@ -11485,7 +11374,8 @@
               "required": true,
               "typeArguments": "x:Object"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "DeserializeJSON",
@@ -11514,7 +11404,8 @@
               "required": true,
               "typeArguments": "x:Object"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "SerializeJson",
@@ -11543,7 +11434,8 @@
               "required": false,
               "typeArguments": "x:String"
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ],
       "version": "1.21.0",
@@ -11692,7 +11584,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "DownloadFile",
@@ -11741,7 +11634,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "SerializeJson",
@@ -11793,7 +11687,8 @@
               ],
               "default": "None"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "DeserializeJson",
@@ -11831,7 +11726,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -11881,7 +11777,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "WriteDocument",
@@ -11920,7 +11817,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ReplaceText",
@@ -11978,7 +11876,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "AppendText",
@@ -12017,7 +11916,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "InsertPicture",
@@ -12056,7 +11956,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         },
         {
           "className": "ReadTable",
@@ -12105,7 +12006,8 @@
               "required": false,
               "default": "False"
             }
-          ]
+          ],
+          "emissionApproved": true
         }
       ]
     },
@@ -12172,7 +12074,8 @@
               "required": false,
               "default": "30000"
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "WorkdayGetWorkers",
@@ -12216,7 +12119,8 @@
               "typeArguments": "scg2:DataTable",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "WorkdayGetWorkerById",
@@ -12244,7 +12148,8 @@
               "typeArguments": "x:Object",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         }
       ]
     },
@@ -12300,7 +12205,8 @@
               "typeArguments": null,
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         },
         {
           "className": "TriggerJob",
@@ -12363,7 +12269,8 @@
               "typeArguments": "scg:Dictionary(x:String,x:Object)",
               "required": false
             }
-          ]
+          ],
+          "emissionApproved": false
         }
       ]
     }
