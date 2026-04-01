@@ -294,12 +294,16 @@ export interface PipelineOutcomeReport {
     stubbed: number;
     corrected: number;
     blocked: number;
+    degraded: number;
     details: Array<{
       file: string;
       line?: number;
       type: string;
       detail: string;
       resolution: string;
+      containingBlockType?: string;
+      containedActivities?: string[];
+      isIntegrityFailure?: boolean;
     }>;
   };
 }
@@ -983,6 +987,18 @@ export async function compilePackageFromSpecs(
       xamlCount: buildResult.xamlEntries.length,
       cacheHit: buildResult.cacheHit,
     });
+
+    if (buildResult.emissionGateWarnings) {
+      for (const w of buildResult.emissionGateWarnings) {
+        pipelineWarnings.push({
+          code: w.code,
+          message: `[Emission Gate] ${w.file}${w.line ? `:${w.line}` : ""} — ${w.message}`,
+          stage: "emission_gate",
+          recoverable: true,
+        });
+        tracker.warn("xaml_emission", `Emission gate warning (${w.type}): ${w.message}`);
+      }
+    }
 
     if (buildResult.dependencyWarnings) {
       pipelineWarnings.push(...buildResult.dependencyWarnings);

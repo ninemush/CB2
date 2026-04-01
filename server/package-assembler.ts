@@ -1998,6 +1998,7 @@ export type BuildResult = {
   generationMode: GenerationMode;
   referencedMLSkillNames: string[];
   dependencyWarnings?: Array<{ code: string; message: string; stage: string; recoverable: boolean; affectedFiles?: string[] }>;
+  emissionGateWarnings?: Array<{ code: string; message: string; file: string; line?: number; type: string }>;
   usedAIFallback: boolean;
   outcomeReport?: PipelineOutcomeReport;
   projectJsonContent?: string;
@@ -4823,9 +4824,11 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
     }
 
-    const emissionGateResult = runEmissionGate(xamlEntries);
+    const emissionGateMode = generationMode === "baseline_openable" ? "baseline" as const : "strict" as const;
+    const emissionGateWarningsList: Array<{ code: string; message: string; file: string; line?: number; type: string }> = [];
+    const emissionGateResult = runEmissionGate(xamlEntries, emissionGateMode);
     if (emissionGateResult.violations.length > 0) {
-      console.log(`[Emission Gate] Post-generation emission contract: ${emissionGateResult.summary.totalViolations} violation(s) — ${emissionGateResult.summary.stubbed} stubbed, ${emissionGateResult.summary.corrected} corrected, ${emissionGateResult.summary.blocked} blocked`);
+      console.log(`[Emission Gate] Post-generation emission contract (${emissionGateMode} mode): ${emissionGateResult.summary.totalViolations} violation(s) — ${emissionGateResult.summary.stubbed} stubbed, ${emissionGateResult.summary.corrected} corrected, ${emissionGateResult.summary.blocked} blocked, ${emissionGateResult.summary.degraded} degraded`);
       for (const entry of xamlEntries) {
         const basename = entry.name.split("/").pop() || entry.name;
         const archivePath = Array.from(deferredWrites.keys()).find(p => (p.split("/").pop() || p) === basename);
@@ -4835,12 +4838,29 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
       if (emissionGateResult.blocked) {
         const blockedViolations = emissionGateResult.violations.filter(v => v.resolution === "blocked");
-        const diagnostics = blockedViolations.map(v => `  ${v.file}${v.line ? `:${v.line}` : ""} — ${v.detail}`).join("\n");
-        console.error(`[Emission Gate] BLOCKING: ${blockedViolations.length} emission contract violation(s) cannot be safely remediated:\n${diagnostics}`);
-        throw new QualityGateError(
-          `[Emission Gate] Packaging blocked: ${blockedViolations.length} emission contract violation(s) cannot be safely remediated. ` +
-          blockedViolations.map(v => `${v.file}${v.line ? `:${v.line}` : ""}: ${v.detail}`).join("; ")
-        );
+        const integrityBlocked = blockedViolations.filter(v => v.isIntegrityFailure === true);
+        const nonIntegrityBlocked = blockedViolations.filter(v => v.isIntegrityFailure !== true);
+
+        if (generationMode === "baseline_openable" && integrityBlocked.length === 0 && nonIntegrityBlocked.length > 0) {
+          console.warn(`[Emission Gate] baseline_openable mode — ${nonIntegrityBlocked.length} non-integrity violation(s) treated as warnings (not blocking):`);
+          for (const v of nonIntegrityBlocked) {
+            console.warn(`[Emission Gate]   WARNING: ${v.file}${v.line ? `:${v.line}` : ""} — ${v.detail}`);
+            emissionGateWarningsList.push({
+              code: "EMISSION_GATE_SUPPRESSED",
+              message: v.detail,
+              file: v.file,
+              line: v.line,
+              type: v.type,
+            });
+          }
+        } else {
+          const diagnostics = blockedViolations.map(v => `  ${v.file}${v.line ? `:${v.line}` : ""} — ${v.detail}`).join("\n");
+          console.error(`[Emission Gate] BLOCKING: ${blockedViolations.length} emission contract violation(s) cannot be safely remediated:\n${diagnostics}`);
+          throw new QualityGateError(
+            `[Emission Gate] Packaging blocked: ${blockedViolations.length} emission contract violation(s) cannot be safely remediated. ` +
+            blockedViolations.map(v => `${v.file}${v.line ? `:${v.line}` : ""}: ${v.detail}`).join("; ")
+          );
+        }
       }
     }
 
@@ -5494,12 +5514,16 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         stubbed: emissionGateResult.summary.stubbed,
         corrected: emissionGateResult.summary.corrected,
         blocked: emissionGateResult.summary.blocked,
+        degraded: emissionGateResult.summary.degraded,
         details: emissionGateResult.violations.map(v => ({
           file: v.file,
           line: v.line,
           type: v.type,
           detail: v.detail,
           resolution: v.resolution,
+          containingBlockType: v.containingBlockType,
+          containedActivities: v.containedActivities,
+          isIntegrityFailure: v.isIntegrityFailure,
         })),
       } : undefined,
     };
@@ -6294,12 +6318,16 @@ ${depEntries}
       stubbed: emissionGateResult.summary.stubbed,
       corrected: emissionGateResult.summary.corrected,
       blocked: emissionGateResult.summary.blocked,
+      degraded: emissionGateResult.summary.degraded,
       details: emissionGateResult.violations.map(v => ({
         file: v.file,
         line: v.line,
         type: v.type,
         detail: v.detail,
         resolution: v.resolution,
+        containingBlockType: v.containingBlockType,
+        containedActivities: v.containedActivities,
+        isIntegrityFailure: v.isIntegrityFailure,
       })),
     } : undefined,
     preEmissionValidation: specValidationReport ? {
@@ -6365,7 +6393,7 @@ ${depEntries}
     });
     console.log(`[UiPath Cache] Stored build for ${buildCacheKey} (${buffer.length} bytes, v${version}) with per-stage fingerprints [enrichment=${stageEnrichment.fingerprint.slice(0, 8)}, xaml=${xamlFp.slice(0, 8)}, qg=${qgFp.slice(0, 8)}]`);
   }
-  return { buffer, gaps: allGaps, usedPackages: allUsedPkgs, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, usedFallbackStubs: usedFallback, generationMode, referencedMLSkillNames: [...genCtx.referencedMLSkillNames], dependencyWarnings: dependencyWarnings.length > 0 ? dependencyWarnings : undefined, usedAIFallback: _usedAIFallback, outcomeReport, projectJsonContent: finalProjectJsonStr };
+  return { buffer, gaps: allGaps, usedPackages: allUsedPkgs, qualityGateResult, xamlEntries: finalXamlEntries, dependencyMap: finalDependencyMap, archiveManifest: finalArchiveManifest, usedFallbackStubs: usedFallback, generationMode, referencedMLSkillNames: [...genCtx.referencedMLSkillNames], dependencyWarnings: dependencyWarnings.length > 0 ? dependencyWarnings : undefined, emissionGateWarnings: emissionGateWarningsList.length > 0 ? emissionGateWarningsList : undefined, usedAIFallback: _usedAIFallback, outcomeReport, projectJsonContent: finalProjectJsonStr };
 }
 
 export function createTrackedArchive() {

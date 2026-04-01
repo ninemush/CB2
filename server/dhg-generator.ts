@@ -456,6 +456,37 @@ export function generateDhgFromOutcomeReport(
     md += `\n`;
   }
 
+  if (report.emissionGateViolations && report.emissionGateViolations.details.length > 0) {
+    const stubbedItems = report.emissionGateViolations.details.filter(v => v.resolution === "stubbed");
+    const degradedItems = report.emissionGateViolations.details.filter(v => v.resolution === "degraded");
+
+    if (stubbedItems.length > 0) {
+      md += `### Emission Gate — Stubbed Activities (${stubbedItems.length})\n\n`;
+      md += `Individual unapproved activities were replaced with Comment+LogMessage stubs in sequential context.\n\n`;
+      md += `| # | File | Line | Detail | Est. Minutes |\n`;
+      md += `|---|------|------|--------|-------------|\n`;
+      stubbedItems.forEach((v, i) => {
+        const detail = (v.detail || "").length > 100 ? (v.detail || "").slice(0, 97) + "..." : (v.detail || "—");
+        md += `| ${i + 1} | \`${v.file}\` | ${v.line || "—"} | ${detail.replace(/\|/g, "\\|")} | 15 |\n`;
+      });
+      md += `\n`;
+    }
+
+    if (degradedItems.length > 0) {
+      md += `### Emission Gate — Degraded Blocks (${degradedItems.length})\n\n`;
+      md += `Entire control-flow/retry blocks were replaced with handoff stubs because they contained unapproved activities. These blocks must be implemented manually in Studio.\n\n`;
+      md += `| # | File | Line | Block Type | Contained Activities | Developer Action | Est. Minutes |\n`;
+      md += `|---|------|------|------------|---------------------|-----------------|-------------|\n`;
+      degradedItems.forEach((v, i) => {
+        const blockType = v.containingBlockType || "Unknown";
+        const contained = v.containedActivities?.join(", ") || "—";
+        const detail = (v.detail || "").length > 80 ? (v.detail || "").slice(0, 77) + "..." : (v.detail || "—");
+        md += `| ${i + 1} | \`${v.file}\` | ${v.line || "—"} | ${blockType} | ${contained.replace(/\|/g, "\\|")} | Implement entire ${blockType} block manually in Studio | 30 |\n`;
+      });
+      md += `\n`;
+    }
+  }
+
   if (transitiveDependencyWarnings.length > 0) {
     md += `### Transitive Dependency Issues (${transitiveDependencyWarnings.length})\n\n`;
     md += `Activities reference packages or types that are not declared in project.json. These may cause runtime failures.\n\n`;

@@ -1,4 +1,5 @@
 import { catalogService } from "./catalog/catalog-service";
+import { validateXmlWellFormedness } from "./xaml/xaml-compliance";
 
 export interface CriticalTypeDiagnostic {
   inputType: string;
@@ -18,13 +19,18 @@ export function drainCriticalTypeDiagnostics(): CriticalTypeDiagnostic[] {
   return criticalTypeDiagnostics.splice(0);
 }
 
+export type EmissionGateMode = "strict" | "baseline";
+
 export interface EmissionViolation {
   file: string;
   line?: number;
   type: "unapproved-activity" | "malformed-type" | "sentinel-expression";
   detail: string;
-  resolution: "stubbed" | "corrected" | "blocked";
+  resolution: "stubbed" | "corrected" | "blocked" | "degraded";
   context?: string;
+  containingBlockType?: string;
+  containedActivities?: string[];
+  isIntegrityFailure?: boolean;
 }
 
 export interface EmissionGateResult {
@@ -35,6 +41,7 @@ export interface EmissionGateResult {
     stubbed: number;
     corrected: number;
     blocked: number;
+    degraded: number;
   };
 }
 
@@ -116,10 +123,93 @@ function isOrchestrationNode(activityName: string): boolean {
   return ORCHESTRATION_NODES.has(activityName);
 }
 
+function findInnermostContainingBlock(
+  content: string,
+  matchIndex: number,
+): { start: number; end: number; blockType: string; prefix: string } | null {
+  const ALL_CONTAINER_NAMES = [...CONTROL_FLOW_CONTAINERS, ...RETRY_LOOP_CONTAINERS];
+  let best: { start: number; end: number; blockType: string; prefix: string } | null = null;
+
+  for (const container of ALL_CONTAINER_NAMES) {
+    const openPatterns = [
+      new RegExp(`<(${container})[\\s>]`, "g"),
+      new RegExp(`<(\\w+):(${container})[\\s>]`, "g"),
+    ];
+
+    for (const openPattern of openPatterns) {
+      let m;
+      while ((m = openPattern.exec(content)) !== null) {
+        if (m.index >= matchIndex) continue;
+
+        const isPrefixed = openPattern.source.includes("\\w+");
+        const tagPrefix = isPrefixed ? m[1] + ":" : "";
+        const tagName = isPrefixed ? m[2] : m[1];
+        const blockStart = m.index;
+
+        let depth = 1;
+        const closeTagStr = `</${tagPrefix}${tagName}>`;
+        const openTagPattern = new RegExp(`<${tagPrefix.replace(/([.*+?^${}()|[\]\\])/g, '\\$1')}${tagName}[\\s>]`, "g");
+        const closeTagPattern = new RegExp(`</${tagPrefix.replace(/([.*+?^${}()|[\]\\])/g, '\\$1')}${tagName}>`, "g");
+
+        openTagPattern.lastIndex = m.index + m[0].length;
+        closeTagPattern.lastIndex = m.index + m[0].length;
+
+        let blockEnd = -1;
+        let searchPos = m.index + m[0].length;
+
+        while (searchPos < content.length) {
+          const nextOpenIdx = content.indexOf(`<${tagPrefix}${tagName}`, searchPos);
+          const nextCloseIdx = content.indexOf(closeTagStr, searchPos);
+
+          if (nextCloseIdx === -1) break;
+
+          if (nextOpenIdx !== -1 && nextOpenIdx < nextCloseIdx) {
+            const charAfter = content[nextOpenIdx + tagPrefix.length + tagName.length + 1];
+            if (charAfter === ' ' || charAfter === '>' || charAfter === '/' || charAfter === '\n' || charAfter === '\r' || charAfter === '\t') {
+              depth++;
+            }
+            searchPos = nextOpenIdx + 1;
+          } else {
+            depth--;
+            if (depth === 0) {
+              blockEnd = nextCloseIdx + closeTagStr.length;
+              break;
+            }
+            searchPos = nextCloseIdx + closeTagStr.length;
+          }
+        }
+
+        if (blockEnd === -1) continue;
+        if (matchIndex < blockStart || matchIndex >= blockEnd) continue;
+
+        if (best === null || (blockEnd - blockStart) < (best.end - best.start)) {
+          best = { start: blockStart, end: blockEnd, blockType: tagName, prefix: tagPrefix };
+        }
+      }
+    }
+  }
+
+  return best;
+}
+
+function listActivitiesInBlock(blockContent: string): string[] {
+  const activities: string[] = [];
+  const tagPattern = /<(\w+:)?(\w+)[\s/>]/g;
+  let m;
+  while ((m = tagPattern.exec(blockContent)) !== null) {
+    const name = m[2];
+    if (!SYSTEM_ACTIVITIES_NO_PREFIX.has(name) && !XML_INFRASTRUCTURE_TAGS.has(name) && !/^[a-z]$/.test(name)) {
+      if (!activities.includes(name)) activities.push(name);
+    }
+  }
+  return activities;
+}
+
 function enforceActivityEmission(
   fileName: string,
   content: string,
   violations: EmissionViolation[],
+  mode: EmissionGateMode = "strict",
 ): { content: string; blocked: boolean } {
   if (!catalogService.isLoaded()) return { content, blocked: false };
 
@@ -134,8 +224,8 @@ function enforceActivityEmission(
     const prefix = match[1] ? match[1].replace(":", "") : "";
     const activityName = match[2];
 
-    if (SYSTEM_ACTIVITIES_NO_PREFIX.has(activityName) && !prefix) continue;
-    if (XML_INFRASTRUCTURE_TAGS.has(activityName) && !prefix) continue;
+    if (SYSTEM_ACTIVITIES_NO_PREFIX.has(activityName)) continue;
+    if (XML_INFRASTRUCTURE_TAGS.has(activityName)) continue;
     if (/^[a-z]$/.test(activityName)) continue;
     if (prefix === "x" || prefix === "s" || prefix === "scg" || prefix === "scg2" || prefix === "mc" || prefix === "sap" || prefix === "sap2010" || prefix === "sads") continue;
     if (activityName.includes(".")) continue;
@@ -144,6 +234,15 @@ function enforceActivityEmission(
     if (!foundActivities.has(key)) foundActivities.set(key, []);
     foundActivities.get(key)!.push({ index: match.index, prefix, fullMatch: match[0] });
   }
+
+  interface PendingBlockReplacement {
+    block: { start: number; end: number; blockType: string; prefix: string };
+    activityName: string;
+    reason: string;
+    line: number;
+    containedActivities: string[];
+  }
+  const pendingBlockReplacements: PendingBlockReplacement[] = [];
 
   for (const [activityName, occurrences] of foundActivities) {
     const schema = catalogService.getActivitySchema(activityName);
@@ -155,20 +254,51 @@ function enforceActivityEmission(
       : `not found in activity catalog`;
 
     for (const occ of occurrences) {
+      const alreadyCoveredByBlock = pendingBlockReplacements.some(
+        r => occ.index >= r.block.start && occ.index < r.block.end
+      );
+      if (alreadyCoveredByBlock) continue;
+
       const line = findLineNumber(content, occ.index);
-      const insideControlFlow = isInsideControlFlowOrRetryContainer(result, occ.index);
+      const insideControlFlow = isInsideControlFlowOrRetryContainer(content, occ.index);
       const isOrch = isOrchestrationNode(activityName);
 
       if (insideControlFlow || isOrch) {
-        violations.push({
-          file: fileName,
-          line,
-          type: "unapproved-activity",
-          detail: `Unapproved activity "${activityName}" (${reason}) inside ${isOrch ? "orchestration node" : "control-flow/retry container"} — cannot safely stub`,
-          resolution: "blocked",
-          context: isOrch ? "orchestration-node" : "control-flow-container",
-        });
-        blocked = true;
+        if (mode === "baseline") {
+          const block = findInnermostContainingBlock(content, occ.index);
+          if (block) {
+            const blockContent = content.substring(block.start, block.end);
+            const containedActivities = listActivitiesInBlock(blockContent);
+            pendingBlockReplacements.push({
+              block,
+              activityName,
+              reason,
+              line,
+              containedActivities,
+            });
+            continue;
+          }
+          const contextLabel = isOrch ? "orchestration node" : "control-flow/retry container";
+          violations.push({
+            file: fileName,
+            line,
+            type: "unapproved-activity",
+            detail: `Unapproved activity "${activityName}" (${reason}) inside ${contextLabel} — no containing block found for replacement, blocking`,
+            resolution: "blocked",
+            context: isOrch ? "orchestration-node" : "control-flow-container",
+          });
+          blocked = true;
+        } else {
+          violations.push({
+            file: fileName,
+            line,
+            type: "unapproved-activity",
+            detail: `Unapproved activity "${activityName}" (${reason}) inside ${isOrch ? "orchestration node" : "control-flow/retry container"} — cannot safely stub`,
+            resolution: "blocked",
+            context: isOrch ? "orchestration-node" : "control-flow-container",
+          });
+          blocked = true;
+        }
       } else {
         const tagPrefix = occ.prefix ? `${occ.prefix}:` : "";
         const selfClosingPattern = new RegExp(
@@ -213,6 +343,61 @@ function enforceActivityEmission(
           resolution: "stubbed",
           context: "sequential",
         });
+      }
+    }
+  }
+
+  if (pendingBlockReplacements.length > 0) {
+    const deduped = new Map<string, PendingBlockReplacement>();
+    for (const rep of pendingBlockReplacements) {
+      const key = `${rep.block.start}:${rep.block.end}`;
+      if (!deduped.has(key)) {
+        deduped.set(key, rep);
+      }
+    }
+
+    const sorted = Array.from(deduped.values()).sort((a, b) => b.block.start - a.block.start);
+
+    for (const rep of sorted) {
+      const handoffStub =
+        `<Sequence DisplayName="[HANDOFF] ${rep.block.blockType} — requires developer implementation">\n` +
+        `  <ui:Comment DisplayName="[HANDOFF] ${rep.block.blockType} block requires developer implementation">\n` +
+        `    <ui:Comment.Body>\n` +
+        `      <InArgument x:TypeArguments="x:String">"This ${rep.block.blockType} block was replaced because it contained unapproved activity: ${rep.activityName} (${rep.reason}). ` +
+        `Original activities in block: ${rep.containedActivities.join(", ") || "none detected"}. File: ${fileName}:${rep.line}"</InArgument>\n` +
+        `    </ui:Comment.Body>\n` +
+        `  </ui:Comment>\n` +
+        `  <ui:LogMessage Level="Warn" Message="&quot;[HANDOFF] Skipped ${rep.block.blockType} containing unapproved activity ${rep.activityName} — implement manually&quot;" />\n` +
+        `</Sequence>`;
+
+      const before = result.substring(0, rep.block.start);
+      const after = result.substring(rep.block.end);
+      const candidate = before + handoffStub + after;
+
+      const xmlValidation = validateXmlWellFormedness(candidate);
+      if (xmlValidation.valid) {
+        result = candidate;
+        violations.push({
+          file: fileName,
+          line: rep.line,
+          type: "unapproved-activity",
+          detail: `Unapproved activity "${rep.activityName}" (${rep.reason}) inside ${rep.block.blockType} — entire block replaced with handoff stub`,
+          resolution: "degraded",
+          context: "control-flow-container",
+          containingBlockType: rep.block.blockType,
+          containedActivities: rep.containedActivities,
+        });
+      } else {
+        console.warn(`[Emission Gate] Block replacement produced invalid XML for ${rep.block.blockType} in ${fileName}: ${xmlValidation.errors.join("; ")}`);
+        violations.push({
+          file: fileName,
+          line: rep.line,
+          type: "unapproved-activity",
+          detail: `Unapproved activity "${rep.activityName}" (${rep.reason}) inside control-flow/retry container — block-level replacement produced invalid XML, blocking`,
+          resolution: "blocked",
+          context: "control-flow-container",
+        });
+        blocked = true;
       }
     }
   }
@@ -304,6 +489,7 @@ function enforceTypeStrings(
           detail: `Malformed type "${typeStr}" in critical context (${contextTag}) — blocking: raw brackets, unbalanced delimiters, or unmapped clr-namespace detected`,
           resolution: "blocked",
           context: contextTag,
+          isIntegrityFailure: true,
         });
         blocked = true;
         return fullMatch;
@@ -373,6 +559,7 @@ function cleanSentinelExpressions(
 
 export function runEmissionGate(
   xamlEntries: Array<{ name: string; content: string }>,
+  mode: EmissionGateMode = "strict",
 ): EmissionGateResult {
   const violations: EmissionViolation[] = [];
   let anyBlocked = false;
@@ -385,6 +572,7 @@ export function runEmissionGate(
       detail: `Critical mapClrType failure: input="${diag.inputType}" resolved="${diag.resolvedType}" — ${diag.reason}`,
       resolution: "blocked",
       context: "mapClrType-critical",
+      isIntegrityFailure: true,
     });
     anyBlocked = true;
   }
@@ -394,7 +582,7 @@ export function runEmissionGate(
     let content = entry.content;
     const fileName = entry.name;
 
-    const actResult = enforceActivityEmission(fileName, content, violations);
+    const actResult = enforceActivityEmission(fileName, content, violations, mode);
     content = actResult.content;
     if (actResult.blocked) anyBlocked = true;
 
@@ -414,12 +602,13 @@ export function runEmissionGate(
     stubbed: violations.filter(v => v.resolution === "stubbed").length,
     corrected: violations.filter(v => v.resolution === "corrected").length,
     blocked: violations.filter(v => v.resolution === "blocked").length,
+    degraded: violations.filter(v => v.resolution === "degraded").length,
   };
 
   if (violations.length > 0) {
-    console.log(`[Emission Gate] Found ${summary.totalViolations} violation(s): ${summary.stubbed} stubbed, ${summary.corrected} corrected, ${summary.blocked} blocked`);
+    console.log(`[Emission Gate] Found ${summary.totalViolations} violation(s): ${summary.stubbed} stubbed, ${summary.corrected} corrected, ${summary.blocked} blocked, ${summary.degraded} degraded`);
     for (const v of violations) {
-      const prefix = v.resolution === "blocked" ? "BLOCKED" : v.resolution === "stubbed" ? "STUBBED" : "CORRECTED";
+      const prefix = v.resolution === "blocked" ? "BLOCKED" : v.resolution === "stubbed" ? "STUBBED" : v.resolution === "degraded" ? "DEGRADED" : "CORRECTED";
       console.log(`[Emission Gate]   ${prefix}: ${v.file}${v.line ? `:${v.line}` : ""} — ${v.detail}`);
     }
   }

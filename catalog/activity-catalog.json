@@ -1,7 +1,7 @@
 {
   "catalogVersion": "2.0.0",
-  "generatedAt": "2026-04-01T10:10:56.410Z",
-  "lastVerifiedAt": "2026-04-01T10:10:56.410Z",
+  "generatedAt": "2026-04-01T15:24:23.919Z",
+  "lastVerifiedAt": "2026-04-01T15:24:23.919Z",
   "studioVersion": "25.10.0",
   "packages": [
     {
@@ -1047,7 +1047,7 @@
             "unattended-ui"
           ],
           "properties": [],
-          "emissionApproved": false
+          "emissionApproved": true
         },
         {
           "className": "ExcelApplicationScope",

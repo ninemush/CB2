@@ -2721,7 +2721,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "GetCredential",
       displayName: "Get Credential",
       browsable: true,
-      emissionApproved: false, // namespace/package resolution instability
+      emissionApproved: false, // Verified mapping: UiPath.System.Activities package, version 26.2.4, official feed verified. Pending package/profile/version compatibility verification before promotion.
       processTypes: ["general", "orchestration"],
       propertiesComplete: true,
       properties: [
@@ -2735,7 +2735,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "GetAsset",
       displayName: "Get Asset",
       browsable: true,
-      emissionApproved: false, // namespace/package resolution instability
+      emissionApproved: false, // Verified mapping: UiPath.System.Activities package, version 26.2.4, official feed verified. Pending package/profile/version compatibility verification before promotion.
       processTypes: ["general", "orchestration"],
       propertiesComplete: true,
       properties: [
@@ -2773,7 +2773,7 @@ const SYSTEM_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       className: "ShouldRetry",
       displayName: "Should Retry",
       browsable: true,
-      emissionApproved: false, // namespace/package resolution instability
+      emissionApproved: true, // structural infrastructure activity — required child of RetryScope, already in SYSTEM_ACTIVITIES_NO_PREFIX and XML_INFRASTRUCTURE_TAGS, mapped to prefix "ui" in GUARANTEED_ACTIVITY_PREFIX_MAP. Not a logic-carrying activity.
       processTypes: ["general", "api-integration", "orchestration", "attended-ui", "unattended-ui"],
       properties: [],
     },

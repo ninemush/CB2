@@ -199,7 +199,7 @@ export function getActivityPrefix(templateName: string): string {
   throw new Error(`[XAML Compliance] getActivityPrefix("${templateName}"): no namespace mapping found — activity is unmapped. Add it to GUARANTEED_ACTIVITY_PREFIX_MAP or the activity catalog.`);
 }
 
-const GUARANTEED_ACTIVITY_PREFIX_MAP: Record<string, string> = {
+export const GUARANTEED_ACTIVITY_PREFIX_MAP: Record<string, string> = {
   "LogMessage": "ui", "Comment": "ui", "InvokeWorkflowFile": "ui",
   "RetryScope": "ui", "ShouldRetry": "ui", "GetAsset": "ui", "GetCredential": "ui",
   "AddQueueItem": "ui", "GetTransactionItem": "ui", "SetTransactionStatus": "ui",
@@ -207,7 +207,7 @@ const GUARANTEED_ACTIVITY_PREFIX_MAP: Record<string, string> = {
   "Click": "ui", "TypeInto": "ui", "GetText": "ui", "ElementExists": "ui",
   "OpenBrowser": "ui", "NavigateTo": "ui", "AttachBrowser": "ui", "AttachWindow": "ui",
   "UseApplicationBrowser": "ui", "UseBrowser": "ui", "UseApplication": "ui",
-  "HttpClient": "uweb", "DeserializeJson": "uweb", "SerializeJson": "uweb",
+  "HttpClient": "uweb", "DeserializeJson": "uweb", "DeserializeJSON": "uweb", "SerializeJson": "uweb",
   "SendSmtpMailMessage": "umail", "SendOutlookMailMessage": "umail", "GetImapMailMessage": "umail",
   "GetOutlookMailMessages": "umail", "SendMail": "umail", "GetMail": "umail",
   "ExcelApplicationScope": "uexcel", "UseExcel": "uexcel", "ExcelReadRange": "uexcel",

@@ -400,3 +400,319 @@ describe("Emission Gate — Critical mapClrType Blocking Propagation", () => {
     expect(isWellFormedXamlType("zz:Unknown")).toBe(false);
   });
 });
+
+describe("Emission Gate — Task 374: Safe-floor pipeline", () => {
+  it("(a) baseline mode: unapproved activity in sequential context produces 'stubbed' not 'blocked'", () => {
+    if (!catalogService.isLoaded()) {
+      console.warn("Catalog not loaded — skipping test");
+      return;
+    }
+
+    const schema = catalogService.getActivitySchema("GoogleCalendarGetEvents");
+    if (!schema) {
+      console.warn("GoogleCalendarGetEvents not in catalog — skipping test");
+      return;
+    }
+    expect(schema.activity.emissionApproved).toBe(false);
+
+    const xaml = makeXaml(`
+      <ui:LogMessage Level="Info" Message="&quot;Hello&quot;" />
+      <ui:GoogleCalendarGetEvents CalendarId="primary" />
+      <ui:LogMessage Level="Info" Message="&quot;Done&quot;" />
+    `);
+
+    const entries = [{ name: "BaselineSeq.xaml", content: xaml }];
+    const result = runEmissionGate(entries, "baseline");
+
+    const actViolations = result.violations.filter(v => v.type === "unapproved-activity");
+    expect(actViolations.length).toBeGreaterThan(0);
+    const stubbed = actViolations.filter(v => v.resolution === "stubbed");
+    expect(stubbed.length).toBeGreaterThan(0);
+    expect(result.blocked).toBe(false);
+    expect(entries[0].content).toContain("[STUBBED]");
+    expect(entries[0].content).not.toMatch(/<ui:GoogleCalendarGetEvents\b/);
+  });
+
+  it("(b) baseline mode: unapproved activity inside RetryScope produces 'degraded' with block-level replacement", () => {
+    if (!catalogService.isLoaded()) {
+      console.warn("Catalog not loaded — skipping test");
+      return;
+    }
+
+    const schema = catalogService.getActivitySchema("GoogleCalendarGetEvents");
+    if (!schema) {
+      console.warn("GoogleCalendarGetEvents not in catalog — skipping test");
+      return;
+    }
+
+    const xaml = makeXaml(`
+      <ui:RetryScope NumberOfRetries="3">
+        <ui:RetryScope.ActivityBody>
+          <Sequence>
+            <ui:GoogleCalendarGetEvents CalendarId="primary" />
+          </Sequence>
+        </ui:RetryScope.ActivityBody>
+      </ui:RetryScope>
+    `);
+
+    const entries = [{ name: "BaselineRetry.xaml", content: xaml }];
+    const result = runEmissionGate(entries, "baseline");
+
+    const actViolations = result.violations.filter(v => v.type === "unapproved-activity");
+    expect(actViolations.length).toBeGreaterThan(0);
+    const degraded = actViolations.filter(v => v.resolution === "degraded");
+    expect(degraded.length).toBeGreaterThan(0);
+    expect(degraded[0].containingBlockType).toBe("RetryScope");
+    expect(result.blocked).toBe(false);
+    expect(entries[0].content).toContain("[HANDOFF]");
+    expect(entries[0].content).not.toMatch(/<ui:GoogleCalendarGetEvents\b/);
+    expect(result.summary.degraded).toBeGreaterThan(0);
+  });
+
+  it("(c) baseline mode still hard-blocks on malformed types in critical context", () => {
+    const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap" x:Class="TestWorkflow"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <x:Members>
+    <x:Property Name="in_Config" Type="InArgument(clr-namespace:System[Collections)" />
+  </x:Members>
+  <Sequence>
+    <Assign DisplayName="Test" />
+  </Sequence>
+</Activity>`;
+
+    const entries = [{ name: "CriticalType.xaml", content: xaml }];
+    const result = runEmissionGate(entries, "baseline");
+
+    const typeViolations = result.violations.filter(v => v.type === "malformed-type");
+    expect(typeViolations.length).toBeGreaterThan(0);
+    const blocked = typeViolations.filter(v => v.resolution === "blocked");
+    expect(blocked.length).toBeGreaterThan(0);
+    expect(result.blocked).toBe(true);
+  });
+
+  it("(d) ui:ShouldRetry with prefix is correctly skipped by the scanner", () => {
+    if (!catalogService.isLoaded()) {
+      console.warn("Catalog not loaded — skipping test");
+      return;
+    }
+
+    const xaml = makeXaml(`
+      <ui:RetryScope NumberOfRetries="3">
+        <ui:RetryScope.ActivityBody>
+          <Sequence>
+            <ui:LogMessage Level="Info" Message="&quot;Trying...&quot;" />
+          </Sequence>
+        </ui:RetryScope.ActivityBody>
+        <ui:RetryScope.RetryCondition>
+          <ui:ShouldRetry />
+        </ui:RetryScope.RetryCondition>
+      </ui:RetryScope>
+    `);
+
+    const entries = [{ name: "ShouldRetryTest.xaml", content: xaml }];
+    const result = runEmissionGate(entries, "strict");
+
+    const shouldRetryViolations = result.violations.filter(
+      v => v.type === "unapproved-activity" && v.detail.includes("ShouldRetry")
+    );
+    expect(shouldRetryViolations.length).toBe(0);
+  });
+
+  it("(e) DeserializeJSON (uppercase) resolves to uweb prefix", async () => {
+    const { GUARANTEED_ACTIVITY_PREFIX_MAP } = await import("../xaml/xaml-compliance");
+    expect(GUARANTEED_ACTIVITY_PREFIX_MAP["DeserializeJSON"]).toBe("uweb");
+    expect(GUARANTEED_ACTIVITY_PREFIX_MAP["DeserializeJson"]).toBe("uweb");
+  });
+
+  it("(f) ShouldRetry with emissionApproved: true passes emission gate in strict mode", () => {
+    if (!catalogService.isLoaded()) {
+      console.warn("Catalog not loaded — skipping test");
+      return;
+    }
+
+    const schema = catalogService.getActivitySchema("ShouldRetry");
+    if (!schema) {
+      console.warn("ShouldRetry not in catalog — skipping test");
+      return;
+    }
+    expect(schema.activity.emissionApproved).toBe(true);
+
+    const xaml = makeXaml(`
+      <ui:RetryScope NumberOfRetries="3">
+        <ui:RetryScope.ActivityBody>
+          <Sequence>
+            <ui:LogMessage Level="Info" Message="&quot;Trying...&quot;" />
+          </Sequence>
+        </ui:RetryScope.ActivityBody>
+        <ui:RetryScope.RetryCondition>
+          <ui:ShouldRetry />
+        </ui:RetryScope.RetryCondition>
+      </ui:RetryScope>
+    `);
+
+    const entries = [{ name: "ShouldRetryApproved.xaml", content: xaml }];
+    const result = runEmissionGate(entries, "strict");
+
+    expect(result.blocked).toBe(false);
+    const shouldRetryViolations = result.violations.filter(
+      v => v.detail.includes("ShouldRetry")
+    );
+    expect(shouldRetryViolations.length).toBe(0);
+  });
+
+  it("(g) baseline mode with RetryScope+GetAsset produces degraded handoff stub rather than hard failure", () => {
+    if (!catalogService.isLoaded()) {
+      console.warn("Catalog not loaded — skipping test");
+      return;
+    }
+
+    const schema = catalogService.getActivitySchema("GetAsset");
+    if (!schema) {
+      console.warn("GetAsset not in catalog — skipping test");
+      return;
+    }
+    expect(schema.activity.emissionApproved).toBe(false);
+
+    const xaml = makeXaml(`
+      <ui:RetryScope NumberOfRetries="3">
+        <ui:RetryScope.ActivityBody>
+          <Sequence>
+            <ui:GetAsset AssetName="MyAsset" />
+          </Sequence>
+        </ui:RetryScope.ActivityBody>
+        <ui:RetryScope.RetryCondition>
+          <ui:ShouldRetry />
+        </ui:RetryScope.RetryCondition>
+      </ui:RetryScope>
+    `);
+
+    const entries = [{ name: "RetryGetAsset.xaml", content: xaml }];
+    const result = runEmissionGate(entries, "baseline");
+
+    expect(result.blocked).toBe(false);
+    const degraded = result.violations.filter(v => v.resolution === "degraded");
+    expect(degraded.length).toBeGreaterThan(0);
+    expect(degraded[0].containingBlockType).toBe("RetryScope");
+    expect(degraded[0].containedActivities).toContain("GetAsset");
+    expect(entries[0].content).toContain("[HANDOFF]");
+    expect(entries[0].content).toContain("RetryScope");
+    expect(entries[0].content).not.toMatch(/<ui:GetAsset\b/);
+  });
+
+  it("strict mode still blocks on unapproved activity inside RetryScope", () => {
+    if (!catalogService.isLoaded()) {
+      console.warn("Catalog not loaded — skipping test");
+      return;
+    }
+
+    const schema = catalogService.getActivitySchema("GetAsset");
+    if (!schema) {
+      console.warn("GetAsset not in catalog — skipping test");
+      return;
+    }
+
+    const xaml = makeXaml(`
+      <ui:RetryScope NumberOfRetries="3">
+        <ui:RetryScope.ActivityBody>
+          <Sequence>
+            <ui:GetAsset AssetName="MyAsset" />
+          </Sequence>
+        </ui:RetryScope.ActivityBody>
+      </ui:RetryScope>
+    `);
+
+    const entries = [{ name: "StrictRetry.xaml", content: xaml }];
+    const result = runEmissionGate(entries, "strict");
+
+    expect(result.blocked).toBe(true);
+    const blocked = result.violations.filter(v => v.resolution === "blocked");
+    expect(blocked.length).toBeGreaterThan(0);
+  });
+
+  it("summary includes degraded count", () => {
+    if (!catalogService.isLoaded()) {
+      console.warn("Catalog not loaded — skipping test");
+      return;
+    }
+
+    const xaml = makeXaml(`
+      <If Condition="[True]">
+        <If.Then>
+          <Sequence>
+            <ui:GoogleCalendarGetEvents CalendarId="primary" />
+          </Sequence>
+        </If.Then>
+      </If>
+    `);
+
+    const entries = [{ name: "SummaryTest374.xaml", content: xaml }];
+    const result = runEmissionGate(entries, "baseline");
+
+    expect(result.summary.degraded).toBeDefined();
+    expect(result.summary.totalViolations).toBe(
+      result.summary.stubbed + result.summary.corrected + result.summary.blocked + result.summary.degraded
+    );
+  });
+
+  it("baseline mode still hard-blocks when integrity failures (malformed types) are present alongside activity-approval issues", () => {
+    if (!catalogService.isLoaded()) {
+      console.warn("Catalog not loaded — skipping test");
+      return;
+    }
+
+    drainCriticalTypeDiagnostics();
+
+    reportCriticalTypeDiagnostic({
+      inputType: "System[Bad",
+      resolvedType: "x:Object",
+      reason: "leaked brackets in clr-namespace",
+      context: "critical",
+      source: "test-generator",
+    });
+
+    const xaml = makeXaml(`
+      <ui:RetryScope NumberOfRetries="3">
+        <ui:RetryScope.ActivityBody>
+          <Sequence>
+            <ui:GetAsset AssetName="MyAsset" />
+          </Sequence>
+        </ui:RetryScope.ActivityBody>
+      </ui:RetryScope>
+    `);
+
+    const entries = [{ name: "MixedBlockers.xaml", content: xaml }];
+    const result = runEmissionGate(entries, "baseline");
+
+    expect(result.blocked).toBe(true);
+    const integrityViolations = result.violations.filter(v => v.isIntegrityFailure === true);
+    expect(integrityViolations.length).toBeGreaterThan(0);
+  });
+
+  it("isIntegrityFailure flag is set on malformed-type blocked violations", () => {
+    const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap" x:Class="TestWorkflow"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <x:Members>
+    <x:Property Name="in_Config" Type="InArgument(clr-namespace:Bad[Type)" />
+  </x:Members>
+  <Sequence>
+    <Assign DisplayName="Test" />
+  </Sequence>
+</Activity>`;
+
+    const entries = [{ name: "IntegrityFlag.xaml", content: xaml }];
+    const result = runEmissionGate(entries, "baseline");
+
+    const blockedMalformed = result.violations.filter(v => v.type === "malformed-type" && v.resolution === "blocked");
+    expect(blockedMalformed.length).toBeGreaterThan(0);
+    for (const v of blockedMalformed) {
+      expect(v.isIntegrityFailure).toBe(true);
+    }
+    expect(result.blocked).toBe(true);
+  });
+});
