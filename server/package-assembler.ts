@@ -48,6 +48,7 @@ import archiver from "archiver";
   import { validateWorkflowSpec as validateSpec, type SpecValidationReport } from "./catalog/spec-validator";
   import { UIPATH_PACKAGE_ALIAS_MAP, QualityGateError, isFrameworkAssembly, type UiPathConfig } from "./uipath-shared";
   import { runEmissionGate, type EmissionGateResult } from "./emission-gate";
+  import { buildWorkflowBusinessContextMap, type WorkflowBusinessContextMap } from "./sdd-business-context-mapper";
   import { metadataService as _metadataService } from "./catalog/metadata-service";
   import { PACKAGE_NAMESPACE_MAP, validateXmlWellFormedness, injectMissingNamespaceDeclarations, collectUsedPackages, buildDynamicXmlnsDeclarations, buildDynamicAssemblyRefs, buildDynamicNamespaceImports, resolvePackageNamespaceInfo, injectInArgumentTypeArguments, resolveActivityToPackage } from "./xaml/xaml-compliance";
   import type { ComplexityTier } from "./complexity-classifier";
@@ -4839,7 +4840,15 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
     const emissionGateMode = generationMode === "baseline_openable" ? "baseline" as const : "strict" as const;
     const emissionGateWarningsList: Array<{ code: string; message: string; file: string; line?: number; type: string }> = [];
-    const emissionGateResult = runEmissionGate(xamlEntries, emissionGateMode);
+    const workflowBusinessContext = buildWorkflowBusinessContextMap(
+      sddContent || undefined,
+      (pkg.workflows || []).map(w => ({
+        name: w.name,
+        description: w.description,
+        steps: (w.steps || []).map(s => ({ activity: s.activity, notes: s.notes })),
+      })),
+    );
+    const emissionGateResult = runEmissionGate(xamlEntries, emissionGateMode, workflowBusinessContext);
     if (emissionGateResult.violations.length > 0) {
       console.log(`[Emission Gate] Post-generation emission contract (${emissionGateMode} mode): ${emissionGateResult.summary.totalViolations} violation(s) — ${emissionGateResult.summary.stubbed} stubbed, ${emissionGateResult.summary.corrected} corrected, ${emissionGateResult.summary.blocked} blocked, ${emissionGateResult.summary.degraded} degraded`);
       for (const entry of xamlEntries) {

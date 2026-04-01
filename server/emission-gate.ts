@@ -1,5 +1,8 @@
 import { catalogService } from "./catalog/catalog-service";
 import { validateXmlWellFormedness } from "./xaml/xaml-compliance";
+import { escapeXml } from "./lib/xml-utils";
+import type { WorkflowBusinessContextMap } from "./sdd-business-context-mapper";
+import { formatBusinessContextForHandoff } from "./sdd-business-context-mapper";
 
 export interface CriticalTypeDiagnostic {
   inputType: string;
@@ -51,6 +54,10 @@ const CONTROL_FLOW_CONTAINERS = new Set([
 ]);
 
 const RETRY_LOOP_CONTAINERS = new Set([
+  "RetryScope", "TryCatch",
+]);
+
+const INDIVISIBLE_BUSINESS_CONTAINERS = new Set([
   "RetryScope", "TryCatch",
 ]);
 
@@ -210,6 +217,7 @@ function enforceActivityEmission(
   content: string,
   violations: EmissionViolation[],
   mode: EmissionGateMode = "strict",
+  businessContextMap?: WorkflowBusinessContextMap,
 ): { content: string; blocked: boolean } {
   if (!catalogService.isLoaded()) return { content, blocked: false };
 
@@ -269,26 +277,41 @@ function enforceActivityEmission(
           if (block) {
             const blockContent = content.substring(block.start, block.end);
             const containedActivities = listActivitiesInBlock(blockContent);
-            pendingBlockReplacements.push({
-              block,
-              activityName,
-              reason,
-              line,
-              containedActivities,
+            const isIndivisible = INDIVISIBLE_BUSINESS_CONTAINERS.has(block.blockType);
+            const unapprovedInBlock = containedActivities.filter(act => {
+              const actSchema = catalogService.getActivitySchema(act);
+              return actSchema ? !actSchema.activity.emissionApproved : true;
             });
+
+            if (!isIndivisible && unapprovedInBlock.length <= 1 && !isOrch) {
+              console.log(`[Emission Gate] ${block.blockType} contains only ${unapprovedInBlock.length} unapproved activity — using activity-level stub within block (preserving ${block.blockType} structure)`);
+            } else {
+              pendingBlockReplacements.push({
+                block,
+                activityName,
+                reason,
+                line,
+                containedActivities,
+              });
+              if (isIndivisible) {
+                console.log(`[Emission Gate] ${block.blockType} is indivisible business container — block-level replacement for "${activityName}"`);
+              }
+              continue;
+            }
+          } else {
+            const contextLabel = isOrch ? "orchestration node" : "control-flow/retry container";
+            console.warn(`[Emission Gate] No containing block found for "${activityName}" at ${fileName}:${line} inside ${contextLabel} — cannot perform block-level replacement in baseline mode`);
+            violations.push({
+              file: fileName,
+              line,
+              type: "unapproved-activity",
+              detail: `Unapproved activity "${activityName}" (${reason}) inside ${contextLabel} — no containing block found for replacement, blocking`,
+              resolution: "blocked",
+              context: isOrch ? "orchestration-node" : "control-flow-container",
+            });
+            blocked = true;
             continue;
           }
-          const contextLabel = isOrch ? "orchestration node" : "control-flow/retry container";
-          console.warn(`[Emission Gate] No containing block found for "${activityName}" at ${fileName}:${line} inside ${contextLabel} — cannot perform block-level replacement in baseline mode`);
-          violations.push({
-            file: fileName,
-            line,
-            type: "unapproved-activity",
-            detail: `Unapproved activity "${activityName}" (${reason}) inside ${contextLabel} — no containing block found for replacement, blocking`,
-            resolution: "blocked",
-            context: isOrch ? "orchestration-node" : "control-flow-container",
-          });
-          blocked = true;
         } else {
           violations.push({
             file: fileName,
@@ -311,12 +334,17 @@ function enforceActivityEmission(
           "g"
         );
 
-        const stubComment = `<ui:Comment DisplayName="[STUBBED] ${activityName} — ${reason}">\n` +
+        const fileBaseName = fileName.split("/").pop() || fileName;
+        const businessCtx = businessContextMap?.get(fileName) || businessContextMap?.get(fileBaseName);
+        const businessDesc = formatBusinessContextForHandoff(businessCtx, activityName);
+        const escapedBusinessDesc = escapeXml(businessDesc);
+        const stubComment = `<ui:Comment DisplayName="[STUBBED] ${escapeXml(activityName)} — ${escapeXml(reason)}">\n` +
           `  <ui:Comment.Body>\n` +
-          `    <InArgument x:TypeArguments="x:String">"This activity (${activityName}) was removed: ${reason}. Original location: ${fileName}:${line}"</InArgument>\n` +
+          `    <InArgument x:TypeArguments="x:String">"This activity (${escapeXml(activityName)}) was removed: ${escapeXml(reason)}. Original location: ${escapeXml(fileName)}:${line}.\n` +
+          `Business Context: ${escapedBusinessDesc}"</InArgument>\n` +
           `  </ui:Comment.Body>\n` +
           `</ui:Comment>\n` +
-          `<ui:LogMessage Level="Warn" Message="&quot;[EmissionGate] Stubbed unapproved activity: ${activityName} in ${fileName}:${line}&quot;" />`;
+          `<ui:LogMessage Level="Warn" Message="&quot;[EmissionGate] Stubbed unapproved activity: ${escapeXml(activityName)} in ${escapeXml(fileName)}:${line}&quot;" />`;
 
         let replaced = false;
         result = result.replace(openClosePattern, (m) => {
@@ -360,15 +388,20 @@ function enforceActivityEmission(
     const sorted = Array.from(deduped.values()).sort((a, b) => b.block.start - a.block.start);
 
     for (const rep of sorted) {
+      const blockFileBaseName = fileName.split("/").pop() || fileName;
+      const blockBusinessCtx = businessContextMap?.get(fileName) || businessContextMap?.get(blockFileBaseName);
+      const blockBusinessDesc = formatBusinessContextForHandoff(blockBusinessCtx, rep.activityName, rep.block.blockType);
+      const escapedBlockDesc = escapeXml(blockBusinessDesc);
       const handoffStub =
-        `<Sequence DisplayName="[HANDOFF] ${rep.block.blockType} — requires developer implementation">\n` +
-        `  <ui:Comment DisplayName="[HANDOFF] ${rep.block.blockType} block requires developer implementation">\n` +
+        `<Sequence DisplayName="[HANDOFF] ${escapeXml(rep.block.blockType)} — requires developer implementation">\n` +
+        `  <ui:Comment DisplayName="[HANDOFF] ${escapeXml(rep.block.blockType)} block requires developer implementation">\n` +
         `    <ui:Comment.Body>\n` +
-        `      <InArgument x:TypeArguments="x:String">"This ${rep.block.blockType} block was replaced because it contained unapproved activity: ${rep.activityName} (${rep.reason}). ` +
-        `Original activities in block: ${rep.containedActivities.join(", ") || "none detected"}. File: ${fileName}:${rep.line}"</InArgument>\n` +
+        `      <InArgument x:TypeArguments="x:String">"This ${escapeXml(rep.block.blockType)} block was replaced because it contained unapproved activity: ${escapeXml(rep.activityName)} (${escapeXml(rep.reason)}). ` +
+        `Original activities in block: ${escapeXml(rep.containedActivities.join(", ") || "none detected")}. File: ${escapeXml(fileName)}:${rep.line}.\n` +
+        `Business Context: ${escapedBlockDesc}"</InArgument>\n` +
         `    </ui:Comment.Body>\n` +
         `  </ui:Comment>\n` +
-        `  <ui:LogMessage Level="Warn" Message="&quot;[HANDOFF] Skipped ${rep.block.blockType} containing unapproved activity ${rep.activityName} — implement manually&quot;" />\n` +
+        `  <ui:LogMessage Level="Warn" Message="&quot;[HANDOFF] Skipped ${escapeXml(rep.block.blockType)} containing unapproved activity ${escapeXml(rep.activityName)} — implement manually&quot;" />\n` +
         `</Sequence>`;
 
       const before = result.substring(0, rep.block.start);
@@ -563,6 +596,7 @@ function cleanSentinelExpressions(
 export function runEmissionGate(
   xamlEntries: Array<{ name: string; content: string }>,
   mode: EmissionGateMode = "strict",
+  businessContextMap?: WorkflowBusinessContextMap,
 ): EmissionGateResult {
   const violations: EmissionViolation[] = [];
   let anyBlocked = false;
@@ -585,7 +619,7 @@ export function runEmissionGate(
     let content = entry.content;
     const fileName = entry.name;
 
-    const actResult = enforceActivityEmission(fileName, content, violations, mode);
+    const actResult = enforceActivityEmission(fileName, content, violations, mode, businessContextMap);
     content = actResult.content;
     if (actResult.blocked) anyBlocked = true;
 
@@ -597,6 +631,48 @@ export function runEmissionGate(
 
     if (content !== entry.content) {
       xamlEntries[i] = { name: fileName, content };
+    }
+
+    if (mode === "baseline") {
+      const fileViolations = violations.filter(v => v.file === fileName);
+      const degradedCount = fileViolations.filter(v => v.resolution === "degraded" || v.resolution === "stubbed").length;
+      const totalActivities = listActivitiesInBlock(content).length;
+      const degradationRatio = totalActivities > 0 ? degradedCount / totalActivities : 0;
+
+      if (degradationRatio > 0.6 && degradedCount >= 3) {
+        const shortName = fileName.split("/").pop() || fileName;
+        if (shortName !== "Main.xaml") {
+          const wfBaseName = fileName.split("/").pop() || fileName;
+          const businessCtx = businessContextMap?.get(fileName) || businessContextMap?.get(wfBaseName);
+          const businessDesc = formatBusinessContextForHandoff(businessCtx, "workflow", "workflow");
+          const escapedWfDesc = escapeXml(businessDesc);
+          console.warn(`[Emission Gate] Workflow "${fileName}" is ${Math.round(degradationRatio * 100)}% degraded (${degradedCount}/${totalActivities} activities) — performing workflow-level replacement`);
+
+          const wfHandoffXaml =
+            `<Activity x:Class="${escapeXml(shortName.replace(/\.xaml$/i, ""))}" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">\n` +
+            `  <Sequence DisplayName="[WORKFLOW-HANDOFF] ${escapeXml(shortName)} — requires full developer implementation">\n` +
+            `    <ui:Comment DisplayName="[WORKFLOW-HANDOFF] This workflow is too degraded for baseline emission">\n` +
+            `      <ui:Comment.Body>\n` +
+            `        <InArgument x:TypeArguments="x:String">"This entire workflow (${escapeXml(shortName)}) was replaced because ${degradedCount} of ${totalActivities} activities (${Math.round(degradationRatio * 100)}%) could not be safely emitted. ` +
+            `The workflow structure was too gutted for meaningful baseline output.\n` +
+            `Business Context: ${escapedWfDesc}"</InArgument>\n` +
+            `      </ui:Comment.Body>\n` +
+            `    </ui:Comment>\n` +
+            `    <ui:LogMessage Level="Warn" Message="&quot;[WORKFLOW-HANDOFF] ${escapeXml(shortName)} requires full developer implementation (${degradedCount}/${totalActivities} activities degraded)&quot;" />\n` +
+            `  </Sequence>\n` +
+            `</Activity>`;
+
+          xamlEntries[i] = { name: fileName, content: wfHandoffXaml };
+
+          violations.push({
+            file: fileName,
+            type: "unapproved-activity",
+            detail: `Workflow "${fileName}" replaced with workflow-level handoff (${degradedCount}/${totalActivities} activities stubbed/degraded, ${Math.round(degradationRatio * 100)}%). ${businessDesc}`,
+            resolution: "degraded",
+            context: "workflow-level-replacement",
+          });
+        }
+      }
     }
   }
 

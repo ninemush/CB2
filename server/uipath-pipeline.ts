@@ -348,6 +348,124 @@ export interface IdeaContext {
   processEdges: any[];
 }
 
+interface UpgradeCheckResult {
+  canUpgrade: boolean;
+  reason: string;
+}
+
+function checkFullImplementationUpgrade(
+  pkg: UiPathPackageSpec,
+  complexity: ComplexityClassification,
+): UpgradeCheckResult {
+  if (complexity.tier === "simple" && complexity.streamlined) {
+    const workflows = pkg.workflows || [];
+    if (workflows.length === 0) {
+      return { canUpgrade: false, reason: "no workflows defined" };
+    }
+
+    const allSteps = workflows.flatMap(w => w.steps || []);
+    if (allSteps.length === 0) {
+      return { canUpgrade: false, reason: "no steps defined in any workflow" };
+    }
+
+    if (!catalogService.isLoaded()) {
+      return { canUpgrade: false, reason: "activity catalog not loaded — cannot verify emission approval" };
+    }
+
+    let allActivitiesApproved = true;
+    let unapprovedActivities: string[] = [];
+    let allTypesVerified = true;
+    let unresolvedTypes: string[] = [];
+
+    const declaredDeps = new Set((pkg.dependencies || []).map(d => d.split("/").pop()?.split("@")[0] || d));
+    const requiredPackages = new Set<string>();
+
+    for (const step of allSteps) {
+      const activityType = step.activityType || "ui:Comment";
+      const actName = activityType.replace(/^ui:/, "");
+
+      const schema = catalogService.getActivitySchema(actName);
+      if (schema && !schema.activity.emissionApproved) {
+        allActivitiesApproved = false;
+        unapprovedActivities.push(actName);
+      } else if (!schema) {
+        const isSystem = ["Assign", "If", "Sequence", "TryCatch", "While", "DoWhile", "ForEach", "Flowchart", "Delay", "Throw", "Rethrow", "Comment", "LogMessage"].includes(actName);
+        if (!isSystem) {
+          allActivitiesApproved = false;
+          unapprovedActivities.push(actName);
+        }
+      }
+
+      if (schema) {
+        requiredPackages.add(schema.packageId);
+      }
+
+      const varType = step.properties?.["TypeArgument"]?.value as string | undefined;
+      if (varType && !["String", "Int32", "Boolean", "Object", "Double", "DateTime", "DataTable"].includes(varType)) {
+        const typeSchema = catalogService.getActivitySchema(varType.replace(/^.*\./, ""));
+        if (!typeSchema) {
+          allTypesVerified = false;
+          unresolvedTypes.push(varType);
+        }
+      }
+    }
+
+    for (const wf of workflows) {
+      for (const v of wf.variables || []) {
+        const vType = v.type || "String";
+        if (!["String", "Int32", "Boolean", "Object", "Double", "DateTime", "DataTable", "Array", "List", "Dictionary"].includes(vType)) {
+          const typeSchema = catalogService.getActivitySchema(vType.replace(/^.*\./, ""));
+          if (!typeSchema) {
+            allTypesVerified = false;
+            unresolvedTypes.push(vType);
+          }
+        }
+      }
+    }
+
+    if (!allTypesVerified) {
+      return {
+        canUpgrade: false,
+        reason: `${unresolvedTypes.length} unresolved type${unresolvedTypes.length === 1 ? "" : "s"}: ${unresolvedTypes.slice(0, 5).join(", ")}${unresolvedTypes.length > 5 ? "..." : ""}`,
+      };
+    }
+
+    const unresolvedDeps: string[] = [];
+    for (const reqPkg of requiredPackages) {
+      if (!declaredDeps.has(reqPkg)) {
+        const isCoreDep = ["UiPath.System.Activities", "UiPath.UIAutomation.Activities"].includes(reqPkg);
+        if (!isCoreDep) {
+          unresolvedDeps.push(reqPkg);
+        }
+      }
+    }
+
+    if (unresolvedDeps.length > 0) {
+      return {
+        canUpgrade: false,
+        reason: `${unresolvedDeps.length} unresolved dependenc${unresolvedDeps.length === 1 ? "y" : "ies"}: ${unresolvedDeps.slice(0, 5).join(", ")}`,
+      };
+    }
+
+    if (!allActivitiesApproved) {
+      return {
+        canUpgrade: false,
+        reason: `${unapprovedActivities.length} unapproved activit${unapprovedActivities.length === 1 ? "y" : "ies"} found: ${unapprovedActivities.slice(0, 5).join(", ")}${unapprovedActivities.length > 5 ? "..." : ""}`,
+      };
+    }
+
+    return {
+      canUpgrade: true,
+      reason: `simple tier process with ${allSteps.length} step(s), all activities emission-approved, types verified, dependencies resolved`,
+    };
+  }
+
+  return {
+    canUpgrade: false,
+    reason: `complexity tier "${complexity.tier}" (streamlined=${complexity.streamlined}) does not meet upgrade criteria`,
+  };
+}
+
 type CachedPipelineResult = PipelineResult & { fingerprint: string };
 
 const pipelineCache = new Map<string, CachedPipelineResult>();
@@ -747,9 +865,14 @@ export async function generateWorkflowSpecs(
     complexityTier?: ComplexityTier;
   },
 ): Promise<SpecGenerationResult> {
-  const mode: GenerationMode = options?.generationMode || "full_implementation";
+  const requestedMode: GenerationMode | undefined = options?.generationMode;
+  const mode: GenerationMode = requestedMode || "baseline_openable";
   const pipelineWarnings: PipelineWarning[] = [];
   let usedAIFallback = false;
+
+  if (!requestedMode) {
+    console.log(`[Pipeline] generateWorkflowSpecs: baseline_openable is the default mode (no explicit mode requested)`);
+  }
 
   const noop: PipelineProgressCallback = () => {};
   const tracker = new PipelineStageTracker(options?.onPipelineProgress || noop);
@@ -857,7 +980,8 @@ export async function compilePackageFromSpecs(
   },
 ): Promise<PipelineResult> {
   const ver = options?.version || computeVersion();
-  const mode: GenerationMode = options?.generationMode || "full_implementation";
+  const requestedMode: GenerationMode | undefined = options?.generationMode;
+  const mode: GenerationMode = requestedMode || "baseline_openable";
   const pipelineWarnings: PipelineWarning[] = [
     ...specResult.pipelineWarnings,
     ...(options?._accumulatedWarnings || []),
@@ -867,6 +991,10 @@ export async function compilePackageFromSpecs(
   const maxDowngradeAttempts = options?.maxDowngradeAttempts ?? 1;
   const currentDowngradeAttempt = options?._downgradeAttempt ?? 0;
   const priorCompliantWorkflows = options?._priorCompliantWorkflows || [];
+
+  if (!requestedMode) {
+    console.log(`[Pipeline] compilePackageFromSpecs: baseline_openable is the default mode (no explicit mode requested)`);
+  }
 
   try {
     const { discoverNewerLines } = await import("./catalog/metadata-refresher");
@@ -1619,12 +1747,19 @@ export async function generateUiPathPackage(
   },
 ): Promise<PipelineResult> {
   const ver = options?.version || computeVersion();
-  const mode: GenerationMode = options?.generationMode || "full_implementation";
+  const requestedMode: GenerationMode | undefined = options?.generationMode;
+  let mode: GenerationMode = requestedMode || "baseline_openable";
   const mvMode: MetaValidationMode = options?.metaValidationMode || "Auto";
   const pipelineWarnings: PipelineWarning[] = options?._accumulatedWarnings ? [...options._accumulatedWarnings] : [];
   const downgrades: DowngradeEvent[] = options?._accumulatedDowngrades ? [...options._accumulatedDowngrades] : [];
   let usedAIFallback = options?._usedAIFallback || false;
   const forceRebuild = options?.forceRebuild || false;
+  let upgradeAttempted = false;
+  let upgradeSucceeded = false;
+
+  if (!requestedMode) {
+    console.log(`[Pipeline] generateUiPathPackage: baseline_openable is the default mode (no explicit mode requested)`);
+  }
 
   const noop: PipelineProgressCallback = () => {};
   const tracker = new PipelineStageTracker(options?.onPipelineProgress || noop);
@@ -1632,18 +1767,7 @@ export async function generateUiPathPackage(
   try {
     tracker.start("decomposition", "Computing fingerprint and checking cache");
     const ctx = options?.preloadedContext || await loadIdeaContext(ideaId);
-    const fp = computeFingerprint(pkg, ctx.sdd?.content || "", ctx.mapNodes, ctx.processEdges);
-    const degradationKey = (downgrades.length > 0 || usedAIFallback) ? "degraded" : "clean";
-    const cacheKey = `${ideaId}:${mode}:${mvMode}:${degradationKey}`;
-    const cached = pipelineCache.get(cacheKey);
-    if (forceRebuild) {
-      console.log(`[Pipeline Cache] FORCE REBUILD requested for ${cacheKey} — bypassing pipeline cache`);
-      pipelineCache.delete(cacheKey);
-    } else if (cached && cached.fingerprint === fp) {
-      tracker.complete("decomposition", "Cache hit — serving cached result");
-      tracker.cleanup();
-      return cached;
-    }
+
     const preComplexity = estimateComplexityFromContext(ctx.sdd?.content, ctx.mapNodes);
     tracker.start("pre_complexity_estimation", "Estimating pre-generation complexity");
     tracker.complete("pre_complexity_estimation", `Pre-generation complexity: ${preComplexity.tier} (${preComplexity.budget.label})`, {
@@ -1686,6 +1810,48 @@ export async function generateUiPathPackage(
       reasons: complexity.reasons,
     });
     console.log(`[Pipeline] Complexity classification: tier=${complexity.tier}, score=${complexity.score}, streamlined=${complexity.streamlined}, reasons=${complexity.reasons.join("; ")}`);
+
+    if (mode === "baseline_openable" && !requestedMode) {
+      upgradeAttempted = true;
+      const upgradeCheck = checkFullImplementationUpgrade(pkg, complexity);
+      if (upgradeCheck.canUpgrade) {
+        mode = "full_implementation";
+        upgradeSucceeded = true;
+        console.log(`[Pipeline] PRE-CHECK UPGRADE: baseline_openable → full_implementation (reason: ${upgradeCheck.reason})`);
+        pipelineWarnings.push({
+          code: "MODE_UPGRADE_PRECHECK",
+          message: `Upgraded from baseline_openable to full_implementation: ${upgradeCheck.reason}`,
+          stage: "mode-selection",
+          recoverable: true,
+        });
+        tracker.complete("mode_precheck", `Upgraded to full_implementation: ${upgradeCheck.reason}`, {
+          upgradeAttempted: true,
+          upgradeSucceeded: true,
+          reason: upgradeCheck.reason,
+        });
+      } else {
+        console.log(`[Pipeline] PRE-CHECK: staying with baseline_openable (reason: ${upgradeCheck.reason})`);
+        tracker.complete("mode_precheck", `Staying with baseline_openable: ${upgradeCheck.reason}`, {
+          upgradeAttempted: true,
+          upgradeSucceeded: false,
+          reason: upgradeCheck.reason,
+        });
+      }
+    }
+    console.log(`[Pipeline] INSTRUMENTATION: mode=${mode}, upgradeAttempted=${upgradeAttempted}, upgradeSucceeded=${upgradeSucceeded}, downgrades=${downgrades.length}`);
+
+    const fp = computeFingerprint(pkg, ctx.sdd?.content || "", ctx.mapNodes, ctx.processEdges);
+    const degradationKey = (downgrades.length > 0 || usedAIFallback) ? "degraded" : "clean";
+    const cacheKey = `${ideaId}:${mode}:${mvMode}:${degradationKey}`;
+    const cached = pipelineCache.get(cacheKey);
+    if (forceRebuild) {
+      console.log(`[Pipeline Cache] FORCE REBUILD requested for ${cacheKey} — bypassing pipeline cache`);
+      pipelineCache.delete(cacheKey);
+    } else if (cached && cached.fingerprint === fp) {
+      tracker.complete("decomposition", "Cache hit — serving cached result");
+      tracker.cleanup();
+      return cached;
+    }
 
     let specResult: SpecGenerationResult;
     try {
