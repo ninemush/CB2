@@ -267,7 +267,7 @@ describe("Task 365: Emission contract & pipeline hardening", () => {
           if (maxIndex >= 0 && args.length <= maxIndex) {
             const missingCount = maxIndex + 1 - args.length;
             if (missingCount > 2) {
-              return `"HANDOFF_STRING_FORMAT_UNSAFE: ${_match.replace(/"/g, '&quot;')}"`;
+              return `"HANDOFF_STRING_FORMAT_UNSAFE"`;
             }
           }
           return "repaired";

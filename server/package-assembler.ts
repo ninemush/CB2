@@ -588,7 +588,7 @@ function normalizeStringFormatOverflow(xml: string): string {
         const missingCount = maxIndex + 1 - args.length;
         if (missingCount > 2) {
           console.error(`[Final Normalization] BLOCKED: String.Format has ${maxIndex + 1} placeholder(s) but only ${args.length} arg(s) — gap too large (${missingCount}) for safe repair`);
-          return `"HANDOFF_STRING_FORMAT_UNSAFE: ${_match.replace(/"/g, '&quot;')}"`;
+          return `"HANDOFF_STRING_FORMAT_UNSAFE"`;
         }
         console.warn(`[Final Normalization] String.Format has ${maxIndex + 1} placeholder(s) but only ${args.length} arg(s) — padding with empty strings`);
         const paddedArgs = [...args];

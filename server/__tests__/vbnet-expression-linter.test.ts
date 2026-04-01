@@ -525,4 +525,95 @@ describe("VB.NET Expression Linter", () => {
       expect(result.correctedEntries[0].content).not.toContain("!= null");
     });
   });
+
+  describe("Task-372 regression: quality gate truthfulness fixes", () => {
+    it("sentinel expressions do not produce undeclared variable violations", () => {
+      const sentinelExpr = '"HANDOFF_STRING_FORMAT_UNSAFE"';
+      const declared = new Set<string>();
+      const undeclared = findUndeclaredVariables(sentinelExpr, declared);
+      expect(undeclared).toHaveLength(0);
+    });
+
+    it("STUB_ sentinel expressions do not produce undeclared variable violations", () => {
+      const sentinelExpr = '"STUB_NOT_IMPLEMENTED"';
+      const declared = new Set<string>();
+      const undeclared = findUndeclaredVariables(sentinelExpr, declared);
+      expect(undeclared).toHaveLength(0);
+    });
+
+    it("ASSEMBLY_FAILED sentinel expressions do not produce undeclared variable violations", () => {
+      const sentinelExpr = 'ASSEMBLY_FAILED_some_context';
+      const declared = new Set<string>();
+      const undeclared = findUndeclaredVariables(sentinelExpr, declared);
+      expect(undeclared).toHaveLength(0);
+    });
+
+    it("complex passthrough expression produces a warning not a blocking error (end-to-end)", () => {
+      const complexExpr = 'From row In dt_Birthdays.AsEnumerable() Where CDate(row("Birthday")).Month = Today.Month Select row';
+      const xamlContent = `<Sequence xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities">
+  <Assign DisplayName="Filter">
+    <Assign.Value>
+      <InArgument x:TypeArguments="x:String" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">[${complexExpr}]</InArgument>
+    </Assign.Value>
+  </Assign>
+</Sequence>`;
+      const entries = [{ name: "Main.xaml", content: xamlContent }];
+      const result = lintXamlExpressions(entries);
+      const passthroughViolations = result.violations.filter(v => v.check === "COMPLEX_EXPRESSION_PASSTHROUGH");
+      expect(passthroughViolations.length).toBeGreaterThan(0);
+      for (const v of passthroughViolations) {
+        expect(v.severity).toBe("warning");
+        expect(v.check).not.toBe("EXPRESSION_SYNTAX_UNFIXABLE");
+      }
+      const unfixableViolations = result.violations.filter(
+        v => v.check === "EXPRESSION_SYNTAX_UNFIXABLE" && v.detail?.includes(complexExpr.substring(0, 30))
+      );
+      expect(unfixableViolations).toHaveLength(0);
+    });
+
+    it("complex passthrough is not classified as blocking by classifyQualityIssues", () => {
+      const mockResult = {
+        passed: false,
+        violations: [{
+          category: "accuracy" as const,
+          severity: "warning" as const,
+          check: "COMPLEX_EXPRESSION_PASSTHROUGH",
+          file: "Main.xaml",
+          detail: "Complex LINQ expression passed through unchanged",
+        }],
+        positiveEvidence: [],
+        typeRepairs: [],
+        completenessLevel: "structural" as const,
+        summary: {
+          blockedPatterns: 0, completenessErrors: 0, completenessWarnings: 0,
+          accuracyErrors: 0, accuracyWarnings: 1, runtimeSafetyErrors: 0,
+          runtimeSafetyWarnings: 0, logicLocationWarnings: 0,
+          totalErrors: 0, totalWarnings: 1,
+        },
+      };
+      const issues = classifyQualityIssues(mockResult);
+      expect(issues).toHaveLength(1);
+      expect(issues[0].severity).toBe("warning");
+      expect(issues[0].check).toBe("COMPLEX_EXPRESSION_PASSTHROUGH");
+    });
+
+    it("PascalCase argument names (InRunStatus, OutResult, InOutCounter) are not flagged as undeclared", () => {
+      const declared = new Set<string>();
+      const undeclaredIn = findUndeclaredVariables("InRunStatus", declared);
+      expect(undeclaredIn).not.toContain("InRunStatus");
+
+      const undeclaredOut = findUndeclaredVariables("OutResult", declared);
+      expect(undeclaredOut).not.toContain("OutResult");
+
+      const undeclaredInOut = findUndeclaredVariables("InOutCounter", declared);
+      expect(undeclaredInOut).not.toContain("InOutCounter");
+    });
+
+    it("PascalCase In/Out names in expressions are not flagged", () => {
+      const declared = new Set(["str_Name"]);
+      const undeclared = findUndeclaredVariables("InFailedCount + InSentCount", declared);
+      expect(undeclared).not.toContain("InFailedCount");
+      expect(undeclared).not.toContain("InSentCount");
+    });
+  });
 });

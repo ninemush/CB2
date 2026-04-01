@@ -1178,6 +1178,8 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
   if (/^\[[\w]+\]\s*(WARN|INFO|ERROR|DEBUG)\b/.test(trimmedExpr) && /\s—\s/.test(trimmedExpr)) return undeclared;
   if (/^\[[\w]+\]/.test(trimmedExpr) && /\s—\s/.test(trimmedExpr)) return undeclared;
 
+  if (/HANDOFF_|STUB_|ASSEMBLY_FAILED/.test(trimmedExpr)) return undeclared;
+
   const decoded = decodeXmlEntities(expression);
   const vbStringPattern = /"(?:[^"]|"")*"/g;
   const exprWithoutStrings = decoded.replace(vbStringPattern, (m) => " ".repeat(m.length));
@@ -1358,6 +1360,8 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
 
     if (/^(in|out|io)_/i.test(ident)) continue;
 
+    if (/^(In|Out|InOut)[A-Z]/.test(ident)) continue;
+
     undeclared.push(ident);
   }
 
@@ -1455,6 +1459,9 @@ export function lintXamlExpressions(
           if (DEDICATED_CHECK_CODES.has(issue.code)) {
             check = issue.code;
             severity = "error";
+          } else if (issue.code === "COMPLEX_EXPRESSION_PASSTHROUGH") {
+            check = "COMPLEX_EXPRESSION_PASSTHROUGH";
+            severity = "warning";
           } else if (issue.autoFixed) {
             check = "EXPRESSION_SYNTAX";
           } else {
