@@ -229,7 +229,43 @@ class CatalogService {
     if (direct) return direct;
 
     const className = this.resolveTag(tag);
-    return this.activityIndex.get(className) || null;
+    const resolved = this.activityIndex.get(className);
+    if (resolved) return resolved;
+
+    const lowerTag = className.toLowerCase();
+    const entries = Array.from(this.activityIndex.entries());
+    for (const [key, schema] of entries) {
+      if (key.toLowerCase() === lowerTag) return schema;
+    }
+
+    const withoutPrefix = className.replace(/^(UiPath\.[\w.]+\.)/, "");
+    if (withoutPrefix !== className) {
+      const prefixResolved = this.activityIndex.get(withoutPrefix);
+      if (prefixResolved) return prefixResolved;
+    }
+
+    const commonAliases: Record<string, string> = {
+      "logmessage": "ui:LogMessage",
+      "messagebox": "ui:MessageBox",
+      "inputdialog": "ui:InputDialog",
+      "excelapplicationscope": "ui:ExcelApplicationScope",
+      "browserscope": "ui:BrowserScope",
+      "useapplicationbrowser": "ui:UseApplicationBrowser",
+      "clickactivity": "ui:Click",
+      "typeintoactivity": "ui:TypeInto",
+      "gettextactivity": "ui:GetText",
+      "settextactivity": "ui:SetText",
+    };
+    const aliasTarget = commonAliases[className.toLowerCase()];
+    if (aliasTarget) {
+      const aliasResolved = this.activityIndex.get(aliasTarget);
+      if (aliasResolved) return aliasResolved;
+      const strippedAlias = this.resolveTag(aliasTarget);
+      const strippedResolved = this.activityIndex.get(strippedAlias);
+      if (strippedResolved) return strippedResolved;
+    }
+
+    return null;
   }
 
   getPackageForActivity(tag: string): string | null {

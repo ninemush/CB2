@@ -725,6 +725,94 @@ function extractAllVariableRefsFromExpression(expr: string): string[] {
   return refs;
 }
 
+function validateStructurallyKnownLocals(
+  children: WorkflowNode[],
+  registry: DeclarationRegistry,
+  workflowName: string,
+): void {
+  function scanForStructuralLocals(node: WorkflowNode): void {
+    if (node.kind === "forEach") {
+      const forEachNode = node as ForEachNode;
+      const iteratorName = inferForEachIteratorFromBody(forEachNode, []);
+      if (!registry.hasName(iteratorName)) {
+        console.warn(`[StructuralLocal] "${workflowName}": ForEach iterator variable "${iteratorName}" from "${forEachNode.displayName}" was not registered — adding to scoped declarations`);
+        registry.registerScopedVariable({
+          name: iteratorName,
+          type: forEachNode.itemType || "x:Object",
+          source: "iterator",
+          scope: "block",
+          scopeId: `forEach::recovery::${forEachNode.displayName}`,
+        });
+      }
+      if (forEachNode.bodyChildren) {
+        for (const child of forEachNode.bodyChildren) scanForStructuralLocals(child);
+      }
+      return;
+    }
+
+    if (node.kind === "tryCatch") {
+      const tryCatchNode = node as TryCatchNode;
+      const exceptionName = resolveTryCatchExceptionName(tryCatchNode);
+      if (!registry.hasName(exceptionName)) {
+        console.warn(`[StructuralLocal] "${workflowName}": TryCatch exception variable "${exceptionName}" from "${tryCatchNode.displayName}" was not registered — adding to scoped declarations`);
+        registry.registerScopedVariable({
+          name: exceptionName,
+          type: "s:Exception",
+          source: "catch-exception",
+          scope: "block",
+          scopeId: `tryCatch::recovery::${tryCatchNode.displayName}`,
+        });
+      }
+      if (tryCatchNode.tryChildren) {
+        for (const child of tryCatchNode.tryChildren) scanForStructuralLocals(child);
+      }
+      if (tryCatchNode.catchChildren) {
+        for (const child of tryCatchNode.catchChildren) scanForStructuralLocals(child);
+      }
+      if (tryCatchNode.finallyChildren) {
+        for (const child of tryCatchNode.finallyChildren) scanForStructuralLocals(child);
+      }
+      return;
+    }
+
+    const childArrays: WorkflowNode[][] = [];
+    if ("children" in node && Array.isArray((node as any).children)) childArrays.push((node as any).children);
+    if ("thenChildren" in node && Array.isArray((node as any).thenChildren)) childArrays.push((node as any).thenChildren);
+    if ("elseChildren" in node && Array.isArray((node as any).elseChildren)) childArrays.push((node as any).elseChildren);
+    if ("tryChildren" in node && Array.isArray((node as any).tryChildren)) childArrays.push((node as any).tryChildren);
+    if ("catchChildren" in node && Array.isArray((node as any).catchChildren)) childArrays.push((node as any).catchChildren);
+    if ("finallyChildren" in node && Array.isArray((node as any).finallyChildren)) childArrays.push((node as any).finallyChildren);
+    if ("bodyChildren" in node && Array.isArray((node as any).bodyChildren)) childArrays.push((node as any).bodyChildren);
+
+    for (const arr of childArrays) {
+      for (const child of arr) scanForStructuralLocals(child);
+    }
+  }
+
+  for (const child of children) {
+    scanForStructuralLocals(child);
+  }
+
+  const deterministicScaffoldVars: Array<{ name: string; type: string; source: string }> = [
+    { name: "str_ScreenshotPath", type: "String", source: "scaffold-screenshot" },
+    { name: "dt_ExcelData", type: "System.Data.DataTable", source: "scaffold-excel" },
+  ];
+
+  for (const scaffoldVar of deterministicScaffoldVars) {
+    if (registry.hasVariableName(scaffoldVar.name)) continue;
+    const specStr = JSON.stringify(children);
+    if (specStr.includes(scaffoldVar.name)) {
+      console.warn(`[StructuralLocal] "${workflowName}": Deterministic scaffold variable "${scaffoldVar.name}" is referenced but not declared — adding to variable declarations`);
+      registry.registerVariable({
+        name: scaffoldVar.name,
+        type: scaffoldVar.type,
+        source: scaffoldVar.source,
+        scope: "workflow",
+      });
+    }
+  }
+}
+
 function validateReferencesBeforeEmission(
   children: WorkflowNode[],
   registry: DeclarationRegistry,
@@ -3167,6 +3255,8 @@ export function assembleWorkflowFromSpec(
   registerImplicitOutputVariables(sanitizedRootChildren, registry);
 
   registerScopedDeclarations(sanitizedRootChildren, registry);
+
+  validateStructurallyKnownLocals(sanitizedRootChildren, registry, workflowName);
 
   const syntheticRoot: SequenceNode = { kind: "sequence", displayName: workflowName, children: sanitizedRootChildren };
   walkNodeForArgumentRefs(syntheticRoot, registry, workflowName);

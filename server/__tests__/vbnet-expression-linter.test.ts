@@ -129,8 +129,14 @@ describe("VB.NET Expression Linter", () => {
       expect(result.corrected).toBe("CStr(str_value)");
     });
 
-    it("reports deeply unbalanced parens as unfixable", () => {
+    it("auto-fixes deeply unbalanced parens within ±4 threshold", () => {
       const result = lintExpression("CStr(CInt(CDbl(str_value");
+      expect(result.issues.some(i => i.code === "UNBALANCED_PARENS" && i.autoFixed)).toBe(true);
+      expect(result.corrected).toContain(")))");
+    });
+
+    it("reports very deeply unbalanced parens beyond ±4 as unfixable", () => {
+      const result = lintExpression("A(B(C(D(E(str_value");
       expect(result.issues.some(i => i.code === "UNBALANCED_PARENS" && !i.autoFixed)).toBe(true);
     });
 
@@ -467,6 +473,42 @@ describe("VB.NET Expression Linter", () => {
   });
 
   describe("XAML content patching", () => {
+    it("auto-fixes parenthesis imbalance of +3 (missing closing parens)", () => {
+      const expr = 'CStr(CInt(CDbl(str_value';
+      const result = lintExpression(expr);
+      expect(result.corrected).not.toBeNull();
+      const openCount = (result.corrected!.match(/\(/g) || []).length;
+      const closeCount = (result.corrected!.match(/\)/g) || []).length;
+      expect(openCount).toBe(closeCount);
+      expect(result.issues.some(i => i.code === "UNBALANCED_PARENS" && i.autoFixed)).toBe(true);
+    });
+
+    it("auto-fixes parenthesis imbalance of -3 (extra closing parens)", () => {
+      const expr = 'CStr(str_value))))';
+      const result = lintExpression(expr);
+      expect(result.corrected).not.toBeNull();
+      const openCount = (result.corrected!.match(/\(/g) || []).length;
+      const closeCount = (result.corrected!.match(/\)/g) || []).length;
+      expect(openCount).toBe(closeCount);
+      expect(result.issues.some(i => i.code === "UNBALANCED_PARENS" && i.autoFixed)).toBe(true);
+    });
+
+    it("auto-fixes parenthesis imbalance of ±4", () => {
+      const expr = 'CStr(CInt(CDbl(CDec(str_value';
+      const result = lintExpression(expr);
+      expect(result.corrected).not.toBeNull();
+      const openCount = (result.corrected!.match(/\(/g) || []).length;
+      const closeCount = (result.corrected!.match(/\)/g) || []).length;
+      expect(openCount).toBe(closeCount);
+    });
+
+    it("countFunctionArgs handles commas inside quoted strings", () => {
+      const expr = 'CStr("{""key1"": ""val,1""}")';
+      const result = lintExpression(expr);
+      const argCountIssue = result.issues.find(i => i.code === "FUNC_ARG_COUNT");
+      expect(argCountIssue).toBeUndefined();
+    });
+
     it("applies corrections back to XAML content", () => {
       const entries = [{
         name: "Main.xaml",

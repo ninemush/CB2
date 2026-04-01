@@ -1162,8 +1162,16 @@ function runPostAssemblyValidation(
   }
 
   if (!catalogService.isLoaded()) {
-    console.warn(`[Package Assembler] WARNING: Activity catalog not loaded — required-property validation skipped. Build may produce packages with missing required properties.`);
-    warnings.push("Activity catalog not loaded — required-property validation was skipped");
+    console.warn(`[Package Assembler] Catalog not loaded — attempting synchronous load retry before assembly`);
+    try {
+      catalogService.load();
+    } catch (err: any) {
+      console.error(`[Package Assembler] Catalog load retry failed: ${err.message}`);
+    }
+    if (!catalogService.isLoaded()) {
+      console.error(`[Package Assembler] ERROR: Activity catalog could not be loaded after retry — required-property validation skipped. Build may produce packages with missing required properties.`);
+      warnings.push("Activity catalog not loaded — required-property validation was skipped");
+    }
   }
   if (catalogService.isLoaded()) {
     const activityTagPattern = /<((?:[a-z]+:)?[A-Z][A-Za-z]+)\s([^>]*?)(?:\/>|>)/g;
@@ -2153,6 +2161,18 @@ function buildDeterministicScaffold(
 
 
 export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1.0.0", ideaId?: string, generationMode: GenerationMode = "full_implementation", onProgress?: (event: { type: "started" | "heartbeat" | "completed" | "warning" | "failed"; stage: string; message: string }) => void, studioProfile?: StudioProfile | null, complexityTier?: ComplexityTier): Promise<BuildResult> {
+  if (!catalogService.isLoaded()) {
+    console.warn(`[Package Assembler] Catalog not loaded at buildNuGetPackage entry — attempting synchronous load`);
+    try {
+      catalogService.load();
+    } catch (err: any) {
+      console.error(`[Package Assembler] Catalog load failed at entry: ${err.message}`);
+    }
+    if (!catalogService.isLoaded()) {
+      console.error(`[Package Assembler] ERROR: Activity catalog could not be loaded at buildNuGetPackage entry — downstream validation and assembly may be degraded`);
+    }
+  }
+
   const _probeCacheSnapshot = await getProbeCache();
   const _studioProfile = studioProfile !== undefined ? studioProfile : catalogService.getStudioProfile();
   const projectName = (pkg.projectName || "Automation").replace(/\s+/g, "_");

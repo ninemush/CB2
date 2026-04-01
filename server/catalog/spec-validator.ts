@@ -701,7 +701,16 @@ export function validateWorkflowSpec(
   studioProfile?: StudioProfile | null,
 ): { spec: WorkflowSpec; report: SpecValidationReport } {
   if (!catalogService.isLoaded()) {
-    return { spec, report: createEmptyReport() };
+    console.warn(`[SpecValidator] Catalog not loaded — attempting synchronous load retry before validation`);
+    try {
+      catalogService.load();
+    } catch (err: any) {
+      console.error(`[SpecValidator] Catalog load retry failed: ${err.message}`);
+    }
+    if (!catalogService.isLoaded()) {
+      console.error(`[SpecValidator] ERROR: Activity catalog could not be loaded — spec validation will produce empty results. Required-property and unknown-activity checks are disabled.`);
+      return { spec, report: createEmptyReport() };
+    }
   }
 
   const report = createEmptyReport();

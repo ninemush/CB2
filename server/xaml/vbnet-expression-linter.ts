@@ -250,7 +250,22 @@ function countFunctionArgs(body: string): number {
   if (!body.trim()) return 0;
   let depth = 0;
   let count = 1;
-  for (const ch of body) {
+  let inQuote = false;
+
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (inQuote) {
+      if (ch === '"' && i + 1 < body.length && body[i + 1] === '"') {
+        i++;
+      } else if (ch === '"') {
+        inQuote = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inQuote = true;
+      continue;
+    }
     if (ch === "(" || ch === "[") depth++;
     else if (ch === ")" || ch === "]") depth--;
     else if (ch === "," && depth === 0) count++;
@@ -831,11 +846,11 @@ export function lintExpression(expression: string): LintResult {
     if (fragment) {
       contextDetail += `, fragment: "${fragment}"`;
     }
-    if (diff > 0 && diff <= 2) {
+    if (diff > 0 && diff <= 4) {
       corrected = corrected + ")".repeat(diff);
       wasModified = true;
       issues.push({ code: "UNBALANCED_PARENS", message: `Unbalanced parentheses: ${openParens} open vs ${closeParens} close — appended ${diff} closing paren(s)${contextDetail}`, autoFixed: true });
-    } else if (diff < 0 && diff >= -2) {
+    } else if (diff < 0 && diff >= -4) {
       let fixedExpr = corrected;
       let remaining = Math.abs(diff);
       for (let ri = fixedExpr.length - 1; ri >= 0 && remaining > 0; ri--) {
