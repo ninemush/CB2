@@ -2228,6 +2228,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
     const nonMainWorkflowNames: string[] = [];
     let deferredHallucinatedRecoveries: Array<{ template: string; displayName: string; file: string }> = [];
+    let mainWfName = "Main";
 
     if (enrichmentsToProcess.length > 0) {
       const mainIdx = enrichmentsToProcess.findIndex(e => e.name === "Main");
@@ -2377,7 +2378,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         console.warn(`[UiPath] EXCESSIVE PROPERTY STRIPPING: ${totalExcessiveStripping} activities exceeded the stripping threshold in ${affectedFileList} — ${deferredHallucinatedRecoveries.length} converted to Comment stubs via spec-level recovery`);
       }
 
-      const mainWfName = generatedWorkflowNames.has("Main") ? "Main" : (generatedWorkflowNames.has("Process") ? "Process" : (enrichmentsToProcess[0]?.name || "Main").replace(/\s+/g, "_"));
+      mainWfName = generatedWorkflowNames.has("Main") ? "Main" : (generatedWorkflowNames.has("Process") ? "Process" : (enrichmentsToProcess[0]?.name || "Main").replace(/\s+/g, "_"));
       const mainXamlPath = `${libPath}/${mainWfName}.xaml`;
       if (nonMainWorkflowNames.length > 0 && deferredWrites.has(mainXamlPath)) {
         let mainXaml = deferredWrites.get(mainXamlPath)!;
@@ -2574,6 +2575,10 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           console.log(`[UiPath] Generated remaining workflow "${wfName}" alongside tree-assembled workflows`);
         }
       }
+    }
+
+    if (enrichmentsToProcess.length === 0 || !treeEnrichment) {
+      mainWfName = generatedWorkflowNames.has("Main") ? "Main" : (generatedWorkflowNames.has("Process") ? "Process" : "Main");
     }
 
     if (!hasMain && processNodes.length > 0 && !enrichment?.decomposition?.length && !treeEnrichment) {
