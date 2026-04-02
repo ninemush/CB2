@@ -68,6 +68,12 @@ process.on("uncaughtException", (err) => {
 (async () => {
   try {
     catalogService.load();
+    if (catalogService.isLoaded()) {
+      console.log(`[Server] Activity catalog loaded successfully at startup`);
+    } else {
+      const reason = catalogService.getLastLoadError?.() || "unknown";
+      console.error(`[Server] WARNING: Activity catalog failed to load at startup: ${reason} — pipeline builds will abort until catalog is available`);
+    }
 
     await reconcileOrphanedRuns();
 

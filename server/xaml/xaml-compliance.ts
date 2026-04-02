@@ -325,14 +325,6 @@ export function getActivityPrefixStrict(templateName: string): string | null {
     return GUARANTEED_ACTIVITY_PREFIX_MAP[templateName];
   }
 
-  if (!catalogService.isLoaded()) {
-    try {
-      catalogService.load();
-    } catch (e) {
-      console.warn(`[XAML Compliance] Failed to load activity catalog: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
   if (catalogService.isLoaded()) {
     const nsInfo = catalogService.getNamespaceInfoForActivity(templateName);
     if (nsInfo) return nsInfo.prefix;

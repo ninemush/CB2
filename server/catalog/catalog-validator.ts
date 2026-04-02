@@ -81,7 +81,7 @@ export function validateCatalog(catalog: any): CatalogValidationResult {
       errors.push(`${pkgLabel}: packageId must not be empty`);
     } else {
       if (seenPackageIds.has(pkg.packageId)) {
-        errors.push(`${pkgLabel}: duplicate packageId "${pkg.packageId}"`);
+        warnings.push(`${pkgLabel}: duplicate packageId "${pkg.packageId}" — later entry will be merged`);
       }
       seenPackageIds.add(pkg.packageId);
     }

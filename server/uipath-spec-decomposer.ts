@@ -6,6 +6,7 @@ import { storage } from "./storage";
 import { RunLogger } from "./lib/run-logger";
 import { sanitizeValueIntentExpressions } from "./xaml/expression-builder";
 import { buildCompactCatalogSummary } from "./catalog/xaml-template-builder";
+import { normalizeWorkflowName } from "./workflow-name-utils";
 
 const SCAFFOLD_MAX_TOKENS = 4096;
 const SCAFFOLD_RETRY_LIMIT = 3;
@@ -483,7 +484,7 @@ function mergeSpec(
     }
   }
 
-  const scaffoldNameSet = new Set(scaffold.workflows.map(w => w.name));
+  const scaffoldNameSet = new Set(scaffold.workflows.map(w => normalizeWorkflowName(w.name)));
 
   const declaredSharedArgs = new Map<string, Set<string>>();
   for (const entry of scaffold.workflows) {
@@ -503,7 +504,7 @@ function mergeSpec(
         if (step.activityType === "InvokeWorkflowFile" && step.properties?.["WorkflowFileName"]) {
           const wfProp = step.properties["WorkflowFileName"];
           const wfFileName = typeof wfProp === "string" ? wfProp : (wfProp && typeof wfProp === "object" && "type" in wfProp && wfProp.type === "literal" && "value" in wfProp ? String(wfProp.value) : String(wfProp));
-          const targetName = wfFileName.replace(/\.xaml$/i, "");
+          const targetName = normalizeWorkflowName(wfFileName);
           if (!scaffoldNameSet.has(targetName)) {
             warnings.push(`Workflow "${wf.name}" references undeclared workflow "${targetName}" via InvokeWorkflowFile`);
           }

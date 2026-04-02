@@ -386,19 +386,8 @@ const CANONICAL_INFRASTRUCTURE_NAMES = new Set([
   "gettransactiondata", "settransactionstatus", "killallprocesses",
 ]);
 
-export function canonicalizeWorkflowName(name: string): string {
-  let result = name
-    .replace(/\{type:[^}]*,value:([^}]*)\}/g, "$1")
-    .replace(/\{"type":"[^"]*","value":"([^"]*)"\}/g, "$1")
-    .replace(/\{&quot;type&quot;:&quot;[^&]*&quot;,&quot;value&quot;:&quot;([^&]*)&quot;\}/g, "$1")
-    .replace(/[\[\]"]/g, "")
-    .replace(/&quot;/g, "")
-    .trim();
-  while (result.toLowerCase().endsWith(".xaml")) {
-    result = result.slice(0, -5);
-  }
-  return result.trim().toLowerCase();
-}
+import { normalizeWorkflowName, canonicalizeWorkflowName } from "./workflow-name-utils";
+export { normalizeWorkflowName, canonicalizeWorkflowName } from "./workflow-name-utils";
 
 export function detectFinalDedupCollisions(
   paths: string[],
@@ -899,26 +888,56 @@ function buildReachabilityGraph(
 
   const graph = new Map<string, string[]>();
 
+  const canonicalToKey = new Map<string, string>();
+  Array.from(allFiles.keys()).forEach(file => {
+    const basename = (file.split("/").pop() || file).replace(/\.xaml$/i, "");
+    const canonical = normalizeWorkflowName(basename);
+    if (!canonicalToKey.has(canonical)) {
+      canonicalToKey.set(canonical, file);
+    }
+  });
+
+  const unresolvedRefs: Array<{ source: string; rawRef: string }> = [];
+
   Array.from(allFiles.entries()).forEach(([file, content]) => {
     const refs: string[] = [];
     const invokePattern = /WorkflowFileName="([^"]+)"/g;
     let match;
     while ((match = invokePattern.exec(content)) !== null) {
-      const rawRef = normalizeXamlPath(match[1]);
-      if (allFiles.has(rawRef)) {
-        refs.push(rawRef);
+      const rawValue = match[1];
+      const normalized = normalizeWorkflowName(rawValue);
+      const normalizedXaml = normalized + ".xaml";
+      const normalizedPath = normalizeXamlPath(normalizedXaml);
+
+      if (allFiles.has(normalizedPath)) {
+        refs.push(normalizedPath);
       } else {
-        const refBasename = rawRef.split("/").pop() || rawRef;
-        const mappedKey = filenameToKey.get(refBasename);
+        const mappedKey = filenameToKey.get(normalizedPath) || canonicalToKey.get(normalized.toLowerCase());
         if (mappedKey) {
           refs.push(mappedKey);
         } else {
-          refs.push(rawRef);
+          const rawRef = normalizeXamlPath(rawValue);
+          if (allFiles.has(rawRef)) {
+            refs.push(rawRef);
+          } else {
+            const refBasename = rawRef.split("/").pop() || rawRef;
+            const mappedByBasename = filenameToKey.get(refBasename);
+            if (mappedByBasename) {
+              refs.push(mappedByBasename);
+            } else {
+              unresolvedRefs.push({ source: file, rawRef: rawValue });
+              refs.push(rawRef);
+            }
+          }
         }
       }
     }
     graph.set(file, refs);
   });
+
+  for (const { source, rawRef } of unresolvedRefs) {
+    console.warn(`[Reachability] Unresolved InvokeWorkflowFile reference in ${source}: "${rawRef}" — no matching file found after normalization`);
+  }
 
   const reachable = new Set<string>();
   const mainKey = allFiles.has("Main.xaml") ? "Main.xaml" : (filenameToKey.get("Main.xaml") || "Main.xaml");
@@ -1234,18 +1253,6 @@ function runPostAssemblyValidation(
     }
   }
 
-  if (!catalogService.isLoaded()) {
-    console.warn(`[Package Assembler] Catalog not loaded — attempting synchronous load retry before assembly`);
-    try {
-      catalogService.load();
-    } catch (err: any) {
-      console.error(`[Package Assembler] Catalog load retry failed: ${err.message}`);
-    }
-    if (!catalogService.isLoaded()) {
-      console.error(`[Package Assembler] ERROR: Activity catalog could not be loaded after retry — required-property validation skipped. Build may produce packages with missing required properties.`);
-      warnings.push("Activity catalog not loaded — required-property validation was skipped");
-    }
-  }
   if (catalogService.isLoaded()) {
     const activityTagPattern = /<((?:[a-z]+:)?[A-Z][A-Za-z]+)\s([^>]*?)(?:\/>|>)/g;
     let actFamilyMatch;
@@ -2345,7 +2352,10 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       console.error(`[Package Assembler] Catalog load failed at entry: ${err.message}`);
     }
     if (!catalogService.isLoaded()) {
-      console.error(`[Package Assembler] ERROR: Activity catalog could not be loaded at buildNuGetPackage entry — downstream validation and assembly may be degraded`);
+      const reason = catalogService.getLastLoadError?.() || "unknown";
+      const msg = `Activity catalog could not be loaded — build aborted. Reason: ${reason}`;
+      console.error(`[Package Assembler] FATAL: ${msg}`);
+      throw new Error(`[Package Assembler] ${msg}`);
     }
   }
 
@@ -3056,12 +3066,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         console.log(`[UiPath] Using tree-based assembly for "${spec.name}"`);
 
         const rawWfName = (spec.name || enrichEntry.name || projectName);
-        const wfName = rawWfName
-          .replace(/\{type:[^}]*,value:([^}]*)\}/g, "$1")
-          .replace(/\{"type":"[^"]*","value":"([^"]*)"\}/g, "$1")
-          .replace(/\{&quot;type&quot;:&quot;[^&]*&quot;,&quot;value&quot;:&quot;([^&]*)&quot;\}/g, "$1")
-          .replace(/\{[^}]*\}/g, "")
-          .replace(/"/g, "").replace(/&quot;/g, "").replace(/\[/g, "").replace(/\]/g, "").replace(/\s+/g, "_").replace(/\.xaml$/i, "");
+        const wfName = normalizeWorkflowName(rawWfName);
         if (isCanonicalInfrastructureName(wfName) && generatedWorkflowNames.has(wfName)) {
           console.log(`[UiPath] Skipping duplicate infrastructure workflow "${wfName}" (canonical match) — already generated`);
           continue;
@@ -3293,7 +3298,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     if (enrichment?.decomposition?.length && !treeEnrichment) {
       console.log(`[UiPath] Using AI decomposition: ${enrichment.decomposition.length} sub-workflows`);
       for (const decomp of enrichment.decomposition) {
-        const wfName = decomp.name.replace(/\s+/g, "_");
+        const wfName = normalizeWorkflowName(decomp.name);
         if (priorCompliantMap.has(wfName)) {
           const priorContent = priorCompliantMap.get(wfName)!;
           deferredWrites.set(`${libPath}/${wfName}.xaml`, priorContent);
@@ -3362,7 +3367,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
     if (!treeEnrichment) {
       for (const wf of workflows) {
-        const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
+        const wfName = normalizeWorkflowName(wf.name || "Workflow");
         if (generatedWorkflowNames.has(wfName)) continue;
         if (priorCompliantMap.has(wfName)) {
           const priorContent = priorCompliantMap.get(wfName)!;
@@ -3399,7 +3404,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
     } else {
       for (const wf of workflows) {
-        const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
+        const wfName = normalizeWorkflowName(wf.name || "Workflow");
         if (generatedWorkflowNames.has(wfName)) continue;
         if (priorCompliantMap.has(wfName)) {
           const priorContent = priorCompliantMap.get(wfName)!;
@@ -3507,7 +3512,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           const invokedInProcess = new Set<string>();
           if (enrichment?.decomposition?.length) {
             for (const decomp of enrichment.decomposition) {
-              const wfName = decomp.name.replace(/\s+/g, "_");
+              const wfName = normalizeWorkflowName(decomp.name);
               if (isCanonicalInfrastructureName(wfName)) continue;
               if (invokedInProcess.has(wfName)) continue;
               invokedInProcess.add(wfName);
@@ -3559,7 +3564,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
       if (enrichment?.decomposition?.length) {
         for (const decomp of enrichment.decomposition) {
-          const wfName = decomp.name.replace(/\s+/g, "_");
+          const wfName = normalizeWorkflowName(decomp.name);
           if (isMainVariant(wfName)) continue;
           invokedNames.add(wfName);
           mainActivities += `
@@ -3568,7 +3573,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
       if (workflows.length > 0) {
         for (const wf of workflows) {
-          const wfName = (wf.name || "Workflow").replace(/\s+/g, "_");
+          const wfName = normalizeWorkflowName(wf.name || "Workflow");
           if (isMainVariant(wfName)) continue;
           if (invokedNames.has(wfName)) continue;
           invokedNames.add(wfName);
@@ -4342,12 +4347,12 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     }
     if (enrichment?.decomposition?.length) {
       for (const d of enrichment.decomposition) {
-        const n = d.name.replace(/\s+/g, "_");
+        const n = normalizeWorkflowName(d.name);
         if (!workflowNames.includes(n)) workflowNames.push(n);
       }
     }
     for (const wf of workflows) {
-      const n = (wf.name || "Workflow").replace(/\s+/g, "_");
+      const n = normalizeWorkflowName(wf.name || "Workflow");
       if (!workflowNames.includes(n)) workflowNames.push(n);
     }
     if (!workflowNames.includes("Main")) workflowNames.unshift("Main");
@@ -6501,6 +6506,21 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     for (const [path, content] of deferredWrites.entries()) {
       if (path.endsWith(".xaml")) {
         let sanitized = content;
+        const archiveFileName = path.split("/").pop() || path;
+
+        {
+          const preArchiveLoad = checkStudioLoadability(sanitized);
+          if (!preArchiveLoad.loadable && preArchiveLoad.repairable) {
+            const repair = repairMissingImplementation(sanitized, archiveFileName);
+            if (repair.repaired) {
+              sanitized = repair.content;
+              console.log(`[Archive Gate] Repaired DynamicActivity/Implementation for "${archiveFileName}" before archive write`);
+            }
+          }
+          if (!preArchiveLoad.loadable && !preArchiveLoad.repairable) {
+            console.warn(`[Archive Gate] "${archiveFileName}" is not Studio-loadable and not repairable — reason: ${preArchiveLoad.reason || "unknown"}`);
+          }
+        }
 
         sanitized = sanitized.replace(/\s+[a-zA-Z_][\w]*="No auto-correction[^"]*"/g, "");
         sanitized = sanitized.replace(/\s+[a-zA-Z_][\w]*="[^"]*;\s*(?:do not|must not|should not|cannot)[^"]*"/gi, "");

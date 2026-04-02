@@ -1226,9 +1226,6 @@ function parseEmittedXmlForValidation(xml: string): {
 }
 
 function applyCatalogConformance(xml: string): string {
-  if (!catalogService.isLoaded()) {
-    try { catalogService.load(); } catch (e) { console.warn("[Catalog Conformance] catalogService.load() failed — continuing in degraded/no-catalog mode:", e); }
-  }
   if (!catalogService.isLoaded()) return xml;
 
   const parsed = parseEmittedXmlForValidation(xml);
@@ -1467,14 +1464,6 @@ export function resolveActivityTemplate(
   if (templateName === "Comment") {
     const text = getPropString(props, "Text", "text") || "";
     return applyCatalogConformance(`<ui:Comment Text="${escapeXml(text)}" DisplayName="${displayName}" />`);
-  }
-
-  if (!catalogService.isLoaded()) {
-    try {
-      catalogService.load();
-    } catch (e) {
-      console.warn("[Workflow Tree Assembler] catalogService.load() failed — continuing in degraded/no-catalog mode:", e);
-    }
   }
 
   const UNSUPPORTED_ACTIVITIES = new Set([
@@ -1959,9 +1948,6 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
   const childParts: string[] = [];
 
   let schema: any = null;
-  if (!catalogService.isLoaded()) {
-    try { catalogService.load(); } catch (e) { console.warn("[Workflow Tree Assembler] catalogService.load() failed — continuing in degraded/no-catalog mode:", e); }
-  }
   if (catalogService.isLoaded()) {
     schema = catalogService.getActivitySchema(templateName);
   }

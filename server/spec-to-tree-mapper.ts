@@ -3,6 +3,7 @@ import type { UiPathPackageSpec } from "./types/uipath-package";
 import type { ProcessType } from "./catalog/catalog-service";
 import type { TreeEnrichmentResult } from "./ai-xaml-enricher";
 import { isValueIntent } from "./xaml/expression-builder";
+import { normalizeWorkflowName } from "./workflow-name-utils";
 
 type FlatWorkflow = UiPathPackageSpec["workflows"][number];
 type FlatStep = FlatWorkflow["steps"][number];
@@ -220,7 +221,8 @@ export function mapPackageSpecToTreeEnrichments(
     if (!workflow.steps || workflow.steps.length === 0) continue;
 
     const spec = mapWorkflowToSpec(workflow);
-    result.set(workflow.name, { spec, processType: "general" });
+    const normalizedName = normalizeWorkflowName(workflow.name);
+    result.set(normalizedName, { spec, processType: "general" });
   }
 
   return result;

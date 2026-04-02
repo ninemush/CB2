@@ -1187,9 +1187,26 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
 
   if (/HANDOFF_|STUB_|ASSEMBLY_FAILED/.test(trimmedExpr)) return undeclared;
 
+  if (/^\{.*"type"\s*:\s*"literal".*"value"\s*:/.test(trimmedExpr) ||
+      /^\{&quot;type&quot;/.test(trimmedExpr) ||
+      /^\{type:/.test(trimmedExpr)) {
+    return undeclared;
+  }
+
   const decoded = decodeXmlEntities(expression);
+
+  let concatMerged = decoded;
+  let prevMerged = "";
+  while (prevMerged !== concatMerged) {
+    prevMerged = concatMerged;
+    concatMerged = concatMerged.replace(/"(?:[^"]|"")*"\s*&\s*"(?:[^"]|"")*"/g, (m) => {
+      const inner = m.replace(/"\s*&\s*"/g, "");
+      return `"${inner}"`;
+    });
+  }
+
   const vbStringPattern = /"(?:[^"]|"")*"/g;
-  const exprWithoutStrings = decoded.replace(vbStringPattern, (m) => " ".repeat(m.length));
+  const exprWithoutStrings = concatMerged.replace(vbStringPattern, (m) => " ".repeat(m.length));
 
   const memberAccessTokens = new Set<string>();
   const memberPattern = /\.([a-zA-Z_]\w*)/g;
@@ -1293,6 +1310,41 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
     }
   }
 
+  const DATE_TIME_FORMAT_TOKENS = new Set([
+    "yyyy", "yy", "MM", "dd", "HH", "hh", "mm", "ss", "fff", "ff", "f",
+    "tt", "zzz", "zz", "ddd", "dddd", "MMM", "MMMM",
+  ]);
+
+  const isFormatContext = /String\.Format|\.ToString\s*\(|Format\s*\(|Now\.ToString|DateTime|DateTimeOffset|TimeSpan|\.ParseExact/.test(decoded)
+    || /"\s*(?:yyyy|MM\/dd|HH:mm|dd-MM)/.test(decoded);
+
+  const concatFragmentParts = new Set<string>();
+  const concatPattern = /"\s*&\s*"/g;
+  if (concatPattern.test(decoded)) {
+    const concatSplitPattern = /"\s*&\s*"([^"]*)"/g;
+    let cm;
+    while ((cm = concatSplitPattern.exec(decoded)) !== null) {
+      for (const part of cm[1].split(/[\s/_.\\-]/)) {
+        if (part) concatFragmentParts.add(part);
+      }
+    }
+    const concatSplitPattern2 = /"([^"]*)"\s*&\s*"/g;
+    while ((cm = concatSplitPattern2.exec(decoded)) !== null) {
+      for (const part of cm[1].split(/[\s/_.\\-]/)) {
+        if (part) concatFragmentParts.add(part);
+      }
+    }
+  }
+
+  const timezoneParts = new Set<string>();
+  const tzPattern = /(?:America|Europe|Asia|Africa|Pacific|Atlantic|Indian|Australia)\/[\w/]+/g;
+  let tzm;
+  while ((tzm = tzPattern.exec(decoded)) !== null) {
+    for (const part of tzm[0].split("/")) {
+      if (part) timezoneParts.add(part);
+    }
+  }
+
   const identPattern = /\b([a-zA-Z_]\w*)\b/g;
   let m;
   const seen = new Set<string>();
@@ -1301,6 +1353,8 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
     const ident = m[1];
     if (seen.has(ident)) continue;
     seen.add(ident);
+
+    if (ident === "_" || ident.length === 1 && /^[a-z]$/.test(ident)) continue;
 
     const identLower = ident.toLowerCase();
     if (VB_KEYWORDS_LOWER.has(identLower)) continue;
@@ -1320,6 +1374,11 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
     }
 
     if (COMPLIANCE_CLR_EXTRA_NAMES.has(ident)) continue;
+
+    if (isFormatContext && DATE_TIME_FORMAT_TOKENS.has(ident)) continue;
+
+    if (concatFragmentParts.has(ident)) continue;
+    if (timezoneParts.has(ident)) continue;
 
     if (expression.includes("@")) {
       const emailPattern = /[\w.+-]+@[\w.-]+/;
@@ -1368,6 +1427,8 @@ export function findUndeclaredVariables(expression: string, declaredVars: Set<st
     if (/^(in|out|io)_/i.test(ident)) continue;
 
     if (/^(In|Out|InOut)[A-Z]/.test(ident)) continue;
+
+    if (memberAccessTokens.has(ident)) continue;
 
     undeclared.push(ident);
   }
