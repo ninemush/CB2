@@ -1202,7 +1202,7 @@ function parseEmittedXmlForValidation(xml: string): {
 
 function applyCatalogConformance(xml: string): string {
   if (!catalogService.isLoaded()) {
-    try { catalogService.load(); } catch (e) { }
+    try { catalogService.load(); } catch (e) { console.warn("[Catalog Conformance] catalogService.load() failed — continuing in degraded/no-catalog mode:", e); }
   }
   if (!catalogService.isLoaded()) return xml;
 
@@ -1448,6 +1448,7 @@ export function resolveActivityTemplate(
     try {
       catalogService.load();
     } catch (e) {
+      console.warn("[Workflow Tree Assembler] catalogService.load() failed — continuing in degraded/no-catalog mode:", e);
     }
   }
 
@@ -1934,7 +1935,7 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
 
   let schema: any = null;
   if (!catalogService.isLoaded()) {
-    try { catalogService.load(); } catch (e) { }
+    try { catalogService.load(); } catch (e) { console.warn("[Workflow Tree Assembler] catalogService.load() failed — continuing in degraded/no-catalog mode:", e); }
   }
   if (catalogService.isLoaded()) {
     schema = catalogService.getActivitySchema(templateName);

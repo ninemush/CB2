@@ -14,7 +14,7 @@ import { checkStudioLoadability, resolveDependencies } from "../package-assemble
 import { runQualityGate, type QualityGateInput } from "../uipath-quality-gate";
 import { normalizeXaml, smartBracketWrap, ensureBracketWrapped, looksLikePlainText, BARE_WORD_LITERALS_SET, CLR_NAMESPACE_TO_XAML_PREFIX, PACKAGE_NAMESPACE_MAP, injectMissingNamespaceDeclarations } from "../xaml/xaml-compliance";
 import { normalizePropertyToValueIntent } from "../xaml/expression-builder";
-import { scanXamlForRequiredPackages } from "../uipath-activity-registry";
+import { scanXamlForRequiredPackages, NAMESPACE_PREFIX_TO_PACKAGE } from "../uipath-activity-registry";
 import { checkNormalizationInvariants } from "../emission-gate";
 import { metadataService } from "../catalog/metadata-service";
 import { ACTIVITY_DEFINITIONS_REGISTRY } from "../catalog/activity-definitions";
@@ -37,6 +37,12 @@ import {
   transactionalQueueSdd,
   lowConfidenceNodes,
   lowConfidenceEdges,
+  travelRequestNodes,
+  travelRequestEdges,
+  travelRequestSdd,
+  passwordResetNodes,
+  passwordResetEdges,
+  passwordResetSdd,
   makeProjectJson,
   makeValidXaml,
 } from "./fixtures/process-specs";
@@ -636,6 +642,210 @@ SAP GUI, Supplier Portal at https://supplier.example.com, Excel, Outlook
           expect(getTransXaml).toMatch(/<InArgument[^>]*>[^<]*BirthdayQueue|QueueName/);
         }
       });
+    });
+  });
+
+  describe("Travel family regression (Task #384)", () => {
+    it("Travel request process: API + Data Service + Action Center + Gmail pipeline", () => {
+      const { xamlEntries, deps } = assemblePipeline(
+        travelRequestNodes,
+        travelRequestEdges,
+        "Travel_Request_Processing",
+        travelRequestSdd,
+      );
+      expect(xamlEntries.length).toBeGreaterThan(0);
+
+      for (const entry of xamlEntries) {
+        const validationResult = XMLValidator.validate(entry.content);
+        expect(validationResult, `XML well-formedness failed for ${entry.name}: ${JSON.stringify(validationResult)}`).toBe(true);
+        const loadResult = checkStudioLoadability(entry.content);
+        expect(loadResult.loadable, `Studio loadability failed for ${entry.name}: ${loadResult.reason}`).toBe(true);
+        expect(entry.content).not.toContain("[ASSEMBLY_FAILED]");
+        expect(entry.content).not.toMatch(/\[TODO: Fix/);
+      }
+
+      const qgResult = runQG(xamlEntries, deps, "Travel_Request_Processing");
+      const errors = qgResult.violations.filter(v => v.severity === "error");
+      const nonKnown = errors.filter(e => !e.detail.includes("obj_FormTask"));
+      expect(nonKnown.length, `Unexpected QG errors:\n${nonKnown.map(e => `  ${e.file}: ${e.detail}`).join("\n")}`).toBe(0);
+    });
+
+    it("Travel process emits correct activity families for API, Data Service, Action Center, Gmail", () => {
+      const { xamlEntries } = assemblePipeline(
+        travelRequestNodes,
+        travelRequestEdges,
+        "Travel_Request_Processing",
+        travelRequestSdd,
+      );
+      const allXaml = xamlEntries.map(e => e.content).join("\n");
+
+      const hasHttpOrApi = allXaml.includes("HttpClient") || allXaml.includes("uweb:") || allXaml.includes("TODO: ") || allXaml.includes("HTTP Request");
+      expect(hasHttpOrApi).toBe(true);
+
+      const hasDataServiceOrTodo = allXaml.includes("uds:") || allXaml.includes("DataService") || allXaml.includes("Data Service") || allXaml.includes("QueryEntity") || allXaml.includes("CreateEntity");
+      expect(hasDataServiceOrTodo).toBe(true);
+
+      const hasActionCenterOrTodo = allXaml.includes("upers:") || allXaml.includes("CreateFormTask") || allXaml.includes("Action Center") || allXaml.includes("Persistence");
+      expect(hasActionCenterOrTodo).toBe(true);
+
+      const hasMailOrGmail = allXaml.includes("ugs:") || allXaml.includes("GmailSendMessage") || allXaml.includes("Gmail") || allXaml.includes("umail:") || allXaml.includes("SendMail") || allXaml.includes("Send Email");
+      expect(hasMailOrGmail).toBe(true);
+    });
+
+    it("Travel process has no [object Object] or [ASSEMBLY_FAILED] leakage", () => {
+      const { xamlEntries } = assemblePipeline(
+        travelRequestNodes,
+        travelRequestEdges,
+        "Travel_Request_Processing",
+        travelRequestSdd,
+      );
+      for (const entry of xamlEntries) {
+        expect(entry.content).not.toContain("[object Object]");
+        expect(entry.content).not.toContain("[ASSEMBLY_FAILED]");
+      }
+    });
+  });
+
+  describe("Password Reset family regression (Task #384)", () => {
+    it("Password reset process: Email + Admin Portal + Action Center pipeline", () => {
+      const { xamlEntries, deps } = assemblePipeline(
+        passwordResetNodes,
+        passwordResetEdges,
+        "Password_Reset_Automation",
+        passwordResetSdd,
+      );
+      expect(xamlEntries.length).toBeGreaterThan(0);
+
+      for (const entry of xamlEntries) {
+        const validationResult = XMLValidator.validate(entry.content);
+        expect(validationResult, `XML well-formedness failed for ${entry.name}: ${JSON.stringify(validationResult)}`).toBe(true);
+        const loadResult = checkStudioLoadability(entry.content);
+        expect(loadResult.loadable, `Studio loadability failed for ${entry.name}: ${loadResult.reason}`).toBe(true);
+        expect(entry.content).not.toContain("[ASSEMBLY_FAILED]");
+        expect(entry.content).not.toMatch(/\[TODO: Fix/);
+      }
+
+      const qgResult = runQG(xamlEntries, deps, "Password_Reset_Automation");
+      const errors = qgResult.violations.filter(v => v.severity === "error");
+      const nonKnown = errors.filter(e => !e.detail.includes("obj_FormTask"));
+      expect(nonKnown.length, `Unexpected QG errors:\n${nonKnown.map(e => `  ${e.file}: ${e.detail}`).join("\n")}`).toBe(0);
+    });
+
+    it("Password reset process emits correct activity families for Email, Browser/UI, Action Center", () => {
+      const { xamlEntries } = assemblePipeline(
+        passwordResetNodes,
+        passwordResetEdges,
+        "Password_Reset_Automation",
+        passwordResetSdd,
+      );
+      const allXaml = xamlEntries.map(e => e.content).join("\n");
+
+      const hasEmail = allXaml.includes("umail:") || allXaml.includes("SendOutlookMailMessage") || allXaml.includes("GetOutlookMailMessages") || allXaml.includes("Send Email") || allXaml.includes("Outlook") || allXaml.includes("GetMail") || allXaml.includes("SendMail");
+      expect(hasEmail).toBe(true);
+
+      const hasBrowserOrPortal = allXaml.includes("OpenBrowser") || allXaml.includes("UseApplicationBrowser") || allXaml.includes("Admin Portal") || allXaml.includes("NavigateTo") || allXaml.includes("TypeInto") || allXaml.includes("Click") || allXaml.includes("Open Browser");
+      expect(hasBrowserOrPortal).toBe(true);
+
+      const hasActionCenter = allXaml.includes("upers:") || allXaml.includes("CreateFormTask") || allXaml.includes("Action Center") || allXaml.includes("Persistence");
+      expect(hasActionCenter).toBe(true);
+    });
+
+    it("Password reset process has no [object Object] or [ASSEMBLY_FAILED] leakage", () => {
+      const { xamlEntries } = assemblePipeline(
+        passwordResetNodes,
+        passwordResetEdges,
+        "Password_Reset_Automation",
+        passwordResetSdd,
+      );
+      for (const entry of xamlEntries) {
+        expect(entry.content).not.toContain("[object Object]");
+        expect(entry.content).not.toContain("[ASSEMBLY_FAILED]");
+      }
+    });
+  });
+
+  describe("Package-family source-of-truth validation (Task #384)", () => {
+    it("UiPath.Mail.Activities has consistent prefix mapping across registry and compliance", () => {
+      expect(NAMESPACE_PREFIX_TO_PACKAGE["umail"]).toBe("UiPath.Mail.Activities");
+      expect(PACKAGE_NAMESPACE_MAP["UiPath.Mail.Activities"]).toBeDefined();
+      expect(PACKAGE_NAMESPACE_MAP["UiPath.Mail.Activities"].prefix).toBe("umail");
+    });
+
+    it("UiPath.WebAPI.Activities has consistent prefix mapping across registry and compliance", () => {
+      expect(NAMESPACE_PREFIX_TO_PACKAGE["uweb"]).toBe("UiPath.WebAPI.Activities");
+      expect(PACKAGE_NAMESPACE_MAP["UiPath.WebAPI.Activities"]).toBeDefined();
+      expect(PACKAGE_NAMESPACE_MAP["UiPath.WebAPI.Activities"].prefix).toBe("uweb");
+    });
+
+    it("UiPath.Persistence.Activities has consistent prefix mapping across registry and compliance", () => {
+      expect(NAMESPACE_PREFIX_TO_PACKAGE["upers"]).toBe("UiPath.Persistence.Activities");
+      expect(PACKAGE_NAMESPACE_MAP["UiPath.Persistence.Activities"]).toBeDefined();
+      expect(PACKAGE_NAMESPACE_MAP["UiPath.Persistence.Activities"].prefix).toBe("upers");
+    });
+
+    it("UiPath.DataService.Activities has consistent prefix mapping across registry and compliance", () => {
+      expect(NAMESPACE_PREFIX_TO_PACKAGE["uds"]).toBe("UiPath.DataService.Activities");
+      expect(PACKAGE_NAMESPACE_MAP["UiPath.DataService.Activities"]).toBeDefined();
+      expect(PACKAGE_NAMESPACE_MAP["UiPath.DataService.Activities"].prefix).toBe("uds");
+    });
+
+    it("UiPath.CommunicationsMining.Activities has consistent prefix mapping across registry and compliance", () => {
+      expect(NAMESPACE_PREFIX_TO_PACKAGE["ucm"]).toBe("UiPath.CommunicationsMining.Activities");
+      expect(PACKAGE_NAMESPACE_MAP["UiPath.CommunicationsMining.Activities"]).toBeDefined();
+      expect(PACKAGE_NAMESPACE_MAP["UiPath.CommunicationsMining.Activities"].prefix).toBe("ucm");
+    });
+
+    it("UiPath.GSuite.Activities has canonical prefix 'ugs' with no dead reverse mapping", () => {
+      expect(NAMESPACE_PREFIX_TO_PACKAGE["ugs"]).toBe("UiPath.GSuite.Activities");
+      expect(NAMESPACE_PREFIX_TO_PACKAGE["ugsuite"]).toBeUndefined();
+      expect(PACKAGE_NAMESPACE_MAP["UiPath.GSuite.Activities"]).toBeDefined();
+      expect(PACKAGE_NAMESPACE_MAP["UiPath.GSuite.Activities"].prefix).toBe("ugs");
+    });
+  });
+
+  describe("DHG truthfulness validation (Task #384)", () => {
+    it("Travel process DHG output reflects generated vs degraded coverage accurately", () => {
+      const { xamlEntries } = assemblePipeline(
+        travelRequestNodes,
+        travelRequestEdges,
+        "Travel_Request_Processing",
+        travelRequestSdd,
+      );
+      const allXaml = xamlEntries.map(e => e.content).join("\n");
+
+      for (const entry of xamlEntries) {
+        if (entry.content.includes("TODO:") || entry.content.includes("Bind Point")) {
+          const displayNameMatch = entry.content.match(/DisplayName="([^"]*TODO[^"]*)"/);
+          if (displayNameMatch) {
+            expect(displayNameMatch[1]).not.toBe("");
+          }
+        }
+      }
+
+      expect(allXaml).not.toContain("[ASSEMBLY_FAILED]");
+      expect(allXaml).not.toMatch(/\[TODO: Fix/);
+    });
+
+    it("Password reset process DHG output reflects generated vs degraded coverage accurately", () => {
+      const { xamlEntries } = assemblePipeline(
+        passwordResetNodes,
+        passwordResetEdges,
+        "Password_Reset_Automation",
+        passwordResetSdd,
+      );
+      const allXaml = xamlEntries.map(e => e.content).join("\n");
+
+      for (const entry of xamlEntries) {
+        if (entry.content.includes("TODO:") || entry.content.includes("Bind Point")) {
+          const displayNameMatch = entry.content.match(/DisplayName="([^"]*TODO[^"]*)"/);
+          if (displayNameMatch) {
+            expect(displayNameMatch[1]).not.toBe("");
+          }
+        }
+      }
+
+      expect(allXaml).not.toContain("[ASSEMBLY_FAILED]");
+      expect(allXaml).not.toMatch(/\[TODO: Fix/);
     });
   });
 

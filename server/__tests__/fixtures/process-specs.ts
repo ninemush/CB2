@@ -108,6 +108,87 @@ The desktop invoice application is used to enter invoice data.
 \`\`\`
 `;
 
+export const travelRequestNodes = [
+  { id: "1", name: "Fetch Travel Requests", nodeType: "task", description: "Call the travel booking REST API to retrieve pending travel requests", system: "REST API" },
+  { id: "2", name: "Store Request in Data Service", nodeType: "task", description: "Save each travel request as an entity record in UiPath Data Service", system: "Data Service" },
+  { id: "3", name: "Check Approval Required", nodeType: "decision", description: "Determine if the travel request amount exceeds the auto-approval threshold", system: "Internal" },
+  { id: "4", name: "Create Approval Task", nodeType: "task", description: "Create a human review task in Action Center for manager approval", system: "Action Center" },
+  { id: "5", name: "Send Confirmation Email", nodeType: "task", description: "Send a confirmation email to the traveler via Gmail", system: "Gmail" },
+];
+
+export const travelRequestEdges = [
+  { sourceNodeId: "1", targetNodeId: "2", label: "" },
+  { sourceNodeId: "2", targetNodeId: "3", label: "" },
+  { sourceNodeId: "3", targetNodeId: "4", label: "over threshold" },
+  { sourceNodeId: "3", targetNodeId: "5", label: "auto-approved" },
+  { sourceNodeId: "4", targetNodeId: "5", label: "approved" },
+];
+
+export const travelRequestSdd = `# Solution Design Document - Travel Request Processing
+
+## 1. Process Overview
+This automation retrieves pending travel requests from an API, stores them in Data Service,
+routes high-value requests through Action Center for manager approval, and sends confirmation emails via Gmail.
+
+## 4. System Architecture
+Travel booking API at https://travel.example.com/api/requests.
+UiPath Data Service stores travel request entities.
+Action Center handles manager approval tasks.
+Gmail sends traveler confirmation emails.
+
+## 9. Orchestrator Artifacts
+\`\`\`orchestrator_artifacts
+{
+  "assets": [
+    { "name": "Travel_API_Token", "type": "Credential", "description": "Bearer token for travel API" },
+    { "name": "ApprovalThreshold", "type": "Text", "value": "5000", "description": "Auto-approval limit in USD" }
+  ],
+  "queues": []
+}
+\`\`\`
+`;
+
+export const passwordResetNodes = [
+  { id: "1", name: "Read Reset Request Email", nodeType: "task", description: "Retrieve incoming password reset request emails from the IT mailbox", system: "Outlook" },
+  { id: "2", name: "Open Admin Portal", nodeType: "task", description: "Open the IT admin web portal and navigate to the user management section", system: "Admin Portal" },
+  { id: "3", name: "Verify User Identity", nodeType: "decision", description: "Check if the requester matches an active user in the directory", system: "Internal" },
+  { id: "4", name: "Reset Password in Portal", nodeType: "task", description: "Execute the password reset action in the admin portal for the verified user", system: "Admin Portal" },
+  { id: "5", name: "Create Manual Review Task", nodeType: "task", description: "Create a task in Action Center for manual identity verification by IT staff", system: "Action Center" },
+  { id: "6", name: "Send Result Email", nodeType: "task", description: "Send the password reset result or rejection notification email to the requester", system: "Outlook" },
+];
+
+export const passwordResetEdges = [
+  { sourceNodeId: "1", targetNodeId: "2", label: "" },
+  { sourceNodeId: "2", targetNodeId: "3", label: "" },
+  { sourceNodeId: "3", targetNodeId: "4", label: "verified" },
+  { sourceNodeId: "3", targetNodeId: "5", label: "unverified" },
+  { sourceNodeId: "4", targetNodeId: "6", label: "" },
+  { sourceNodeId: "5", targetNodeId: "6", label: "reviewed" },
+];
+
+export const passwordResetSdd = `# Solution Design Document - Password Reset Automation
+
+## 1. Process Overview
+This automation reads password reset requests from email, verifies user identity via the admin portal,
+resets passwords or routes to Action Center for manual review, and sends result notifications.
+
+## 4. System Architecture
+IT mailbox monitored via Outlook for reset requests.
+Admin portal at https://admin.example.com/users for user management.
+Action Center handles unverified identity cases for manual review.
+
+## 9. Orchestrator Artifacts
+\`\`\`orchestrator_artifacts
+{
+  "assets": [
+    { "name": "AdminPortal_Credential", "type": "Credential", "description": "Admin portal login" },
+    { "name": "IT_Mailbox", "type": "Text", "value": "it-support@example.com", "description": "IT support mailbox" }
+  ],
+  "queues": []
+}
+\`\`\`
+`;
+
 export function makeProjectJson(
   projectName: string,
   deps: Record<string, string>,

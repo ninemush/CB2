@@ -770,7 +770,7 @@ export const NAMESPACE_PREFIX_TO_PACKAGE: Record<string, string> = {
   "uocr": "UiPath.IntelligentOCR.Activities",
   "upers": "UiPath.Persistence.Activities",
   "uds": "UiPath.DataService.Activities",
-  "ugsuite": "UiPath.GSuite.Activities",
+  "ugs": "UiPath.GSuite.Activities",
   "uis": "UiPath.IntegrationService.Activities",
   "ugenai": "UiPath.IntegrationService.Activities",
   "updf": "UiPath.PDF.Activities",
