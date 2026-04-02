@@ -501,6 +501,83 @@ export function buildDynamicNamespaceImports(usedPackages: Set<string>, existing
   return imports.join("\n");
 }
 
+export interface AuthoritativeDeclarationResult {
+  neededPackages: Set<string>;
+  neededAssemblies: Set<string>;
+  neededNamespaces: Set<string>;
+  neededXmlns: Map<string, string>;
+  activitiesDetected: string[];
+}
+
+export function deriveRequiredDeclarationsForXaml(content: string): AuthoritativeDeclarationResult {
+  const neededPackages = new Set<string>();
+  const neededAssemblies = new Set<string>();
+  const neededNamespaces = new Set<string>();
+  const neededXmlns = new Map<string, string>();
+  const activitiesDetected: string[] = [];
+  const seenActivities = new Set<string>();
+
+  const SKIP_PREFIXES = new Set(["xmlns", "xml", "x", "sap", "sap2010", "mc", "s", "scg", "sco", "mva", "sads", "scg2"]);
+
+  const activityTagPattern = /<(\w+):(\w+)[\s>\/]/g;
+  let atm;
+  while ((atm = activityTagPattern.exec(content)) !== null) {
+    const prefix = atm[1];
+    const activityName = atm[2];
+    if (SKIP_PREFIXES.has(prefix)) continue;
+
+    const activityKey = `${prefix}:${activityName}`;
+    if (seenActivities.has(activityKey)) continue;
+    seenActivities.add(activityKey);
+    activitiesDetected.push(activityKey);
+
+    let matchedPackage: string | null = null;
+
+    if (prefix === "ui") {
+      matchedPackage = resolveActivityToPackage(activityName);
+    }
+
+    if (!matchedPackage) {
+      for (const [pkgId, info] of Object.entries(PACKAGE_NAMESPACE_MAP)) {
+        if (info.prefix === prefix) {
+          matchedPackage = pkgId;
+          break;
+        }
+      }
+    }
+
+    if (matchedPackage) {
+      neededPackages.add(matchedPackage);
+      const info = PACKAGE_NAMESPACE_MAP[matchedPackage];
+      if (info) {
+        if (info.assembly) neededAssemblies.add(info.assembly);
+        if (info.clrNamespace) neededNamespaces.add(info.clrNamespace);
+        if (info.prefix && info.xmlns && !neededXmlns.has(info.prefix)) {
+          neededXmlns.set(info.prefix, info.xmlns);
+        }
+      }
+    }
+  }
+
+  if (neededPackages.has("UiPath.System.Activities") || neededPackages.has("UiPath.UIAutomation.Activities")) {
+    neededPackages.add("UiPath.System.Activities");
+    neededPackages.add("UiPath.UIAutomation.Activities");
+
+    const sysInfo = PACKAGE_NAMESPACE_MAP["UiPath.System.Activities"];
+    if (sysInfo) {
+      if (sysInfo.assembly) neededAssemblies.add(sysInfo.assembly);
+      if (sysInfo.clrNamespace) neededNamespaces.add(sysInfo.clrNamespace);
+    }
+    const uiInfo = PACKAGE_NAMESPACE_MAP["UiPath.UIAutomation.Activities"];
+    if (uiInfo) {
+      if (uiInfo.assembly) neededAssemblies.add(uiInfo.assembly);
+      if (uiInfo.clrNamespace) neededNamespaces.add(uiInfo.clrNamespace);
+    }
+  }
+
+  return { neededPackages, neededAssemblies, neededNamespaces, neededXmlns, activitiesDetected };
+}
+
 export function ensureBracketWrapped(val: string, isDeclared?: (name: string) => boolean): string {
   const trimmed = val.trim();
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
@@ -633,6 +710,8 @@ const UIPATH_VB_SETTINGS = `
       <AssemblyReference>System.Xml.Linq</AssemblyReference>
       <AssemblyReference>UiPath.Core</AssemblyReference>
       <AssemblyReference>UiPath.Core.Activities</AssemblyReference>
+      <AssemblyReference>UiPath.System.Activities</AssemblyReference>
+      <AssemblyReference>UiPath.UIAutomation.Activities</AssemblyReference>
     </sco:Collection>
   </TextExpression.ReferencesForImplementation>`;
 
@@ -660,6 +739,8 @@ const UIPATH_CSHARP_SETTINGS = `
       <AssemblyReference>System.Xml.Linq</AssemblyReference>
       <AssemblyReference>UiPath.Core</AssemblyReference>
       <AssemblyReference>UiPath.Core.Activities</AssemblyReference>
+      <AssemblyReference>UiPath.System.Activities</AssemblyReference>
+      <AssemblyReference>UiPath.UIAutomation.Activities</AssemblyReference>
     </sco:Collection>
   </TextExpression.ReferencesForImplementation>`;
 
@@ -1164,7 +1245,8 @@ export function sanitizeXmlArtifacts(xml: string): string {
 }
 
 function injectDynamicNamespaceDeclarations(xml: string, isCrossPlatform: boolean): string {
-  const usedPackages = collectUsedPackages(xml);
+  const declarations = deriveRequiredDeclarationsForXaml(xml);
+  const usedPackages = declarations.neededPackages;
 
   const hasNewtonsoftTypes = /JObject|JToken|JArray|JsonConvert|Newtonsoft/i.test(xml);
   if (hasNewtonsoftTypes) {

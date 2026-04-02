@@ -50,7 +50,7 @@ import archiver from "archiver";
   import { runEmissionGate, type EmissionGateResult } from "./emission-gate";
   import { buildWorkflowBusinessContextMap, type WorkflowBusinessContextMap } from "./sdd-business-context-mapper";
   import { metadataService as _metadataService } from "./catalog/metadata-service";
-  import { PACKAGE_NAMESPACE_MAP, validateXmlWellFormedness, injectMissingNamespaceDeclarations, collectUsedPackages, buildDynamicXmlnsDeclarations, buildDynamicAssemblyRefs, buildDynamicNamespaceImports, resolvePackageNamespaceInfo, injectInArgumentTypeArguments, resolveActivityToPackage } from "./xaml/xaml-compliance";
+  import { PACKAGE_NAMESPACE_MAP, validateXmlWellFormedness, injectMissingNamespaceDeclarations, collectUsedPackages, buildDynamicXmlnsDeclarations, buildDynamicAssemblyRefs, buildDynamicNamespaceImports, resolvePackageNamespaceInfo, injectInArgumentTypeArguments, resolveActivityToPackage, deriveRequiredDeclarationsForXaml } from "./xaml/xaml-compliance";
   import type { ComplexityTier } from "./complexity-classifier";
   import { generateDhgFromOutcomeReport, type DhgContext } from "./dhg-generator";
   import { runDhgAnalysis } from "./xaml/dhg-analyzers";
@@ -1271,35 +1271,8 @@ function runAuthoritativeNamespaceInjection(
     if (!path.endsWith(".xaml")) return;
     const fileName = path.split("/").pop() || path;
 
-    const usedPackages = collectUsedPackages(content);
-    const prefixPattern = /<(\w+):/g;
-    let pm;
-    const usedPrefixes = new Set<string>();
-    while ((pm = prefixPattern.exec(content)) !== null) {
-      if (pm[1] !== "xmlns" && pm[1] !== "xml" && pm[1] !== "x" && pm[1] !== "sap" && pm[1] !== "sap2010" && pm[1] !== "mc") {
-        usedPrefixes.add(pm[1]);
-      }
-    }
-
-    for (const [packageId, info] of Object.entries(PACKAGE_NAMESPACE_MAP)) {
-      if (!info.prefix || info.prefix === "") continue;
-      if (info.prefix === "ui") continue;
-      if (usedPrefixes.has(info.prefix)) {
-        usedPackages.add(packageId);
-      }
-    }
-
-    if (usedPrefixes.has("ui")) {
-      const uiActivityPattern = /<ui:(\w+)[\s>\/]/g;
-      let uiMatch;
-      while ((uiMatch = uiActivityPattern.exec(content)) !== null) {
-        const activityName = uiMatch[1];
-        const pkg = resolveActivityToPackage(activityName);
-        if (pkg) {
-          usedPackages.add(pkg);
-        }
-      }
-    }
+    const declarations = deriveRequiredDeclarationsForXaml(content);
+    const usedPackages = declarations.neededPackages;
 
     let updated = content;
     const additionalXmlns = buildDynamicXmlnsDeclarations(usedPackages, isCrossPlatform, updated);
@@ -1328,6 +1301,15 @@ function runAuthoritativeNamespaceInjection(
       if (importsMatch && importsMatch.index !== undefined) {
         updated = updated.slice(0, importsMatch.index) + additionalNamespaceImports + "\n" + updated.slice(importsMatch.index);
         injectedCount++;
+      }
+    }
+
+    const prefixPattern = /<(\w+):/g;
+    let pm;
+    const usedPrefixes = new Set<string>();
+    while ((pm = prefixPattern.exec(updated)) !== null) {
+      if (!["xmlns", "xml", "x", "sap", "sap2010", "mc", "s", "scg", "sco", "mva", "sads", "scg2"].includes(pm[1])) {
+        usedPrefixes.add(pm[1]);
       }
     }
 
@@ -5889,44 +5871,31 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     }
 
     {
-      console.log(`[Pre-Smoke-Test Self-Check] Ensuring all activity assemblies and namespaces are present...`);
+      console.log(`[Authoritative Declaration Synthesis] Inspecting final XAML files for required declarations...`);
       let selfCheckFixes = 0;
+      let filesInspected = 0;
       Array.from(deferredWrites.entries()).forEach(([path, content]) => {
         if (!path.endsWith(".xaml")) return;
+        const fileName = path.split("/").pop() || path;
+        filesInspected++;
         let updated = content;
 
-        const activityTagPattern = /<(\w+):(\w+)[\s>\/]/g;
-        let atm;
-        const neededAssemblies = new Set<string>();
-        const neededNamespaces = new Set<string>();
-        const neededXmlns = new Map<string, string>();
+        const declarations = deriveRequiredDeclarationsForXaml(content);
+        const { neededPackages, neededAssemblies, neededNamespaces, neededXmlns, activitiesDetected } = declarations;
 
-        while ((atm = activityTagPattern.exec(content)) !== null) {
-          const prefix = atm[1];
-          const activityName = atm[2];
-          if (["xmlns", "xml", "x", "sap", "sap2010", "mc", "s", "scg", "sco", "mva", "sads", "scg2"].includes(prefix)) continue;
+        if (activitiesDetected.length > 0) {
+          console.log(`[Authoritative Declaration Synthesis] [${fileName}] Activities detected: ${activitiesDetected.join(", ")}`);
+          console.log(`[Authoritative Declaration Synthesis] [${fileName}] Required packages: ${Array.from(neededPackages).join(", ")}`);
+          console.log(`[Authoritative Declaration Synthesis] [${fileName}] Required assemblies: ${Array.from(neededAssemblies).join(", ")}`);
+          console.log(`[Authoritative Declaration Synthesis] [${fileName}] Required namespaces: ${Array.from(neededNamespaces).join(", ")}`);
+        }
 
-          let matchedPackage: string | null = null;
-          if (prefix === "ui") {
-            matchedPackage = resolveActivityToPackage(activityName);
-          }
-          if (!matchedPackage) {
-            for (const [pkgId, info] of Object.entries(PACKAGE_NAMESPACE_MAP)) {
-              if (info.prefix === prefix) {
-                matchedPackage = pkgId;
-                break;
-              }
-            }
-          }
-
-          if (matchedPackage) {
-            const info = PACKAGE_NAMESPACE_MAP[matchedPackage];
+        for (const pkg of neededPackages) {
+          if (!deps[pkg]) {
+            const info = PACKAGE_NAMESPACE_MAP[pkg];
             if (info) {
-              if (info.assembly) neededAssemblies.add(info.assembly);
-              if (info.clrNamespace) neededNamespaces.add(info.clrNamespace);
-              if (info.prefix && info.xmlns && !neededXmlns.has(info.prefix)) {
-                neededXmlns.set(info.prefix, info.xmlns);
-              }
+              deps[pkg] = "*";
+              console.log(`[Authoritative Declaration Synthesis] [${fileName}] Added missing project dependency: ${pkg}`);
             }
           }
         }
@@ -5951,6 +5920,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
             const insertAfter = xmlnsInsertPoint + 'xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"'.length;
             updated = updated.slice(0, insertAfter) + "\n" + missingXmlnsDecls.join("\n") + updated.slice(insertAfter);
             selfCheckFixes += missingXmlnsDecls.length;
+            console.log(`[Authoritative Declaration Synthesis] [${fileName}] Injected xmlns declarations: ${missingXmlnsDecls.length}`);
           }
         }
 
@@ -5996,6 +5966,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
               selfCheckFixes += missingAssemblies.length;
             }
           }
+          console.log(`[Authoritative Declaration Synthesis] [${fileName}] Injected assembly references: ${missingAssemblies.length}`);
         }
 
         if (missingNamespaces.length > 0) {
@@ -6012,6 +5983,11 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
               selfCheckFixes += missingNamespaces.length;
             }
           }
+          console.log(`[Authoritative Declaration Synthesis] [${fileName}] Injected namespace imports: ${missingNamespaces.length}`);
+        }
+
+        if (missingAssemblies.length === 0 && missingNamespaces.length === 0 && missingXmlnsDecls.length === 0) {
+          console.log(`[Authoritative Declaration Synthesis] [${fileName}] All declarations already present`);
         }
 
         if (updated !== content) {
@@ -6019,9 +5995,9 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         }
       });
       if (selfCheckFixes > 0) {
-        console.log(`[Pre-Smoke-Test Self-Check] Injected ${selfCheckFixes} missing assembly/namespace declaration(s)`);
+        console.log(`[Authoritative Declaration Synthesis] Injected ${selfCheckFixes} missing declaration(s) across ${filesInspected} XAML file(s)`);
       } else {
-        console.log(`[Pre-Smoke-Test Self-Check] All assemblies and namespaces already present`);
+        console.log(`[Authoritative Declaration Synthesis] All declarations already present across ${filesInspected} XAML file(s)`);
       }
     }
 
