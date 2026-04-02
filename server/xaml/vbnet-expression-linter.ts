@@ -946,7 +946,14 @@ export function lintExpression(expression: string): LintResult {
       const looksLikeStandaloneWord = /^\s*$/.test(stripped.substring(0, bm.index)) &&
         /^\s*$/.test(stripped.substring(afterIdx));
       if (looksLikeStandaloneWord) {
-        reportOnly("BARE_WORD_REFERENCE", `Standalone word "${word}" may be an undeclared variable — should it be a string literal "${word}"?`);
+        if (word === "Yes" || word === "No") {
+          const replacement = word === "Yes" ? "True" : "False";
+          issues.push({ code: "BARE_WORD_REFERENCE", message: `Standalone "${word}" corrected to "${replacement}"`, autoFixed: true });
+          corrected = replacement;
+          break;
+        } else {
+          reportOnly("BARE_WORD_REFERENCE", `Standalone word "${word}" may be an undeclared variable — should it be a string literal "${word}"?`);
+        }
       }
     }
   }

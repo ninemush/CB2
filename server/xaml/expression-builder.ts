@@ -336,6 +336,9 @@ export function normalizePropertyToValueIntent(
   }
 
   if (/^[a-zA-Z_]\w*\.[a-zA-Z_]\w*/.test(trimmed) && !/\s/.test(trimmed)) {
+    if (/\.(json|xml|xlsx|csv|txt|log|config|pdf|html|xaml|dll|exe|zip|png|jpg|yaml|yml)$/i.test(trimmed)) {
+      return { type: "literal", value: trimmed };
+    }
     return { type: "variable", name: trimmed };
   }
 

@@ -59,6 +59,7 @@ export const PACKAGE_NAMESPACE_MAP: Record<string, PackageNamespaceInfo> = {
   "UiPath.IntegrationService.Activities": { prefix: "uis", xmlns: "clr-namespace:UiPath.IntegrationService.Activities;assembly=UiPath.IntegrationService.Activities", clrNamespace: "UiPath.IntegrationService.Activities", assembly: "UiPath.IntegrationService.Activities" },
   "UiPath.CommunicationsMining.Activities": { prefix: "ucm", xmlns: "clr-namespace:UiPath.CommunicationsMining.Activities;assembly=UiPath.CommunicationsMining.Activities", clrNamespace: "UiPath.CommunicationsMining.Activities", assembly: "UiPath.CommunicationsMining.Activities" },
   "UiPath.WorkflowEvents.Activities": { prefix: "uwfe", xmlns: "clr-namespace:UiPath.WorkflowEvents.Activities;assembly=UiPath.WorkflowEvents.Activities", clrNamespace: "UiPath.WorkflowEvents.Activities", assembly: "UiPath.WorkflowEvents.Activities" },
+  "System.Net.Mail": { prefix: "snetmail", xmlns: "clr-namespace:System.Net.Mail;assembly=System", clrNamespace: "System.Net.Mail", assembly: "System" },
   "UiPath.Box.Activities": { prefix: "ubox", xmlns: "clr-namespace:UiPath.Box.Activities;assembly=UiPath.Box.Activities", clrNamespace: "UiPath.Box.Activities", assembly: "UiPath.Box.Activities" },
   "UiPath.MicrosoftDynamics.Activities": { prefix: "udyn", xmlns: "clr-namespace:UiPath.MicrosoftDynamics.Activities;assembly=UiPath.MicrosoftDynamics.Activities", clrNamespace: "UiPath.MicrosoftDynamics.Activities", assembly: "UiPath.MicrosoftDynamics.Activities" },
   "UiPath.Workday.Activities": { prefix: "uwd", xmlns: "clr-namespace:UiPath.Workday.Activities;assembly=UiPath.Workday.Activities", clrNamespace: "UiPath.Workday.Activities", assembly: "UiPath.Workday.Activities" },
@@ -161,6 +162,19 @@ export function injectMissingNamespaceDeclarations(xaml: string): { xml: string;
   while ((um = usagePattern.exec(xaml)) !== null) {
     if (um[1] !== "xmlns" && um[1] !== "xml") {
       usedPrefixes.add(um[1]);
+    }
+  }
+  const typeArgPattern = /x:TypeArguments="([^"]*)"/g;
+  let tam;
+  while ((tam = typeArgPattern.exec(xaml)) !== null) {
+    const prefixesInTypeArgs = tam[1].match(/(\w+):/g);
+    if (prefixesInTypeArgs) {
+      for (const p of prefixesInTypeArgs) {
+        const prefix = p.slice(0, -1);
+        if (prefix !== "x" && prefix !== "xmlns") {
+          usedPrefixes.add(prefix);
+        }
+      }
     }
   }
 

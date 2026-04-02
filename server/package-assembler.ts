@@ -659,20 +659,66 @@ export function checkStudioLoadability(xamlContent: string): StudioLoadabilityRe
   return { loadable: true };
 }
 
-function repairMissingImplementation(xamlContent: string, fileName: string): { repaired: boolean; content: string } {
-  const loadResult = checkStudioLoadability(xamlContent);
-  if (loadResult.loadable || !loadResult.repairable) {
-    return { repaired: false, content: xamlContent };
+function ensureStubNamespaces(xamlContent: string): string {
+  const requiredNamespaces: Array<{ prefix: string; uri: string }> = [
+    { prefix: "xmlns:x", uri: "http://schemas.microsoft.com/winfx/2006/xaml" },
+    { prefix: "xmlns:sap", uri: "http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation" },
+    { prefix: "xmlns:sap2010", uri: "http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation" },
+    { prefix: "xmlns:mc", uri: "http://schemas.openxmlformats.org/markup-compatibility/2006" },
+  ];
+
+  let result = xamlContent;
+  const activityTagMatch = result.match(/<Activity\b/);
+  if (!activityTagMatch) return result;
+
+  const tagEnd = result.indexOf(">", activityTagMatch.index!);
+  if (tagEnd < 0) return result;
+
+  const activityTag = result.substring(activityTagMatch.index!, tagEnd + 1);
+
+  for (const ns of requiredNamespaces) {
+    if (!activityTag.includes(ns.prefix + "=")) {
+      const insertPos = tagEnd;
+      result = result.substring(0, insertPos) + `\n  ${ns.prefix}="${ns.uri}"` + result.substring(insertPos);
+    }
   }
 
-  const activityOpenMatch = xamlContent.match(/<Activity\b[\s\S]*?>/);
-  const activityCloseIdx = xamlContent.lastIndexOf("</Activity>");
-  if (!activityOpenMatch || activityCloseIdx < 0) {
+  if (!result.includes('xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"')) {
+    const activityTagMatch2 = result.match(/<Activity\b/);
+    if (activityTagMatch2) {
+      const insertPos2 = activityTagMatch2.index! + "<Activity".length;
+      result = result.substring(0, insertPos2) + ' xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"' + result.substring(insertPos2);
+    }
+  }
+
+  return result;
+}
+
+function repairMissingImplementation(xamlContent: string, fileName: string): { repaired: boolean; content: string } {
+  let content = xamlContent;
+
+  content = ensureStubNamespaces(content);
+
+  const loadResult = checkStudioLoadability(content);
+  if (loadResult.loadable) {
+    if (content !== xamlContent) {
+      console.log(`[UiPath] Namespace repair succeeded for "${fileName}" — fixed missing xmlns declarations`);
+      return { repaired: true, content };
+    }
     return { repaired: false, content: xamlContent };
+  }
+  if (!loadResult.repairable) {
+    return { repaired: false, content };
+  }
+
+  const activityOpenMatch = content.match(/<Activity\b[\s\S]*?>/);
+  const activityCloseIdx = content.lastIndexOf("</Activity>");
+  if (!activityOpenMatch || activityCloseIdx < 0) {
+    return { repaired: false, content };
   }
 
   const activityOpenEnd = activityOpenMatch.index! + activityOpenMatch[0].length;
-  const innerContent = xamlContent.substring(activityOpenEnd, activityCloseIdx).trim();
+  const innerContent = content.substring(activityOpenEnd, activityCloseIdx).trim();
 
   const xMembersMatch = innerContent.match(/<x:Members\b[\s\S]*?<\/x:Members>/);
   const xMembersBlock = xMembersMatch ? xMembersMatch[0] : "";
@@ -680,12 +726,30 @@ function repairMissingImplementation(xamlContent: string, fileName: string): { r
     ? innerContent.replace(xMembersBlock, "").trim()
     : innerContent;
 
+  const metadataBlocks: string[] = [];
+  const metadataPatterns = [
+    /<mva:VisualBasic\.Settings[\s\S]*?<\/mva:VisualBasic\.Settings>/g,
+    /<sap2010:WorkflowViewState\.IdRef>[^<]*<\/sap2010:WorkflowViewState\.IdRef>/g,
+    /<TextExpression\.NamespacesForImplementation[\s\S]*?<\/TextExpression\.NamespacesForImplementation>/g,
+    /<TextExpression\.ReferencesForImplementation[\s\S]*?<\/TextExpression\.ReferencesForImplementation>/g,
+  ];
+  let strippedRemaining = remainingInner;
+  for (const pattern of metadataPatterns) {
+    const matches = remainingInner.match(pattern);
+    if (matches) {
+      for (const m of matches) {
+        metadataBlocks.push(m);
+        strippedRemaining = strippedRemaining.replace(m, "").trim();
+      }
+    }
+  }
+
   const className = fileName.replace(/\.xaml$/i, "").replace(/[^A-Za-z0-9_]/g, "_");
-  const hasUiNamespace = /xmlns:ui=/.test(xamlContent);
+  const hasUiNamespace = /xmlns:ui=/.test(content);
 
   let sequenceBody: string;
-  if (remainingInner.length > 0) {
-    sequenceBody = `  <Sequence DisplayName="${className}">\n    ${remainingInner}\n  </Sequence>`;
+  if (strippedRemaining.length > 0) {
+    sequenceBody = `  <Sequence DisplayName="${className}">\n    ${strippedRemaining}\n  </Sequence>`;
   } else {
     const stubComment = hasUiNamespace
       ? `<ui:Comment Text="[IMPLEMENTATION_REPAIRED] Root container was missing — this stub Sequence was injected to prevent DynamicActivity/Implementation null. Implement the actual logic here." DisplayName="Implementation Repair Stub" />`
@@ -694,12 +758,13 @@ function repairMissingImplementation(xamlContent: string, fileName: string): { r
   }
 
   const repairedXaml =
-    xamlContent.substring(0, activityOpenEnd) +
+    content.substring(0, activityOpenEnd) +
     "\n" +
     (xMembersBlock ? xMembersBlock + "\n" : "") +
+    metadataBlocks.map(b => b + "\n").join("") +
     sequenceBody +
     "\n" +
-    xamlContent.substring(activityCloseIdx);
+    content.substring(activityCloseIdx);
 
   const recheckResult = checkStudioLoadability(repairedXaml);
   if (recheckResult.loadable) {
@@ -3727,13 +3792,57 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
           if (specRetained.size > 0) {
             console.log(`[Structural Dedup] Retained ${specRetained.size} spec-decomposed workflow(s) despite being unreachable from fallback Main.xaml: ${Array.from(specRetained).join(", ")}`);
+            const processPath = `${libPath}/Process.xaml`;
+            let processXaml = deferredWrites.get(processPath) || "";
+            if (!processXaml) {
+              const processEntry = xamlEntries.find(e => e.name.endsWith("Process.xaml"));
+              if (processEntry) processXaml = processEntry.content;
+            }
+            const injectedFiles: string[] = [];
+            if (processXaml) {
+              const closingSeqIdx = processXaml.lastIndexOf("</Sequence>");
+              if (closingSeqIdx >= 0) {
+                let invokeBlock = "";
+                Array.from(specRetained).forEach(retained => {
+                  const basename = retained.split("/").pop() || retained;
+                  if (!processXaml.includes(`WorkflowFileName="${basename}"`)) {
+                    const displayBasename = basename.replace(/\.xaml$/i, "");
+                    invokeBlock += `    <ui:InvokeWorkflowFile WorkflowFileName="${basename}" DisplayName="Invoke ${displayBasename}">\n` +
+                      `      <ui:InvokeWorkflowFile.Arguments>\n` +
+                      `      </ui:InvokeWorkflowFile.Arguments>\n` +
+                      `    </ui:InvokeWorkflowFile>\n`;
+                    injectedFiles.push(basename);
+                  }
+                });
+                if (invokeBlock) {
+                  processXaml = processXaml.substring(0, closingSeqIdx) + invokeBlock + processXaml.substring(closingSeqIdx);
+                  if (deferredWrites.has(processPath)) {
+                    deferredWrites.set(processPath, processXaml);
+                  } else {
+                    const processEntry = xamlEntries.find(e => e.name.endsWith("Process.xaml"));
+                    if (processEntry) processEntry.content = processXaml;
+                  }
+                  console.log(`[Structural Dedup] Injected InvokeWorkflowFile calls into Process.xaml for: ${injectedFiles.join(", ")}`);
+                }
+              }
+            }
             Array.from(specRetained).forEach(retained => {
-              dependencyWarnings.push({
-                code: "SPEC_WORKFLOW_NOT_WIRED",
-                message: `"${retained}" was generated from spec decomposition but is not reachable from current Main.xaml — flagged as "generated but not wired"`,
-                stage: "structural-deduplication",
-                recoverable: true,
-              });
+              const basename = retained.split("/").pop() || retained;
+              if (injectedFiles.includes(basename)) {
+                dependencyWarnings.push({
+                  code: "SPEC_WORKFLOW_WIRED",
+                  message: `"${retained}" was generated from spec decomposition and has been wired into Process.xaml via InvokeWorkflowFile`,
+                  stage: "structural-deduplication",
+                  recoverable: true,
+                });
+              } else {
+                dependencyWarnings.push({
+                  code: "SPEC_WORKFLOW_NOT_WIRED",
+                  message: `"${retained}" was generated from spec decomposition but could not be auto-wired — flagged as "generated but not wired"`,
+                  stage: "structural-deduplication",
+                  recoverable: true,
+                });
+              }
             });
           }
 
@@ -4996,6 +5105,55 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
       if (!qualityGateResult.passed) {
         console.log(`[UiPath Quality Gate] Validation found ${qualityGateResult.summary.totalErrors} error(s), ${qualityGateResult.summary.totalWarnings} warning(s) — reporting in DHG without remediation`);
+      }
+    }
+
+    {
+      const allXamlForProactive = xamlEntries.map(e => e.content).join("\n");
+      const PROACTIVE_PREFIX_PACKAGES: Record<string, string> = {
+        "umail:": "UiPath.Mail.Activities",
+        "upers:": "UiPath.Persistence.Activities",
+        "uexcel:": "UiPath.Excel.Activities",
+        "uauto:": "UiPath.UIAutomation.Activities",
+        "uweb:": "UiPath.WebAPI.Activities",
+        "uwebapi:": "UiPath.WebAPI.Activities",
+        "udb:": "UiPath.Database.Activities",
+        "ucred:": "UiPath.Credentials.Activities",
+        "utest:": "UiPath.Testing.Activities",
+        "uform:": "UiPath.Form.Activities",
+        "ugs:": "UiPath.GSuite.Activities",
+        "uo365:": "UiPath.MicrosoftOffice365.Activities",
+        "snetmail:": "System",
+      };
+      for (const [prefix, pkgName] of Object.entries(PROACTIVE_PREFIX_PACKAGES)) {
+        if (allXamlForProactive.includes(`<${prefix}`) || allXamlForProactive.includes(`</${prefix}`)) {
+          if (pkgName === "System") continue;
+          if (!deps[pkgName]) {
+            if (catalogService.isLoaded()) {
+              const catalogVersion = catalogService.getPreferredVersion(pkgName);
+              if (catalogVersion) {
+                deps[pkgName] = catalogVersion;
+                autoFixSummary.push(`Proactively added ${pkgName}@${catalogVersion} — ${prefix} activities detected in XAML`);
+                console.log(`[Dependency Proactive] Added ${pkgName}@${catalogVersion} — ${prefix} prefix detected in emitted XAML`);
+                continue;
+              }
+            }
+            const fallback = getBaselineFallbackVersion(pkgName, tf as "Windows" | "Portable");
+            if (fallback) {
+              deps[pkgName] = fallback;
+              autoFixSummary.push(`Proactively added ${pkgName}@${fallback} — ${prefix} activities detected in XAML`);
+              console.log(`[Dependency Proactive] Added ${pkgName}@${fallback} — ${prefix} prefix detected in emitted XAML`);
+            }
+          }
+        }
+      }
+      const hasNewtonsoftTypesProactive = /JObject|JToken|JArray|JsonConvert|Newtonsoft/i.test(allXamlForProactive);
+      if (hasNewtonsoftTypesProactive && !deps["Newtonsoft.Json"]) {
+        const njtVersion = catalogService.isLoaded() ? catalogService.getPreferredVersion("Newtonsoft.Json") : null;
+        const resolvedNjt = njtVersion || "13.0.3";
+        deps["Newtonsoft.Json"] = resolvedNjt;
+        autoFixSummary.push(`Proactively added Newtonsoft.Json@${resolvedNjt} — Newtonsoft types detected in XAML`);
+        console.log(`[Dependency Proactive] Added Newtonsoft.Json@${resolvedNjt} — JSON types detected in emitted XAML`);
       }
     }
 

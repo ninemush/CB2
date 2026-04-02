@@ -250,6 +250,34 @@ export function mapClrFullyQualifiedToXamlPrefix(clrType: string): string | null
   return null;
 }
 
+const EXTRA_XMLNS_FOR_TYPE: Record<string, { prefix: string; namespace: string; assembly: string }> = {
+  "System.Net.Mail.MailMessage": { prefix: "snetmail", namespace: "System.Net.Mail", assembly: "System" },
+  "System.Net.Mail.MailAddress": { prefix: "snetmail", namespace: "System.Net.Mail", assembly: "System" },
+};
+
+export function normalizeVariableTypeAttr(typeAttr: string): string {
+  const clrPrefixed = mapClrFullyQualifiedToXamlPrefix(typeAttr);
+  if (clrPrefixed) {
+    if (clrPrefixed.includes(".") && clrPrefixed.includes(":")) {
+      const colonIdx = clrPrefixed.indexOf(":");
+      const afterPrefix = clrPrefixed.substring(colonIdx + 1);
+      if (afterPrefix.includes(".")) {
+        const extraXmlns = EXTRA_XMLNS_FOR_TYPE[typeAttr];
+        if (extraXmlns) {
+          return `${extraXmlns.prefix}:${typeAttr.split(".").pop()}`;
+        }
+        return typeAttr;
+      }
+    }
+    return clrPrefixed;
+  }
+  if (/^[A-Z][\w.]+\.[A-Z]\w+$/.test(typeAttr) && !typeAttr.includes(":") && !typeAttr.startsWith("clr-namespace:")) {
+    const directPrefixed = mapClrFullyQualifiedToXamlPrefix(typeAttr);
+    if (directPrefixed) return directPrefixed;
+  }
+  return typeAttr;
+}
+
 function mapClrType(type: string, context: MapClrTypeContext = "non-critical"): string {
   const trimmed = type.trim();
   const lower = trimmed.toLowerCase();
@@ -1093,11 +1121,12 @@ export function wrapVariableDefault(val: string, varType: string): string {
   if (/^[0-9]+(\.[0-9]+)?$/.test(trimmed)) return trimmed;
 
   if (isVbExpression(trimmed)) {
+    const hasVbConcatOperator = / & /.test(trimmed) || /&(?!quot;|amp;|lt;|gt;|apos;)/.test(trimmed);
+    const hasVbOperators = hasVbConcatOperator || (/[+]/.test(trimmed) && /\b\w+\.\w+\(/.test(trimmed));
+    if (hasVbOperators) {
+      return `[${trimmed}]`;
+    }
     if (trimmed.startsWith("\"") || trimmed.startsWith("&quot;")) {
-      const hasVbOperators = /[&+]/.test(trimmed) && (/\b\w+\.\w+\(/.test(trimmed) || /&(?!quot;|amp;|lt;|gt;|apos;)/.test(trimmed));
-      if (hasVbOperators) {
-        return `[${trimmed}]`;
-      }
       return trimmed;
     }
     return `[${trimmed}]`;
@@ -1390,6 +1419,9 @@ export function coercePropToString(val: unknown): string {
   }
   if (typeof val === "object") {
     const obj = val as Record<string, unknown>;
+    if (obj.type === "literal" && typeof obj.value === "string") return obj.value;
+    if (obj.type === "vb_expression" && typeof obj.value === "string") return obj.value;
+    if (obj.type === "variable" && typeof obj.name === "string") return obj.name;
     if (typeof obj.value === "string") return obj.value;
     if (typeof obj.name === "string") return obj.name;
   }
@@ -1455,8 +1487,10 @@ export function resolveActivityTemplate(
   }
 
   if (templateName === "InvokeWorkflowFile") {
-    const fileName = (getPropString(props, "WorkflowFileName", "workflowFileName") || "Workflow.xaml")
+    let fileName = (getPropString(props, "WorkflowFileName", "workflowFileName") || "Workflow.xaml")
       .replace(/&quot;/g, "").replace(/^"+|"+$/g, "").trim();
+    fileName = fileName.replace(/\{type:[^}]*,value:([^}]*)\}/g, "$1").replace(/[{}]/g, "");
+    if (!fileName.endsWith(".xaml")) fileName += ".xaml";
     return applyCatalogConformance(`<ui:InvokeWorkflowFile WorkflowFileName="${escapeXml(fileName)}" DisplayName="${displayName}">\n` +
       `  <ui:InvokeWorkflowFile.Arguments>\n` +
       `  </ui:InvokeWorkflowFile.Arguments>\n` +
@@ -1473,6 +1507,14 @@ export function resolveActivityTemplate(
 
   if (templateName === "SendSmtpMailMessage") {
     return applyCatalogConformance(resolveSendSmtpMailMessageTemplate(node));
+  }
+
+  if (templateName === "GetImapMailMessage") {
+    return applyCatalogConformance(resolveGetImapMailMessageTemplate(node));
+  }
+
+  if (templateName === "CreateFormTask") {
+    return applyCatalogConformance(resolveCreateFormTaskTemplate(node));
   }
 
   if (templateName === "HttpClient") {
@@ -1758,6 +1800,65 @@ function resolveSendSmtpMailMessageTemplate(node: ActivityNode): string {
   if (password) attrs += ` Password="${escapeXml(wrapSmtpPropValue(password))}"`;
 
   return `<ui:SendSmtpMailMessage ${attrs} />`;
+}
+
+function resolveGetImapMailMessageTemplate(node: ActivityNode): string {
+  const props = node.properties || {};
+  const displayName = escapeXml(node.displayName);
+  const server = getPropString(props, "Server", "server") || "PLACEHOLDER_ImapServer";
+  const port = getPropString(props, "Port", "port") || "993";
+  const email = getPropString(props, "Email", "email") || "PLACEHOLDER_Email";
+  const password = getPropString(props, "Password", "password") || "PLACEHOLDER_Password";
+  const secureConnection = getPropString(props, "SecureConnection", "secureConnection") || "Auto";
+  const top = getPropString(props, "Top", "top") || "30";
+  const mailFolder = getPropString(props, "MailFolder", "mailFolder") || "Inbox";
+  const onlyUnread = getPropString(props, "OnlyUnreadMessages", "onlyUnreadMessages") || "True";
+  const outputVar = node.outputVar || getPropString(props, "Messages", "messages") || "list_Messages";
+
+  let attrs = `DisplayName="${displayName}"`;
+  attrs += ` Server="${escapeXml(wrapSmtpPropValue(server))}"`;
+  attrs += ` Port="${escapeXml(port)}"`;
+  attrs += ` Email="${escapeXml(wrapSmtpPropValue(email))}"`;
+  attrs += ` Password="${escapeXml(wrapSmtpPropValue(password))}"`;
+  attrs += ` SecureConnection="${escapeXml(secureConnection)}"`;
+  attrs += ` Top="${escapeXml(top)}"`;
+  attrs += ` MailFolder="${escapeXml(wrapSmtpPropValue(mailFolder))}"`;
+  attrs += ` OnlyUnreadMessages="${escapeXml(onlyUnread)}"`;
+
+  return `<umail:GetImapMailMessage ${attrs}>\n` +
+    `  <umail:GetImapMailMessage.Messages>\n` +
+    `    <OutArgument x:TypeArguments="scg:List(snetmail:MailMessage)">[${outputVar}]</OutArgument>\n` +
+    `  </umail:GetImapMailMessage.Messages>\n` +
+    `</umail:GetImapMailMessage>`;
+}
+
+function resolveCreateFormTaskTemplate(node: ActivityNode): string {
+  const props = node.properties || {};
+  const displayName = escapeXml(node.displayName);
+  const title = getPropString(props, "Title", "title") || "PLACEHOLDER_FormTitle";
+  const formSchemaPath = getPropString(props, "FormSchemaPath", "formSchemaPath") || "PLACEHOLDER_FormSchemaPath";
+  const taskDataJson = getPropString(props, "TaskDataJson", "taskDataJson");
+  const taskCatalog = getPropString(props, "TaskCatalog", "taskCatalog");
+  const taskFolder = getPropString(props, "TaskFolder", "taskFolder");
+  const outputVar = node.outputVar || getPropString(props, "TaskObject", "taskObject") || "obj_FormTask";
+
+  let attrs = `DisplayName="${displayName}"`;
+  attrs += ` Title="${escapeXml(wrapSmtpPropValue(title))}"`;
+  attrs += ` FormSchemaPath="${escapeXml(wrapSmtpPropValue(formSchemaPath))}"`;
+  if (taskCatalog) attrs += ` TaskCatalog="${escapeXml(wrapSmtpPropValue(taskCatalog))}"`;
+  if (taskFolder) attrs += ` TaskFolder="${escapeXml(wrapSmtpPropValue(taskFolder))}"`;
+
+  let childParts = "";
+  if (taskDataJson) {
+    childParts += `  <upers:CreateFormTask.TaskDataJson>\n` +
+      `    <InArgument x:TypeArguments="x:String">[${taskDataJson}]</InArgument>\n` +
+      `  </upers:CreateFormTask.TaskDataJson>\n`;
+  }
+  childParts += `  <upers:CreateFormTask.TaskObject>\n` +
+    `    <OutArgument x:TypeArguments="upers:FormTaskData">[${outputVar}]</OutArgument>\n` +
+    `  </upers:CreateFormTask.TaskObject>\n`;
+
+  return `<upers:CreateFormTask ${attrs}>\n${childParts}</upers:CreateFormTask>`;
 }
 
 function resolveHttpClientTemplate(node: ActivityNode): string {
@@ -2247,6 +2348,7 @@ function assembleSequenceNode(
           if (defaultType) typeAttr = defaultType;
         }
       }
+      typeAttr = normalizeVariableTypeAttr(typeAttr);
       let defaultAttr = "";
       if (v.default) {
         const isObjectType = typeAttr === "x:Object" || typeAttr.includes("System.Object");
@@ -2737,6 +2839,7 @@ function buildVariablesBlock(variables: VariableDeclaration[]): string {
         if (defaultType) typeAttr = defaultType;
       }
     }
+    typeAttr = normalizeVariableTypeAttr(typeAttr);
     let defaultAttr = "";
     if (v.default) {
       const isObjectType = typeAttr === "x:Object" || typeAttr.includes("System.Object");

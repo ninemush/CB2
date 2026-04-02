@@ -12,7 +12,8 @@ import {
 import type { PropertyValue } from "../workflow-spec-types";
 import { checkStudioLoadability, resolveDependencies } from "../package-assembler";
 import { runQualityGate, type QualityGateInput } from "../uipath-quality-gate";
-import { normalizeXaml, smartBracketWrap } from "../xaml/xaml-compliance";
+import { normalizeXaml, smartBracketWrap, injectMissingNamespaceDeclarations } from "../xaml/xaml-compliance";
+import { normalizePropertyToValueIntent } from "../xaml/expression-builder";
 import { scanXamlForRequiredPackages } from "../uipath-activity-registry";
 import { metadataService } from "../catalog/metadata-service";
 import { ACTIVITY_DEFINITIONS_REGISTRY } from "../catalog/activity-definitions";
@@ -634,6 +635,71 @@ SAP GUI, Supplier Portal at https://supplier.example.com, Excel, Outlook
           expect(getTransXaml).toMatch(/<InArgument[^>]*>[^<]*BirthdayQueue|QueueName/);
         }
       });
+    });
+  });
+
+  describe("Task #387 regression locks", () => {
+    it("T008: file paths are classified as literals, not variable references", () => {
+      const xamlFile = normalizePropertyToValueIntent("InitAllSettings.xaml", "InvokeWorkflowFile", "WorkflowFileName");
+      expect(xamlFile.type).toBe("literal");
+      expect(xamlFile.value).toBe("InitAllSettings.xaml");
+
+      const excelFile = normalizePropertyToValueIntent("Config.xlsx", "ExcelReadRange", "WorkbookPath");
+      expect(excelFile.type).toBe("literal");
+      expect(excelFile.value).toBe("Config.xlsx");
+
+      const jsonFile = normalizePropertyToValueIntent("data.json", "ReadTextFile", "FileName");
+      expect(jsonFile.type).toBe("literal");
+      expect(jsonFile.value).toBe("data.json");
+
+      const dotProp = normalizePropertyToValueIntent("item.Status");
+      expect(dotProp.type).toBe("variable");
+      expect(dotProp.name).toBe("item.Status");
+    });
+
+    it("T009: xmlns injection detects prefixes in x:TypeArguments attributes", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence DisplayName="Test">
+    <Variable x:TypeArguments="scg:List(snetmail:MailMessage)" Name="mailList" />
+  </Sequence>
+</Activity>`;
+      const result = injectMissingNamespaceDeclarations(xaml);
+      expect(result.injected).toContain("snetmail");
+      expect(result.xml).toContain('xmlns:snetmail="clr-namespace:System.Net.Mail;assembly=System"');
+    });
+
+    it("T010: wrapVariableDefault does not bracket-wrap file paths", () => {
+      const configPath = wrapVariableDefault("Data\\\\Config.xlsx", "System.String");
+      expect(configPath).not.toContain("[");
+
+      const xamlPath = wrapVariableDefault("InitAllSettings.xaml", "System.String");
+      expect(xamlPath).not.toContain("[");
+    });
+
+    it("T011: InvokeWorkflowFile filenames remain unbracketted through full pipeline", () => {
+      const { xamlEntries } = assemblePipeline(
+        simpleLinearNodes,
+        simpleLinearEdges,
+        "HR_Report_Download",
+        simpleLinearSdd,
+      );
+      const mainEntry = xamlEntries.find(e => e.name === "Main.xaml");
+      expect(mainEntry).toBeDefined();
+      const wfnMatches = mainEntry!.content.match(/WorkflowFileName="([^"]*)"/g) || [];
+      for (const match of wfnMatches) {
+        expect(match).not.toContain("[");
+        expect(match).not.toContain("]");
+      }
+
+      for (const entry of xamlEntries) {
+        if (entry.name.includes("InitAllSettings")) {
+          expect(entry.name).toBe("InitAllSettings.xaml");
+        }
+      }
     });
   });
 });
