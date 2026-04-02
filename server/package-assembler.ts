@@ -1146,7 +1146,7 @@ function runPostAssemblyValidation(
     warnings.push(`${unreachable.size} XAML file(s) unreachable from Main.xaml: ${Array.from(unreachable).join(", ")}`);
   }
 
-  const allXamlContent = [
+  let allXamlContent = [
     ...xamlEntries.map(e => e.content),
     ...Array.from(deferredWrites.entries())
       .filter(([p]) => p.endsWith(".xaml"))
@@ -1199,7 +1199,8 @@ function runPostAssemblyValidation(
 
   if (allXamlContent.includes("<ui:RetryScope")) {
     if (allXamlContent.includes("<ui:RetryScope.Body>")) {
-      errors.push("RetryScope uses explicit .Body property element — Studio 25.10 requires default content property");
+      allXamlContent = allXamlContent.replace(/<ui:RetryScope\.Body>\s*/g, "").replace(/\s*<\/ui:RetryScope\.Body>/g, "");
+      warnings.push("RetryScope had explicit .Body property element — unwrapped to use default content property");
     }
     const retryScopeBlocks = /<ui:RetryScope\s[^>]*>[\s\S]*?<\/ui:RetryScope>/g;
     let rsMatch;

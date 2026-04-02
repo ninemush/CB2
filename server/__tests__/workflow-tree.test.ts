@@ -985,11 +985,53 @@ describe("Workflow Tree Architecture", () => {
       expect(result.errors[0]).toContain("ActivityAction");
     });
 
-    it("flags lingering RetryScope.Body as irrecoverable", () => {
-      const xaml = `<ui:RetryScope><ui:RetryScope.Body><Sequence /></ui:RetryScope.Body></ui:RetryScope>`;
+    it("repairs lingering RetryScope.Body by unwrapping content", () => {
+      const xaml = `<ui:RetryScope><ui:RetryScope.Body><Sequence DisplayName="Inner" /></ui:RetryScope.Body></ui:RetryScope>`;
       const result = validateContainerChildModel(xaml, "TestWf");
-      expect(result.errors.length).toBeGreaterThan(0);
-      expect(result.errors[0]).toContain(".Body");
+      expect(result.errors.length).toBe(0);
+      expect(result.repairs.some((r: string) => r.includes(".Body"))).toBe(true);
+      expect(result.repairedXaml).toContain(`<Sequence DisplayName="Inner" />`);
+      expect(result.repairedXaml).not.toContain("<ui:RetryScope.Body>");
+    });
+
+    it("compliance normalizer expands self-closing ui:RetryScope without .Body wrapper", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="Test"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="Main">
+    <ui:RetryScope NumberOfRetries="3" RetryInterval="00:00:05" DisplayName="Retry" />
+  </Sequence>
+</Activity>`;
+      const result = makeUiPathCompliant(xaml);
+      expect(result).not.toContain("<ui:RetryScope.Body>");
+      expect(result).toContain("<Sequence");
+      expect(result).toContain("<ui:RetryScope.Condition>");
+      expect(result).toContain("<ui:ShouldRetry />");
+    });
+
+    it("compliance normalizer expands self-closing unprefixed RetryScope without .Body wrapper", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="Test"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="Main">
+    <RetryScope NumberOfRetries="2" DisplayName="Retry" />
+  </Sequence>
+</Activity>`;
+      const result = makeUiPathCompliant(xaml);
+      expect(result).not.toContain("<ui:RetryScope.Body>");
+      expect(result).toContain("<Sequence");
+      expect(result).toContain("<ui:RetryScope.Condition>");
+      expect(result).toContain("<ui:ShouldRetry />");
     });
 
     it("auto-repairs self-closing Transition without Condition", () => {

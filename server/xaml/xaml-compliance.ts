@@ -1827,12 +1827,10 @@ export function normalizeXaml(rawXaml: string, targetFramework: TargetFramework 
             </${tag}>`;
     }
     return `<${tag} ${attrs}>
-              <${tag}.Body>
-                <Sequence DisplayName="Retry Body" />
-              </${tag}.Body>
               <${tag}.Condition>
                 <ui:ShouldRetry />
               </${tag}.Condition>
+              <Sequence DisplayName="Retry Body" />
             </${tag}>`;
   });
 
@@ -1845,12 +1843,10 @@ export function normalizeXaml(rawXaml: string, targetFramework: TargetFramework 
   });
   xml = xml.replace(/<(RetryScope)\s+([^>]*?)\/>/g, (match, tag, attrs) => {
     return `<ui:${tag} ${attrs}>
-              <ui:${tag}.Body>
-                <Sequence DisplayName="Retry Body" />
-              </ui:${tag}.Body>
               <ui:${tag}.Condition>
                 <ui:ShouldRetry />
               </ui:${tag}.Condition>
+              <Sequence DisplayName="Retry Body" />
             </ui:${tag}>`;
   });
 

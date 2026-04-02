@@ -3757,7 +3757,8 @@ export function validateContainerChildModel(xaml: string, workflowName: string):
   }
 
   if (patched.includes("<ui:RetryScope.Body>")) {
-    errors.push("RetryScope still uses explicit .Body property element after all code paths — must use default content property");
+    patched = patched.replace(/<ui:RetryScope\.Body>\s*/g, "").replace(/\s*<\/ui:RetryScope\.Body>/g, "");
+    repairs.push("RetryScope had explicit .Body property element — unwrapped to use default content property");
   }
 
   const retryScopePattern = /<ui:RetryScope\s[^>]*>[\s\S]*?<\/ui:RetryScope>/g;
