@@ -249,8 +249,89 @@ function clrToXamlType(clrType: string): string {
     "System.DateTime": "s:DateTime",
     "System.TimeSpan": "s:TimeSpan",
     "System.Exception": "s:Exception",
+    "System.Data.DataTable": "scg:DataTable",
+    "System.Data.DataRow": "scg:DataRow",
+    "UiPath.Core.QueueItem": "ui:QueueItem",
+    "UiPath.Core.DataTypes.TransactionItem": "ui:TransactionItem",
+    "System.Security.SecureString": "s:Security.SecureString",
+    "System.Net.Mail.MailMessage": "s:Net.Mail.MailMessage",
+    "System.Collections.Generic.Dictionary`2[System.String,System.Object]": "scg:Dictionary(x:String, x:Object)",
+    "System.Collections.Generic.List`1[System.String]": "scg:List(x:String)",
+    "System.Collections.Generic.List`1[System.Object]": "scg:List(x:Object)",
   };
   return map[clrType] || "x:String";
+}
+
+function sanitizeClrTypeArguments(xamlContent: string): string {
+  return xamlContent.replace(
+    /x:TypeArguments="(\{[^"]+\})"/g,
+    (_match, clrExpr: string) => {
+      let cleaned = clrExpr
+        .replace(/\{http:\/\/schemas\.microsoft\.com\/netfx\/2009\/xaml\/activities\}Variable\(([^)]+)\)/g, (_m, inner: string) => {
+          const resolved = resolveClrTypeRef(inner);
+          return `Variable(${resolved})`;
+        })
+        .replace(/\{http:\/\/[^}]+\}(\w+)/g, (_m, typeName: string) => {
+          return resolveClrTypeName(typeName);
+        });
+      if (cleaned.startsWith("{")) {
+        cleaned = "x:String";
+      }
+      return `x:TypeArguments="${cleaned}"`;
+    }
+  );
+}
+
+function resolveClrTypeRef(clrRef: string): string {
+  const trimmed = clrRef.trim();
+  if (trimmed.startsWith("{")) {
+    const nameMatch = trimmed.match(/\}(\w+)$/);
+    if (nameMatch) {
+      return resolveClrTypeName(nameMatch[1]);
+    }
+  }
+  return trimmed;
+}
+
+function resolveClrTypeName(name: string): string {
+  const typeMap: Record<string, string> = {
+    "Variable": "Variable",
+    "String": "x:String",
+    "Object": "x:Object",
+    "Boolean": "x:Boolean",
+    "Int32": "x:Int32",
+    "Int64": "x:Int64",
+    "Double": "x:Double",
+    "DateTime": "s:DateTime",
+    "TimeSpan": "s:TimeSpan",
+    "Exception": "s:Exception",
+    "DataTable": "scg:DataTable",
+    "DataRow": "scg:DataRow",
+    "QueueItem": "ui:QueueItem",
+    "TransactionItem": "ui:TransactionItem",
+    "SecureString": "s:Security.SecureString",
+    "MailMessage": "s:Net.Mail.MailMessage",
+  };
+  return typeMap[name] || `x:${name}`;
+}
+
+const VALUE_INTENT_PATTERNS = [
+  /\{"type":"[^"]*","value":"([^"]*)"\}/g,
+  /\{&quot;type&quot;:&quot;[^&]*&quot;,&quot;value&quot;:&quot;([^&]*)&quot;\}/g,
+  /\{type:[^,]*,value:([^}]*)\}/g,
+];
+
+function sweepValueIntentFromXaml(xamlContent: string): { content: string; repairCount: number } {
+  let content = xamlContent;
+  let repairCount = 0;
+  for (const pattern of VALUE_INTENT_PATTERNS) {
+    const regex = new RegExp(pattern.source, "g");
+    content = content.replace(regex, (_match, innerValue: string) => {
+      repairCount++;
+      return innerValue;
+    });
+  }
+  return { content, repairCount };
 }
 
 export function isValidNuGetVersion(version: string): boolean {
@@ -630,6 +711,31 @@ export function checkStudioLoadability(xamlContent: string): StudioLoadabilityRe
     return { loadable: false, reason: "No <Sequence>, <Flowchart>, or <StateMachine> child — Studio will report DynamicActivity/Implementation is null", repairable: true };
   }
 
+  if (/x:TypeArguments="\{http:\/\//.test(xamlContent)) {
+    return { loadable: false, reason: "Variable declarations contain CLR namespace format in x:TypeArguments — Studio cannot resolve these type references", repairable: true };
+  }
+
+  const activityOpenEnd = xamlContent.match(/<Activity\b[\s\S]*?>/);
+  if (activityOpenEnd) {
+    const afterActivityOpen = xamlContent.substring(activityOpenEnd.index! + activityOpenEnd[0].length);
+    const xMembersEnd = afterActivityOpen.match(/<\/x:Members>/);
+    const contentAfterMembers = xMembersEnd
+      ? afterActivityOpen.substring(xMembersEnd.index! + xMembersEnd[0].length)
+      : afterActivityOpen;
+    const metadataSkipped = contentAfterMembers
+      .replace(/<mva:VisualBasic\.Settings[\s\S]*?<\/mva:VisualBasic\.Settings>/g, "")
+      .replace(/<TextExpression\.NamespacesForImplementation[\s\S]*?<\/TextExpression\.NamespacesForImplementation>/g, "")
+      .replace(/<TextExpression\.ReferencesForImplementation[\s\S]*?<\/TextExpression\.ReferencesForImplementation>/g, "")
+      .trim();
+    const firstElementMatch = metadataSkipped.match(/<([A-Za-z][\w]*)\b/);
+    if (firstElementMatch) {
+      const firstTag = firstElementMatch[1];
+      if (firstTag !== "Sequence" && firstTag !== "Flowchart" && firstTag !== "StateMachine") {
+        return { loadable: false, reason: `First child of Activity is <${firstTag}> instead of Sequence/Flowchart/StateMachine — Studio requires a direct implementation child`, repairable: true };
+      }
+    }
+  }
+
   const openTags: string[] = [];
   const structuralTagPattern = /<\/?(?:Activity|Sequence|Flowchart|StateMachine|TryCatch|If|While|DoWhile|ForEach|Switch|Pick|Parallel)\b(?!\.)[^>]*\/?>/gi;
   let match;
@@ -692,6 +798,11 @@ function repairMissingImplementation(xamlContent: string, fileName: string): { r
   let content = xamlContent;
 
   content = ensureStubNamespaces(content);
+
+  if (/x:TypeArguments="\{http:\/\//.test(content)) {
+    content = sanitizeClrTypeArguments(content);
+    console.log(`[UiPath] Repaired CLR namespace type arguments in "${fileName}"`);
+  }
 
   const loadResult = checkStudioLoadability(content);
   if (loadResult.loadable) {
@@ -1112,6 +1223,123 @@ interface PostAssemblyValidationResult {
   passed: boolean;
   errors: string[];
   warnings: string[];
+  remediations: Array<{ code: string; detail: string }>;
+}
+
+const PROPERTY_NAME_CORRECTIONS: Array<{
+  activityClass: string;
+  wrong: string;
+  correct: string;
+  note: string;
+}> = [
+  { activityClass: "GetTransactionItem", wrong: "QueueItemName", correct: "QueueName", note: "UiPath.Core.Activities 23.10+: property is QueueName (InArgument child element), not QueueItemName" },
+  { activityClass: "SetTransactionStatus", wrong: "StatusInfo", correct: "Status", note: "UiPath.Core.Activities 23.10+: property is Status, not StatusInfo" },
+];
+
+function getPlaceholderForClrType(clrType: string): string {
+  const placeholders: Record<string, string> = {
+    "System.String": "PLACEHOLDER",
+    "System.Int32": "0",
+    "System.Int64": "0",
+    "System.Boolean": "False",
+    "System.Double": "0.0",
+    "System.TimeSpan": "00:00:00",
+    "System.Object": "Nothing",
+  };
+  return placeholders[clrType] || "PLACEHOLDER";
+}
+
+function repairTransitionsInXaml(xamlContent: string): { content: string; repairs: string[]; unrepaired: string[] } {
+  let content = xamlContent;
+  const repairs: string[] = [];
+  const unrepaired: string[] = [];
+
+  const stateNameMatches = Array.from(content.matchAll(/x:Name="([^"]+)"/g));
+  const stateNames = stateNameMatches.map(m => m[1]);
+
+  const finalStatePattern = /<State\s[^>]*IsFinal="True"[^>]*x:Name="([^"]+)"/g;
+  const finalStateNames: string[] = [];
+  let fsMatch;
+  while ((fsMatch = finalStatePattern.exec(content)) !== null) {
+    finalStateNames.push(fsMatch[1]);
+  }
+
+  const transPattern = /<Transition\s([^>]*?)(\/>|>)/g;
+  let tMatch;
+  while ((tMatch = transPattern.exec(content)) !== null) {
+    const attrs = tMatch[1];
+    if (attrs.includes('To="')) continue;
+
+    const displayNameMatch = attrs.match(/DisplayName="([^"]*)"/);
+    const dn = displayNameMatch ? displayNameMatch[1] : "Transition";
+
+    let targetState: string | null = null;
+    if (finalStateNames.length === 1) {
+      targetState = finalStateNames[0];
+    } else if (stateNames.length === 1) {
+      targetState = stateNames[0];
+    }
+
+    if (targetState) {
+      const original = tMatch[0];
+      const repaired = original.replace(
+        tMatch[2] === "/>" ? /\/>$/ : />$/,
+        ` To="{x:Reference ${targetState}}"${tMatch[2]}`
+      );
+      content = content.replace(original, repaired);
+      repairs.push(`Transition "${dn}" repaired with target "${targetState}"`);
+    } else {
+      unrepaired.push(`Transition "${dn}" missing To attribute — no safe target inferable (${stateNames.length} states, ${finalStateNames.length} final)`);
+    }
+  }
+
+  return { content, repairs, unrepaired };
+}
+
+function applyPropertyNameCorrections(
+  deferredWrites: Map<string, string>,
+  xamlEntries: Array<{ name: string; content: string }>,
+  remediations: Array<{ code: string; detail: string }>,
+): void {
+  for (const correction of PROPERTY_NAME_CORRECTIONS) {
+    const wrongPattern = new RegExp(`(${correction.activityClass}[.\\s][^>]*)\\b${correction.wrong}="([^"]*)"`, "g");
+    Array.from(deferredWrites.entries()).forEach(([path, content]) => {
+      if (!path.endsWith(".xaml")) return;
+      const fileName = path.split("/").pop() || path;
+      let updated = content;
+      let corrected = false;
+      updated = updated.replace(wrongPattern, (match: string, prefix: string, value: string) => {
+        if (catalogService.isLoaded()) {
+          const schema = catalogService.getActivitySchema(correction.activityClass);
+          if (schema) {
+            const hasProp = schema.activity.properties.some(p => p.name === correction.wrong);
+            if (hasProp) return match;
+          }
+        }
+        corrected = true;
+        return `${prefix}${correction.correct}="${value}"`;
+      });
+      if (corrected) {
+        deferredWrites.set(path, updated);
+        remediations.push({
+          code: "PROPERTY_NAME_CORRECTED",
+          detail: `${fileName}: ${correction.activityClass}.${correction.wrong} → ${correction.correct} (${correction.note})`,
+        });
+        console.log(`[Post-Assembly] Property correction in ${fileName}: ${correction.activityClass}.${correction.wrong} → ${correction.correct}`);
+      }
+    });
+    for (const entry of xamlEntries) {
+      let updated = entry.content;
+      let corrected = false;
+      updated = updated.replace(wrongPattern, (_match: string, prefix: string, value: string) => {
+        corrected = true;
+        return `${prefix}${correction.correct}="${value}"`;
+      });
+      if (corrected) {
+        entry.content = updated;
+      }
+    }
+  }
 }
 
 function runPostAssemblyValidation(
@@ -1125,6 +1353,9 @@ function runPostAssemblyValidation(
 ): PostAssemblyValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
+  const remediations: Array<{ code: string; detail: string }> = [];
+
+  applyPropertyNameCorrections(deferredWrites, xamlEntries, remediations);
 
   for (const [pkgName, version] of Object.entries(deps)) {
     const metaVersion = _metadataService.getPreferredVersion(pkgName);
@@ -1141,6 +1372,22 @@ function runPostAssemblyValidation(
       errors.push(`studioVersion "${studioVersion}" is not from a validated source (studio profile or metadata service)`);
     } else if (validatedVersion !== studioVersion) {
       warnings.push(`studioVersion "${studioVersion}" differs from validated source version "${validatedVersion}"`);
+    }
+  }
+
+  Array.from(deferredWrites.entries()).forEach(([path, content]) => {
+    if (!path.endsWith(".xaml")) return;
+    const viSweep = sweepValueIntentFromXaml(content);
+    if (viSweep.repairCount > 0) {
+      deferredWrites.set(path, viSweep.content);
+      const fn = path.split("/").pop() || path;
+      console.log(`[Post-Assembly] Pre-reachability ValueIntent sweep: cleaned ${viSweep.repairCount} fragment(s) in ${fn}`);
+    }
+  });
+  for (const entry of xamlEntries) {
+    const viSweep = sweepValueIntentFromXaml(entry.content);
+    if (viSweep.repairCount > 0) {
+      entry.content = viSweep.content;
     }
   }
 
@@ -1164,7 +1411,29 @@ function runPostAssemblyValidation(
   }
 
   if (unreachable.size > 0) {
-    warnings.push(`${unreachable.size} XAML file(s) unreachable from Main.xaml: ${Array.from(unreachable).join(", ")}`);
+    const allFileCanonicals = new Map<string, string>();
+    Array.from(reachable).forEach(f => {
+      const bn = (f.split("/").pop() || f).replace(/\.xaml$/i, "");
+      allFileCanonicals.set(canonicalizeWorkflowName(bn), f);
+    });
+
+    const trulyUnreachable: string[] = [];
+    Array.from(unreachable).forEach(file => {
+      const bn = (file.split("/").pop() || file).replace(/\.xaml$/i, "");
+      const canonical = canonicalizeWorkflowName(bn);
+      if (allFileCanonicals.has(canonical)) {
+        remediations.push({
+          code: "REACHABILITY_IDENTITY_DRIFT",
+          detail: `"${file}" unreachable due to pre-canonicalization identity drift — canonical name "${canonical}" matches reachable file "${allFileCanonicals.get(canonical)}"`,
+        });
+      } else {
+        trulyUnreachable.push(file);
+      }
+    });
+
+    if (trulyUnreachable.length > 0) {
+      warnings.push(`${trulyUnreachable.length} XAML file(s) unreachable from Main.xaml: ${trulyUnreachable.join(", ")}`);
+    }
   }
 
   let allXamlContent = [
@@ -1254,54 +1523,95 @@ function runPostAssemblyValidation(
   }
 
   if (catalogService.isLoaded()) {
+    const missingPropRepairs: Array<{ activityTag: string; propName: string; placeholder: string }> = [];
     const activityTagPattern = /<((?:[a-z]+:)?[A-Z][A-Za-z]+)\s([^>]*?)(?:\/>|>)/g;
     let actFamilyMatch;
     const checkedActivities = new Set<string>();
     while ((actFamilyMatch = activityTagPattern.exec(allXamlContent)) !== null) {
       const activityTag = actFamilyMatch[1];
-      if (checkedActivities.has(activityTag)) {
-        const tagStr = actFamilyMatch[0];
-        const schema = catalogService.getActivitySchema(activityTag);
-        if (!schema) continue;
-        for (const propDef of schema.activity.properties) {
-          if (!propDef.required) continue;
-          if (!tagStr.includes(`${propDef.name}="`)) {
-            const closeTag = `</${activityTag}>`;
-            const endIdx = allXamlContent.indexOf(closeTag, actFamilyMatch.index);
-            const bodySection = endIdx > 0 ? allXamlContent.substring(actFamilyMatch.index, endIdx) : tagStr;
-            if (!bodySection.includes(`${activityTag}.${propDef.name}`)) {
-              warnings.push(`${schema.activity.displayName || activityTag} activity is missing required property "${propDef.name}"`);
-            }
-          }
-        }
-        continue;
-      }
-      checkedActivities.add(activityTag);
       const tagStr = actFamilyMatch[0];
       const schema = catalogService.getActivitySchema(activityTag);
-      if (!schema) continue;
+      if (!schema) {
+        checkedActivities.add(activityTag);
+        continue;
+      }
       for (const propDef of schema.activity.properties) {
         if (!propDef.required) continue;
-        if (!tagStr.includes(`${propDef.name}="`)) {
-          const closeTag = `</${activityTag}>`;
-          const endIdx = allXamlContent.indexOf(closeTag, actFamilyMatch.index);
-          const bodySection = endIdx > 0 ? allXamlContent.substring(actFamilyMatch.index, endIdx) : tagStr;
-          if (!bodySection.includes(`${activityTag}.${propDef.name}`)) {
-            warnings.push(`${schema.activity.displayName || activityTag} activity is missing required property "${propDef.name}"`);
-          }
+        if (tagStr.includes(`${propDef.name}="`)) continue;
+        const closeTag = `</${activityTag}>`;
+        const endIdx = allXamlContent.indexOf(closeTag, actFamilyMatch.index);
+        const bodySection = endIdx > 0 ? allXamlContent.substring(actFamilyMatch.index, endIdx) : tagStr;
+        if (bodySection.includes(`${activityTag}.${propDef.name}`)) continue;
+
+        const placeholder = getPlaceholderForClrType(propDef.clrType || "System.String");
+        missingPropRepairs.push({ activityTag, propName: propDef.name, placeholder });
+        warnings.push(`${schema.activity.displayName || activityTag} activity is missing required property "${propDef.name}" — auto-injected placeholder`);
+        remediations.push({
+          code: "MISSING_REQUIRED_PROPERTY_INJECTED",
+          detail: `${activityTag}.${propDef.name} set to ${placeholder} — developer must provide actual value`,
+        });
+      }
+      checkedActivities.add(activityTag);
+    }
+
+    if (missingPropRepairs.length > 0) {
+      for (const repair of missingPropRepairs) {
+        const attrInjection = ` ${repair.propName}="${repair.placeholder}"`;
+        const selfClosingPattern = new RegExp(`(<${repair.activityTag}\\s[^>]*?)(/?>)`, "g");
+        const applyRepair = (content: string): string => {
+          return content.replace(selfClosingPattern, (match: string, prefix: string, closing: string) => {
+            if (match.includes(`${repair.propName}="`)) return match;
+            return `${prefix}${attrInjection}${closing}`;
+          });
+        };
+        Array.from(deferredWrites.entries()).forEach(([path, content]) => {
+          if (!path.endsWith(".xaml")) return;
+          const updated = applyRepair(content);
+          if (updated !== content) deferredWrites.set(path, updated);
+        });
+        for (const entry of xamlEntries) {
+          entry.content = applyRepair(entry.content);
         }
       }
+      console.log(`[Post-Assembly] Auto-injected ${missingPropRepairs.length} missing required property placeholder(s)`);
     }
   }
 
-  const transitionTags = /<Transition\s[^>]*>/g;
-  let transValidMatch;
-  while ((transValidMatch = transitionTags.exec(allXamlContent)) !== null) {
-    const tag = transValidMatch[0];
-    if (!tag.includes('To="{x:Reference')) {
-      if (!tag.includes('To="')) {
-        warnings.push("Transition is missing To attribute — every Transition must specify a target State");
+  {
+    let transitionRepairCount = 0;
+    Array.from(deferredWrites.entries()).forEach(([path, content]) => {
+      if (!path.endsWith(".xaml")) return;
+      if (!content.includes("<Transition")) return;
+      const transResult = repairTransitionsInXaml(content);
+      if (transResult.repairs.length > 0) {
+        deferredWrites.set(path, transResult.content);
+        transitionRepairCount += transResult.repairs.length;
+        transResult.repairs.forEach(r => {
+          remediations.push({ code: "TRANSITION_REPAIRED", detail: r });
+        });
       }
+      transResult.unrepaired.forEach(u => {
+        warnings.push(u);
+        remediations.push({ code: "TRANSITION_UNREPAIRED", detail: u });
+      });
+    });
+    for (const entry of xamlEntries) {
+      if (!entry.content.includes("<Transition")) continue;
+      const transResult = repairTransitionsInXaml(entry.content);
+      if (transResult.repairs.length > 0) {
+        entry.content = transResult.content;
+        transitionRepairCount += transResult.repairs.length;
+        transResult.repairs.forEach(r => {
+          remediations.push({ code: "TRANSITION_REPAIRED", detail: r });
+        });
+      }
+      transResult.unrepaired.forEach(u => {
+        warnings.push(u);
+        remediations.push({ code: "TRANSITION_UNREPAIRED", detail: u });
+      });
+    }
+    if (transitionRepairCount > 0) {
+      console.log(`[Post-Assembly] Repaired ${transitionRepairCount} Transition(s) with missing To attributes`);
     }
   }
 
@@ -1318,12 +1628,13 @@ function runPostAssemblyValidation(
     }
   }
 
-  console.log(`[Post-Assembly Validation] Activity family checks complete: ${warnings.length} warning(s), ${errors.length} error(s)`);
+  console.log(`[Post-Assembly Validation] Activity family checks complete: ${warnings.length} warning(s), ${errors.length} error(s), ${remediations.length} remediation(s)`);
 
   return {
     passed: errors.length === 0,
     errors,
     warnings,
+    remediations,
   };
 }
 
@@ -4388,7 +4699,10 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         if (m) missingFiles.add(m[1]);
       }
       for (const rawMissingFile of Array.from(missingFiles)) {
-        const missingFile = rawMissingFile.replace(/\\/g, "/").replace(/^[./]+/, "");
+        const rawCleaned = rawMissingFile.replace(/\\/g, "/").replace(/^[./]+/, "");
+        const baseName = rawCleaned.replace(/\.xaml$/i, "");
+        const normalizedBase = normalizeWorkflowName(baseName);
+        const missingFile = normalizedBase + (rawCleaned.toLowerCase().endsWith(".xaml") ? ".xaml" : "");
         const stubXaml = generateStubWorkflow(missingFile);
         const stubCompliant = compliancePass(stubXaml, missingFile, true);
         deferredWrites.set(`${libPath}/${missingFile}`, stubCompliant);
@@ -6503,6 +6817,51 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
     }
 
+    {
+      console.log(`[Post-Assembly Validation] Running final validation pass...`);
+      const postValidation = runPostAssemblyValidation(
+        deps,
+        projectJson.studioVersion,
+        xamlEntries,
+        deferredWrites,
+        libPath,
+        _studioProfile,
+        _metaTarget,
+      );
+
+      for (const warning of postValidation.warnings) {
+        console.warn(`[Post-Assembly Validation] WARNING: ${warning}`);
+        dependencyWarnings.push({
+          code: "POST_ASSEMBLY_WARNING",
+          message: warning,
+          stage: "post-assembly-validation",
+          recoverable: true,
+        });
+      }
+
+      for (const remediation of postValidation.remediations) {
+        outcomeRemediations.push({
+          level: "activity",
+          file: "",
+          remediationCode: "POST_ASSEMBLY_REPAIR",
+          reason: `[${remediation.code}] ${remediation.detail}`,
+          classifiedCheck: "post-assembly-repair",
+          developerAction: remediation.detail,
+          estimatedEffortMinutes: 5,
+        });
+      }
+
+      if (!postValidation.passed) {
+        const errorDetails = postValidation.errors.map((e: string) => `  - ${e}`).join("\n");
+        console.error(`[Post-Assembly Validation] FAILED with ${postValidation.errors.length} error(s):\n${errorDetails}`);
+        throw new Error(
+          `Post-assembly validation failed with ${postValidation.errors.length} error(s):\n${errorDetails}`
+        );
+      }
+
+      console.log(`[Post-Assembly Validation] PASSED — all dependency versions validated, entry point verified, studio version confirmed`);
+    }
+
     for (const [path, content] of deferredWrites.entries()) {
       if (path.endsWith(".xaml")) {
         let sanitized = content;
@@ -6519,6 +6878,22 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           }
           if (!preArchiveLoad.loadable && !preArchiveLoad.repairable) {
             console.warn(`[Archive Gate] "${archiveFileName}" is not Studio-loadable and not repairable — reason: ${preArchiveLoad.reason || "unknown"}`);
+          }
+        }
+
+        {
+          const viSweep = sweepValueIntentFromXaml(sanitized);
+          if (viSweep.repairCount > 0) {
+            sanitized = viSweep.content;
+            console.log(`[Archive Gate] Swept ${viSweep.repairCount} residual ValueIntent JSON fragment(s) from "${archiveFileName}"`);
+          }
+        }
+
+        {
+          const preCLR = sanitized;
+          sanitized = sanitizeClrTypeArguments(sanitized);
+          if (sanitized !== preCLR) {
+            console.log(`[Archive Gate] Converted CLR namespace type arguments to XAML prefix format in "${archiveFileName}"`);
           }
         }
 
@@ -6609,39 +6984,6 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
       }
     }
     projectJson.dependencies = { ...deps };
-
-    {
-      console.log(`[Post-Assembly Validation] Running final validation pass...`);
-      const postValidation = runPostAssemblyValidation(
-        deps,
-        projectJson.studioVersion,
-        xamlEntries,
-        deferredWrites,
-        libPath,
-        _studioProfile,
-        _metaTarget,
-      );
-
-      for (const warning of postValidation.warnings) {
-        console.warn(`[Post-Assembly Validation] WARNING: ${warning}`);
-        dependencyWarnings.push({
-          code: "POST_ASSEMBLY_WARNING",
-          message: warning,
-          stage: "post-assembly-validation",
-          recoverable: true,
-        });
-      }
-
-      if (!postValidation.passed) {
-        const errorDetails = postValidation.errors.map(e => `  - ${e}`).join("\n");
-        console.error(`[Post-Assembly Validation] FAILED with ${postValidation.errors.length} error(s):\n${errorDetails}`);
-        throw new Error(
-          `Post-assembly validation failed with ${postValidation.errors.length} error(s):\n${errorDetails}`
-        );
-      }
-
-      console.log(`[Post-Assembly Validation] PASSED — all dependency versions validated, entry point verified, studio version confirmed`);
-    }
 
     const finalProjectJsonStr = JSON.stringify(projectJson, null, 2);
     archive.append(finalProjectJsonStr, { name: `${libPath}/project.json` });

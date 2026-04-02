@@ -1353,7 +1353,11 @@ export function getPropString(props: Record<string, PropertyValue>, ...keys: str
   for (const key of keys) {
     if (props[key] !== undefined) {
       const val = props[key];
-      if (typeof val === "string") return val;
+      if (typeof val === "string") {
+        const extracted = extractValueIntentFromString(val);
+        if (extracted !== null) return extracted;
+        return val;
+      }
       if (isValueIntent(val)) {
         return buildExpression(val as ValueIntent);
       }
@@ -1361,6 +1365,19 @@ export function getPropString(props: Record<string, PropertyValue>, ...keys: str
     }
   }
   return "";
+}
+
+function extractValueIntentFromString(s: string): string | null {
+  const patterns = [
+    /^\{"type":"[^"]*","value":"([^"]*)"\}$/,
+    /^\{&quot;type&quot;:&quot;[^&]*&quot;,&quot;value&quot;:&quot;([^&]*)&quot;\}$/,
+    /^\{type:[^,]*,value:([^}]*)\}$/,
+  ];
+  for (const pat of patterns) {
+    const m = s.match(pat);
+    if (m) return m[1];
+  }
+  return null;
 }
 
 export type EmissionContext = "normal" | "mandatory-catch" | "mandatory-finally" | "inside-trycatch";
