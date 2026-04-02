@@ -2600,9 +2600,19 @@ export function classifyQualityIssues(result: QualityGateResult): ClassifiedIssu
 
 export function getBlockingFiles(issues: ClassifiedIssue[]): Set<string> {
   const files = new Set<string>();
+  const fileBlockingChecks = new Map<string, Set<string>>();
   for (const issue of issues) {
     if (issue.severity === "blocking" && issue.file !== "project.json" && issue.file !== "package" && issue.file !== "orchestrator") {
-      files.add(issue.file);
+      if (!fileBlockingChecks.has(issue.file)) {
+        fileBlockingChecks.set(issue.file, new Set());
+      }
+      fileBlockingChecks.get(issue.file)!.add(issue.check);
+    }
+  }
+  for (const [file, checks] of fileBlockingChecks) {
+    const hasOnlyUndeclaredVar = Array.from(checks).every(c => c === "UNDECLARED_VARIABLE" || c === "undeclared-variable");
+    if (!hasOnlyUndeclaredVar) {
+      files.add(file);
     }
   }
   return files;

@@ -12,6 +12,7 @@ import type {
   PropertyValue,
 } from "./workflow-spec-types";
 import { catalogService } from "./catalog/catalog-service";
+import { inferTypeFromPrefix, PREFIXED_VAR_REF_REGEX, DEMOTION_WHITELIST_REGEX } from "./shared/type-inference";
 import type { ActivityValidationResult, ValidationCorrection } from "./catalog/catalog-service";
 import { buildTemplateBlock } from "./catalog/xaml-template-builder";
 import type { ProcessType } from "./catalog/catalog-service";
@@ -378,21 +379,6 @@ function inferAssignType(varName: string, variables: VariableDeclaration[]): str
   return "x:Object";
 }
 
-function inferTypeFromPrefix(varName: string): string | null {
-  if (varName.startsWith("str_")) return "x:String";
-  if (varName.startsWith("int_") || varName.startsWith("num_")) return "x:Int32";
-  if (varName.startsWith("bool_") || varName.startsWith("is_") || varName.startsWith("has_")) return "x:Boolean";
-  if (varName.startsWith("dbl_")) return "x:Double";
-  if (varName.startsWith("dec_")) return "x:Decimal";
-  if (varName.startsWith("dt_")) return "scg2:DataTable";
-  if (varName.startsWith("date_") || varName.startsWith("dtm_")) return "s:DateTime";
-  if (varName.startsWith("dr_") || varName.startsWith("drow_")) return "scg2:DataRow";
-  if (varName.startsWith("dict_")) return "scg:Dictionary(x:String, x:Object)";
-  if (varName.startsWith("sec_")) return "s:Security.SecureString";
-  if (varName.startsWith("ts_")) return "s:TimeSpan";
-  if (varName.startsWith("obj_")) return "x:Object";
-  return null;
-}
 
 const IMPLICIT_OUTPUT_ACTIVITY_TYPES: Record<string, { outputPropNames: string[]; defaultVar: string; defaultType: string }> = {
   "GetAsset": { outputPropNames: ["AssetValue", "Value"], defaultVar: "str_AssetValue", defaultType: "String" },
@@ -423,6 +409,29 @@ function extractArgumentRefsFromString(str: string): string[] {
     refs.push(match[1]);
   }
   return refs;
+}
+
+function extractPrefixedVarRefsFromString(str: string): string[] {
+  const refs: string[] = [];
+  const pattern = new RegExp(PREFIXED_VAR_REF_REGEX.source, "g");
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(str)) !== null) {
+    refs.push(match[1]);
+  }
+  return refs;
+}
+
+function discoverAndRegisterVarRef(varName: string, registry: DeclarationRegistry, workflowName: string): void {
+  if (registry.hasName(varName)) return;
+  if (/^(in_|out_|io_)/i.test(varName)) return;
+  const inferredType = inferTypeFromPrefix(varName);
+  if (!inferredType) return;
+  registry.registerVariable({
+    name: varName,
+    type: inferredType,
+    source: "discovered-reference",
+  });
+  console.log(`[Variable Declaration] Pre-emission walk: auto-declared variable "${varName}" (${inferredType}) in "${workflowName}"`);
 }
 
 function discoverAndRegisterArgRef(argName: string, registry: DeclarationRegistry, workflowName: string): void {
@@ -463,6 +472,10 @@ function walkNodeForArgumentRefs(node: WorkflowNode, registry: DeclarationRegist
       for (const argName of refs) {
         discoverAndRegisterArgRef(argName, registry, workflowName);
       }
+      const varRefs = extractPrefixedVarRefsFromString(str);
+      for (const varName of varRefs) {
+        discoverAndRegisterVarRef(varName, registry, workflowName);
+      }
     }
   }
 
@@ -475,6 +488,10 @@ function walkNodeForArgumentRefs(node: WorkflowNode, registry: DeclarationRegist
     for (const argName of refs) {
       discoverAndRegisterArgRef(argName, registry, workflowName);
     }
+    const varRefs = extractPrefixedVarRefsFromString(condStr);
+    for (const varName of varRefs) {
+      discoverAndRegisterVarRef(varName, registry, workflowName);
+    }
   }
 
   if (node.kind === "while") {
@@ -486,6 +503,10 @@ function walkNodeForArgumentRefs(node: WorkflowNode, registry: DeclarationRegist
     for (const argName of refs) {
       discoverAndRegisterArgRef(argName, registry, workflowName);
     }
+    const varRefs = extractPrefixedVarRefsFromString(condStr);
+    for (const varName of varRefs) {
+      discoverAndRegisterVarRef(varName, registry, workflowName);
+    }
   }
 
   if (node.kind === "forEach") {
@@ -496,6 +517,10 @@ function walkNodeForArgumentRefs(node: WorkflowNode, registry: DeclarationRegist
     const refs = extractArgumentRefsFromString(forEachNode.valuesExpression);
     for (const argName of refs) {
       discoverAndRegisterArgRef(argName, registry, workflowName);
+    }
+    const varRefs = extractPrefixedVarRefsFromString(forEachNode.valuesExpression);
+    for (const varName of varRefs) {
+      discoverAndRegisterVarRef(varName, registry, workflowName);
     }
 
     if (forEachNode.bodyChildren) {
@@ -3276,7 +3301,7 @@ function demoteUndeclaredBracketReferences(xml: string, registry: DeclarationReg
   return xml.replace(/<(In|Out|InOut)Argument[^>]*>\[([a-zA-Z_]\w*)\]<\/(In|Out|InOut)Argument>/g, (match, openTag, name, closeTag) => {
     if (openTag !== closeTag) return match;
     if (registry.hasName(name)) return match;
-    if (/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_|in_|out_|io_|arr_|dict_|list_)/i.test(name)) return match;
+    if (DEMOTION_WHITELIST_REGEX.test(name)) return match;
     console.log(`[Literal Demotion] Post-emission: demoted bracket reference [${name}] to literal "${name}" in ${openTag}Argument (not in declaration registry)`);
     return match.replace(`[${name}]`, `"${name}"`);
   });

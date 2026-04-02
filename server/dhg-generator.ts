@@ -111,7 +111,7 @@ export interface DhgContext {
 
 interface WorkflowTierClassification {
   name: string;
-  tier: "generated" | "handoff" | "stub";
+  tier: "generated" | "handoff" | "stub" | "blocked";
   isFullyGenerated: boolean;
   isStubbed: boolean;
   isStudioBlocked: boolean;
@@ -208,9 +208,11 @@ function classifyWorkflows(
     const manualSteps = isWorkflowStub ? totalSteps : handoffBlockCount + wfPropertyRems.length + wfBindPoints.length;
     const preservedSteps = Math.max(0, totalSteps - degradedSteps - (isWorkflowStub ? totalSteps : 0));
 
-    let tier: "generated" | "handoff" | "stub";
-    if (isWorkflowStub || isStudioBlocked) {
+    let tier: "generated" | "handoff" | "stub" | "blocked";
+    if (isWorkflowStub) {
       tier = "stub";
+    } else if (isStudioBlocked) {
+      tier = "blocked";
     } else if (hasHandoffBlocks) {
       tier = "handoff";
     } else {
@@ -309,7 +311,7 @@ export function generateDhgFromOutcomeReport(
   const fullyGeneratedCount = wfClassifications.filter(c => c.tier === "generated").length;
   const handoffCount = wfClassifications.filter(c => c.tier === "handoff").length;
   const workflowStubCount = wfClassifications.filter(c => c.isStubbed).length;
-  const studioBlockedOnly = wfClassifications.filter(c => c.tier === "stub" && c.isStudioBlocked && !c.isStubbed).length;
+  const studioBlockedOnly = wfClassifications.filter(c => c.tier === "blocked").length;
   const totalWorkflows = wfClassifications.length;
 
   let tierSummary = `**${totalWorkflows} workflow${totalWorkflows !== 1 ? "s" : ""}: ${fullyGeneratedCount} fully generated, ${handoffCount} with handoff blocks, ${workflowStubCount} workflow-level stub${workflowStubCount !== 1 ? "s" : ""}`;
@@ -331,7 +333,7 @@ export function generateDhgFromOutcomeReport(
     md += `| # | Workflow | Tier | ${stepsLabel} | Preserved | Degraded (Handoff) | Manual | Bind Points |\n`;
     md += `|---|----------|------|-------------|-----------|-------------------|--------|-------------|\n`;
     wfClassifications.forEach((wfc, i) => {
-      const tierLabel = wfc.tier === "generated" ? "Generated" : wfc.tier === "handoff" ? "Handoff" : "Stub";
+      const tierLabel = wfc.tier === "generated" ? "Generated" : wfc.tier === "handoff" ? "Handoff" : wfc.tier === "blocked" ? "Blocked" : "Stub";
       md += `| ${i + 1} | \`${wfc.name}.xaml\` | ${tierLabel} | ${wfc.totalSteps} | ${wfc.preservedSteps} | ${wfc.degradedSteps} | ${wfc.manualSteps} | ${wfc.bindPointCount} |\n`;
     });
     md += `\n`;

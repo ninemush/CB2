@@ -13,6 +13,7 @@ import type { AICenterSkill } from "./uipath-integration";
 import { isActivityAllowed } from "./uipath-activity-policy";
 import type { AutomationPattern } from "./uipath-activity-registry";
 import { ACTIVITY_NAME_ALIAS_MAP } from "./uipath-activity-registry";
+import { inferTypeFromPrefix } from "./shared/type-inference";
 import type { XamlGenerationContext } from "./types/uipath-package";
 import type { PipelineOutcomeReport } from "./uipath-pipeline";
 import { XMLValidator } from "fast-xml-parser";
@@ -1199,20 +1200,6 @@ function sanitizeVarName(name: string): string {
   return sanitized;
 }
 
-function inferTypeFromPrefix(varName: string): string | null {
-  if (varName.startsWith("str_")) return "x:String";
-  if (varName.startsWith("int_") || varName.startsWith("num_")) return "x:Int32";
-  if (varName.startsWith("bool_") || varName.startsWith("is_") || varName.startsWith("has_")) return "x:Boolean";
-  if (varName.startsWith("dbl_")) return "x:Double";
-  if (varName.startsWith("dec_")) return "x:Decimal";
-  if (varName.startsWith("dt_")) return "s:DateTime";
-  if (varName.startsWith("dr_") || varName.startsWith("drow_")) return "scg2:DataRow";
-  if (varName.startsWith("dict_")) return "scg:Dictionary(x:String, x:Object)";
-  if (varName.startsWith("sec_")) return "s:Security.SecureString";
-  if (varName.startsWith("ts_")) return "s:TimeSpan";
-  if (varName.startsWith("obj_")) return "x:Object";
-  return null;
-}
 
 function inferTypeFromDefaultValue(defaultValue: string | undefined): string | null {
   if (!defaultValue) return null;

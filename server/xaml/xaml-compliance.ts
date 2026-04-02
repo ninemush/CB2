@@ -3,6 +3,8 @@ import { ACTIVITY_NAME_ALIAS_MAP, getActivityPackageFromRegistry } from "../uipa
 import { catalogService } from "../catalog/catalog-service";
 import { XMLValidator } from "fast-xml-parser";
 import { QualityGateError } from "../uipath-shared";
+import { findUndeclaredVariables } from "./vbnet-expression-linter";
+import { inferTypeFromPrefix } from "../shared/type-inference";
 
 export type TargetFramework = "Windows" | "Portable";
 
@@ -1143,8 +1145,6 @@ function ensureVariableDeclarations(xml: string): string {
 
   const referencedVarsWithPos = new Map<string, number>();
 
-  const unicodeContextPattern = /[\\]u[0-9a-fA-F]{4,5}/;
-
   const bracketExprPattern = /\[([^\[\]]+)\]/g;
   let bracketMatch;
   while ((bracketMatch = bracketExprPattern.exec(xml)) !== null) {
@@ -1152,30 +1152,10 @@ function ensureVariableDeclarations(xml: string): string {
     if (expr.startsWith("&quot;") || expr.startsWith('"')) continue;
     if (expr.includes("xmlns") || expr.includes("clr-namespace")) continue;
 
-    const withoutStrings = expr.replace(/&quot;[^&]*&quot;/g, "").replace(/"[^"]*"/g, "");
-
-    if (unicodeContextPattern.test(expr) || /Regex|ChrW|Char|Replace.*u[0-9a-fA-F]/.test(expr)) continue;
-
-    const tokens = withoutStrings.match(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g);
-    if (!tokens) continue;
-
-    for (let i = 0; i < tokens.length; i++) {
-      const token = tokens[i];
-      if (isExcludedToken(token)) continue;
-
-      const afterToken = withoutStrings.indexOf(token) + token.length;
-      const charAfter = withoutStrings[afterToken];
-      if (charAfter === "(") continue;
-
-      if (i > 0) {
-        const prevToken = tokens[i - 1];
-        if (prevToken === "." || withoutStrings.includes(`.${token}`)) continue;
-      }
-
-      if (token === "u" || /^u[0-9a-fA-F]{4,5}$/.test(token) || (token.length <= 5 && /^[0-9a-fA-F]+$/.test(token) && i > 0 && (tokens[i-1] === "u" || /^u[0-9a-fA-F]*$/.test(tokens[i-1])))) continue;
-
-      if (!referencedVarsWithPos.has(token)) {
-        referencedVarsWithPos.set(token, bracketMatch.index);
+    const undeclared = findUndeclaredVariables(expr, declaredVars);
+    for (const varName of undeclared) {
+      if (!referencedVarsWithPos.has(varName)) {
+        referencedVarsWithPos.set(varName, bracketMatch.index);
       }
     }
   }
@@ -1183,7 +1163,9 @@ function ensureVariableDeclarations(xml: string): string {
   const missingVars: { name: string; type: string | null; refIndex: number }[] = [];
   for (const [varName, refIdx] of Array.from(referencedVarsWithPos)) {
     if (!declaredVars.has(varName)) {
-      missingVars.push({ name: varName, type: inferVariableTypeFromBindingContext(varName, xml), refIndex: refIdx });
+      const bindingType = inferVariableTypeFromBindingContext(varName, xml);
+      const type = bindingType ?? inferTypeFromPrefix(varName);
+      missingVars.push({ name: varName, type, refIndex: refIdx });
     }
   }
 
@@ -1909,8 +1891,9 @@ export function normalizeXaml(rawXaml: string, targetFramework: TargetFramework 
   const varDeclBefore = xml;
   const varDeclResult = ensureVariableDeclarations(xml);
   if (varDeclResult !== varDeclBefore) {
-    findings.push({ type: "variable-declaration", description: "Missing variable declarations detected", severity: "warning" });
-    console.log(`[Compliance READ-ONLY] ensureVariableDeclarations detected issues (not mutated)`);
+    findings.push({ type: "variable-declaration", description: "Missing variable declarations detected and auto-declared", severity: "warning" });
+    xml = varDeclResult;
+    console.log(`[Compliance] ensureVariableDeclarations applied auto-declarations`);
   }
 
   xml = xml.replace(/WorkflowFileName="Workflows\\([^"]+)"/g, 'WorkflowFileName="$1"');

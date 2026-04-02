@@ -174,7 +174,9 @@ export type RemediationCode =
   | "STUB_STRUCTURAL_LEAF"
   | "STUB_WORKFLOW_BLOCKING"
   | "STUB_WORKFLOW_GENERATOR_FAILURE"
-  | "HALLUCINATED_ACTIVITY_STUBBED";
+  | "HALLUCINATED_ACTIVITY_STUBBED"
+  | "UNDECLARED_VARIABLE_MANUAL"
+  | "INVOKE_ARG_TYPE_MISMATCH";
 
 export type RepairCode =
   | "REPAIR_ALIAS_NORMALIZE"
@@ -210,6 +212,7 @@ export interface RemediationEntry {
   businessRule?: string;
   expectedInputs?: string;
   expectedOutputs?: string;
+  inferredType?: string;
 }
 
 export interface AutoRepairEntry {

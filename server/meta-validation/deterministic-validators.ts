@@ -1,6 +1,8 @@
 import type { ErrorCategory } from "./confidence-scorer";
 import type { Correction, CorrectionSet, CorrectionConfidence } from "./meta-validator";
 import { catalogService } from "../catalog/catalog-service";
+import { inferTypeFromPrefix, hasRecognizedPrefix } from "../shared/type-inference";
+import { findUndeclaredVariables } from "../xaml/vbnet-expression-linter";
 
 function extractActivities(xaml: string): Array<{
   tag: string;
@@ -58,20 +60,6 @@ function extractVariableDeclarations(xaml: string): Set<string> {
   return vars;
 }
 
-function extractVariableReferences(xaml: string): Array<{ varName: string; context: string }> {
-  const refs: Array<{ varName: string; context: string }> = [];
-  const bracketPattern = /\[([a-zA-Z_][a-zA-Z0-9_.]*)\]/g;
-  let m;
-  while ((m = bracketPattern.exec(xaml)) !== null) {
-    const varName = m[1];
-    if (varName === "TODO" || varName.startsWith("TODO:")) continue;
-    if (varName === "object Object") continue;
-    if (varName.includes(".") && varName.split(".")[0] === "System") continue;
-    if (["True", "False", "Nothing", "null"].includes(varName)) continue;
-    refs.push({ varName, context: m[0] });
-  }
-  return refs;
-}
 
 export function validateEnumViolations(
   xamlContent: string,
@@ -285,7 +273,6 @@ export function validateUndeclaredVariables(
   const corrections: Correction[] = [];
 
   const declaredVars = extractVariableDeclarations(xamlContent);
-  const references = extractVariableReferences(xamlContent);
 
   const argumentPattern = /x:Property Name="([^"]+)"/g;
   let argMatch;
@@ -304,72 +291,35 @@ export function validateUndeclaredVariables(
   declaredVars.add("row");
   declaredVars.add("index");
 
-  const universalSafeIdentifiers = new Set([
-    "Nothing", "True", "False", "String.Empty",
-    "DateTime", "TimeSpan", "Environment", "Math", "Convert",
-    "Integer", "Double", "Boolean", "Object",
-    "vbCrLf", "vbTab", "vbNewLine", "vbNullString",
-  ]);
+  const bracketExprPattern = /\[([^\[\]]+)\]/g;
+  let bracketMatch;
+  const seen = new Set<string>();
+  while ((bracketMatch = bracketExprPattern.exec(xamlContent)) !== null) {
+    const expr = bracketMatch[1];
+    if (expr.startsWith("&quot;") || expr.startsWith('"')) continue;
+    if (expr.includes("xmlns") || expr.includes("clr-namespace")) continue;
 
-  const catalogExemptedRefs = new Set<string>();
-  if (catalogService.isLoaded()) {
-    const activities = extractActivities(xamlContent);
-    for (const activity of activities) {
-      const schema = catalogService.getActivitySchema(activity.className);
-      if (!schema) continue;
-      for (const [attrName, attrValue] of Object.entries(activity.attributes)) {
-        const bracketMatch = attrValue.match(/^\[([a-zA-Z_][a-zA-Z0-9_.]*)\]$/);
-        if (!bracketMatch) continue;
-        const refName = bracketMatch[1];
-        if (declaredVars.has(refName)) continue;
-        const propDef = schema.activity.properties.find((p: any) => p.name === attrName);
-        if (propDef) {
-          const isStringType = propDef.clrType === "System.String" || propDef.clrType === "String";
-          const isEnum = propDef.validValues && propDef.validValues.length > 0;
-          const isConstant = propDef.xamlSyntax === "attribute" && (isStringType || isEnum);
-          if (isConstant) {
-            catalogExemptedRefs.add(refName);
-          }
-        }
-      }
+    const undeclared = findUndeclaredVariables(expr, declaredVars);
+    for (const varName of undeclared) {
+      if (seen.has(varName)) continue;
+      seen.add(varName);
+
+      const inferredType = inferTypeFromPrefix(varName);
+      if (!inferredType) continue;
+
+      corrections.push({
+        workflowName,
+        activityDisplayName: "",
+        category: "UNDECLARED_VARIABLES",
+        confidence: "medium",
+        description: `Variable "${varName}" is referenced but not declared in any <Variable> element`,
+        original: "",
+        corrected: `<Variable x:TypeArguments="${inferredType}" Name="${varName}" />`,
+      });
     }
   }
 
-  const seen = new Set<string>();
-  for (const ref of references) {
-    if (declaredVars.has(ref.varName)) continue;
-    if (seen.has(ref.varName)) continue;
-    if (universalSafeIdentifiers.has(ref.varName)) continue;
-    if (catalogExemptedRefs.has(ref.varName)) continue;
-    if (ref.varName.includes(".")) continue;
-    seen.add(ref.varName);
-
-    const inferredType = inferVariableType(ref.varName);
-
-    corrections.push({
-      workflowName,
-      activityDisplayName: "",
-      category: "UNDECLARED_VARIABLES",
-      confidence: "medium",
-      description: `Variable "${ref.varName}" is referenced but not declared in any <Variable> element`,
-      original: "",
-      corrected: `<Variable x:TypeArguments="${inferredType}" Name="${ref.varName}" />`,
-    });
-  }
-
   return corrections;
-}
-
-function inferVariableType(varName: string): string {
-  if (varName.startsWith("str_") || varName.startsWith("s_")) return "x:String";
-  if (varName.startsWith("int_") || varName.startsWith("i_")) return "x:Int32";
-  if (varName.startsWith("bool_") || varName.startsWith("b_")) return "x:Boolean";
-  if (varName.startsWith("dt_")) return "scg2:DataTable";
-  if (varName.startsWith("drow_")) return "scg2:DataRow";
-  if (varName.startsWith("dbl_")) return "x:Double";
-  if (varName.startsWith("obj_")) return "x:Object";
-  if (varName.startsWith("dict_")) return "scg:Dictionary(x:String, x:Object)";
-  return "x:String";
 }
 
 export function runDeterministicValidation(

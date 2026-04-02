@@ -1,5 +1,6 @@
 import type { Correction, CorrectionSet, CorrectionConfidence } from "./meta-validator";
 import type { ErrorCategory } from "./confidence-scorer";
+import { hasRecognizedPrefix } from "../shared/type-inference";
 
 export interface CorrectionApplicationResult {
   applied: number;
@@ -313,18 +314,30 @@ export function applyCorrections(
       case "LITERAL_EXPRESSIONS":
         result = applyLiteralExpression(entry.content, correction);
         break;
-      case "UNDECLARED_VARIABLES":
+      case "UNDECLARED_VARIABLES": {
+        const varNameMatch = correction.description.match(/Variable "([^"]+)"/);
+        const varName = varNameMatch ? varNameMatch[1] : "";
+        if (varName && hasRecognizedPrefix(varName)) {
+          result = applyUndeclaredVariable(entry.content, correction);
+          if (result.success) {
+            console.log(`[Meta-Validation] UNDECLARED_VARIABLES auto-fix applied for prefixed variable "${varName}" in ${correction.workflowName}`);
+            break;
+          }
+        }
         skipped++;
         details.push({
           workflowName: correction.workflowName,
           category: correction.category,
           confidence: correction.confidence,
           status: "skipped",
-          reason: "UNDECLARED_VARIABLES auto-fix disabled — scanner is not precise enough for safe declaration insertion",
+          reason: varName && !hasRecognizedPrefix(varName)
+            ? `UNDECLARED_VARIABLES: variable "${varName}" has no recognized prefix — requires manual declaration`
+            : "UNDECLARED_VARIABLES auto-fix failed — could not find insertion scope",
           description: correction.description,
         });
-        console.log(`[Meta-Validation] UNDECLARED_VARIABLES auto-fix skipped (diagnostic only): ${correction.description.substring(0, 120)}`);
+        console.log(`[Meta-Validation] UNDECLARED_VARIABLES auto-fix skipped: ${correction.description.substring(0, 120)}`);
         continue;
+      }
       case "MISSING_PROPERTIES":
         result = applyMissingProperty(entry.content, correction);
         break;

@@ -50,7 +50,7 @@ const CLR_SHORT_TO_FULL: Record<string, string> = {
   "DataRow": "System.Data.DataRow",
 };
 
-function normalizeClrType(typeStr: string): string {
+export function normalizeClrType(typeStr: string): string {
   if (CLR_SHORT_TO_FULL[typeStr]) return CLR_SHORT_TO_FULL[typeStr];
   return typeStr;
 }

@@ -41,6 +41,8 @@ import archiver from "archiver";
   import { computePackageFingerprint, computeEnrichmentFingerprint, computeXamlFingerprint, computeQualityGateFingerprint } from "./lib/utils";
   import { buildDeterministicScaffold as buildGenericDeterministicScaffold } from "./deterministic-scaffold";
   import { computeDhgAccuracy } from "./pipeline-health";
+  import { getConversion, normalizeClrType } from "./xaml/type-compatibility-validator";
+  import { inferTypeFromPrefix } from "./shared/type-inference";
   import { scanXamlForRequiredPackages, classifyAutomationPattern, shouldUseReFramework, type AutomationPattern, ACTIVITY_NAME_ALIAS_MAP, normalizeActivityName, NAMESPACE_PREFIX_TO_PACKAGE, getActivityPackage } from "./uipath-activity-registry";
   import { filterBlockedActivitiesFromXaml } from "./uipath-activity-policy";
   import { catalogService, type ProcessType, type ValidationCorrection } from "./catalog/catalog-service";
@@ -5683,9 +5685,76 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         stubCategory: v.stubCategory,
       }));
 
+    for (const v of qualityGateResult.violations) {
+      if ((v.check === "UNDECLARED_VARIABLE" || v.check === "undeclared-variable") && v.severity === "error") {
+        const varMatch = v.detail.match(/variable "([^"]+)"/);
+        const varName = varMatch ? varMatch[1] : "unknown";
+        const exprMatch = v.detail.match(/in expression: (.+?)(?:\s*—|$)/);
+        const exprContext = exprMatch ? exprMatch[1].trim() : "";
+        const prefixType = inferTypeFromPrefix(varName);
+        outcomeRemediations.push({
+          level: "activity",
+          file: v.file || "unknown",
+          remediationCode: "UNDECLARED_VARIABLE_MANUAL",
+          reason: `Undeclared variable "${varName}" — type cannot be auto-inferred (no recognized naming prefix)`,
+          classifiedCheck: "UNDECLARED_VARIABLE",
+          developerAction: `Declare variable "${varName}" in ${v.file || "unknown"} with the appropriate type. Expression context: ${exprContext || v.detail}`,
+          estimatedEffortMinutes: 5,
+          inferredType: prefixType ?? undefined,
+        });
+      }
+      if (v.check === "invoke-arg-type-mismatch" && v.severity === "error") {
+        const argMatch = v.detail.match(/argument "([^"]+)" passed as ([^\s]+) to "([^"]+)" but declared as ([^\s]+)/);
+        if (argMatch) {
+          const [, argName, passedType, targetFile, declaredType] = argMatch;
+          const conversion = getConversion(passedType, declaredType);
+          if (conversion && conversion.kind === "wrap" && conversion.wrapper) {
+            const file = v.file || "unknown";
+            const deferredKey = Array.from(deferredWrites.keys()).find(k => {
+              const name = (k.split("/").pop() || k);
+              return name === file;
+            });
+            if (deferredKey) {
+              const content = deferredWrites.get(deferredKey)!;
+              const argBindPattern = new RegExp(
+                `(x:Key="${argName}"[^>]*>\\s*)\\[([^\\]]+)\\]`,
+              );
+              const bindMatch = content.match(argBindPattern);
+              if (bindMatch && bindMatch[2]) {
+                const origExpr = bindMatch[2];
+                const convertedExpr = `${conversion.wrapper}(${origExpr})`;
+                deferredWrites.set(deferredKey, content.replace(
+                  argBindPattern,
+                  `$1[${convertedExpr}]`
+                ));
+                console.log(`[Invoke Arg Auto-Convert] ${file}: wrapped "${argName}" binding with ${conversion.wrapper}() (${passedType} → ${declaredType})`);
+                continue;
+              }
+            }
+          }
+          const action = conversion
+            ? conversion.kind === "wrap"
+              ? `Auto-convertible: ${conversion.detail}`
+              : conversion.kind === "variable-type-change"
+                ? `Retype variable: ${conversion.detail}`
+                : `Manual fix required: ${conversion.detail}`
+            : `Fix type mismatch: argument "${argName}" is passed as ${passedType} but ${targetFile} expects ${declaredType}`;
+          outcomeRemediations.push({
+            level: "activity",
+            file: v.file || "unknown",
+            remediationCode: "INVOKE_ARG_TYPE_MISMATCH",
+            reason: `Argument type mismatch in InvokeWorkflowFile: "${argName}" (${passedType} → ${declaredType})`,
+            classifiedCheck: "invoke-arg-type-mismatch",
+            developerAction: action,
+            estimatedEffortMinutes: conversion && conversion.kind === "wrap" ? 2 : 10,
+          });
+        }
+      }
+    }
+
     const dhgStudioBlockingChecks = new Set([
       "empty-container", "empty-http-endpoint", "invalid-trycatch-structure",
-      "invalid-catch-type", "invalid-activity-property", "undeclared-variable",
+      "invalid-catch-type", "invalid-activity-property",
       "unknown-activity", "undeclared-namespace", "invalid-type-argument",
       "invalid-default-value", "policy-blocked-activity", "pseudo-xaml",
       "fake-trycatch", "object-object", "EXPRESSION_SYNTAX_UNFIXABLE",
@@ -5696,6 +5765,7 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
     const dhgStudioWarningChecks = new Set([
       "placeholder-value", "expression-syntax-mismatch", "invoke-arg-type-mismatch",
       "invalid-continue-on-error", "EXPRESSION_SYNTAX", "UNSAFE_VARIABLE_NAME", "empty-catches",
+      "undeclared-variable",
     ]);
     const dhgStubbedFiles = new Set(complianceFallbacks.map(fb => fb.file));
     for (const esf of earlyStubFallbacks) dhgStubbedFiles.add(esf);
@@ -6996,7 +7066,7 @@ export function assertDhgArchiveParity(
 ): { passed: boolean; divergences: string[] } {
   const divergences: string[] = [];
 
-  const dhgWorkflowTablePattern = /\|\s*\d+\s*\|\s*`([^`]+\.xaml)`\s*\|\s*(Generated|Handoff|Stub)\s*\|/g;
+  const dhgWorkflowTablePattern = /\|\s*\d+\s*\|\s*`([^`]+\.xaml)`\s*\|\s*(Generated|Handoff|Stub|Blocked)\s*\|/g;
   const dhgWorkflowEntries = new Map<string, string>();
   let dhgTableMatch;
   while ((dhgTableMatch = dhgWorkflowTablePattern.exec(dhgContent)) !== null) {
@@ -7024,8 +7094,12 @@ export function assertDhgArchiveParity(
       const isActuallyStub = DHG_STUB_CONTENT_PATTERNS.some(p => archiveEntry.content.includes(p));
       if (dhgTier === "Generated" && isActuallyStub) {
         divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Generated" but archive content is a stub`);
+      } else if (dhgTier === "Handoff" && isActuallyStub) {
+        divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Handoff" but archive content is a stub`);
       } else if (dhgTier === "Stub" && !isActuallyStub) {
         divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Stub" but archive content is not a stub`);
+      } else if (dhgTier === "Blocked" && isActuallyStub) {
+        divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Blocked" but archive content is a stub`);
       }
     }
   }

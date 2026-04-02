@@ -267,5 +267,58 @@ describe("Task 388: Pipeline integrity — dependencies, namespaces, and package
       expect(result.passed).toBe(false);
       expect(result.divergences.some(d => d.includes("Status mismatch") && d.includes("Stub") && d.includes("not a stub"))).toBe(true);
     });
+
+    it("should detect status mismatch — DHG says Handoff but archive is stub", () => {
+      const dhg = [
+        "| # | Workflow | Status | Steps |",
+        "|---|----------|--------|-------|",
+        "| 1 | `Main.xaml` | Handoff | 3 |",
+      ].join("\n");
+      const result = assertDhgArchiveParity(
+        dhg,
+        ["Main"],
+        [
+          { name: "lib/Main.xaml", content: stubXaml },
+        ],
+      );
+      expect(result.passed).toBe(false);
+      expect(result.divergences.some(d => d.includes("Status mismatch") && d.includes("Handoff") && d.includes("stub"))).toBe(true);
+    });
+
+    it("should pass when DHG says Blocked and archive has real content", () => {
+      const dhg = [
+        "| # | Workflow | Status | Steps |",
+        "|---|----------|--------|-------|",
+        "| 1 | `Main.xaml` | Generated | 5 |",
+        "| 2 | `Helper.xaml` | Blocked | 3 |",
+      ].join("\n");
+      const result = assertDhgArchiveParity(
+        dhg,
+        ["Main", "Helper"],
+        [
+          { name: "lib/Main.xaml", content: generatedXaml },
+          { name: "lib/Helper.xaml", content: generatedXaml },
+        ],
+      );
+      expect(result.passed).toBe(true);
+      expect(result.divergences).toHaveLength(0);
+    });
+
+    it("should detect status mismatch — DHG says Blocked but archive is stub", () => {
+      const dhg = [
+        "| # | Workflow | Status | Steps |",
+        "|---|----------|--------|-------|",
+        "| 1 | `Main.xaml` | Blocked | 3 |",
+      ].join("\n");
+      const result = assertDhgArchiveParity(
+        dhg,
+        ["Main"],
+        [
+          { name: "lib/Main.xaml", content: stubXaml },
+        ],
+      );
+      expect(result.passed).toBe(false);
+      expect(result.divergences.some(d => d.includes("Status mismatch") && d.includes("Blocked") && d.includes("stub"))).toBe(true);
+    });
   });
 });
