@@ -5961,6 +5961,32 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
           }
         });
 
+        const hasRefsBlock = updated.includes("TextExpression.ReferencesForImplementation");
+        const hasNsBlock = updated.includes("TextExpression.NamespacesForImplementation");
+        if ((missingAssemblies.length > 0 || missingNamespaces.length > 0) && !hasRefsBlock && !hasNsBlock) {
+          const activityCloseMatch = updated.match(/<\/Activity>\s*$/);
+          const seqMatch = updated.match(/(\s*<Sequence[\s>])/);
+          const xMembersMatch = updated.match(/(\s*<x:Members>)/);
+          let bootstrapInsertIdx = -1;
+          if (xMembersMatch && xMembersMatch.index !== undefined) {
+            bootstrapInsertIdx = xMembersMatch.index;
+          } else if (seqMatch && seqMatch.index !== undefined) {
+            bootstrapInsertIdx = seqMatch.index;
+          } else if (activityCloseMatch && activityCloseMatch.index !== undefined) {
+            bootstrapInsertIdx = activityCloseMatch.index;
+          }
+          if (bootstrapInsertIdx >= 0) {
+            const allNs = Array.from(neededNamespaces).map(ns => `      <x:String>${ns}</x:String>`).join("\n");
+            const allAsm = Array.from(neededAssemblies).map(asm => `      <AssemblyReference>${asm}</AssemblyReference>`).join("\n");
+            const bootstrapBlock = `\n  <TextExpression.NamespacesForImplementation>\n    <sco:Collection x:TypeArguments="x:String">\n${allNs}\n    </sco:Collection>\n  </TextExpression.NamespacesForImplementation>\n  <TextExpression.ReferencesForImplementation>\n    <sco:Collection x:TypeArguments="AssemblyReference">\n${allAsm}\n    </sco:Collection>\n  </TextExpression.ReferencesForImplementation>\n`;
+            updated = updated.slice(0, bootstrapInsertIdx) + bootstrapBlock + updated.slice(bootstrapInsertIdx);
+            selfCheckFixes += missingAssemblies.length + missingNamespaces.length;
+            missingAssemblies.length = 0;
+            missingNamespaces.length = 0;
+            console.log(`[Authoritative Declaration Synthesis] [${fileName}] Bootstrapped both NamespacesForImplementation and ReferencesForImplementation blocks (last-resort fallback)`);
+          }
+        }
+
         if (missingAssemblies.length > 0) {
           let asmInserted = false;
           if (updated.includes("TextExpression.ReferencesForImplementation")) {
