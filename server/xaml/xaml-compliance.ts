@@ -682,13 +682,13 @@ export function smartBracketWrap(val: string, isDeclared?: (name: string) => boo
   return `[${trimmed}]`;
 }
 
-const BARE_WORD_LITERALS_SET = new Set([
+export const BARE_WORD_LITERALS_SET = new Set([
   "yes", "no", "normal", "high", "low", "info", "warn", "error", "trace", "fatal",
   "none", "default", "verbose", "debug", "warning", "information", "critical",
   "success", "failed", "pending", "completed", "cancelled", "skipped",
 ]);
 
-function looksLikePlainText(val: string, isDeclared?: (name: string) => boolean): boolean {
+export function looksLikePlainText(val: string, isDeclared?: (name: string) => boolean): boolean {
   if (/^[a-zA-Z_]\w*\(/.test(val)) return false;
   if (/[+\-*/&=<>]/.test(val) && !/[.,!?;:'"…]/.test(val)) return false;
   if (/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_)/i.test(val)) return false;
@@ -710,6 +710,20 @@ function looksLikePlainText(val: string, isDeclared?: (name: string) => boolean)
   }
   return false;
 }
+
+export const CLR_NAMESPACE_TO_XAML_PREFIX: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  for (const [, info] of Object.entries(PACKAGE_NAMESPACE_MAP)) {
+    if (info.prefix && info.clrNamespace) {
+      if (!map[info.clrNamespace]) {
+        map[info.clrNamespace] = info.prefix;
+      }
+    }
+  }
+  map["UiPath.Core"] = "ui";
+  map["UiPath.Core.Activities"] = "ui";
+  return map;
+})();
 
 const UIPATH_NAMESPACES = `xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"

@@ -19,7 +19,7 @@ import { escapeXml, escapeXmlExpression, normalizeXmlExpression, escapeXmlTextCo
 import { XMLValidator } from "fast-xml-parser";
 import { buildExpression, isValueIntent, normalizeStringToExpression, normalizePropertyToValueIntent, type ValueIntent } from "./xaml/expression-builder";
 import { validateMapClrTypeOutput, reportCriticalTypeDiagnostic } from "./emission-gate";
-import { getActivityTag, getActivityPrefixStrict, injectMissingNamespaceDeclarations } from "./xaml/xaml-compliance";
+import { getActivityTag, getActivityPrefixStrict, injectMissingNamespaceDeclarations, ensureBracketWrapped, smartBracketWrap, looksLikePlainText, BARE_WORD_LITERALS_SET, CLR_NAMESPACE_TO_XAML_PREFIX } from "./xaml/xaml-compliance";
 import { lintExpression } from "./xaml/vbnet-expression-linter";
 import type { RemediationEntry, RemediationCode } from "./uipath-pipeline";
 import { PROPERTY_REMEDIATION_ESCALATION_THRESHOLD } from "./uipath-pipeline";
@@ -212,18 +212,6 @@ export function isUnsafeVariableName(name: string): string | null {
 
 type MapClrTypeContext = "critical" | "non-critical";
 
-const CLR_NAMESPACE_TO_XAML_PREFIX: Record<string, string> = {
-  "UiPath.Core": "ui",
-  "UiPath.Core.Activities": "ui",
-  "UiPath.Persistence.Activities": "upers",
-  "UiPath.Mail.Activities": "umail",
-  "UiPath.Excel.Activities": "uexcel",
-  "UiPath.UIAutomation.Activities": "uauto",
-  "UiPath.GSuite.Activities": "ugs",
-  "UiPath.MicrosoftOffice365.Activities": "uo365",
-  "UiPath.Credentials.Activities": "ucred",
-  "UiPath.Testing.Activities": "utest",
-};
 
 export function mapClrFullyQualifiedToXamlPrefix(clrType: string): string | null {
   const dotParts = clrType.split(".");
@@ -1031,68 +1019,6 @@ function indent(xml: string, level: number): string {
   return xml.split("\n").map(line => line.trim() ? spaces + line : line).join("\n");
 }
 
-function ensureBracketWrapped(expr: string, isDeclared?: (name: string) => boolean): string {
-  const trimmed = expr.trim();
-  if (!trimmed) return trimmed;
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
-  if (trimmed.startsWith("\"") || trimmed.startsWith("'")) return trimmed;
-  if (/^\d+$/.test(trimmed)) return trimmed;
-  if (trimmed === "True" || trimmed === "False") return trimmed;
-  if (looksLikeStringLiteral(trimmed, isDeclared)) {
-    const escaped = trimmed.replace(/"/g, '""');
-    return `"${escaped}"`;
-  }
-  return `[${trimmed}]`;
-}
-
-function looksLikeVariableRef(expr: string): boolean {
-  const trimmed = expr.trim();
-  if (!trimmed) return false;
-  if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) return true;
-  if (/^[a-zA-Z_][a-zA-Z0-9_.]+$/.test(trimmed)) return true;
-  return false;
-}
-
-function looksLikeVbExpression(val: string): boolean {
-  const trimmed = val.trim();
-  if (!trimmed) return false;
-  if (/:\/\//.test(trimmed) || /^https?:\/\//i.test(trimmed)) return false;
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return true;
-  if (trimmed.startsWith('"') || trimmed.startsWith("&quot;")) return true;
-  if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing" || trimmed === "null") return true;
-  if (/^[0-9]+(\.[0-9]+)?$/.test(trimmed)) return true;
-  if (/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_)/i.test(trimmed)) return true;
-  if (/^[a-zA-Z_]\w*\(/.test(trimmed)) return true;
-  if (/[+\-*/&=<>]/.test(trimmed) && !/[.,!?;:'"…]/.test(trimmed)) return true;
-  if (/^[a-zA-Z_]\w*\.[a-zA-Z_]\w*/.test(trimmed)) {
-    if (/\.(json|xml|xlsx|csv|txt|log|config|pdf|html|xaml|dll|exe|zip|png|jpg)$/i.test(trimmed)) return false;
-    return true;
-  }
-  return false;
-}
-
-const BARE_WORD_LITERALS = new Set([
-  "Yes", "No", "Normal", "High", "Low", "Info", "Warn", "Error", "Trace", "Fatal",
-  "None", "Default", "Verbose", "Debug", "Warning", "Information", "Critical",
-  "Success", "Failed", "Pending", "Completed", "Cancelled", "Skipped",
-  "yes", "no", "normal", "high", "low", "info", "warn", "error", "trace", "fatal",
-  "none", "default", "verbose", "debug", "warning", "information", "critical",
-  "success", "failed", "pending", "completed", "cancelled", "skipped",
-]);
-
-function looksLikeStringLiteral(val: string, isDeclared?: (name: string) => boolean): boolean {
-  const trimmed = val.trim();
-  if (!trimmed) return false;
-  if (/\b[\w_]+\.(json|xml|xlsx|csv|txt|log|config|pdf|html|xaml|dll|exe|zip|png|jpg)\b/i.test(trimmed)) return true;
-  if ((/[A-Z]\w*\/[A-Z]\w*/.test(trimmed) || /\w+\/\w+\/\w+/.test(trimmed)) && !/[()=<>]/.test(trimmed)) return true;
-  if (/\u2014/.test(trimmed)) return true;
-  if (looksLikeVbExpression(trimmed)) return false;
-  if (isDeclared && /^[a-zA-Z_]\w*$/.test(trimmed) && isDeclared(trimmed)) {
-    return false;
-  }
-  return true;
-}
-
 function isVbExpression(val: string): boolean {
   const trimmed = val.trim();
   if (!trimmed) return false;
@@ -1140,33 +1066,6 @@ export function wrapVariableDefault(val: string, varType: string): string {
     return `"${trimmed}"`;
   }
   return trimmed;
-}
-
-function smartBracketWrap(val: string, isDeclared?: (name: string) => boolean): string {
-  const trimmed = val.trim();
-  if (!trimmed) return trimmed;
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
-  if (trimmed.startsWith("<InArgument") || trimmed.startsWith("<OutArgument")) return trimmed;
-  if (/^".*"$/.test(trimmed)) {
-    const inner = trimmed.slice(1, -1);
-    if (/^New\s+\w/.test(inner)) {
-      return `[${inner}]`;
-    }
-    return trimmed;
-  }
-  if (/^'.*'$/.test(trimmed)) return trimmed;
-  if (/^&quot;.*&quot;$/.test(trimmed)) return trimmed;
-  if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing" || trimmed === "null") return trimmed;
-  if (BARE_WORD_LITERALS.has(trimmed) || BARE_WORD_LITERALS.has(trimmed.toLowerCase())) {
-    return `"${trimmed}"`;
-  }
-  if (/^[0-9]+$/.test(trimmed)) return trimmed;
-  if (/^New\s+\w/.test(trimmed)) return `[${trimmed}]`;
-  if (looksLikeStringLiteral(trimmed, isDeclared)) {
-    const escaped = trimmed.replace(/"/g, '""');
-    return `"${escaped}"`;
-  }
-  return `[${trimmed}]`;
 }
 
 const ENCODING_MAP: Record<string, string> = {
@@ -1469,7 +1368,7 @@ export function resolveActivityTemplate(
     const level = ENUM_NORMALIZE[rawLevel.toLowerCase()] || rawLevel;
     const message = getPropString(props, "Message", "message") || `"${displayName}"`;
     let wrappedMessage: string;
-    if (looksLikeStringLiteral(message, _activeDeclarationLookup || undefined)) {
+    if (looksLikePlainText(message, _activeDeclarationLookup || undefined)) {
       wrappedMessage = `"${message.replace(/"/g, '""')}"`;
     } else {
       wrappedMessage = smartBracketWrap(message, _activeDeclarationLookup || undefined);

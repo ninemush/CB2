@@ -12,9 +12,10 @@ import {
 import type { PropertyValue } from "../workflow-spec-types";
 import { checkStudioLoadability, resolveDependencies } from "../package-assembler";
 import { runQualityGate, type QualityGateInput } from "../uipath-quality-gate";
-import { normalizeXaml, smartBracketWrap, injectMissingNamespaceDeclarations } from "../xaml/xaml-compliance";
+import { normalizeXaml, smartBracketWrap, ensureBracketWrapped, looksLikePlainText, BARE_WORD_LITERALS_SET, CLR_NAMESPACE_TO_XAML_PREFIX, PACKAGE_NAMESPACE_MAP, injectMissingNamespaceDeclarations } from "../xaml/xaml-compliance";
 import { normalizePropertyToValueIntent } from "../xaml/expression-builder";
 import { scanXamlForRequiredPackages } from "../uipath-activity-registry";
+import { checkNormalizationInvariants } from "../emission-gate";
 import { metadataService } from "../catalog/metadata-service";
 import { ACTIVITY_DEFINITIONS_REGISTRY } from "../catalog/activity-definitions";
 import {
@@ -489,7 +490,7 @@ SAP GUI, Supplier Portal at https://supplier.example.com, Excel, Outlook
       expect(mapClrFullyQualifiedToXamlPrefix("String")).toBeNull();
       expect(mapClrFullyQualifiedToXamlPrefix("x:Int32")).toBeNull();
 
-      expect(mapClrFullyQualifiedToXamlPrefix("System.Net.Mail.MailMessage")).toBeNull();
+      expect(mapClrFullyQualifiedToXamlPrefix("System.Net.Mail.MailMessage")).toBe("snetmail:MailMessage");
       expect(mapClrFullyQualifiedToXamlPrefix("System.String")).toBe("s:String");
       expect(mapClrFullyQualifiedToXamlPrefix("System.Int32")).toBe("s:Int32");
     });
@@ -700,6 +701,188 @@ SAP GUI, Supplier Portal at https://supplier.example.com, Excel, Outlook
           expect(entry.name).toBe("InitAllSettings.xaml");
         }
       }
+    });
+  });
+});
+
+describe("Canonical normalization consolidation", () => {
+  describe("CLR_NAMESPACE_TO_XAML_PREFIX derived from PACKAGE_NAMESPACE_MAP", () => {
+    it("covers all clrNamespaces from PACKAGE_NAMESPACE_MAP", () => {
+      for (const [, info] of Object.entries(PACKAGE_NAMESPACE_MAP)) {
+        if (info.prefix && info.clrNamespace) {
+          expect(CLR_NAMESPACE_TO_XAML_PREFIX[info.clrNamespace]).toBeDefined();
+        }
+      }
+    });
+
+    it("maps UiPath.Core and UiPath.Core.Activities to 'ui'", () => {
+      expect(CLR_NAMESPACE_TO_XAML_PREFIX["UiPath.Core"]).toBe("ui");
+      expect(CLR_NAMESPACE_TO_XAML_PREFIX["UiPath.Core.Activities"]).toBe("ui");
+    });
+
+    it("maps known packages correctly", () => {
+      expect(CLR_NAMESPACE_TO_XAML_PREFIX["UiPath.Persistence.Activities"]).toBe("upers");
+      expect(CLR_NAMESPACE_TO_XAML_PREFIX["UiPath.Mail.Activities"]).toBe("umail");
+      expect(CLR_NAMESPACE_TO_XAML_PREFIX["UiPath.Excel.Activities"]).toBe("uexcel");
+      expect(CLR_NAMESPACE_TO_XAML_PREFIX["UiPath.GSuite.Activities"]).toBe("ugs");
+      expect(CLR_NAMESPACE_TO_XAML_PREFIX["UiPath.MicrosoftOffice365.Activities"]).toBe("uo365");
+      expect(CLR_NAMESPACE_TO_XAML_PREFIX["UiPath.Credentials.Activities"]).toBe("ucred");
+      expect(CLR_NAMESPACE_TO_XAML_PREFIX["UiPath.Testing.Activities"]).toBe("utest");
+    });
+  });
+
+  describe("Single canonical normalization functions", () => {
+    it("ensureBracketWrapped handles InArgument/OutArgument prefixes", () => {
+      expect(ensureBracketWrapped('<InArgument x:TypeArguments="x:String">"test"</InArgument>')).toBe('<InArgument x:TypeArguments="x:String">"test"</InArgument>');
+      expect(ensureBracketWrapped('<OutArgument x:TypeArguments="x:String">result</OutArgument>')).toBe('<OutArgument x:TypeArguments="x:String">result</OutArgument>');
+    });
+
+    it("ensureBracketWrapped handles Nothing", () => {
+      expect(ensureBracketWrapped("Nothing")).toBe("Nothing");
+      expect(ensureBracketWrapped("null")).toBe("null");
+    });
+
+    it("ensureBracketWrapped handles basic literals", () => {
+      expect(ensureBracketWrapped("True")).toBe("True");
+      expect(ensureBracketWrapped("False")).toBe("False");
+      expect(ensureBracketWrapped("123")).toBe("123");
+      expect(ensureBracketWrapped('"hello"')).toBe('"hello"');
+    });
+
+    it("smartBracketWrap handles &quot; entities", () => {
+      expect(smartBracketWrap("&quot;test&quot;")).toBe("&quot;test&quot;");
+    });
+
+    it("smartBracketWrap handles XML entities as expressions", () => {
+      const result = smartBracketWrap("value &amp; other");
+      expect(result).toBe("[value &amp; other]");
+    });
+
+    it("BARE_WORD_LITERALS_SET is canonical and case-normalized", () => {
+      expect(BARE_WORD_LITERALS_SET.has("yes")).toBe(true);
+      expect(BARE_WORD_LITERALS_SET.has("no")).toBe(true);
+      expect(BARE_WORD_LITERALS_SET.has("normal")).toBe(true);
+      expect(BARE_WORD_LITERALS_SET.has("pending")).toBe(true);
+    });
+
+    it("looksLikePlainText recognizes variable prefixes as non-plain-text", () => {
+      expect(looksLikePlainText("str_Name")).toBe(false);
+      expect(looksLikePlainText("int_Count")).toBe(false);
+      expect(looksLikePlainText("in_Parameter")).toBe(false);
+      expect(looksLikePlainText("out_Result")).toBe(false);
+    });
+
+    it("looksLikePlainText recognizes file extensions as plain text", () => {
+      expect(looksLikePlainText("report.xlsx")).toBe(true);
+      expect(looksLikePlainText("data.json")).toBe(true);
+    });
+  });
+});
+
+describe("Compiler-invariant regression tests", () => {
+  describe("No typed property objects in emitted XAML", () => {
+    it("detects typed property object leakage", () => {
+      const badXaml = '<InArgument x:TypeArguments="x:String"> {key: "value"}</InArgument>';
+      const violations = checkNormalizationInvariants(badXaml, "test.xaml");
+      const tpoViolations = violations.filter(v => v.pattern === "typed-property-object");
+      expect(tpoViolations.length).toBeGreaterThan(0);
+    });
+
+    it("passes clean XAML without typed property objects", () => {
+      const goodXaml = '<InArgument x:TypeArguments="x:String">"hello"</InArgument>';
+      const violations = checkNormalizationInvariants(goodXaml, "test.xaml");
+      const tpoViolations = violations.filter(v => v.pattern === "typed-property-object");
+      expect(tpoViolations.length).toBe(0);
+    });
+  });
+
+  describe("No raw CLR type leakage", () => {
+    it("detects raw CLR types in type attributes", () => {
+      const badXaml = '<Variable x:TypeArguments="System.Collections.Generic.List" Name="items" />';
+      const violations = checkNormalizationInvariants(badXaml, "test.xaml");
+      const rawClr = violations.filter(v => v.pattern === "raw-clr-type");
+      expect(rawClr.length).toBeGreaterThan(0);
+    });
+
+    it("accepts prefixed XAML types", () => {
+      const goodXaml = '<Variable x:TypeArguments="scg:List(x:String)" Name="items" />';
+      const violations = checkNormalizationInvariants(goodXaml, "test.xaml");
+      const rawClr = violations.filter(v => v.pattern === "raw-clr-type");
+      expect(rawClr.length).toBe(0);
+    });
+  });
+
+  describe("No unwrapped VB expression defaults", () => {
+    it("detects unwrapped New expressions in variable defaults", () => {
+      const badXaml = '<Variable x:TypeArguments="scg:List(x:String)" Name="items" Default="New List(Of String)" />';
+      const violations = checkNormalizationInvariants(badXaml, "test.xaml");
+      const unwrapped = violations.filter(v => v.pattern === "unwrapped-vb-default");
+      expect(unwrapped.length).toBeGreaterThan(0);
+    });
+
+    it("accepts bracket-wrapped New expressions in variable defaults", () => {
+      const goodXaml = '<Variable x:TypeArguments="scg:List(x:String)" Name="items" Default="[New List(Of String)]" />';
+      const violations = checkNormalizationInvariants(goodXaml, "test.xaml");
+      const unwrapped = violations.filter(v => v.pattern === "unwrapped-vb-default");
+      expect(unwrapped.length).toBe(0);
+    });
+  });
+
+  describe("No malformed generic type serialization", () => {
+    it("detects unbalanced parentheses in type arguments", () => {
+      const badXaml = '<Variable x:TypeArguments="scg:Dictionary(x:String" Name="data" />';
+      const violations = checkNormalizationInvariants(badXaml, "test.xaml");
+      const malformed = violations.filter(v => v.pattern === "malformed-generic");
+      expect(malformed.length).toBeGreaterThan(0);
+    });
+
+    it("detects raw brackets in type arguments", () => {
+      const badXaml = '<Variable x:TypeArguments="List[String]" Name="data" />';
+      const violations = checkNormalizationInvariants(badXaml, "test.xaml");
+      const malformed = violations.filter(v => v.pattern === "malformed-generic");
+      expect(malformed.length).toBeGreaterThan(0);
+    });
+
+    it("accepts well-formed generic types", () => {
+      const goodXaml = '<Variable x:TypeArguments="scg:Dictionary(x:String, x:Object)" Name="data" />';
+      const violations = checkNormalizationInvariants(goodXaml, "test.xaml");
+      const malformed = violations.filter(v => v.pattern === "malformed-generic");
+      expect(malformed.length).toBe(0);
+    });
+  });
+
+  describe("Skips declaration ranges", () => {
+    it("does not flag type patterns inside TextExpression declaration sections", () => {
+      const xamlWithDecl = `<Sequence>
+        <TextExpression.ReferencesForImplementation>
+          <Variable x:TypeArguments="System.Collections.Generic.List" Name="internal" />
+        </TextExpression.ReferencesForImplementation>
+        <Variable x:TypeArguments="scg:List(x:String)" Name="items" Default="[New List(Of String)]" />
+      </Sequence>`;
+      const violations = checkNormalizationInvariants(xamlWithDecl, "test.xaml");
+      expect(violations.length).toBe(0);
+    });
+  });
+
+  describe("mapClrFullyQualifiedToXamlPrefix uses canonical map", () => {
+    it("maps UiPath.Core.Activities types to ui: prefix", () => {
+      const result = mapClrFullyQualifiedToXamlPrefix("UiPath.Core.Activities.InvokeWorkflowFile");
+      expect(result).toBe("ui:InvokeWorkflowFile");
+    });
+
+    it("maps UiPath.Excel.Activities types to uexcel: prefix", () => {
+      const result = mapClrFullyQualifiedToXamlPrefix("UiPath.Excel.Activities.ExcelReadRange");
+      expect(result).toBe("uexcel:ExcelReadRange");
+    });
+
+    it("maps UiPath.Persistence.Activities types to upers: prefix", () => {
+      const result = mapClrFullyQualifiedToXamlPrefix("UiPath.Persistence.Activities.CreateFormTask");
+      expect(result).toBe("upers:CreateFormTask");
+    });
+
+    it("maps UiPath.Mail.Activities types to umail: prefix", () => {
+      const result = mapClrFullyQualifiedToXamlPrefix("UiPath.Mail.Activities.SendSmtpMailMessage");
+      expect(result).toBe("umail:SendSmtpMailMessage");
     });
   });
 });

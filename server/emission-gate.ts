@@ -605,6 +605,115 @@ function cleanSentinelExpressions(
   return result;
 }
 
+export interface NormalizationInvariantViolation {
+  pattern: string;
+  detail: string;
+  line?: number;
+}
+
+export function checkNormalizationInvariants(
+  content: string,
+  fileName: string,
+): NormalizationInvariantViolation[] {
+  const violations: NormalizationInvariantViolation[] = [];
+
+  const declarationRanges: Array<{ start: number; end: number }> = [];
+  const declSectionPattern = /<TextExpression\.(?:ReferencesForImplementation|NamespacesForImplementation)>[\s\S]*?<\/TextExpression\.(?:ReferencesForImplementation|NamespacesForImplementation)>/g;
+  let declMatch;
+  while ((declMatch = declSectionPattern.exec(content)) !== null) {
+    declarationRanges.push({ start: declMatch.index, end: declMatch.index + declMatch[0].length });
+  }
+
+  function isInDeclarationRange(idx: number): boolean {
+    return declarationRanges.some(r => idx >= r.start && idx < r.end);
+  }
+
+  const typedPropertyObjectPattern = /x:TypeArguments="[^"]*"\s*>\s*\{[^}]*\}/g;
+  let tpoMatch;
+  while ((tpoMatch = typedPropertyObjectPattern.exec(content)) !== null) {
+    if (isInDeclarationRange(tpoMatch.index)) continue;
+    violations.push({
+      pattern: "typed-property-object",
+      detail: `Typed property object leaked into XAML at ${fileName}:${findLineNumber(content, tpoMatch.index)}: ${tpoMatch[0].substring(0, 80)}`,
+      line: findLineNumber(content, tpoMatch.index),
+    });
+  }
+
+  const rawClrPattern = /(?:Type|x:TypeArguments)="([^"]+)"/g;
+  let clrMatch;
+  while ((clrMatch = rawClrPattern.exec(content)) !== null) {
+    if (isInDeclarationRange(clrMatch.index)) continue;
+    const typeVal = clrMatch[1];
+    if (/^clr-namespace:/.test(typeVal)) continue;
+    if (/\bSystem\.\w+\.\w+\.\w+/.test(typeVal) && !/^[sx]:/.test(typeVal) && !/^scg/.test(typeVal) && !/^mva:/.test(typeVal)) {
+      if (typeVal.startsWith("clr-namespace:")) continue;
+      violations.push({
+        pattern: "raw-clr-type",
+        detail: `Raw CLR type "${typeVal}" found where XAML-prefix type required at ${fileName}:${findLineNumber(content, clrMatch.index)}`,
+        line: findLineNumber(content, clrMatch.index),
+      });
+    }
+  }
+
+  const unwrappedVbDefaultPattern = /<Variable\s+[^>]*Default="([^"]+)"/g;
+  let vbMatch;
+  while ((vbMatch = unwrappedVbDefaultPattern.exec(content)) !== null) {
+    if (isInDeclarationRange(vbMatch.index)) continue;
+    const defaultVal = vbMatch[1];
+    if (/^New\s+\w/.test(defaultVal) && !defaultVal.startsWith("[")) {
+      violations.push({
+        pattern: "unwrapped-vb-default",
+        detail: `Unwrapped VB expression default "${defaultVal}" at ${fileName}:${findLineNumber(content, vbMatch.index)} — should be bracket-wrapped`,
+        line: findLineNumber(content, vbMatch.index),
+      });
+    }
+  }
+
+  const malformedGenericPattern = /x:TypeArguments="([^"]+)"/g;
+  let genMatch;
+  while ((genMatch = malformedGenericPattern.exec(content)) !== null) {
+    if (isInDeclarationRange(genMatch.index)) continue;
+    const typeVal = genMatch[1];
+    const openParens = (typeVal.match(/\(/g) || []).length;
+    const closeParens = (typeVal.match(/\)/g) || []).length;
+    if (openParens !== closeParens) {
+      violations.push({
+        pattern: "malformed-generic",
+        detail: `Malformed generic type serialization "${typeVal}" at ${fileName}:${findLineNumber(content, genMatch.index)} — unbalanced parentheses`,
+        line: findLineNumber(content, genMatch.index),
+      });
+    }
+    if (/\[/.test(typeVal) && !/^\w+:\w+\(/.test(typeVal)) {
+      violations.push({
+        pattern: "malformed-generic",
+        detail: `Malformed generic type with raw brackets "${typeVal}" at ${fileName}:${findLineNumber(content, genMatch.index)}`,
+        line: findLineNumber(content, genMatch.index),
+      });
+    }
+  }
+
+  const propAttrPattern = /(\w+)="([^"]+)"/g;
+  let attrMatch;
+  while ((attrMatch = propAttrPattern.exec(content)) !== null) {
+    if (isInDeclarationRange(attrMatch.index)) continue;
+    const attrName = attrMatch[1];
+    const attrVal = attrMatch[2];
+    if (attrName === "xmlns" || attrName.startsWith("xmlns:") || attrName === "x:Class" || attrName === "x:TypeArguments" || attrName === "Type") continue;
+    if (attrName === "DisplayName" || attrName === "Text" || attrName === "Message" || attrName === "AnnotationText") continue;
+    if (/\[.*".*\]/.test(attrVal) && !/^\["[^"]*"\]$/.test(attrVal) && !/^\[.*&quot;.*\]$/.test(attrVal)) {
+      if (/\[.*\]/.test(attrVal) && /"/.test(attrVal.replace(/&quot;/g, "").replace(/""/, ""))) {
+        violations.push({
+          pattern: "mixed-literal-expression",
+          detail: `Mixed literal/expression syntax in ${attrName}="${attrVal}" at ${fileName}:${findLineNumber(content, attrMatch.index)}`,
+          line: findLineNumber(content, attrMatch.index),
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
 export function runEmissionGate(
   xamlEntries: Array<{ name: string; content: string }>,
   mode: EmissionGateMode = "strict",
@@ -640,6 +749,19 @@ export function runEmissionGate(
     if (typeResult.blocked) anyBlocked = true;
 
     content = cleanSentinelExpressions(fileName, content, violations);
+
+    const normViolations = checkNormalizationInvariants(content, fileName);
+    for (const nv of normViolations) {
+      violations.push({
+        file: fileName,
+        line: nv.line,
+        type: "malformed-type",
+        detail: `[Normalization Invariant] ${nv.pattern}: ${nv.detail}`,
+        resolution: "blocked",
+        isIntegrityFailure: true,
+      });
+      anyBlocked = true;
+    }
 
     if (content !== entry.content) {
       xamlEntries[i] = { name: fileName, content };
