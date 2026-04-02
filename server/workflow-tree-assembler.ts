@@ -733,6 +733,60 @@ function registerImplicitOutputVariables(children: WorkflowNode[], registry: Dec
   }
 }
 
+const TEMPLATE_INPUT_VAR_PATTERNS: Record<string, { propNames: string[]; varType: string }[]> = {
+  "SendSmtpMailMessage": [
+    { propNames: ["To", "to"], varType: "String" },
+    { propNames: ["Body", "body"], varType: "String" },
+    { propNames: ["Subject", "subject"], varType: "String" },
+    { propNames: ["From", "from"], varType: "String" },
+  ],
+  "SetTransactionStatus": [
+    { propNames: ["TransactionItem", "transactionItem"], varType: "UiPath.Core.QueueItem" },
+    { propNames: ["Status", "status"], varType: "String" },
+  ],
+  "AddTransactionItem": [
+    { propNames: ["QueueName", "queueName"], varType: "String" },
+  ],
+};
+
+function harvestTemplateInputVariables(children: WorkflowNode[], registry: DeclarationRegistry): void {
+  function scanNode(node: WorkflowNode): void {
+    if (node.kind === "activity") {
+      const actNode = node as ActivityNode;
+      const templateName = actNode.template || "";
+      const patterns = TEMPLATE_INPUT_VAR_PATTERNS[templateName];
+      if (patterns) {
+        const props = actNode.properties || {};
+        for (const pattern of patterns) {
+          for (const propName of pattern.propNames) {
+            const val = coercePropToString(props[propName]);
+            if (!val) continue;
+            const cleaned = val.replace(/^\[|\]$/g, "").trim();
+            if (!cleaned || cleaned.startsWith('"') || cleaned.startsWith("PLACEHOLDER")) continue;
+            if (/^[a-zA-Z_]\w*$/.test(cleaned) && !registry.hasName(cleaned)) {
+              const inferredType = inferTypeFromPrefix(cleaned);
+              registry.registerVariable({
+                name: cleaned,
+                type: inferredType || pattern.varType,
+                source: "template-input-harvest",
+                scope: "workflow",
+              });
+            }
+          }
+        }
+      }
+    }
+
+    const childKeys = ["children", "thenChildren", "elseChildren", "tryChildren", "catchChildren", "finallyChildren", "bodyChildren"] as const;
+    for (const key of childKeys) {
+      if (key in node && Array.isArray((node as any)[key])) {
+        for (const child of (node as any)[key]) scanNode(child);
+      }
+    }
+  }
+  for (const child of children) scanNode(child);
+}
+
 function resolveTryCatchExceptionName(tryCatchNode: TryCatchNode): string {
   const deepResult = inferExceptionVariableName(tryCatchNode.catchChildren);
   if (deepResult) return deepResult;
@@ -1722,7 +1776,7 @@ function resolveSendSmtpMailMessageTemplate(node: ActivityNode): string {
   const wrappedSubject = wrapSmtpPropValue(subject);
   const wrappedBody = wrapSmtpPropValue(body);
 
-  let attrs = `DisplayName="${displayName}" To="${escapeXml(wrappedTo)}" Subject="${escapeXml(wrappedSubject)}" Body="${escapeXml(wrappedBody)}"`;
+  let attrs = `DisplayName="${displayName}" To="${escapeXml(wrappedTo)}" Subject="${escapeXml(wrappedSubject)}"`;
   attrs += ` IsBodyHtml="${escapeXml(isBodyHtml)}"`;
   attrs += ` Server="${escapeXml(server)}" Port="${escapeXml(port)}"`;
   if (from) attrs += ` From="${escapeXml(wrapSmtpPropValue(from))}"`;
@@ -1730,7 +1784,12 @@ function resolveSendSmtpMailMessageTemplate(node: ActivityNode): string {
   if (username) attrs += ` Username="${escapeXml(wrapSmtpPropValue(username))}"`;
   if (password) attrs += ` Password="${escapeXml(wrapSmtpPropValue(password))}"`;
 
-  return `<ui:SendSmtpMailMessage ${attrs} />`;
+  const safeBody = escapeXmlTextContent(ensureBracketWrapped(wrappedBody, _activeDeclarationLookup || undefined));
+  return `<ui:SendSmtpMailMessage ${attrs}>\n` +
+    `  <ui:SendSmtpMailMessage.Body>\n` +
+    `    <InArgument x:TypeArguments="x:String">${safeBody}</InArgument>\n` +
+    `  </ui:SendSmtpMailMessage.Body>\n` +
+    `</ui:SendSmtpMailMessage>`;
 }
 
 function resolveGetImapMailMessageTemplate(node: ActivityNode): string {
@@ -3393,6 +3452,8 @@ export function assembleWorkflowFromSpec(
   crossCheckGetCredentialVariableTypesRegistry(sanitizedRootSequence, registry);
 
   registerImplicitOutputVariables(sanitizedRootChildren, registry);
+
+  harvestTemplateInputVariables(sanitizedRootChildren, registry);
 
   registerScopedDeclarations(sanitizedRootChildren, registry);
 

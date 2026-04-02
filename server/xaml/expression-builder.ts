@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { convertMixedLiteralBracketToConcat } from "./xaml-compliance";
 
 
 const VARIABLE_NAME_ONLY = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
@@ -182,6 +183,10 @@ export function normalizeStringToExpression(val: string, isDeclared?: (name: str
   }
 
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
+
+  const mixedConcat = convertMixedLiteralBracketToConcat(trimmed);
+  if (mixedConcat) return mixedConcat;
+
   if (/^".*"$/.test(trimmed)) {
     const inner = trimmed.slice(1, -1);
     if (/^New\s+\w/.test(inner)) {
@@ -199,6 +204,7 @@ export function normalizeStringToExpression(val: string, isDeclared?: (name: str
   if (/^[0-9]+(\.[0-9]+)?$/.test(trimmed)) return trimmed;
 
   if (/^New\s+\w/.test(trimmed)) return `[${trimmed}]`;
+  if (/^TimeSpan\.\w+/i.test(trimmed)) return `[${trimmed}]`;
   if (/^[a-zA-Z_]\w*\(/.test(trimmed)) return `[${trimmed}]`;
   if (/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_)/i.test(trimmed)) return `[${trimmed}]`;
   if (/^(in_|out_|io_)/i.test(trimmed)) return `[${trimmed}]`;

@@ -626,6 +626,45 @@ export function deriveRequiredDeclarationsForXaml(content: string): Authoritativ
   return { neededPackages, neededAssemblies, neededNamespaces, neededXmlns, activitiesDetected };
 }
 
+export function convertMixedLiteralBracketToConcat(val: string): string | null {
+  if (!val.includes("[") || !val.includes("]")) return null;
+
+  let inner = val;
+  if (inner.startsWith('"') && inner.endsWith('"')) {
+    inner = inner.substring(1, inner.length - 1);
+  }
+
+  if (inner.startsWith("[") && inner.endsWith("]") && inner.indexOf("]") === inner.length - 1) return null;
+
+  const hasLeadingLiteral = /^[^[]+\[/.test(inner);
+  const hasTrailingLiteral = /\][^[\]]+$/.test(inner);
+  const hasBracketExpr = /\[[^\]]+\]/.test(inner);
+  if (!hasBracketExpr) return null;
+  if (!hasLeadingLiteral && !hasTrailingLiteral) {
+    if (inner.startsWith("[") && inner.endsWith("]")) return null;
+  }
+
+  const parts: string[] = [];
+  const bracketPattern = /\[([^\]]+)\]/g;
+  let match;
+  let lastIdx = 0;
+  bracketPattern.lastIndex = 0;
+  while ((match = bracketPattern.exec(inner)) !== null) {
+    if (match.index > lastIdx) {
+      const literal = inner.substring(lastIdx, match.index).replace(/"/g, '""');
+      parts.push(`"${literal}"`);
+    }
+    parts.push(match[1]);
+    lastIdx = match.index + match[0].length;
+  }
+  if (lastIdx < inner.length) {
+    const literal = inner.substring(lastIdx).replace(/"/g, '""');
+    parts.push(`"${literal}"`);
+  }
+  if (parts.length <= 1) return null;
+  return `[${parts.join(" & ")}]`;
+}
+
 export function ensureBracketWrapped(val: string, isDeclared?: (name: string) => boolean): string {
   const trimmed = val.trim();
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
@@ -633,6 +672,12 @@ export function ensureBracketWrapped(val: string, isDeclared?: (name: string) =>
   if (trimmed.startsWith("\"") || trimmed.startsWith("'")) return trimmed;
   if (/^\d+$/.test(trimmed)) return trimmed;
   if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing" || trimmed === "null") return trimmed;
+
+  const mixedConcat = convertMixedLiteralBracketToConcat(trimmed);
+  if (mixedConcat) return mixedConcat;
+
+  if (/^TimeSpan\.\w+/i.test(trimmed)) return `[${trimmed}]`;
+
   if (looksLikePlainText(trimmed, isDeclared)) {
     const escaped = trimmed.replace(/"/g, '""');
     return `"${escaped}"`;
@@ -668,7 +713,12 @@ export function smartBracketWrap(val: string, isDeclared?: (name: string) => boo
   if (trimmed === "True" || trimmed === "False" || trimmed === "Nothing" || trimmed === "null") return trimmed;
   if (/^[0-9]+$/.test(trimmed)) return trimmed;
   if (/^New\s+\w/.test(trimmed)) return `[${trimmed}]`;
+  if (/^TimeSpan\.\w+/i.test(trimmed)) return `[${trimmed}]`;
   if (/&quot;|&amp;|&lt;|&gt;/.test(trimmed)) return `[${trimmed}]`;
+
+  const mixedConcat = convertMixedLiteralBracketToConcat(trimmed);
+  if (mixedConcat) return mixedConcat;
+
   if (looksLikePlainText(trimmed, isDeclared)) {
     const escaped = trimmed.replace(/"/g, '""');
     return `"${escaped}"`;
@@ -680,6 +730,9 @@ export const BARE_WORD_LITERALS_SET = new Set([
   "yes", "no", "normal", "high", "low", "info", "warn", "error", "trace", "fatal",
   "none", "default", "verbose", "debug", "warning", "information", "critical",
   "success", "failed", "pending", "completed", "cancelled", "skipped",
+  "sent", "received", "processed", "queued", "active", "inactive",
+  "approved", "rejected", "open", "closed", "new", "updated", "deleted",
+  "successful", "running", "stopped", "started", "finished", "ready",
 ]);
 
 export function looksLikePlainText(val: string, isDeclared?: (name: string) => boolean): boolean {
@@ -1042,6 +1095,25 @@ function inferVariableTypeFromBindingContext(varName: string, xml: string): stri
     }
     return "s:Exception";
   }
+
+  const inArgPattern = new RegExp(`<InArgument\\s[^>]*x:TypeArguments="([^"]+)"[^>]*>\\s*\\[?${escapedName}\\]?\\s*</InArgument>`);
+  const inArgMatch = xml.match(inArgPattern);
+  if (inArgMatch) return inArgMatch[1];
+
+  const outArgPattern = new RegExp(`<OutArgument\\s[^>]*x:TypeArguments="([^"]+)"[^>]*>\\s*\\[?${escapedName}\\]?\\s*</OutArgument>`);
+  const outArgMatch = xml.match(outArgPattern);
+  if (outArgMatch) return outArgMatch[1];
+
+  const TEMPLATE_VAR_PATTERNS: Record<string, string> = {
+    "currentItem": "x:Object",
+    "retryAttempts": "x:Int32",
+    "retryCount": "x:Int32",
+    "rawResult": "x:String",
+    "rawValue": "x:String",
+    "transactionItem": "ui:QueueItem",
+  };
+  const templateType = TEMPLATE_VAR_PATTERNS[varName];
+  if (templateType) return templateType;
 
   return null;
 }
@@ -1742,6 +1814,9 @@ export function normalizeXaml(rawXaml: string, targetFramework: TargetFramework 
     "DeleteEntity", "GetEntityById",
     "MLSkill", "Predict",
     "DigitizeDocument", "ClassifyDocument", "ExtractDocumentData", "ValidateDocumentData",
+    "MultipleAssign", "WaitForDownload", "RepeatUntil",
+    "BuildDataTable", "FilterDataTable", "SortDataTable", "RemoveDuplicateRows",
+    "JoinDataTables", "OutputDataTable", "AddDataRow", "RemoveDataRow", "LookupDataTable",
   ];
 
   for (const actName of KNOWN_PREFIXED_ACTIVITIES) {

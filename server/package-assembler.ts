@@ -1249,6 +1249,48 @@ function getPlaceholderForClrType(clrType: string): string {
   return placeholders[clrType] || "PLACEHOLDER";
 }
 
+function inferTransitionTargetFromDisplayName(displayName: string, stateNames: string[], stateDisplayNames: Map<string, string>): string | null {
+  const arrowMatch = displayName.match(/(?:->|→|->|&gt;)\s*(.+)$/);
+  if (!arrowMatch) return null;
+  const targetHint = arrowMatch[1].trim().replace(/\(.*\)$/, "").trim();
+  if (!targetHint) return null;
+
+  const targetLower = targetHint.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  for (const [stateName, stateDisplayName] of Array.from(stateDisplayNames.entries())) {
+    const dnLower = stateDisplayName.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (dnLower === targetLower || dnLower.includes(targetLower) || targetLower.includes(dnLower)) {
+      return stateName;
+    }
+  }
+
+  for (const stateName of stateNames) {
+    const snLower = stateName.toLowerCase().replace(/[^a-z0-9_]/g, "");
+    if (snLower.includes(targetLower) || targetLower.includes(snLower.replace("state_", ""))) {
+      return stateName;
+    }
+  }
+
+  const KEYWORD_TO_STATE: Record<string, string[]> = {
+    "init": ["init", "initialize", "initialization"],
+    "get": ["gettransaction", "gettransactiondata", "get_transaction"],
+    "process": ["process", "processtransaction", "process_transaction"],
+    "end": ["end", "endprocess", "end_process", "final", "done", "complete"],
+  };
+  for (const stateName of stateNames) {
+    const snKey = stateName.toLowerCase().replace(/^state_?/i, "").replace(/[^a-z0-9]/g, "");
+    for (const [, keywords] of Object.entries(KEYWORD_TO_STATE)) {
+      if (keywords.some(kw => targetLower.includes(kw) || kw.includes(targetLower))) {
+        if (keywords.some(kw => snKey.includes(kw) || kw.includes(snKey))) {
+          return stateName;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 function repairTransitionsInXaml(xamlContent: string): { content: string; repairs: string[]; unrepaired: string[] } {
   let content = xamlContent;
   const repairs: string[] = [];
@@ -1257,11 +1299,24 @@ function repairTransitionsInXaml(xamlContent: string): { content: string; repair
   const stateNameMatches = Array.from(content.matchAll(/x:Name="([^"]+)"/g));
   const stateNames = stateNameMatches.map(m => m[1]);
 
+  const stateDisplayNames = new Map<string, string>();
+  const stateTagPattern = /<State\s[^>]*?(?:DisplayName="([^"]*)"[^>]*?x:Name="([^"]*)")|(?:x:Name="([^"]*)"[^>]*?DisplayName="([^"]*)")/g;
+  let sdMatch;
+  while ((sdMatch = stateTagPattern.exec(content)) !== null) {
+    const dn = sdMatch[1] || sdMatch[4] || "";
+    const name = sdMatch[2] || sdMatch[3] || "";
+    if (name) stateDisplayNames.set(name, dn);
+  }
+
   const finalStatePattern = /<State\s[^>]*IsFinal="True"[^>]*x:Name="([^"]+)"/g;
   const finalStateNames: string[] = [];
   let fsMatch;
   while ((fsMatch = finalStatePattern.exec(content)) !== null) {
     finalStateNames.push(fsMatch[1]);
+  }
+  const finalStatePattern2 = /<State\s[^>]*x:Name="([^"]+)"[^>]*IsFinal="True"/g;
+  while ((fsMatch = finalStatePattern2.exec(content)) !== null) {
+    if (!finalStateNames.includes(fsMatch[1])) finalStateNames.push(fsMatch[1]);
   }
 
   const transPattern = /<Transition\s([^>]*?)(\/>|>)/g;
@@ -1269,6 +1324,15 @@ function repairTransitionsInXaml(xamlContent: string): { content: string; repair
   while ((tMatch = transPattern.exec(content)) !== null) {
     const attrs = tMatch[1];
     if (attrs.includes('To="')) continue;
+
+    const transStart = tMatch.index!;
+    if (tMatch[2] === ">") {
+      const transEnd = content.indexOf("</Transition>", transStart);
+      if (transEnd !== -1) {
+        const transBody = content.substring(transStart, transEnd + "</Transition>".length);
+        if (transBody.includes("<Transition.To>")) continue;
+      }
+    }
 
     const displayNameMatch = attrs.match(/DisplayName="([^"]*)"/);
     const dn = displayNameMatch ? displayNameMatch[1] : "Transition";
@@ -1278,6 +1342,10 @@ function repairTransitionsInXaml(xamlContent: string): { content: string; repair
       targetState = finalStateNames[0];
     } else if (stateNames.length === 1) {
       targetState = stateNames[0];
+    }
+
+    if (!targetState) {
+      targetState = inferTransitionTargetFromDisplayName(dn, stateNames, stateDisplayNames);
     }
 
     if (targetState) {
@@ -2073,11 +2141,13 @@ export function resolveDependencies(
   }
 
   const PROACTIVE_COMMON_PACKAGES: Record<string, string[]> = {
-    "UiPath.UIAutomation.Activities": ["Click", "TypeInto", "GetText", "OpenBrowser", "CloseBrowser", "NavigateTo", "CloseApplication", "KillProcess", "TakeScreenshot", "UseApplicationBrowser", "OpenApplication", "AttachBrowser", "AttachWindow", "FindElement", "ElementExists", "HighlightElement", "SetText", "SendHotkey", "SelectItem", "Check", "GetAttribute", "WaitElementVanish"],
-    "UiPath.Mail.Activities": ["SendSmtpMailMessage", "GetImapMailMessages", "GetOutlookMailMessages", "SendOutlookMailMessage", "GetPop3MailMessages", "ForwardMailMessage", "ReplyToMailMessage", "SaveMailMessage", "ReadMail", "SendMail", "GetMail", "ClassifyEmail"],
-    "UiPath.Excel.Activities": ["ExcelApplicationScope", "ReadRange", "WriteRange", "ReadCell", "WriteCell", "AppendRange", "InsertDeleteColumns", "InsertDeleteRows", "ExcelReadRange", "ExcelWriteRange", "ExcelReadCell", "ExcelWriteCell"],
-    "UiPath.Persistence.Activities": ["CreateFormTask", "WaitForFormTask", "ResumeFormTask", "FormTaskAction", "GetFormTaskData", "SetFormTaskData"],
-    "UiPath.Database.Activities": ["DatabaseConnect", "DatabaseDisconnect", "ExecuteQuery", "ExecuteNonQuery", "InsertDataTable"],
+    "UiPath.UIAutomation.Activities": ["Click", "TypeInto", "GetText", "OpenBrowser", "CloseBrowser", "NavigateTo", "CloseApplication", "KillProcess", "TakeScreenshot", "UseApplicationBrowser", "OpenApplication", "AttachBrowser", "AttachWindow", "FindElement", "ElementExists", "HighlightElement", "SetText", "SendHotkey", "SelectItem", "Check", "GetAttribute", "WaitElementVanish", "LogMessage", "RetryScope", "GetAsset", "GetCredential", "AddQueueItem", "GetTransactionItem", "SetTransactionStatus", "InvokeWorkflowFile", "ReadTextFile", "WriteTextFile", "PathExists", "AddLogFields", "Comment", "ShouldRetry"],
+    "UiPath.Mail.Activities": ["SendSmtpMailMessage", "GetImapMailMessages", "GetOutlookMailMessages", "SendOutlookMailMessage", "GetPop3MailMessages", "ForwardMailMessage", "ReplyToMailMessage", "SaveMailMessage", "ReadMail", "SendMail", "GetMail", "ClassifyEmail", "GetImapMailMessage"],
+    "UiPath.Excel.Activities": ["ExcelApplicationScope", "ReadRange", "WriteRange", "ReadCell", "WriteCell", "AppendRange", "InsertDeleteColumns", "InsertDeleteRows", "ExcelReadRange", "ExcelWriteRange", "ExcelReadCell", "ExcelWriteCell", "UseExcel"],
+    "UiPath.Persistence.Activities": ["CreateFormTask", "WaitForFormTask", "ResumeFormTask", "FormTaskAction", "GetFormTaskData", "SetFormTaskData", "WaitForFormTaskAndResume"],
+    "UiPath.Database.Activities": ["DatabaseConnect", "DatabaseDisconnect", "ExecuteQuery", "ExecuteNonQuery", "InsertDataTable", "ConnectToDatabase"],
+    "UiPath.WebAPI.Activities": ["HttpClient", "DeserializeJson", "SerializeJson", "DeserializeJSON", "HttpClientRequest", "DownloadFile"],
+    "UiPath.ComplexScenarios.Activities": ["MultipleAssign", "WaitForDownload", "RepeatUntil", "BuildDataTable", "FilterDataTable", "SortDataTable", "RemoveDuplicateRows", "JoinDataTables", "OutputDataTable", "AddDataRow", "RemoveDataRow", "LookupDataTable"],
   };
 
   for (const treeSpec of specArray) {
@@ -4192,19 +4262,37 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
             console.log(`[Structural Dedup] Retained ${specRetained.size} spec-decomposed workflow(s) despite being unreachable from fallback Main.xaml: ${Array.from(specRetained).join(", ")}`);
             const processPath = `${libPath}/Process.xaml`;
             let processXaml = deferredWrites.get(processPath) || "";
-            if (!processXaml) {
+            let processSource: "deferred" | "entry" | "none" = "none";
+            if (processXaml) {
+              processSource = "deferred";
+            } else {
               const processEntry = xamlEntries.find(e => e.name.endsWith("Process.xaml"));
-              if (processEntry) processXaml = processEntry.content;
+              if (processEntry) {
+                processXaml = processEntry.content;
+                processSource = "entry";
+              }
             }
             const injectedFiles: string[] = [];
             if (processXaml) {
-              const closingSeqIdx = processXaml.lastIndexOf("</Sequence>");
+              let closingSeqIdx = processXaml.lastIndexOf("</Sequence>");
+              if (closingSeqIdx < 0) {
+                const closingActivityIdx = processXaml.lastIndexOf("</Activity>");
+                if (closingActivityIdx >= 0) {
+                  const seqInsert = `  <Sequence DisplayName="Process Body">\n  </Sequence>\n`;
+                  processXaml = processXaml.substring(0, closingActivityIdx) + seqInsert + processXaml.substring(closingActivityIdx);
+                  closingSeqIdx = processXaml.lastIndexOf("</Sequence>");
+                }
+              }
               if (closingSeqIdx >= 0) {
                 let invokeBlock = "";
                 Array.from(specRetained).forEach(retained => {
                   const basename = retained.split("/").pop() || retained;
-                  if (!processXaml.includes(`WorkflowFileName="${basename}"`)) {
-                    const displayBasename = basename.replace(/\.xaml$/i, "");
+                  const basenameNoExt = basename.replace(/\.xaml$/i, "");
+                  const alreadyReferenced = processXaml.includes(`WorkflowFileName="${basename}"`) ||
+                    processXaml.includes(`WorkflowFileName="${basenameNoExt}"`) ||
+                    processXaml.includes(`WorkflowFileName="${basenameNoExt}.xaml"`);
+                  if (!alreadyReferenced) {
+                    const displayBasename = basenameNoExt;
                     invokeBlock += `    <ui:InvokeWorkflowFile WorkflowFileName="${basename}" DisplayName="Invoke ${displayBasename}">\n` +
                       `      <ui:InvokeWorkflowFile.Arguments>\n` +
                       `      </ui:InvokeWorkflowFile.Arguments>\n` +
@@ -4214,9 +4302,9 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                 });
                 if (invokeBlock) {
                   processXaml = processXaml.substring(0, closingSeqIdx) + invokeBlock + processXaml.substring(closingSeqIdx);
-                  if (deferredWrites.has(processPath)) {
+                  if (processSource === "deferred") {
                     deferredWrites.set(processPath, processXaml);
-                  } else {
+                  } else if (processSource === "entry") {
                     const processEntry = xamlEntries.find(e => e.name.endsWith("Process.xaml"));
                     if (processEntry) processEntry.content = processXaml;
                   }

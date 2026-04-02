@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { normalizeStringToExpression, normalizePropertyToValueIntent } from "../xaml/expression-builder";
 import { findUndeclaredVariables } from "../xaml/vbnet-expression-linter";
-import { injectMissingNamespaceDeclarations, normalizeXaml, validateImplementationContainer } from "../xaml/xaml-compliance";
+import { injectMissingNamespaceDeclarations, normalizeXaml, validateImplementationContainer, convertMixedLiteralBracketToConcat, ensureBracketWrapped, smartBracketWrap } from "../xaml/xaml-compliance";
+import { generateReframeworkMainXaml } from "../xaml-generator";
 
 describe("Task 354 — Expression emission and Studio structural fixes", () => {
   describe("2-segment timezone paths treated as string literals", () => {
@@ -365,6 +366,68 @@ describe("Task 354 — Expression emission and Studio structural fixes", () => {
     it("normalizePropertyToValueIntent treats UTF8 (no hyphen) as literal", () => {
       const intent = normalizePropertyToValueIntent("UTF8");
       expect(intent.type).toBe("literal");
+    });
+  });
+
+  describe("Mixed literal/bracket conversion to VB concatenation", () => {
+    it("converts 'Dear [recipientName]' to VB concat expression", () => {
+      const result = convertMixedLiteralBracketToConcat('"Dear [recipientName]"');
+      expect(result).not.toBeNull();
+      expect(result).toContain('"Dear "');
+      expect(result).toContain("recipientName");
+      expect(result).toContain("&");
+    });
+
+    it("converts mixed literal with trailing text", () => {
+      const result = convertMixedLiteralBracketToConcat('"Hello [name], welcome!"');
+      expect(result).not.toBeNull();
+      expect(result).toContain('"Hello "');
+      expect(result).toContain("name");
+      expect(result).toContain('", welcome!"');
+    });
+
+    it("returns null for pure bracket expression (no mixed literal)", () => {
+      const result = convertMixedLiteralBracketToConcat("[variableName]");
+      expect(result).toBeNull();
+    });
+
+    it("returns null for plain string without brackets", () => {
+      const result = convertMixedLiteralBracketToConcat('"Hello World"');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("TimeSpan expression wrapping", () => {
+    it("smartBracketWrap wraps TimeSpan.FromSeconds", () => {
+      const result = smartBracketWrap("TimeSpan.FromSeconds(30)");
+      expect(result.startsWith("[")).toBe(true);
+      expect(result).toContain("TimeSpan.FromSeconds(30)");
+    });
+
+    it("ensureBracketWrapped wraps TimeSpan.FromMinutes", () => {
+      const result = ensureBracketWrapped("TimeSpan.FromMinutes(5)");
+      expect(result.startsWith("[")).toBe(true);
+      expect(result).toContain("TimeSpan.FromMinutes(5)");
+    });
+
+    it("normalizePropertyToValueIntent treats TimeSpan.FromHours as non-literal", () => {
+      const intent = normalizePropertyToValueIntent("TimeSpan.FromHours(1)");
+      expect(intent.type).not.toBe("literal");
+    });
+
+    it("does not double-wrap already bracketed TimeSpan", () => {
+      const result = smartBracketWrap("[TimeSpan.FromSeconds(30)]");
+      expect(result).toBe("[TimeSpan.FromSeconds(30)]");
+    });
+  });
+
+  describe("REFramework transition generation includes Transition.To", () => {
+    it("generated Main.xaml transitions use child element syntax at generation time", () => {
+      const mainXaml = generateReframeworkMainXaml("TestProject", "TestQueue", "Windows");
+      const transitionToMatches = mainXaml.match(/<Transition\.To>/g) || [];
+      expect(transitionToMatches.length).toBeGreaterThan(0);
+      expect(mainXaml).toContain("<x:Reference>State_GetTransaction</x:Reference>");
+      expect(mainXaml).not.toMatch(/<Transition [^>]*To="/);
     });
   });
 });
