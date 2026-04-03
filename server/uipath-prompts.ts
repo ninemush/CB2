@@ -1,4 +1,12 @@
-export const UIPATH_PROMPT = `Based on the approved SDD, generate a detailed UiPath automation package specification. Output a JSON object with this exact shape:
+export interface StudioProfileInfo {
+  studioLine?: string;
+  studioVersion?: string;
+  targetFramework?: string;
+  expressionLanguage?: string;
+  minimumRequiredPackages?: string[] | Record<string, string>;
+}
+
+const UIPATH_PROMPT_BODY = `
 
 {
   "projectName": "string (PascalCase, no spaces)",
@@ -51,7 +59,48 @@ IMPORTANT RULES:
 - List ALL required UiPath package dependencies
 - Be as specific and production-ready as possible
 
+HARD CONSTRAINTS — CATALOG BOUNDARY:
+- ONLY use activity names from known UiPath packages. Do NOT invent activity names, class names, or aliases.
+- ONLY use property names that exist for each activity. Do NOT invent property names.
+- ONLY use valid enum values for enum-typed properties. Do NOT invent enum values.
+- ONLY reference real UiPath dependency package names. Do NOT invent package names.
+- Every variable referenced in steps MUST be declared in the workflow's variables array with a concrete type.
+- When using InvokeWorkflowFile, the target workflow MUST exist in the project's workflow list and all required in/out arguments MUST be wired.
+
+VB.NET EXPRESSION SYNTAX:
+- All expressions use VB.NET syntax — not C#, not JavaScript.
+- String concatenation: use "&" operator, NEVER "+".
+- Not-equal comparison: use "<>", NEVER "!=".
+- No string interpolation: do NOT use $"..." syntax. Use String.Format or "&" concatenation.
+- Boolean literals: True / False (PascalCase), not true / false.
+- Nothing instead of null.
+- Logical operators: AndAlso, OrElse, Not — not &&, ||, !.
+
 Return ONLY the JSON object, no other text.`;
+
+export function buildUiPathPrompt(profile?: StudioProfileInfo | null): string {
+  if (!profile) {
+    return `Based on the approved SDD, generate a detailed UiPath automation package specification. Output a JSON object with this exact shape:` + UIPATH_PROMPT_BODY;
+  }
+  const lines: string[] = [
+    "STUDIO PROFILE:",
+    `Studio: ${profile.studioLine || "Community"} v${profile.studioVersion || "25.10"}`,
+    `Target Framework: ${profile.targetFramework || "Windows"}`,
+    `Expression Language: ${profile.expressionLanguage || "VisualBasic"}`,
+  ];
+  if (profile.minimumRequiredPackages) {
+    const pkgs = Array.isArray(profile.minimumRequiredPackages)
+      ? profile.minimumRequiredPackages
+      : Object.entries(profile.minimumRequiredPackages).map(([k, v]) => `${k}=${v}`);
+    if (pkgs.length > 0) {
+      lines.push(`Minimum Required Packages: ${pkgs.join(", ")}`);
+    }
+  }
+  lines.push("");
+  return `${lines.join("\n")}Based on the approved SDD, generate a detailed UiPath automation package specification. Output a JSON object with this exact shape:` + UIPATH_PROMPT_BODY;
+}
+
+export const UIPATH_PROMPT = `Based on the approved SDD, generate a detailed UiPath automation package specification. Output a JSON object with this exact shape:` + UIPATH_PROMPT_BODY;
 
 
 export function repairTruncatedPackageJson(rawText: string): any | null {

@@ -33,6 +33,7 @@ import {
   runDeterministicValidation,
   calculateEstimatedCost,
   recordGenerationMetrics,
+  runIterativeLlmCorrection,
   type MetaValidationMode,
   type MetaValidationResult,
   type ConfidenceScorerInput,
@@ -1478,6 +1479,115 @@ export async function compilePackageFromSpecs(
             }
           }
 
+          let iterativeLlmApplied = 0;
+          let iterativeSkipped = 0;
+          let iterativeFailed = 0;
+          try {
+            if (options?.onProgress) options.onProgress("Running iterative LLM self-correction...");
+
+            const qgViolationsForIterative = (postCorrectionQualityGate?.violations || qgResult?.violations || [])
+              .filter(v => ["unknown-activity", "invalid-activity-property", "undeclared-variable", "expression-syntax"].includes(v.check))
+              .map(v => ({ check: v.check, file: v.file, detail: v.detail, severity: v.severity }));
+
+            const workflowSpecs = enriched.workflows?.map((w: any) => ({
+              name: w.name,
+              description: w.description,
+              steps: w.steps?.map((s: any) => ({
+                activity: s.activity,
+                activityType: s.activityType,
+                activityPackage: s.activityPackage,
+                properties: s.properties,
+              })),
+              variables: w.variables?.map((v: any) => ({
+                name: v.name,
+                type: v.type,
+              })),
+            })) || [];
+
+            const iterativeProjectContext = {
+              projectJsonContent: buildResult.projectJsonContent || "{}",
+              targetFramework: ("Windows" as const),
+              archiveManifest: buildResult.archiveManifest,
+            };
+
+            const iterativeResult = await runIterativeLlmCorrection(
+              finalXamlEntries,
+              options?.onProgress,
+              qgViolationsForIterative,
+              workflowSpecs,
+              iterativeProjectContext,
+            );
+
+            iterativeSkipped = iterativeResult.totalCorrectionsSkipped;
+            iterativeFailed = iterativeResult.totalCorrectionsFailed;
+
+            if (iterativeResult.totalCorrectionsApplied > 0) {
+              finalXamlEntries = iterativeResult.updatedXamlEntries;
+              iterativeLlmApplied = iterativeResult.totalCorrectionsApplied;
+              mvInputTokens += iterativeResult.llmInputTokens;
+              mvOutputTokens += iterativeResult.llmOutputTokens;
+              console.log(
+                `[Pipeline] Iterative LLM correction: ${iterativeResult.totalRounds} round(s), ${iterativeResult.totalCorrectionsApplied} verified fixes, ${iterativeResult.remainingIssueCount} remaining (${iterativeResult.durationMs}ms)`,
+              );
+
+              if (buildResult.buffer.length > 0) {
+                const rebuilt = await rebuildNupkgWithEntries(buildResult.buffer, finalXamlEntries, buildResult.archiveManifest);
+                if (rebuilt) {
+                  finalPackageBuffer = rebuilt;
+                  console.log(`[Pipeline] Rebuilt .nupkg after iterative LLM correction (${finalPackageBuffer.length} bytes)`);
+                } else {
+                  console.warn(`[Pipeline] Failed to rebuild .nupkg after iterative LLM correction — reverting XAML to pre-iterative state`);
+                  finalXamlEntries = xamlEntries.map((e: any) => ({ ...e }));
+                  iterativeLlmApplied = 0;
+                  pipelineWarnings.push({
+                    code: "ITERATIVE_LLM_REBUILD_FAILED",
+                    message: "Iterative LLM corrections applied but .nupkg rebuild failed — corrections reverted to maintain package consistency",
+                    stage: "remediating",
+                    recoverable: true,
+                  });
+                }
+              }
+
+              try {
+                const postIterativeQg = runQualityGate({
+                  xamlEntries: finalXamlEntries,
+                  projectJsonContent: buildResult.projectJsonContent || "{}",
+                  targetFramework: "Windows",
+                  archiveManifest: buildResult.archiveManifest,
+                });
+                postCorrectionQualityGate = postIterativeQg;
+                const postIterErrors = postIterativeQg.violations.filter(v => v.severity === "error");
+                const postIterWarnings = postIterativeQg.violations.filter(v => v.severity === "warning");
+                qualityGateBlocking = postIterErrors.length > 0 || postIterativeQg.completenessLevel === "incomplete";
+                qualityGateWarnings = postIterWarnings.map(v => v.detail);
+                console.log(`[Pipeline] Post-iterative quality gate: ${postIterErrors.length} error(s), ${postIterWarnings.length} warning(s), blocking=${qualityGateBlocking}`);
+              } catch (qgErr: unknown) {
+                const errMsg = qgErr instanceof Error ? qgErr.message : String(qgErr);
+                console.warn(`[Pipeline] Post-iterative quality gate revalidation failed: ${errMsg}`);
+              }
+            } else {
+              console.log(`[Pipeline] Iterative LLM correction: no additional fixes needed`);
+            }
+
+            if (iterativeResult.remainingIssueCount > 0) {
+              pipelineWarnings.push({
+                code: "ITERATIVE_LLM_REMAINING_ISSUES",
+                message: `${iterativeResult.remainingIssueCount} fragile defect(s) remain after iterative LLM correction (unknown-activity, invalid-activity-property, ENUM_VIOLATIONS, LITERAL_EXPRESSIONS, UNDECLARED_VARIABLES, MISSING_PROPERTIES, NESTED_ARGUMENTS)`,
+                stage: "remediating",
+                recoverable: true,
+              });
+            }
+          } catch (iterErr: unknown) {
+            const errMsg = iterErr instanceof Error ? iterErr.message : String(iterErr);
+            console.warn(`[Pipeline] Iterative LLM correction failed: ${errMsg}`);
+            pipelineWarnings.push({
+              code: "ITERATIVE_LLM_CORRECTION_FAILED",
+              message: `Iterative LLM self-correction failed: ${errMsg}`,
+              stage: "remediating",
+              recoverable: true,
+            });
+          }
+
           if (applicationResult.flatStructureWarnings > 0) {
             pipelineWarnings.push({
               code: "META_VALIDATION_FLAT_STRUCTURE",
@@ -1487,37 +1597,41 @@ export async function compilePackageFromSpecs(
             });
           }
 
-          const mvStatus = applicationResult.applied > 0
+          const totalCorrectionsApplied = applicationResult.applied + iterativeLlmApplied;
+          const mvStatus = totalCorrectionsApplied > 0
             ? "fixed"
             : applicationResult.flatStructureWarnings > 0
               ? "warnings"
               : "clean";
 
+          const totalSkipped = applicationResult.skipped + iterativeSkipped;
+          const totalFailed = applicationResult.failed + iterativeFailed;
+
           metaValidationResult = {
             engaged: true,
             mode: mvMode,
             confidenceScore: confidenceResult.score,
-            correctionsApplied: applicationResult.applied,
-            correctionsSkipped: applicationResult.skipped,
-            correctionsFailed: applicationResult.failed,
+            correctionsApplied: totalCorrectionsApplied,
+            correctionsSkipped: totalSkipped,
+            correctionsFailed: totalFailed,
             flatStructureWarnings: applicationResult.flatStructureWarnings,
             durationMs: applicationResult.durationMs + correctionSet.reviewDurationMs,
             status: mvStatus,
           };
 
-          console.log(`[Pipeline] Meta-validation complete: ${applicationResult.applied} applied, ${applicationResult.skipped} skipped, ${applicationResult.failed} failed (${metaValidationResult.durationMs}ms) | corrections_applied=${applicationResult.applied}, meta_validations_engaged=1`);
+          console.log(`[Pipeline] Meta-validation complete: ${totalCorrectionsApplied} applied (${applicationResult.applied} deterministic + ${iterativeLlmApplied} iterative-LLM), ${totalSkipped} skipped (${applicationResult.skipped} det + ${iterativeSkipped} iter), ${totalFailed} failed (${applicationResult.failed} det + ${iterativeFailed} iter) (${metaValidationResult.durationMs}ms) | corrections_applied=${totalCorrectionsApplied}, meta_validations_engaged=1`);
 
           const completionEvent: MetaValidationEvent = {
             status: mvStatus === "fixed" ? "completed" : mvStatus === "warnings" ? "warning" : "completed",
-            correctionsApplied: applicationResult.applied,
-            correctionsSkipped: applicationResult.skipped,
-            correctionsFailed: applicationResult.failed,
+            correctionsApplied: totalCorrectionsApplied,
+            correctionsSkipped: totalSkipped,
+            correctionsFailed: totalFailed,
             flatStructureWarnings: applicationResult.flatStructureWarnings,
             confidenceScore: confidenceResult.score,
             durationMs: metaValidationResult.durationMs,
           };
 
-          if (applicationResult.skipped > 0 && mvStatus !== "warnings") {
+          if (totalSkipped > 0 && mvStatus !== "warnings") {
             completionEvent.status = "warning";
           }
 

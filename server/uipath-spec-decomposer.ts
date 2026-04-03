@@ -7,6 +7,7 @@ import { RunLogger } from "./lib/run-logger";
 import { sanitizeValueIntentExpressions } from "./xaml/expression-builder";
 import { buildCompactCatalogSummary } from "./catalog/xaml-template-builder";
 import { normalizeWorkflowName } from "./workflow-name-utils";
+import { catalogService } from "./catalog/catalog-service";
 
 const SCAFFOLD_MAX_TOKENS = 4096;
 const SCAFFOLD_RETRY_LIMIT = 3;
@@ -134,6 +135,22 @@ IMPORTANT RULES:
 Return ONLY the JSON object, no other text.`;
 }
 
+function buildStudioProfileBlock(): string {
+  const profile = catalogService.getStudioProfile();
+  if (!profile) return "";
+  const lines: string[] = [
+    "=== STUDIO PROFILE ===",
+    `Studio: ${profile.studioLine} v${profile.studioVersion}`,
+    `Target Framework: ${profile.targetFramework}`,
+    `Expression Language: ${profile.expressionLanguage}`,
+  ];
+  if (profile.minimumRequiredPackages && Object.keys(profile.minimumRequiredPackages).length > 0) {
+    lines.push(`Minimum Required Packages: ${Object.entries(profile.minimumRequiredPackages).map(([k, v]) => `${k}=${v}`).join(", ")}`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
 function buildDetailPrompt(workflow: ScaffoldWorkflowEntry, scaffold: ScaffoldResult): string {
   const contextLines: string[] = [];
   contextLines.push(`Project: ${scaffold.projectName} — ${scaffold.description}`);
@@ -159,9 +176,11 @@ function buildDetailPrompt(workflow: ScaffoldWorkflowEntry, scaffold: ScaffoldRe
     contextLines.push(`Shared orchestrator assets: ${scaffold.sharedAssetNames.join(", ")}`);
   }
 
+  const studioProfile = buildStudioProfileBlock();
+
   return `You are a Senior Developer and Solution Architect. Apply production engineering rigor: use camelCase for all variable names, provide meaningful defaultValues (not empty strings for critical variables), include logging-level annotations in step notes at every decision point and error handler, use realistic selectorHints with tag/attribute structure (not just placeholder text), and set errorHandling deliberately — "none" only for steps that genuinely cannot fail. Anticipate specific runtime failures (selector not found, API timeout, file locked, stale data) rather than relying on generic TryCatch. Comply strictly with the JSON schema below — no extra fields, no missing required fields, no prose outside the JSON.
 
-Generate the full workflow specification for the "${workflow.name}" workflow in the UiPath project "${scaffold.projectName}".
+${studioProfile}Generate the full workflow specification for the "${workflow.name}" workflow in the UiPath project "${scaffold.projectName}".
 
 PROJECT CONTEXT:
 ${contextLines.join("\n")}
@@ -242,6 +261,25 @@ IMPORTANT RULES:
 - Map decision points to If/Switch activities
 - Map loops to ForEach/While activities
 - Be as specific and production-ready as possible
+
+HARD CONSTRAINTS — CATALOG BOUNDARY:
+- ONLY use activity names that appear in the AVAILABLE ACTIVITIES catalog above or the Built-in Activities list. Do NOT invent activity names, class names, or aliases.
+- ONLY use property names that are listed for each activity in the catalog. Do NOT invent property names.
+- ONLY use enum values that are listed for each activity's enum properties. Do NOT invent enum values.
+- ONLY reference dependency packages that appear in the catalog. Do NOT invent package names.
+- Every variable referenced in steps MUST be declared in the "variables" array with a concrete type.
+- Follow catalog xamlSyntax metadata: if a property is marked as a child element (not an attribute), emit it accordingly.
+- When using InvokeWorkflowFile, the target workflow MUST exist in this project's workflow list and all required in/out arguments MUST be wired.
+
+VB.NET EXPRESSION SYNTAX (expressionLanguage = VisualBasic):
+- All expressions use VB.NET syntax — not C#, not JavaScript.
+- String concatenation: use "&" operator (e.g. "Hello " & variableName), NEVER "+".
+- Not-equal comparison: use "<>" (e.g. status <> "Done"), NEVER "!=".
+- No string interpolation: do NOT use $"..." syntax. Use String.Format or "&" concatenation.
+- Variable references in expression attributes MUST be bracket-wrapped: [variableName].
+- Boolean literals: True / False (PascalCase), not true / false.
+- Nothing instead of null.
+- Logical operators: AndAlso, OrElse, Not — not &&, ||, !.
 
 OUTPUT FORMAT RULES (strict):
 - Workflow names must NOT include file extensions (no ".xaml") or surrounding quotes
@@ -871,6 +909,11 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
     });
 
     const detailPrompt = buildDetailPrompt(entry, scaffold);
+    const estimatedTokens = Math.ceil(detailPrompt.length / 3.5);
+    console.log(`[SpecDecomposer] Prompt for "${entry.name}": ${detailPrompt.length} chars (~${estimatedTokens} tokens)`);
+    if (estimatedTokens > 30000) {
+      console.warn(`[SpecDecomposer] Token budget warning: prompt for "${entry.name}" exceeds 30k tokens (~${estimatedTokens})`);
+    }
 
     for (let attempt = 0; attempt <= DETAIL_RETRY_LIMIT; attempt++) {
       const aggregateRemaining = aggregateTimeoutMs - (Date.now() - detailPhaseStart);

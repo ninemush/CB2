@@ -41,6 +41,14 @@ export {
   type TokenPricing,
 } from "./cost-tracker";
 
+export {
+  runIterativeLlmCorrection,
+  type IterativeCorrectionResult,
+  type QualityGateIssue,
+  type WorkflowSpecContext,
+  type ProjectContext,
+} from "./iterative-llm-corrector";
+
 export type MetaValidationMode = "Auto" | "Always" | "Off";
 
 export interface MetaValidationResult {

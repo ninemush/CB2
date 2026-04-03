@@ -10,9 +10,10 @@ import { getPlatformCapabilities, type PlatformCapabilityProfile, type Integrati
 import { generateUiPathPackage, generateDhg, findUiPathMessage, parseUiPathPackage, computeVersion, getCachedPipelineResult } from "./uipath-pipeline";
 import { generateConfigXlsx } from "./package-assembler";
 import { startUiPathGenerationRun, type TriggerSource, type RunCallbacks, type RunResult } from "./uipath-run-manager";
-import { UIPATH_PROMPT, repairTruncatedPackageJson } from "./uipath-prompts";
+import { UIPATH_PROMPT, buildUiPathPrompt, repairTruncatedPackageJson } from "./uipath-prompts";
 export { UIPATH_PROMPT, repairTruncatedPackageJson };
 import type { MetaValidationMode } from "./meta-validation";
+import { catalogService } from "./catalog/catalog-service";
 import { acquireDocGenerationLock, releaseDocGenerationLock, isGenerationCancelled, consumePendingInvalidation, runCompletionCallbacks } from "./lib/doc-generation-lock";
 import { evaluateTransition } from "./stage-transition";
 import { approveDocument } from "./document-service";
@@ -603,7 +604,8 @@ async function generateDocument(ideaId: string, docType: string, onStageEvent?: 
   }
 
   pddLogger.stageStart("llm_generation");
-  const prompt = docType === "PDD" ? PDD_PROMPT : UIPATH_PROMPT;
+  const studioProfile = catalogService.getStudioProfile();
+  const prompt = docType === "PDD" ? PDD_PROMPT : buildUiPathPrompt(studioProfile);
   const maxTokens = 4096;
   try {
     const response = await getLLM().create({
