@@ -10,6 +10,7 @@ import { registerProcessMapRoutes } from "./process-map-routes";
 import { registerDocumentRoutes } from "./document-routes";
 import { registerUiPathRoutes } from "./uipath-routes";
 import { registerFileUploadRoutes } from "./file-upload";
+import { registerVerificationBundleRoutes } from "./verification-bundle";
 import { evaluateTransition } from "./stage-transition";
 import { SUPPORTED_MODELS, CHAT_SUPPORTED_MODELS, setDbModel, getActiveModel, getProviderName, setDbCodeModel, getActiveCodeModel, getCodeProviderName, setDbMetaValidationModel, getActiveMetaValidationModel, getMetaValidationProviderName } from "./lib/llm";
 import { getMetricsSummary, getAllMetrics, type MetaValidationMode } from "./meta-validation";
@@ -86,6 +87,7 @@ export async function registerRoutes(
   registerDocumentRoutes(app);
   registerUiPathRoutes(app);
   registerFileUploadRoutes(app);
+  registerVerificationBundleRoutes(app);
 
   app.get("/api/auth/me", async (req: Request, res: Response) => {
     if (!req.session.userId) {

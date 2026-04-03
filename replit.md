@@ -94,6 +94,7 @@ The application is built on a modern web stack to ensure scalability and a user-
 - **Proactive Registry-Based Dependency Resolution**: Activity registry fallback resolves packages proactively.
 - **Non-Catalog Property Stripping Threshold**: Flags activities with excessive unknown properties.
 - **High Confidence Mode (Meta-Validation)**: Optional post-generation review layer with deterministic confidence scoring.
+- **Post-Implementation Verification Bundle**: A downloadable ZIP containing verification artifacts (manifest, nupkg, DHG, quality gate results, meta-validation results, pipeline diagnostics, outcome report, final quality report, spec snapshot) for reviewer inspection after pipeline tasks. Button appears when a UiPath package exists. Endpoint: `POST /api/verification-bundle/:ideaId`. Agent skill at `.agents/skills/post-implementation-verification/SKILL.md`.
 
 ## External Dependencies
 - **AI Services**: Anthropic Claude, OpenAI, Google Gemini (via Replit AI Integrations)

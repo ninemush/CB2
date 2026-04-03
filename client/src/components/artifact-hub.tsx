@@ -17,6 +17,7 @@ import {
   Clock,
   Archive,
   XCircle,
+  ClipboardCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -485,6 +486,7 @@ export function ArtifactHub({ ideaId, ideaTitle }: ArtifactHubProps) {
   const { toast } = useToast();
   const [viewingArtifact, setViewingArtifact] = useState<string | null>(null);
   const [downloadingAll, setDownloadingAll] = useState(false);
+  const [downloadingBundle, setDownloadingBundle] = useState(false);
 
   const { data, isLoading } = useQuery<{ artifacts: ArtifactSummary[] }>({
     queryKey: ["/api/ideas", ideaId, "artifacts"],
@@ -542,6 +544,33 @@ export function ArtifactHub({ ideaId, ideaTitle }: ArtifactHubProps) {
     } catch {
       toast({ title: "Download failed", variant: "destructive" });
     }
+  }
+
+  async function downloadVerificationBundle() {
+    setDownloadingBundle(true);
+    try {
+      const res = await fetch(`/api/verification-bundle/${ideaId}`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => null);
+        throw new Error(errBody?.message || "Failed to generate verification bundle");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${ideaTitle.replace(/[^a-zA-Z0-9_-]/g, "_")}_verification_bundle.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast({ title: "Verification bundle downloaded" });
+    } catch (err: any) {
+      toast({ title: err.message || "Verification bundle download failed", variant: "destructive" });
+    }
+    setDownloadingBundle(false);
   }
 
   async function downloadAll() {
@@ -607,6 +636,7 @@ export function ArtifactHub({ ideaId, ideaTitle }: ArtifactHubProps) {
   }
 
   const anyExists = artifacts.some(a => a.exists);
+  const uipathPackageExists = artifacts.find(a => a.type === "uipath")?.exists;
 
   return (
     <div className="flex flex-col h-full" data-testid="panel-artifact-hub">
@@ -618,21 +648,40 @@ export function ArtifactHub({ ideaId, ideaTitle }: ArtifactHubProps) {
           </h3>
         </div>
         {anyExists && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-[10px] gap-1"
-            onClick={downloadAll}
-            disabled={downloadingAll}
-            data-testid="button-download-all-artifacts"
-          >
-            {downloadingAll ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Download className="h-3 w-3" />
+          <div className="flex items-center gap-1.5">
+            {uipathPackageExists && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-[10px] gap-1"
+                onClick={downloadVerificationBundle}
+                disabled={downloadingBundle}
+                data-testid="button-download-verification-bundle"
+              >
+                {downloadingBundle ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <ClipboardCheck className="h-3 w-3" />
+                )}
+                Verification Bundle
+              </Button>
             )}
-            Download All
-          </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[10px] gap-1"
+              onClick={downloadAll}
+              disabled={downloadingAll}
+              data-testid="button-download-all-artifacts"
+            >
+              {downloadingAll ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Download className="h-3 w-3" />
+              )}
+              Download All
+            </Button>
+          </div>
         )}
       </div>
 
