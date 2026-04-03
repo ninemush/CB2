@@ -7,6 +7,7 @@ import { getCodeLLM, SDD_LLM_TIMEOUT_MS } from "./lib/llm";
 import { RunLogger } from "./lib/run-logger";
 import { runBuildPipeline, getCachedPipelineResult, findUiPathMessage, type IdeaContext, type PipelineResult } from "./uipath-pipeline";
 import type { PipelineProgressEvent, PipelineProgressCallback } from "./uipath-pipeline";
+import { initTrace, flushAndClear, runInTraceContext } from "./llm-trace-collector";
 import type { UipathGenerationRun } from "@shared/schema";
 import { sanitizeAndParseJson } from "./lib/json-utils";
 import { uipathPackageSchema } from "./types/uipath-package";
@@ -507,15 +508,26 @@ async function executeRun(
 
     let userMetaValidationMode: MetaValidationMode = options?.metaValidationMode || "Auto";
 
-    const pipelineResult = await runBuildPipeline(ideaId, packageJson, {
-      onProgress: (msg: string) => emitProgress(msg),
-      onPipelineProgress: pipelineProgressCallback,
-      onMetaValidation: callbacks?.onMetaValidation,
-      generationMode: options?.generationMode,
-      metaValidationMode: userMetaValidationMode,
-      preloadedContext,
-      forceRebuild: options?.forceRegenerate,
-    });
+    initTrace(runId);
+
+    let pipelineResult: PipelineResult;
+    try {
+      pipelineResult = await runInTraceContext(runId, () =>
+        runBuildPipeline(ideaId, packageJson, {
+          onProgress: (msg: string) => emitProgress(msg),
+          onPipelineProgress: pipelineProgressCallback,
+          onMetaValidation: callbacks?.onMetaValidation,
+          generationMode: options?.generationMode,
+          metaValidationMode: userMetaValidationMode,
+          preloadedContext,
+          forceRebuild: options?.forceRegenerate,
+        })
+      );
+    } finally {
+      await flushAndClear(runId).catch((err: any) => {
+        console.warn(`[RunManager] Run ${runId}: LLM trace flush failed: ${err?.message}`);
+      });
+    }
 
     console.log(`[RunManager] Run ${runId}: build pipeline phase completed — status: ${pipelineResult.status}`);
     runLogger.stageEnd("build_pipeline", pipelineResult.status === "FAILED" ? "failed" : "succeeded", {

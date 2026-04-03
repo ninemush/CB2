@@ -705,9 +705,11 @@ export async function registerRoutes(
     let parsedPhaseProgress = null;
     let parsedOutcomeReport = null;
     let parsedStageLog = null;
+    let parsedLlmTrace = null;
     try { if (dbRun.phaseProgress) parsedPhaseProgress = JSON.parse(dbRun.phaseProgress); } catch {}
     try { if (dbRun.outcomeReport) parsedOutcomeReport = JSON.parse(dbRun.outcomeReport); } catch {}
     try { if (dbRun.stageLog) parsedStageLog = typeof dbRun.stageLog === 'string' ? JSON.parse(dbRun.stageLog) : dbRun.stageLog; } catch {}
+    try { if (dbRun.llmTrace) parsedLlmTrace = typeof dbRun.llmTrace === 'string' ? JSON.parse(dbRun.llmTrace) : dbRun.llmTrace; } catch {}
 
     const durationMs = dbRun.completedAt && dbRun.createdAt ? new Date(dbRun.completedAt).getTime() - new Date(dbRun.createdAt).getTime() : null;
     const terminalStatuses = ["completed", "completed_with_warnings", "failed", "blocked"];
@@ -720,6 +722,7 @@ export async function registerRoutes(
         phaseProgress: parsedPhaseProgress,
         outcomeReport: parsedOutcomeReport,
         stageLog: parsedStageLog,
+        llmTrace: parsedLlmTrace,
         durationMs,
         isActive,
       },

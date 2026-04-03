@@ -30,6 +30,7 @@ export interface IStorage {
   completeGenerationRun(runId: string, updates: { status: string; outcomeReport?: string; dhgContent?: string; generationMode?: string; pddDocumentId?: number; sddDocumentId?: number; qualityGateResults?: unknown; metaValidationResults?: unknown; finalQualityReport?: unknown }): Promise<UipathGenerationRun | undefined>;
   failGenerationRun(runId: string, errorMessage: string): Promise<UipathGenerationRun | undefined>;
   updateGenerationRunStageLog(runId: string, stageLog: unknown): Promise<UipathGenerationRun | undefined>;
+  updateGenerationRunLlmTrace(runId: string, llmTrace: unknown): Promise<UipathGenerationRun | undefined>;
   failOrphanedRuns(): Promise<UipathGenerationRun[]>;
   getGenerationRunsForIdea(ideaId: string): Promise<UipathGenerationRun[]>;
   listGenerationRuns(options: { offset?: number; limit?: number; status?: string; ideaId?: string; fromDate?: Date; toDate?: Date; search?: string }): Promise<{ runs: (UipathGenerationRun & { ideaTitle?: string })[]; total: number }>;
@@ -206,6 +207,14 @@ export class DatabaseStorage implements IStorage {
   async updateGenerationRunStageLog(runId: string, stageLog: unknown): Promise<UipathGenerationRun | undefined> {
     const [updated] = await db.update(uipathGenerationRuns)
       .set({ stageLog, updatedAt: new Date() })
+      .where(eq(uipathGenerationRuns.runId, runId))
+      .returning();
+    return updated;
+  }
+
+  async updateGenerationRunLlmTrace(runId: string, llmTrace: unknown): Promise<UipathGenerationRun | undefined> {
+    const [updated] = await db.update(uipathGenerationRuns)
+      .set({ llmTrace, updatedAt: new Date() })
       .where(eq(uipathGenerationRuns.runId, runId))
       .returning();
     return updated;

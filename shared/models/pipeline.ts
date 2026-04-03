@@ -144,6 +144,7 @@ export const uipathGenerationRuns = pgTable("uipath_generation_runs", {
   qualityGateResults: jsonb("quality_gate_results"),
   metaValidationResults: jsonb("meta_validation_results"),
   finalQualityReport: jsonb("final_quality_report"),
+  llmTrace: jsonb("llm_trace"),
   errorMessage: text("error_message"),
   triggeredBy: text("triggered_by").notNull().default("manual"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),

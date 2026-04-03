@@ -42,6 +42,150 @@ function readCatalogFile(filename: string): any | null {
   return null;
 }
 
+function generateDiagnosticSummary(
+  run: any,
+  outcomeReport: any,
+  qualityGateResults: any,
+  metaValidationResults: any,
+  stageLog: any,
+  phaseProgress: any,
+  llmTrace: any,
+): string {
+  const lines: string[] = [];
+  lines.push("# Diagnostic Summary");
+  lines.push("");
+
+  lines.push("## Run Metadata");
+  lines.push(`- **Run ID:** ${run.runId}`);
+  lines.push(`- **Idea ID:** ${run.ideaId}`);
+  lines.push(`- **Status:** ${run.status}`);
+  lines.push(`- **Generation Mode:** ${run.generationMode}`);
+  lines.push(`- **Triggered By:** ${run.triggeredBy}`);
+  lines.push(`- **Created At:** ${run.createdAt}`);
+  lines.push(`- **Completed At:** ${run.completedAt || "N/A"}`);
+  if (run.completedAt && run.createdAt) {
+    const durationMs = new Date(run.completedAt).getTime() - new Date(run.createdAt).getTime();
+    lines.push(`- **Duration:** ${(durationMs / 1000).toFixed(1)}s`);
+  }
+  if (run.errorMessage) {
+    lines.push(`- **Error:** ${run.errorMessage}`);
+  }
+  lines.push("");
+
+  if (stageLog && Array.isArray(stageLog)) {
+    lines.push("## Stage Timing");
+    lines.push("");
+    lines.push("| Stage | Status | Duration (ms) |");
+    lines.push("|-------|--------|--------------|");
+    for (const entry of stageLog) {
+      const stage = entry.stage || "unknown";
+      const status = entry.outcome || entry.status || "—";
+      const duration = entry.durationMs != null ? entry.durationMs : "—";
+      lines.push(`| ${stage} | ${status} | ${duration} |`);
+    }
+    lines.push("");
+  }
+
+  if (llmTrace && Array.isArray(llmTrace)) {
+    const llmCalls = llmTrace.filter((e: any) => e.entryType === "llm_call");
+    const transforms = llmTrace.filter((e: any) => e.entryType === "deterministic_transform");
+
+    if (llmCalls.length > 0) {
+      lines.push("## LLM Call Summary");
+      lines.push("");
+      lines.push("| Stage | Model | Duration (ms) | Input Tokens | Output Tokens | Status |");
+      lines.push("|-------|-------|--------------|-------------|--------------|--------|");
+      for (const call of llmCalls) {
+        lines.push(`| ${call.stage} | ${call.model || "—"} | ${call.durationMs} | ${call.inputTokens} | ${call.outputTokens} | ${call.parsedResultStatus} |`);
+      }
+      lines.push("");
+      const totalInput = llmCalls.reduce((s: number, c: any) => s + (c.inputTokens || 0), 0);
+      const totalOutput = llmCalls.reduce((s: number, c: any) => s + (c.outputTokens || 0), 0);
+      const totalDuration = llmCalls.reduce((s: number, c: any) => s + (c.durationMs || 0), 0);
+      lines.push(`**Totals:** ${llmCalls.length} calls, ${totalInput} input tokens, ${totalOutput} output tokens, ${(totalDuration / 1000).toFixed(1)}s total LLM time`);
+      lines.push("");
+    }
+
+    if (transforms.length > 0) {
+      lines.push("## Deterministic Transforms");
+      lines.push("");
+      const byStageCounts: Record<string, number> = {};
+      for (const t of transforms) {
+        byStageCounts[t.stage] = (byStageCounts[t.stage] || 0) + 1;
+      }
+      lines.push("| Transform Type | Count |");
+      lines.push("|---------------|-------|");
+      for (const [stage, cnt] of Object.entries(byStageCounts)) {
+        lines.push(`| ${stage} | ${cnt} |`);
+      }
+      lines.push("");
+    }
+  }
+
+  if (qualityGateResults) {
+    lines.push("## Quality Gate Summary");
+    lines.push("");
+    const qg = qualityGateResults;
+    if (qg.passed !== undefined) lines.push(`- **Passed:** ${qg.passed}`);
+    if (qg.summary) {
+      if (qg.summary.totalErrors !== undefined) lines.push(`- **Total Errors:** ${qg.summary.totalErrors}`);
+      if (qg.summary.totalWarnings !== undefined) lines.push(`- **Total Warnings:** ${qg.summary.totalWarnings}`);
+      if (qg.summary.byCategory) {
+        lines.push("- **By Category:**");
+        for (const [cat, count] of Object.entries(qg.summary.byCategory as Record<string, number>)) {
+          if (count > 0) lines.push(`  - ${cat}: ${count}`);
+        }
+      }
+    }
+    if (qg.completenessLevel) lines.push(`- **Completeness:** ${qg.completenessLevel}`);
+    lines.push("");
+  }
+
+  if (metaValidationResults) {
+    lines.push("## Meta-Validation Summary");
+    lines.push("");
+    const mv = metaValidationResults;
+    if (mv.engaged !== undefined) lines.push(`- **Engaged:** ${mv.engaged}`);
+    if (mv.mode) lines.push(`- **Mode:** ${mv.mode}`);
+    if (mv.correctionsApplied !== undefined) lines.push(`- **Corrections Applied:** ${mv.correctionsApplied}`);
+    if (mv.correctionsSkipped !== undefined) lines.push(`- **Corrections Skipped:** ${mv.correctionsSkipped}`);
+    if (mv.correctionsFailed !== undefined) lines.push(`- **Corrections Failed:** ${mv.correctionsFailed}`);
+    if (mv.confidenceScore !== undefined) lines.push(`- **Confidence Score:** ${mv.confidenceScore}`);
+    if (mv.durationMs !== undefined) lines.push(`- **Duration:** ${mv.durationMs}ms`);
+    lines.push("");
+  }
+
+  if (outcomeReport) {
+    const po = outcomeReport.pipelineOutcome || outcomeReport;
+    if (po.degradations && po.degradations.length > 0) {
+      lines.push("## Degradations");
+      lines.push("");
+      for (const d of po.degradations) {
+        lines.push(`- ${typeof d === "string" ? d : d.message || JSON.stringify(d)}`);
+      }
+      lines.push("");
+    }
+    if (po.remediations && po.remediations.length > 0) {
+      lines.push("## Remediations");
+      lines.push("");
+      for (const r of po.remediations) {
+        lines.push(`- ${typeof r === "string" ? r : r.detail || r.code || JSON.stringify(r)}`);
+      }
+      lines.push("");
+    }
+    if (po.autoRepairs && po.autoRepairs.length > 0) {
+      lines.push("## Auto-Repairs");
+      lines.push("");
+      for (const ar of po.autoRepairs) {
+        lines.push(`- ${typeof ar === "string" ? ar : ar.detail || JSON.stringify(ar)}`);
+      }
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n");
+}
+
 export function registerVerificationBundleRoutes(app: Express): void {
   app.get("/api/verification-bundle/:ideaId/versions", async (req: Request, res: Response) => {
     const access = await verifyIdeaAccess(req, res);
@@ -482,6 +626,19 @@ export function registerVerificationBundleRoutes(app: Express): void {
       if (stageHashParity) {
         serializedArtifacts.push({ data: JSON.stringify(stageHashParity, null, 2), name: "stage-hash-parity.json" });
       }
+
+      let llmTrace: any = null;
+      if (targetRun.llmTrace) {
+        llmTrace = typeof targetRun.llmTrace === "string" ? JSON.parse(targetRun.llmTrace) : targetRun.llmTrace;
+      }
+      if (llmTrace && Array.isArray(llmTrace) && llmTrace.length > 0) {
+        serializedArtifacts.push({ data: JSON.stringify(llmTrace, null, 2), name: "llm-trace.json" });
+        artifactSources["llm-trace"] = "database";
+      }
+
+      const diagnosticSummary = generateDiagnosticSummary(targetRun, outcomeReport, qualityGateResults, metaValidationResults, stageLog, phaseProgress, llmTrace);
+      serializedArtifacts.push({ data: diagnosticSummary, name: "diagnostic-summary.md" });
+      artifactSources["diagnostic-summary"] = "generated";
 
       archive = archiver("zip", { zlib: { level: 9 } });
       const zip = archive;

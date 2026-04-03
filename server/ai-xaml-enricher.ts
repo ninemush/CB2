@@ -1,4 +1,4 @@
-import { getCodeLLM } from "./lib/llm";
+import { getCodeLLM, getActiveCodeModel, getActiveModel } from "./lib/llm";
 import type { ProcessNode, ProcessEdge } from "@shared/schema";
 import { sanitizeJsonString, stripCodeFences } from "./lib/json-utils";
 import { isActivityAllowed } from "./uipath-activity-policy";
@@ -9,6 +9,7 @@ import { buildTemplateBlock, formatTemplateBlockForPrompt, formatCompactTemplate
 import { validateWorkflowSpec, type WorkflowSpec as TreeWorkflowSpec, type WorkflowNode, type PropertyValue } from "./workflow-spec-types";
 import { isValueIntent, sanitizeValueIntentExpressions, type ValueIntent } from "./xaml/expression-builder";
 import { extractUiContext, formatUiContextForPrompt } from "./xaml/selector-quality-scorer";
+import { recordLlmCall, buildLlmTraceEntry, getCurrentRunId } from "./llm-trace-collector";
 
 const TIMESPAN_PROPERTY_NAMES = new Set([
   "RetryInterval", "Timeout", "DelayBefore", "DelayAfter",
@@ -401,29 +402,61 @@ Generate the enriched workflow specification. For each node, provide the specifi
     const systemPrompt = SECTION_1_ROLE + section2Block + "\n\n" + SECTION_3_VARIABLES + "\n\n" + SECTION_4_OUTPUT + uiContextBlock;
 
       console.log(`[AI XAML Enricher] Requesting enrichment for ${nodeDescriptions.length} nodes (streaming)...`);
-      const stream = getCodeLLM().stream({
+      const enrichLlmOptions = {
         maxTokens: 12288,
         temperature: 0.15,
         system: systemPrompt,
-        messages: [{ role: "user", content: userMessage }],
+        messages: [{ role: "user", content: userMessage }] as Array<{ role: "user" | "assistant"; content: string }>,
         timeoutMs,
-      });
+      };
+      const enrichCallStart = Date.now();
+      const stream = getCodeLLM().stream(enrichLlmOptions);
 
       const timeoutHandle = setTimeout(() => stream.abort(), timeoutMs);
 
       let accumulated = "";
+      let enrichStreamError: string | undefined;
       try {
         for await (const event of stream) {
           if (event.type === "text_delta" && event.text) {
             accumulated += event.text;
           }
         }
+      } catch (streamErr: any) {
+        enrichStreamError = streamErr?.message || "Stream error";
+        const enrichRunId = getCurrentRunId();
+        if (enrichRunId) {
+          recordLlmCall(enrichRunId, buildLlmTraceEntry(
+            "xaml_enrichment",
+            enrichLlmOptions,
+            accumulated,
+            Date.now() - enrichCallStart,
+            "error",
+            enrichStreamError,
+            getActiveCodeModel() || getActiveModel(),
+          ));
+        }
+        throw streamErr;
       } finally {
         clearTimeout(timeoutHandle);
       }
 
+      const enrichDuration = Date.now() - enrichCallStart;
+
       const responseText = accumulated.trim();
       if (!responseText) {
+        const enrichRunId = getCurrentRunId();
+        if (enrichRunId) {
+          recordLlmCall(enrichRunId, buildLlmTraceEntry(
+            "xaml_enrichment",
+            enrichLlmOptions,
+            accumulated,
+            enrichDuration,
+            "error",
+            "Empty response",
+            getActiveCodeModel() || getActiveModel(),
+          ));
+        }
         console.log("[AI XAML Enricher] Empty response received");
         return null;
       }
@@ -442,12 +475,37 @@ Generate the enriched workflow specification. For each node, provide the specifi
           console.log(`[AI XAML Enricher] JSON repair succeeded — recovered ${repaired.nodes.length} nodes`);
           parsed = repaired as EnrichmentResult;
         } else {
+          const parseRunId = getCurrentRunId();
+          if (parseRunId) {
+            recordLlmCall(parseRunId, buildLlmTraceEntry(
+              "xaml_enrichment",
+              enrichLlmOptions,
+              accumulated,
+              enrichDuration,
+              "parse_error",
+              parseErr.message,
+              getActiveCodeModel() || getActiveModel(),
+            ));
+          }
           console.log("[AI XAML Enricher] JSON repair failed — could not recover valid enrichment structure");
           return null;
         }
       }
 
       sanitizeValueIntentExpressions(parsed);
+
+      const enrichRunId = getCurrentRunId();
+      if (enrichRunId) {
+        recordLlmCall(enrichRunId, buildLlmTraceEntry(
+          "xaml_enrichment",
+          enrichLlmOptions,
+          accumulated,
+          enrichDuration,
+          "success",
+          undefined,
+          getActiveCodeModel() || getActiveModel(),
+        ));
+      }
 
       if (!parsed.nodes || !Array.isArray(parsed.nodes)) {
         console.log("[AI XAML Enricher] Invalid response structure — missing nodes array");
@@ -761,69 +819,123 @@ IMPORTANT: The pre-mapped structure above is authoritative for workflow decompos
         { role: "user", content: (preMappedContext ? userMessage + preMappedContext : userMessage) + (extraContext ? "\n\n" + extraContext : "") },
       ];
 
-      const stream = getCodeLLM().stream({
+      const treeLlmOptions = {
         maxTokens: 16384,
         temperature: 0.15,
         system: systemPrompt,
         messages,
         timeoutMs,
-      });
+      };
+      const treeCallStart = Date.now();
+      const stream = getCodeLLM().stream(treeLlmOptions);
 
       const timeoutHandle = setTimeout(() => stream.abort(), timeoutMs);
 
+      let accumulated = "";
       try {
-        let accumulated = "";
         for await (const event of stream) {
           if (event.type === "text_delta" && event.text) {
             accumulated += event.text;
           }
         }
-        clearTimeout(timeoutHandle);
-
-        const responseText = accumulated.trim();
-        if (!responseText) {
-          console.log("[AI XAML Enricher Tree] Empty response received");
-          lastParseError = "Empty response from LLM";
-          return null;
+      } catch (streamErr: any) {
+        const treeRunId = getCurrentRunId();
+        if (treeRunId) {
+          recordLlmCall(treeRunId, buildLlmTraceEntry(
+            "xaml_enrichment_tree",
+            treeLlmOptions,
+            accumulated,
+            Date.now() - treeCallStart,
+            "error",
+            streamErr?.message || "Stream error",
+            getActiveCodeModel() || getActiveModel(),
+          ));
         }
-
-        let parsed: any;
-        try {
-          const jsonText = stripCodeFences(responseText);
-          const sanitized = sanitizeJsonString(jsonText);
-          parsed = JSON.parse(sanitized);
-        } catch (parseErr: any) {
-          lastParseError = `JSON parse error: ${parseErr.message}`;
-          console.log(`[AI XAML Enricher Tree] ${lastParseError}`);
-          return null;
-        }
-
-        if (parsed && typeof parsed === "object") {
-          sanitizeObjectProperties(parsed);
-          sanitizeValueIntentExpressions(parsed);
-          if (parsed.reframeworkConfig == null || typeof parsed.reframeworkConfig !== "object") {
-            parsed.reframeworkConfig = undefined;
-            if (parsed.useReFramework) {
-              parsed.reframeworkConfig = { queueName: "", maxRetries: 1, processName: parsed.name || "" };
-            }
-          } else {
-            if (parsed.reframeworkConfig.maxRetries == null || parsed.reframeworkConfig.maxRetries < 0) {
-              parsed.reframeworkConfig.maxRetries = 1;
-            }
-          }
-        }
-
-        const validation = validateWorkflowSpec(parsed);
-        if (!validation.success) {
-          lastValidationErrors = validation.errors;
-          console.log(`[AI XAML Enricher Tree] Validation failed: ${validation.errors.join("; ")}`);
-          return null;
-        }
-
-        return validation.data;
+        throw streamErr;
       } finally {
         clearTimeout(timeoutHandle);
       }
+
+      const treeDuration = Date.now() - treeCallStart;
+
+      const responseText = accumulated.trim();
+      if (!responseText) {
+        const treeRunId = getCurrentRunId();
+        if (treeRunId) {
+          recordLlmCall(treeRunId, buildLlmTraceEntry(
+            "xaml_enrichment_tree",
+            treeLlmOptions,
+            accumulated,
+            treeDuration,
+            "error",
+            "Empty response",
+            getActiveCodeModel() || getActiveModel(),
+          ));
+        }
+        console.log("[AI XAML Enricher Tree] Empty response received");
+        lastParseError = "Empty response from LLM";
+        return null;
+      }
+
+      let parsed: any;
+      try {
+        const jsonText = stripCodeFences(responseText);
+        const sanitized = sanitizeJsonString(jsonText);
+        parsed = JSON.parse(sanitized);
+      } catch (parseErr: any) {
+        lastParseError = `JSON parse error: ${parseErr.message}`;
+        const parseRunId = getCurrentRunId();
+        if (parseRunId) {
+          recordLlmCall(parseRunId, buildLlmTraceEntry(
+            "xaml_enrichment_tree",
+            treeLlmOptions,
+            accumulated,
+            treeDuration,
+            "parse_error",
+            parseErr.message,
+            getActiveCodeModel() || getActiveModel(),
+          ));
+        }
+        console.log(`[AI XAML Enricher Tree] ${lastParseError}`);
+        return null;
+      }
+
+      const treeRunId = getCurrentRunId();
+      if (treeRunId) {
+        recordLlmCall(treeRunId, buildLlmTraceEntry(
+          "xaml_enrichment_tree",
+          treeLlmOptions,
+          accumulated,
+          treeDuration,
+          "success",
+          undefined,
+          getActiveCodeModel() || getActiveModel(),
+        ));
+      }
+
+      if (parsed && typeof parsed === "object") {
+        sanitizeObjectProperties(parsed);
+        sanitizeValueIntentExpressions(parsed);
+        if (parsed.reframeworkConfig == null || typeof parsed.reframeworkConfig !== "object") {
+          parsed.reframeworkConfig = undefined;
+          if (parsed.useReFramework) {
+            parsed.reframeworkConfig = { queueName: "", maxRetries: 1, processName: parsed.name || "" };
+          }
+        } else {
+          if (parsed.reframeworkConfig.maxRetries == null || parsed.reframeworkConfig.maxRetries < 0) {
+            parsed.reframeworkConfig.maxRetries = 1;
+          }
+        }
+      }
+
+      const validation = validateWorkflowSpec(parsed);
+      if (!validation.success) {
+        lastValidationErrors = validation.errors;
+        console.log(`[AI XAML Enricher Tree] Validation failed: ${validation.errors.join("; ")}`);
+        return null;
+      }
+
+      return validation.data;
     };
 
     console.log(`[AI XAML Enricher Tree] Requesting tree enrichment for ${nodeDescriptions.length} nodes...`);

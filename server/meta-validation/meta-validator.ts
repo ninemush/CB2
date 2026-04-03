@@ -1,5 +1,6 @@
 import type { ErrorCategory } from "./confidence-scorer";
-import { getLLM, getLLMForModel, getActiveMetaValidationModel, type LLMProvider } from "../lib/llm";
+import { getLLM, getLLMForModel, getActiveMetaValidationModel, getActiveModel, type LLMProvider } from "../lib/llm";
+import { recordLlmCall, buildLlmTraceEntry, getCurrentRunId } from "../llm-trace-collector";
 
 export type CorrectionConfidence = "high" | "medium" | "low";
 
@@ -169,14 +170,29 @@ export async function runMetaValidation(
     const truncatedXaml = truncateXaml(entry.content, INPUT_TOKEN_CAP);
     const prompt = buildReviewPrompt(categories, truncatedXaml, workflowName);
 
+    const mvLlmOptions = {
+      system: "You are a UiPath XAML quality reviewer. Return only valid JSON arrays of corrections.",
+      messages: [{ role: "user", content: prompt }] as Array<{ role: "user" | "assistant"; content: string }>,
+      maxTokens: OUTPUT_TOKEN_CAP,
+    };
+    const mvCallStart = Date.now();
     try {
-      const response = await llm.create({
-        system: "You are a UiPath XAML quality reviewer. Return only valid JSON arrays of corrections.",
-        messages: [{ role: "user", content: prompt }],
-        maxTokens: OUTPUT_TOKEN_CAP,
-      });
+      const response = await llm.create(mvLlmOptions);
 
       const responseText = response.text;
+
+      const mvRunId = getCurrentRunId();
+      if (mvRunId) {
+        recordLlmCall(mvRunId, buildLlmTraceEntry(
+          `meta_validation:${workflowName}`,
+          mvLlmOptions,
+          responseText,
+          Date.now() - mvCallStart,
+          "success",
+          undefined,
+          usedModel,
+        ));
+      }
 
       const inputEstimate = Math.ceil(prompt.length / 3.5);
       const outputEstimate = Math.ceil(responseText.length / 3.5);
@@ -190,6 +206,18 @@ export async function runMetaValidation(
       }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
+      const mvRunId = getCurrentRunId();
+      if (mvRunId) {
+        recordLlmCall(mvRunId, buildLlmTraceEntry(
+          `meta_validation:${workflowName}`,
+          mvLlmOptions,
+          "",
+          Date.now() - mvCallStart,
+          "error",
+          errMsg,
+          usedModel,
+        ));
+      }
       console.warn(`[Meta-Validator] Review failed for ${workflowName}: ${errMsg}`);
     }
   }

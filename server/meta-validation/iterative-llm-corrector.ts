@@ -2,8 +2,9 @@ import type { ErrorCategory } from "./confidence-scorer";
 import { runDeterministicValidation } from "./deterministic-validators";
 import { applyCorrections } from "./correction-applier";
 import type { CorrectionSet } from "./meta-validator";
-import { getLLM, type LLMProvider } from "../lib/llm";
+import { getLLM, getActiveModel, type LLMProvider } from "../lib/llm";
 import { runQualityGate, type QualityGateViolation } from "../uipath-quality-gate";
+import { recordLlmCall, buildLlmTraceEntry, getCurrentRunId } from "../llm-trace-collector";
 
 const LLM_CORRECTION_MAX_ROUNDS = 2;
 const LLM_CORRECTION_MAX_TOKENS = 4000;
@@ -318,13 +319,27 @@ export async function runIterativeLlmCorrection(
 
       const issuesBefore = countFragileForWorkflow(revalidation, workflowName) + qgIssues.length;
 
+      const iterLlmOptions = {
+        system: "You are a UiPath XAML regeneration specialist. You regenerate workflow XAML from the original specification and current defective XAML. Return only the regenerated XAML content.",
+        messages: [{ role: "user", content: prompt }] as Array<{ role: "user" | "assistant"; content: string }>,
+        maxTokens: LLM_CORRECTION_MAX_TOKENS,
+      };
+      const iterCallStart = Date.now();
       try {
-        const response = await llm.create({
-          system:
-            "You are a UiPath XAML regeneration specialist. You regenerate workflow XAML from the original specification and current defective XAML. Return only the regenerated XAML content.",
-          messages: [{ role: "user", content: prompt }],
-          maxTokens: LLM_CORRECTION_MAX_TOKENS,
-        });
+        const response = await llm.create(iterLlmOptions);
+
+        const iterRunId = getCurrentRunId();
+        if (iterRunId) {
+          recordLlmCall(iterRunId, buildLlmTraceEntry(
+            `iterative_correction:${workflowName}:round_${round}`,
+            iterLlmOptions,
+            response.text,
+            Date.now() - iterCallStart,
+            "success",
+            undefined,
+            getActiveModel(),
+          ));
+        }
 
         const inputEst = Math.ceil(prompt.length / 3.5);
         const outputEst = Math.ceil(response.text.length / 3.5);
@@ -353,6 +368,18 @@ export async function runIterativeLlmCorrection(
           });
           parser.parse(correctedXaml);
         } catch (xmlErr: any) {
+          const xmlRunId = getCurrentRunId();
+          if (xmlRunId) {
+            recordLlmCall(xmlRunId, buildLlmTraceEntry(
+              `iterative_correction:${workflowName}:round_${round}:xml_validation`,
+              iterLlmOptions,
+              response.text,
+              Date.now() - iterCallStart,
+              "parse_error",
+              `Malformed XML: ${xmlErr.message}`,
+              getActiveModel(),
+            ));
+          }
           console.warn(
             `[Iterative LLM Corrector] Round ${round}: LLM-corrected XAML for ${workflowName} is malformed: ${xmlErr.message} — falling back to deterministic corrections`,
           );
@@ -440,6 +467,18 @@ export async function runIterativeLlmCorrection(
         }
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
+        const iterRunId = getCurrentRunId();
+        if (iterRunId) {
+          recordLlmCall(iterRunId, buildLlmTraceEntry(
+            `iterative_correction:${workflowName}:round_${round}`,
+            iterLlmOptions,
+            "",
+            Date.now() - iterCallStart,
+            "error",
+            errMsg,
+            getActiveModel(),
+          ));
+        }
         console.warn(
           `[Iterative LLM Corrector] Round ${round}: LLM call failed for ${workflowName}: ${errMsg}`,
         );

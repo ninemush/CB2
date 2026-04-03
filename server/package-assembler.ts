@@ -2,6 +2,7 @@ import archiver from "archiver";
   import AdmZip from "adm-zip";
   import { createHash } from "crypto";
   import { PassThrough } from "stream";
+  import { recordTransform, getCurrentRunId } from "./llm-trace-collector";
   import {
     generateRichXamlFromSpec,
     generateRichXamlFromNodes,
@@ -1621,6 +1622,15 @@ function runPostAssemblyValidation(
           code: "MISSING_REQUIRED_PROPERTY_INJECTED",
           detail: `${activityTag}.${propDef.name} set to ${placeholder} — developer must provide actual value`,
         });
+        const traceRunId = getCurrentRunId();
+        if (traceRunId) {
+          recordTransform(traceRunId, {
+            stage: "auto_injected_property",
+            file: "package",
+            description: `Auto-injected required property ${activityTag}.${propDef.name} with placeholder "${placeholder}"`,
+            after: placeholder,
+          });
+        }
       }
       checkedActivities.add(activityTag);
     }
@@ -3321,18 +3331,57 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
     function compliancePass(rawXaml: string, fileName: string, skipTracking?: boolean): string {
       const preCatalogSnapshot = catalogService.isLoaded() ? snapshotCatalogValidProperties(rawXaml) : null;
       let compliant = makeUiPathCompliant(rawXaml, tf);
+      if (compliant !== rawXaml) {
+        const traceRunId = getCurrentRunId();
+        if (traceRunId) {
+          recordTransform(traceRunId, {
+            stage: "compliance_normalization",
+            file: fileName,
+            description: `XAML compliance normalization applied (${rawXaml.length} → ${compliant.length} chars)`,
+            before: rawXaml.length > 500 ? rawXaml.slice(0, 500) + `... [${rawXaml.length} chars]` : rawXaml,
+            after: compliant.length > 500 ? compliant.slice(0, 500) + `... [${compliant.length} chars]` : compliant,
+          });
+        }
+      }
       if (preCatalogSnapshot && preCatalogSnapshot.size > 0) {
+        const preProtection = compliant;
         compliant = enforcePreCompliancePropertyProtection(rawXaml, compliant, preCatalogSnapshot, fileName);
+        if (compliant !== preProtection) {
+          const traceRunId = getCurrentRunId();
+          if (traceRunId) {
+            recordTransform(traceRunId, {
+              stage: "catalog_property_protection",
+              file: fileName,
+              description: `Catalog property protection restored ${preCatalogSnapshot.size} property snapshot(s)`,
+            });
+          }
+        }
       }
       const { filtered, removed } = filterBlockedActivitiesFromXaml(compliant, automationPattern);
       compliant = filtered;
       if (removed.length > 0) {
+        const traceRunId = getCurrentRunId();
+        if (traceRunId) {
+          recordTransform(traceRunId, {
+            stage: "activity_policy_filter",
+            file: fileName,
+            description: `Removed ${removed.length} blocked activit(ies) for pattern "${automationPattern}": ${removed.join(", ")}`,
+          });
+        }
         console.log(`[UiPath Policy] ${fileName}: removed ${removed.length} blocked activit(ies) for pattern "${automationPattern}": ${removed.join(", ")}`);
       }
       const policyResult = applyActivityPolicy(compliant, modeConfig, fileName);
       compliant = policyResult.content;
       if (policyResult.blocked.length > 0) {
         allPolicyBlocked.push({ file: fileName, activities: policyResult.blocked });
+        const traceRunId = getCurrentRunId();
+        if (traceRunId) {
+          recordTransform(traceRunId, {
+            stage: "activity_policy_block",
+            file: fileName,
+            description: `Policy blocked ${policyResult.blocked.length} activit(ies) in ${generationMode} mode: ${policyResult.blocked.join(", ")}`,
+          });
+        }
         console.log(`[UiPath Policy] ${fileName}: blocked ${policyResult.blocked.join(", ")} (${generationMode} mode)`);
       }
       const { fixed, report } = analyzeAndFix(compliant);
@@ -3341,6 +3390,14 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
         xamlEntries.push({ name: fileName, content: fixed });
       }
       if (report.totalAutoFixed > 0) {
+        const traceRunId = getCurrentRunId();
+        if (traceRunId) {
+          recordTransform(traceRunId, {
+            stage: "workflow_analyzer_autofix",
+            file: fileName,
+            description: `Auto-fixed ${report.totalAutoFixed} issue(s), ${report.totalRemaining} remaining`,
+          });
+        }
         console.log(`[UiPath Analyzer] ${fileName}: ${report.totalAutoFixed} auto-fixed, ${report.totalRemaining} remaining`);
       }
 

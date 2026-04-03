@@ -1,4 +1,4 @@
-import { getCodeLLM, SDD_LLM_TIMEOUT_MS } from "./lib/llm";
+import { getCodeLLM, SDD_LLM_TIMEOUT_MS, getActiveCodeModel, getActiveModel } from "./lib/llm";
 import { sanitizeAndParseJson, diagnoseJsonFailure } from "./lib/json-utils";
 import { uipathPackageSchema, type UiPathPackageSpec } from "./types/uipath-package";
 import { repairTruncatedPackageJson } from "./uipath-prompts";
@@ -8,6 +8,7 @@ import { sanitizeValueIntentExpressions } from "./xaml/expression-builder";
 import { buildCompactCatalogSummary } from "./catalog/xaml-template-builder";
 import { normalizeWorkflowName } from "./workflow-name-utils";
 import { catalogService } from "./catalog/catalog-service";
+import { recordLlmCall, buildLlmTraceEntry } from "./llm-trace-collector";
 
 const SCAFFOLD_MAX_TOKENS = 4096;
 const SCAFFOLD_RETRY_LIMIT = 3;
@@ -600,21 +601,35 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
 
   const scaffoldStart = Date.now();
   let scaffoldResponse;
+  let scaffoldLlmDuration = 0;
   let scaffoldTimeoutEscalations = 0;
+  let scaffoldLlmOptions: any;
   for (let attempt = 0; attempt <= SCAFFOLD_RETRY_LIMIT; attempt++) {
     const escalatedTimeout = SDD_LLM_TIMEOUT_MS + (scaffoldTimeoutEscalations * SCAFFOLD_TIMEOUT_ESCALATION_MS);
     console.log(`[SpecDecomposer] Run ${runId}: Scaffold attempt ${attempt + 1}/${SCAFFOLD_RETRY_LIMIT + 1} (timeout: ${Math.round(escalatedTimeout / 1000)}s)`);
 
+    scaffoldLlmOptions = {
+      maxTokens: SCAFFOLD_MAX_TOKENS,
+      system: systemContext,
+      messages: [{ role: "user", content: buildScaffoldPrompt(complexityGuidance) }] as Array<{ role: "user" | "assistant"; content: string }>,
+      timeoutMs: escalatedTimeout,
+    };
+    const scaffoldCallStart = Date.now();
     try {
       metrics.totalLlmCalls++;
-      scaffoldResponse = await getCodeLLM().create({
-        maxTokens: SCAFFOLD_MAX_TOKENS,
-        system: systemContext,
-        messages: [{ role: "user", content: buildScaffoldPrompt(complexityGuidance) }],
-        timeoutMs: escalatedTimeout,
-      });
+      scaffoldResponse = await getCodeLLM().create(scaffoldLlmOptions);
+      scaffoldLlmDuration = Date.now() - scaffoldCallStart;
       break;
     } catch (err: any) {
+      recordLlmCall(runId, buildLlmTraceEntry(
+        "spec_scaffold",
+        scaffoldLlmOptions,
+        "",
+        Date.now() - scaffoldCallStart,
+        "error",
+        err?.message || "Unknown error",
+        getActiveCodeModel() || getActiveModel(),
+      ));
       const isTimeout = /timed?\s*out/i.test(err?.message ?? "");
       const failureKind = isTimeout ? "timeout" : "error";
       const attemptDuration = Date.now() - scaffoldStart;
@@ -653,13 +668,33 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
   metrics.scaffoldDurationMs = Date.now() - scaffoldStart;
 
   let scaffold: ScaffoldResult;
+  const scaffoldRawText = scaffoldResponse!.text || "";
   try {
-    scaffold = parseScaffold(scaffoldResponse!.text || "{}");
+    scaffold = parseScaffold(scaffoldRawText || "{}");
   } catch (err: any) {
+    recordLlmCall(runId, buildLlmTraceEntry(
+      "spec_scaffold",
+      scaffoldLlmOptions,
+      scaffoldRawText,
+      scaffoldLlmDuration,
+      "parse_error",
+      err?.message || "Parse failed",
+      getActiveCodeModel() || getActiveModel(),
+    ));
     runLogger.stageEnd("spec_scaffold", "failed", undefined, err?.message);
     onPipelineProgress?.({ type: "failed", stage: "spec_scaffold", message: "Failed to parse scaffold" });
     throw new Error(`Scaffold parse failed: ${err?.message}`);
   }
+
+  recordLlmCall(runId, buildLlmTraceEntry(
+    "spec_scaffold",
+    scaffoldLlmOptions,
+    scaffoldRawText,
+    scaffoldLlmDuration,
+    "success",
+    undefined,
+    getActiveCodeModel() || getActiveModel(),
+  ));
 
   let validation = validateScaffoldArgumentContracts(scaffold);
 
@@ -685,21 +720,50 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
     });
     onProgress?.("Scaffold had structural errors, retrying with corrections...");
 
+    const correctionPrompt = `The scaffold you generated has the following structural errors that must be fixed:\n\n${validation.errors.map((e, i) => `${i + 1}. ${e}`).join("\n")}\n\nPlease regenerate the complete scaffold JSON, fixing all listed errors. Return ONLY the corrected JSON object, no other text.`;
+    const retryLlmOptions = {
+      maxTokens: SCAFFOLD_MAX_TOKENS,
+      system: systemContext,
+      messages: [
+        { role: "user" as const, content: buildScaffoldPrompt(complexityGuidance) },
+        { role: "assistant" as const, content: scaffoldResponse!.text || "{}" },
+        { role: "user" as const, content: correctionPrompt },
+      ],
+      timeoutMs: SDD_LLM_TIMEOUT_MS + SCAFFOLD_TIMEOUT_ESCALATION_MS,
+    };
+    const retryCallStart = Date.now();
     try {
       metrics.totalLlmCalls++;
-      const correctionPrompt = `The scaffold you generated has the following structural errors that must be fixed:\n\n${validation.errors.map((e, i) => `${i + 1}. ${e}`).join("\n")}\n\nPlease regenerate the complete scaffold JSON, fixing all listed errors. Return ONLY the corrected JSON object, no other text.`;
-      const retryResponse = await getCodeLLM().create({
-        maxTokens: SCAFFOLD_MAX_TOKENS,
-        system: systemContext,
-        messages: [
-          { role: "user", content: buildScaffoldPrompt(complexityGuidance) },
-          { role: "assistant", content: scaffoldResponse!.text || "{}" },
-          { role: "user", content: correctionPrompt },
-        ],
-        timeoutMs: SDD_LLM_TIMEOUT_MS + SCAFFOLD_TIMEOUT_ESCALATION_MS,
-      });
+      const retryResponse = await getCodeLLM().create(retryLlmOptions);
+      const retryDuration = Date.now() - retryCallStart;
+      const retryRawText = retryResponse.text || "";
 
-      const retryScaffold = parseScaffold(retryResponse.text || "{}");
+      let retryScaffold;
+      try {
+        retryScaffold = parseScaffold(retryRawText || "{}");
+      } catch (parseErr: any) {
+        recordLlmCall(runId, buildLlmTraceEntry(
+          "spec_scaffold_feedback_retry",
+          retryLlmOptions,
+          retryRawText,
+          retryDuration,
+          "parse_error",
+          parseErr?.message || "Parse failed",
+          getActiveCodeModel() || getActiveModel(),
+        ));
+        throw parseErr;
+      }
+
+      recordLlmCall(runId, buildLlmTraceEntry(
+        "spec_scaffold_feedback_retry",
+        retryLlmOptions,
+        retryRawText,
+        retryDuration,
+        "success",
+        undefined,
+        getActiveCodeModel() || getActiveModel(),
+      ));
+
       const retryValidation = validateScaffoldArgumentContracts(retryScaffold);
 
       if (retryValidation.warnings.length > 0) {
@@ -735,7 +799,20 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
         message: "Scaffold feedback retry succeeded — all blocking errors resolved",
       });
     } catch (retryErr: any) {
-      if (retryErr?.message?.startsWith("Scaffold argument contract violations after feedback retry")) {
+      const isContractViolation = retryErr?.message?.startsWith("Scaffold argument contract violations after feedback retry");
+      const isParseError = retryErr?.message?.includes("Parse failed") || retryErr?.message?.includes("JSON");
+      if (!isContractViolation && !isParseError) {
+        recordLlmCall(runId, buildLlmTraceEntry(
+          "spec_scaffold_feedback_retry",
+          retryLlmOptions,
+          "",
+          Date.now() - retryCallStart,
+          "error",
+          retryErr?.message || "Unknown error",
+          getActiveCodeModel() || getActiveModel(),
+        ));
+      }
+      if (isContractViolation) {
         throw retryErr;
       }
       const originalErrorSummary = validation.errors.join("; ");
@@ -941,15 +1018,44 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
 
       console.log(`[SpecDecomposer] Run ${runId}: Workflow "${entry.name}" attempt ${attempt + 1}/${DETAIL_RETRY_LIMIT + 1} (timeout: ${Math.round(perWorkflowTimeout / 1000)}s)`);
 
+      const detailLlmOptions = {
+        maxTokens: DETAIL_MAX_TOKENS,
+        system: systemContext,
+        messages: [{ role: "user", content: detailPrompt }] as Array<{ role: "user" | "assistant"; content: string }>,
+        timeoutMs: perWorkflowTimeout,
+      };
+      const detailCallStart = Date.now();
       try {
-        const detailResponse = await getCodeLLM().create({
-          maxTokens: DETAIL_MAX_TOKENS,
-          system: systemContext,
-          messages: [{ role: "user", content: detailPrompt }],
-          timeoutMs: perWorkflowTimeout,
-        });
+        const detailResponse = await getCodeLLM().create(detailLlmOptions);
+        const detailDuration = Date.now() - detailCallStart;
+        const detailRawText = detailResponse.text || "";
 
-        const detail = parseWorkflowDetail(detailResponse.text || "{}", entry.name, runLogger);
+        let detail;
+        try {
+          detail = parseWorkflowDetail(detailRawText || "{}", entry.name, runLogger);
+        } catch (parseErr: any) {
+          recordLlmCall(runId, buildLlmTraceEntry(
+            `spec_detail:${entry.name}`,
+            detailLlmOptions,
+            detailRawText,
+            detailDuration,
+            "parse_error",
+            parseErr?.message || "Parse failed",
+            getActiveCodeModel() || getActiveModel(),
+          ));
+          throw parseErr;
+        }
+
+        recordLlmCall(runId, buildLlmTraceEntry(
+          `spec_detail:${entry.name}`,
+          detailLlmOptions,
+          detailRawText,
+          detailDuration,
+          "success",
+          undefined,
+          getActiveCodeModel() || getActiveModel(),
+        ));
+
         workflowDetails.set(entry.name, detail);
         succeeded = true;
 
@@ -982,6 +1088,15 @@ export async function generateDecomposedSpec(options: DecomposeOptions): Promise
 
         break;
       } catch (err: any) {
+        recordLlmCall(runId, buildLlmTraceEntry(
+          `spec_detail:${entry.name}`,
+          detailLlmOptions,
+          "",
+          Date.now() - detailCallStart,
+          "error",
+          err?.message || "Unknown error",
+          getActiveCodeModel() || getActiveModel(),
+        ));
         const wfDuration = Date.now() - wfStart;
         const isTimeout = /timed?\s*out/i.test(err?.message ?? "");
         const failureKind = isTimeout ? "timeout" : "error";

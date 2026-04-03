@@ -16,6 +16,7 @@ import { lintXamlExpressions } from "./xaml/vbnet-expression-linter";
 import { validateTypeCompatibility } from "./xaml/type-compatibility-validator";
 import { scoreSelectorQuality, generateSelectorWarnings, injectResilienceDefaults } from "./xaml/selector-quality-scorer";
 import { XAML_INFRASTRUCTURE_TYPE_ARGUMENTS } from "./xaml/xaml-compliance";
+import { recordTransform, getCurrentRunId } from "./llm-trace-collector";
 import { UIPATH_PACKAGE_ALIAS_MAP } from "./uipath-shared";
 
 const KNOWN_ACTIVITIES = ACTIVITY_REGISTRY;
@@ -2172,6 +2173,14 @@ export function validatePackage(input: QualityGateInput): QualityGateResult {
   const positiveEvidence = collectPositiveEvidence(input);
 
   if (expressionLintResult.correctedEntries.length > 0) {
+    const traceRunId = getCurrentRunId();
+    const originalContentMap = new Map<string, string>();
+    if (traceRunId) {
+      for (const corrected of expressionLintResult.correctedEntries) {
+        const original = input.xamlEntries.find(e => e.name === corrected.name);
+        if (original) originalContentMap.set(corrected.name, original.content);
+      }
+    }
     for (const corrected of expressionLintResult.correctedEntries) {
       const idx = input.xamlEntries.findIndex(e => e.name === corrected.name);
       if (idx !== -1) {
@@ -2179,6 +2188,18 @@ export function validatePackage(input: QualityGateInput): QualityGateResult {
       }
     }
     console.log(`[Quality Gate] Expression lint: applied ${expressionLintResult.correctedEntries.length} corrections`);
+    if (traceRunId) {
+      for (const corrected of expressionLintResult.correctedEntries) {
+        const origContent = originalContentMap.get(corrected.name);
+        recordTransform(traceRunId, {
+          stage: "expression_lint",
+          file: corrected.name,
+          description: `Expression lint correction applied to ${corrected.name}`,
+          before: origContent ? (origContent.length > 500 ? origContent.slice(0, 500) + `... [${origContent.length} chars]` : origContent) : undefined,
+          after: corrected.content.length > 500 ? corrected.content.slice(0, 500) + `... [${corrected.content.length} chars]` : corrected.content,
+        });
+      }
+    }
   }
 
   const typeCompatResult = validateTypeCompatibility(input.xamlEntries);
@@ -2191,6 +2212,18 @@ export function validatePackage(input: QualityGateInput): QualityGateResult {
       }
     }
     console.log(`[Quality Gate] Type compatibility: applied ${typeCompatResult.correctedEntries.length} corrections`);
+    const traceRunId = getCurrentRunId();
+    if (traceRunId) {
+      for (const repair of typeCompatResult.repairs) {
+        recordTransform(traceRunId, {
+          stage: "type_compatibility",
+          file: repair.file || "unknown",
+          description: `Type ${repair.repairKind}: ${repair.activity}.${repair.property} (${repair.actualType} → ${repair.expectedType}) — ${repair.detail}`,
+          before: repair.actualType,
+          after: repair.expectedType,
+        });
+      }
+    }
   }
 
   const selectorScores = scoreSelectorQuality(input.xamlEntries);
@@ -2476,6 +2509,14 @@ export function validatePackage(input: QualityGateInput): QualityGateResult {
 export function runQualityGate(input: QualityGateInput): QualityGateResult {
   const resilienceCorrected = injectResilienceDefaults(input.xamlEntries);
   if (resilienceCorrected.length > 0) {
+    const traceRunId = getCurrentRunId();
+    const resilienceOrigMap = new Map<string, string>();
+    if (traceRunId) {
+      for (const corrected of resilienceCorrected) {
+        const original = input.xamlEntries.find(e => e.name === corrected.name);
+        if (original) resilienceOrigMap.set(corrected.name, original.content);
+      }
+    }
     for (const corrected of resilienceCorrected) {
       const idx = input.xamlEntries.findIndex(e => e.name === corrected.name);
       if (idx !== -1) {
@@ -2483,6 +2524,18 @@ export function runQualityGate(input: QualityGateInput): QualityGateResult {
       }
     }
     console.log(`[Quality Gate] Resilience defaults: applied ${resilienceCorrected.length} corrections`);
+    if (traceRunId) {
+      for (const corrected of resilienceCorrected) {
+        const origContent = resilienceOrigMap.get(corrected.name);
+        recordTransform(traceRunId, {
+          stage: "resilience_defaults",
+          file: corrected.name,
+          description: `Resilience defaults injected into ${corrected.name}`,
+          before: origContent ? (origContent.length > 500 ? origContent.slice(0, 500) + `... [${origContent.length} chars]` : origContent) : undefined,
+          after: corrected.content.length > 500 ? corrected.content.slice(0, 500) + `... [${corrected.content.length} chars]` : corrected.content,
+        });
+      }
+    }
   }
 
   return validatePackage(input);

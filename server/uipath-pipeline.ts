@@ -43,6 +43,16 @@ import {
 import { classifyComplexity, estimateComplexityFromContext, type ComplexityTier, type ComplexityClassification } from "./complexity-classifier";
 import { recordPipelineHealth, computePipelineHealthFromResult } from "./pipeline-health";
 import { runFinalArtifactValidation, type FinalQualityReport } from "./final-artifact-validation";
+import { flushTrace, getCurrentRunId } from "./llm-trace-collector";
+
+async function periodicTraceFlush(): Promise<void> {
+  const runId = getCurrentRunId();
+  if (runId) {
+    await flushTrace(runId).catch((err: any) => {
+      console.warn(`[Pipeline] Periodic trace flush failed: ${err?.message}`);
+    });
+  }
+}
 
 export type { GenerationMode };
 export type { ComplexityTier, ComplexityClassification };
@@ -983,6 +993,7 @@ export async function generateWorkflowSpecs(
 
     tracker.start("spec_generation_done", "Spec generation complete");
     tracker.complete("spec_generation_done", "WorkflowSpecs ready for XAML emission");
+    await periodicTraceFlush();
 
     if (options?.runId) {
       try {
@@ -1169,6 +1180,7 @@ export async function compilePackageFromSpecs(
       xamlCount: buildResult.xamlEntries.length,
       cacheHit: buildResult.cacheHit,
     });
+    await periodicTraceFlush();
 
     if (buildResult.emissionGateWarnings) {
       for (const w of buildResult.emissionGateWarnings) {
@@ -1303,6 +1315,7 @@ export async function compilePackageFromSpecs(
       tracker.warn("compliance_normalization", `Template compliance check failed: ${err.message}`);
     }
     tracker.complete("compliance_normalization", "Compliance normalization complete", { templateComplianceScore });
+    await periodicTraceFlush();
 
     const qgResult = buildResult.qualityGateResult;
     const isIncomplete = qgResult ? qgResult.completenessLevel === "incomplete" : false;
@@ -1704,6 +1717,7 @@ export async function compilePackageFromSpecs(
       throw new Error(canonicalRebuildErrorMsg);
     }
     tracker.complete("validation", "Validation and remediation complete");
+    await periodicTraceFlush();
 
     if (options?.runId) {
       try {
