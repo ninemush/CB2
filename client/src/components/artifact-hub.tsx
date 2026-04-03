@@ -18,6 +18,9 @@ import {
   Archive,
   XCircle,
   ClipboardCheck,
+  CheckCircle2,
+  AlertTriangle,
+  PackageOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -51,7 +54,22 @@ const ARTIFACT_ICONS: Record<string, typeof Map> = {
   dhg: BookOpen,
 };
 
-function statusBadgeClass(status: string): string {
+import { isAssessedTerminalStatus, STATUS_PRESENTATION, mapLegacyStatus, type AssessedTerminalStatus } from "@shared/models/package-status";
+
+const ASSESSED_ICON_MAP: Record<string, typeof CheckCircle2> = {
+  CheckCircle2,
+  AlertTriangle,
+  PackageOpen,
+  XCircle,
+};
+
+function statusBadgeClass(status: string, artifactType?: string): string {
+  if (artifactType === "uipath") {
+    const mapped = mapLegacyStatus(status);
+    if (isAssessedTerminalStatus(mapped)) {
+      return STATUS_PRESENTATION[mapped].badgeClass;
+    }
+  }
   switch (status) {
     case "Approved":
       return "bg-emerald-500/15 text-emerald-400 border-emerald-500/25";
@@ -65,7 +83,25 @@ function statusBadgeClass(status: string): string {
   }
 }
 
-function statusIcon(status: string) {
+function statusLabel(status: string, artifactType?: string): string {
+  if (artifactType === "uipath") {
+    const mapped = mapLegacyStatus(status);
+    if (isAssessedTerminalStatus(mapped)) {
+      return STATUS_PRESENTATION[mapped].shortLabel;
+    }
+  }
+  return status;
+}
+
+function statusIcon(status: string, artifactType?: string) {
+  if (artifactType === "uipath") {
+    const mapped = mapLegacyStatus(status);
+    if (isAssessedTerminalStatus(mapped)) {
+      const pres = STATUS_PRESENTATION[mapped];
+      const IconComp = ASSESSED_ICON_MAP[pres.iconName];
+      if (IconComp) return <IconComp className="h-3 w-3" />;
+    }
+  }
   switch (status) {
     case "Approved":
       return <Check className="h-3 w-3" />;
@@ -716,11 +752,11 @@ export function ArtifactHub({ ideaId, ideaTitle }: ArtifactHubProps) {
                       </span>
                       <Badge
                         variant="outline"
-                        className={`text-[9px] px-1.5 py-0 h-4 ${statusBadgeClass(artifact.status)}`}
+                        className={`text-[9px] px-1.5 py-0 h-4 ${statusBadgeClass(artifact.status, artifact.type)}`}
                         data-testid={`badge-status-${artifact.type}`}
                       >
-                        {statusIcon(artifact.status)}
-                        <span className="ml-0.5">{artifact.status}</span>
+                        {statusIcon(artifact.status, artifact.type)}
+                        <span className="ml-0.5">{statusLabel(artifact.status, artifact.type)}</span>
                       </Badge>
                     </div>
                     <div className="text-[10px] text-muted-foreground/70">

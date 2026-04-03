@@ -57,7 +57,25 @@ export interface MetaValidationEvent {
   durationMs?: number;
 }
 
-export type PackageStatus = "BUILDING" | "READY" | "READY_WITH_WARNINGS" | "FALLBACK_READY" | "FAILED";
+/**
+ * PackageStatus uses the defect-aware assessed terminal states plus process states.
+ *
+ * Terminal assessed states:
+ * - `studio_stable` — opens in target Studio version with no validation errors/material warnings
+ * - `openable_with_warnings` — opens and loads but has minor non-blocking issues
+ * - `handoff_only` — artifact generated for inspection/continuation, not deployment-ready
+ * - `structurally_invalid` — pipeline completed enough to assess, but artifact is structurally invalid
+ *
+ * Semantic distinction:
+ * - `FAILED` = crash or unrecoverable system/process failure — the pipeline did not complete.
+ * - `structurally_invalid` = the pipeline completed enough to assess artifacts, but the generated
+ *   automation artifact is structurally invalid.
+ *
+ * Artifact availability is intentionally decoupled from deployability:
+ * - Download/DHG remain available for ALL terminal states.
+ * - Only `studio_stable` packages may be deployed to Orchestrator.
+ */
+export type PackageStatus = "BUILDING" | "studio_stable" | "openable_with_warnings" | "handoff_only" | "structurally_invalid" | "FAILED" | "generation_finished";
 
 export type PipelineEventType = "started" | "heartbeat" | "completed" | "warning" | "failed";
 
@@ -1734,6 +1752,12 @@ export async function compilePackageFromSpecs(
       }
     }
 
+    /**
+     * Fallback status derivation when final-artifact-validation did not run.
+     * Without final validation evidence, the highest possible status is `handoff_only`.
+     * `studio_stable` can only be assigned by passing final artifact validation.
+     * `generation_finished` is transient and never emitted as a final status.
+     */
     const finalStatus: PackageStatus = finalQualityReport
       ? finalQualityReport.derivedStatus
       : (() => {
@@ -1743,14 +1767,8 @@ export async function compilePackageFromSpecs(
           const hasStructuralBlockers = buildResult.outcomeReport?.studioCompatibility?.some(
             sc => sc.level === "studio-blocked"
           ) ?? false;
-          const hasDegradation = downgrades.length > 0 || usedAIFallback || entryPointIsStubbed || hasStructuralBlockers;
-          const hasStructuralWarnings = buildResult.outcomeReport?.studioCompatibility?.some(
-            sc => sc.level === "studio-warnings"
-          ) ?? false;
-          if (!hasNupkg) return "FAILED" as PackageStatus;
-          if (hasDegradation) return "FALLBACK_READY" as PackageStatus;
-          if (hasStructuralWarnings || pipelineWarnings.length > 0 || metaValidationResult?.flatStructureWarnings) return "READY_WITH_WARNINGS" as PackageStatus;
-          return "READY" as PackageStatus;
+          if (!hasNupkg || entryPointIsStubbed || hasStructuralBlockers) return "structurally_invalid" as PackageStatus;
+          return "handoff_only" as PackageStatus;
         })();
 
     if (options?.runId) {

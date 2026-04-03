@@ -240,26 +240,45 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
   let derivedStatus: PackageStatus;
   let statusReason: string;
 
+  /**
+   * Status derivation uses the defect-aware assessed terminal states.
+   *
+   * Semantic distinction (FAILED vs structurally_invalid):
+   * - `FAILED` = pipeline crash or unrecoverable system/process failure — reserved for
+   *   cases where the pipeline itself did not complete. Never used as a quality outcome.
+   * - `structurally_invalid` = pipeline completed assessment, but the artifact is unusable:
+   *   no .nupkg produced, entry point blocked, studio-blocked files, or unusable assembly.
+   * - `handoff_only` = artifact generated but quality gate is incomplete — not deployment-ready.
+   * - `openable_with_warnings` = artifact opens and loads but has minor non-blocking issues.
+   * - `studio_stable` = artifact validated clean — ready to deploy.
+   *
+   * Artifact availability is intentionally decoupled from deployability:
+   * download/DHG remain available for ALL states.
+   */
   if (!input.hasNupkg) {
-    derivedStatus = "FAILED";
-    statusReason = "No .nupkg package was produced";
-  } else if (hasDegradation) {
-    derivedStatus = "FALLBACK_READY";
+    derivedStatus = "structurally_invalid";
+    statusReason = "No .nupkg package was produced — artifact assembly failed";
+  } else if (entryPointHasBlockers || hasStructuralBlockers) {
+    derivedStatus = "structurally_invalid";
     const reasons: string[] = [];
     if (entryPointHasBlockers) reasons.push("entry point (Main.xaml) has structural blockers or stub content");
     if (hasStructuralBlockers) reasons.push(`${studioBlockedCount} file(s) structurally blocked in final validation`);
+    statusReason = `Structurally invalid: ${reasons.join(", ")}`;
+  } else if (hasAnyStubContent || qgIncomplete) {
+    derivedStatus = "handoff_only";
+    const reasons: string[] = [];
     if (hasAnyStubContent) reasons.push("stub content detected in finalized artifacts");
     if (qgIncomplete) reasons.push("quality gate completeness level: incomplete");
-    statusReason = `Degradation detected from final artifact analysis: ${reasons.join(", ")}`;
+    statusReason = `Handoff only: ${reasons.join(", ")}`;
   } else if (hasStructuralWarnings || totalWarnings > 0) {
-    derivedStatus = "READY_WITH_WARNINGS";
+    derivedStatus = "openable_with_warnings";
     const reasons: string[] = [];
     if (hasStructuralWarnings) reasons.push(`${studioWarningsCount} file(s) with studio warnings`);
     if (totalWarnings > 0) reasons.push(`${totalWarnings} quality gate warning(s)`);
-    statusReason = `Warnings from final artifact analysis: ${reasons.join(", ")}`;
+    statusReason = `Openable with warnings: ${reasons.join(", ")}`;
   } else {
-    derivedStatus = "READY";
-    statusReason = "All finalized artifacts validated — no blockers or warnings";
+    derivedStatus = "studio_stable";
+    statusReason = "All finalized artifacts validated — no blockers or warnings — studio stable";
   }
 
   return {

@@ -75,18 +75,26 @@ function formatTimestamp(ts: string): string {
   return new Date(ts).toLocaleString();
 }
 
-const TERMINAL_STATUSES = ["completed", "completed_with_warnings", "failed", "blocked"];
+import { mapLegacyStatus, isAssessedTerminalStatus, isTerminalStatus, STATUS_PRESENTATION } from "@shared/models/package-status";
+
+const TERMINAL_STATUSES = ["completed", "completed_with_warnings", "failed", "blocked", "studio_stable", "openable_with_warnings", "handoff_only", "structurally_invalid"];
 
 function statusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
-  if (status === "completed") return "default";
-  if (status === "completed_with_warnings") return "secondary";
-  if (status === "failed" || status === "blocked") return "destructive";
-  if (!TERMINAL_STATUSES.includes(status)) return "outline";
+  const mapped = mapLegacyStatus(status);
+  if (isAssessedTerminalStatus(mapped)) return STATUS_PRESENTATION[mapped].badgeVariant;
+  if (mapped === "FAILED") return "destructive";
+  if (!isTerminalStatus(mapped)) return "outline";
   return "secondary";
 }
 
+function statusDisplayLabel(status: string): string {
+  const mapped = mapLegacyStatus(status);
+  if (isAssessedTerminalStatus(mapped)) return STATUS_PRESENTATION[mapped].shortLabel;
+  return status;
+}
+
 function isActiveStatus(status: string): boolean {
-  return !TERMINAL_STATUSES.includes(status);
+  return !isTerminalStatus(mapLegacyStatus(status));
 }
 
 function RunHistoryTable({ onSelectRun }: { onSelectRun: (runId: string, ideaId: string) => void }) {
@@ -197,7 +205,7 @@ function RunHistoryTable({ onSelectRun }: { onSelectRun: (runId: string, ideaId:
                     <TableCell>
                       <Badge variant={statusVariant(run.status)} className="text-[10px]" data-testid={`badge-status-${run.runId}`}>
                         {isActiveStatus(run.status) && <Radio className="h-3 w-3 mr-1 animate-pulse" />}
-                        {run.status}
+                        {statusDisplayLabel(run.status)}
                       </Badge>
                     </TableCell>
                     <TableCell className="max-w-[200px] truncate text-xs" title={run.ideaTitle} data-testid={`text-idea-${run.runId}`}>
@@ -520,7 +528,7 @@ function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void })
         </div>
         <Badge variant={statusVariant(run.status)} data-testid="badge-detail-status">
           {isActiveStatus(run.status) && <Radio className="h-3 w-3 mr-1 animate-pulse" />}
-          {run.status}
+          {statusDisplayLabel(run.status)}
         </Badge>
       </div>
 

@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { getApprovalReadiness } from "@/lib/document-readiness";
 import { useToast } from "@/hooks/use-toast";
+import { isAssessedTerminalStatus, STATUS_PRESENTATION, getStatusPresentation, type AssessedTerminalStatus } from "@shared/models/package-status";
 import {
   FileText,
   ChevronDown,
@@ -23,6 +24,7 @@ import {
   BookOpen,
   AlertTriangle,
   RotateCcw,
+  PackageOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -494,7 +496,7 @@ interface UiPathPackageCardProps {
   ideaId: string;
   onDeployProgress?: (step: string) => void;
   onDeployComplete?: () => void;
-  status?: "BUILDING" | "READY" | "READY_WITH_WARNINGS" | "FALLBACK_READY" | "FAILED";
+  status?: "BUILDING" | "studio_stable" | "openable_with_warnings" | "handoff_only" | "structurally_invalid" | "FAILED";
   warnings?: Array<{ code: string; message: string; stage: string; recoverable: boolean }>;
   onRetry?: () => void;
   templateComplianceScore?: number;
@@ -594,8 +596,12 @@ export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDep
   const [warningsExpanded, setWarningsExpanded] = useState(false);
   const { toast } = useToast();
   const isFailed = status === "FAILED";
-  const isFallbackReady = status === "FALLBACK_READY";
-  const hasWarnings = (status === "READY_WITH_WARNINGS" || status === "FALLBACK_READY") && warnings && warnings.length > 0;
+  const assessedStatus = (status && isAssessedTerminalStatus(status)) ? status as AssessedTerminalStatus : null;
+  const highestBlockerCategory = warnings?.length
+    ? warnings.find(w => !w.recoverable)?.stage || warnings[0]?.stage
+    : undefined;
+  const statusPres = assessedStatus ? getStatusPresentation(assessedStatus, highestBlockerCategory) : null;
+  const hasWarnings = warnings && warnings.length > 0 && assessedStatus && assessedStatus !== "studio_stable";
 
   const { data: orchestratorStatus } = useQuery<{ configured: boolean }>({
     queryKey: ["/api/settings/uipath/status"],
@@ -753,19 +759,18 @@ export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDep
             <XCircle className="h-3 w-3" /> Failed
           </span>
         )}
-        {isFallbackReady && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 text-[10px] font-medium" data-testid="badge-status-fallback-ready">
-            <AlertTriangle className="h-3 w-3" /> Reduced Scope
-          </span>
-        )}
-        {hasWarnings && !isFallbackReady && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-500 text-[10px] font-medium" data-testid="badge-status-warnings">
-            <AlertTriangle className="h-3 w-3" /> {warnings.length} warning{warnings.length !== 1 ? "s" : ""}
+        {statusPres && (
+          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${statusPres.badgeClass}`} data-testid={`badge-status-${assessedStatus}`}>
+            {statusPres.iconName === "CheckCircle2" && <CheckCircle2 className="h-3 w-3" />}
+            {statusPres.iconName === "AlertTriangle" && <AlertTriangle className="h-3 w-3" />}
+            {statusPres.iconName === "PackageOpen" && <PackageOpen className="h-3 w-3" />}
+            {statusPres.iconName === "XCircle" && <XCircle className="h-3 w-3" />}
+            {statusPres.shortLabel}
           </span>
         )}
         {templateComplianceScore !== undefined && !isNaN(templateComplianceScore) && (() => {
           const hasStubs = outcomeSummary && (outcomeSummary.stubbedActivities > 0 || outcomeSummary.stubbedSequences > 0 || outcomeSummary.stubbedWorkflows > 0);
-          const hasStructuralDefects = isFallbackReady || isFailed;
+          const hasStructuralDefects = assessedStatus === "handoff_only" || assessedStatus === "structurally_invalid" || isFailed;
           if (hasStubs || hasStructuralDefects) {
             return (
               <span
@@ -863,12 +868,12 @@ export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDep
         )}
       </div>
 
-      {isFallbackReady && (
-        <div className="px-4 py-2 border-t border-amber-500/30 bg-amber-500/10" data-testid="banner-fallback-ready">
+      {assessedStatus && assessedStatus !== "studio_stable" && statusPres && (
+        <div className={`px-4 py-2 border-t ${assessedStatus === "structurally_invalid" ? "border-red-500/30 bg-red-500/10" : "border-amber-500/30 bg-amber-500/10"}`} data-testid={`banner-${assessedStatus}`}>
           <div className="flex items-start gap-2">
-            <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
-            <p className="text-[11px] text-amber-700 dark:text-amber-400">
-              Package generated with reduced scope — see Developer Handoff Guide for details
+            <AlertTriangle className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${assessedStatus === "structurally_invalid" ? "text-red-500" : "text-amber-600"}`} />
+            <p className={`text-[11px] ${assessedStatus === "structurally_invalid" ? "text-red-600 dark:text-red-400" : "text-amber-700 dark:text-amber-400"}`}>
+              {statusPres.longLabel} — see Developer Handoff Guide for details
             </p>
           </div>
         </div>
@@ -967,24 +972,31 @@ export function UiPathPackageCard({ packageData, ideaId, onDeployProgress, onDep
           </button>
         </div>
         {orchestratorStatus?.configured && (
-          <button
-            onClick={() => pushMutation.mutate()}
-            disabled={pushMutation.isPending || isFailed}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-medium transition-colors w-full justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-            data-testid="button-push-uipath"
-          >
-            {pushMutation.isPending ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Deploying to Orchestrator...
-              </>
-            ) : (
-              <>
-                <Cloud className="h-3.5 w-3.5" />
-                Deploy to UiPath Orchestrator
-              </>
+          <div className="relative group" data-testid="deploy-button-wrapper">
+            <button
+              onClick={() => pushMutation.mutate()}
+              disabled={pushMutation.isPending || isFailed || !statusPres?.deployEnabled}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-medium transition-colors w-full justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+              data-testid="button-push-uipath"
+            >
+              {pushMutation.isPending ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Deploying to Orchestrator...
+                </>
+              ) : (
+                <>
+                  <Cloud className="h-3.5 w-3.5" />
+                  Deploy to UiPath Orchestrator
+                </>
+              )}
+            </button>
+            {!statusPres?.deployEnabled && (
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-popover text-popover-foreground text-[10px] rounded-md shadow-lg border border-border opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none w-64 text-center z-50" data-testid="tooltip-deploy-disabled">
+                {statusPres?.disabledDeployTooltip || "Deployment blocked — package status has not been assessed as studio stable."}
+              </div>
             )}
-          </button>
+          </div>
         )}
 
         {pushResult?.success && (

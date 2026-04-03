@@ -2,7 +2,20 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 
-export type UiPathRunStatus = "BUILDING" | "STALLED" | "READY" | "READY_WITH_WARNINGS" | "FALLBACK_READY" | "FAILED" | "CANCELLED" | "PENDING";
+import { mapLegacyStatus, isAssessedTerminalStatus, STATUS_PRESENTATION, type PackageAssessedStatus } from "@shared/models/package-status";
+
+/**
+ * UiPathRunStatus uses the defect-aware assessed terminal states.
+ *
+ * Semantic distinction:
+ * - `FAILED` = crash or unrecoverable system/process failure — the pipeline did not complete.
+ * - `structurally_invalid` = pipeline completed enough to assess, but artifact is structurally invalid.
+ *
+ * Artifact availability is intentionally decoupled from deployability:
+ * - Download/DHG remain available for ALL terminal states.
+ * - Only `studio_stable` may be deployed.
+ */
+export type UiPathRunStatus = "BUILDING" | "STALLED" | "studio_stable" | "openable_with_warnings" | "handoff_only" | "structurally_invalid" | "FAILED" | "CANCELLED" | "PENDING" | "generation_finished";
 export type UiPathRunWarning = { code: string; message: string; stage: string; recoverable: boolean };
 export type UiPathOutcomeSummary = {
   stubbedActivities: number;
@@ -241,7 +254,7 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
     }
 
     if (data.status) {
-      const status = data.status as UiPathRunStatus;
+      const status = mapLegacyStatus(data.status) as UiPathRunStatus;
       setCurrentRun(prev => {
         if (!prev || prev.runId !== runId) return prev;
         const updated = { ...prev, status };
@@ -314,15 +327,16 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
     if (data.done) {
       console.log(`[useUiPathRun] done event received: runId=${runId}, status=${data.status}`);
       setPipelineComplete(true);
-      setPipelineFinalStatus(data.status || null);
+      const mappedStatus = data.status ? mapLegacyStatus(data.status) : null;
+      setPipelineFinalStatus(mappedStatus || null);
       const finalRun = currentRunRef.current;
       if (finalRun && finalRun.runId === runId) {
-        const finalStatus = (data.status || finalRun.status) as UiPathRunStatus;
+        const finalStatus = (mappedStatus || finalRun.status) as UiPathRunStatus;
         const isSuccess = finalStatus !== "FAILED" && finalStatus !== "CANCELLED";
-        if (isSuccess && (finalStatus === "BUILDING" || finalStatus === "PENDING")) {
+        if (isSuccess && (finalStatus === "BUILDING" || finalStatus === "PENDING" || finalStatus === "generation_finished")) {
           setCurrentRun(prev => {
             if (!prev || prev.runId !== runId) return prev;
-            const updated = { ...prev, status: "READY" as UiPathRunStatus };
+            const updated = { ...prev, status: "handoff_only" as UiPathRunStatus };
             currentRunRef.current = updated;
             return updated;
           });
@@ -342,9 +356,13 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
           return next;
         });
         if (isSuccess) {
+          const assessedStatus = (cur => cur?.status || finalStatus)(currentRunRef.current);
+          const pres = isAssessedTerminalStatus(assessedStatus) ? STATUS_PRESENTATION[assessedStatus] : null;
           toast({
-            title: "UiPath Package Ready",
-            description: "Package generated successfully. You can now deploy to UiPath.",
+            title: pres ? pres.longLabel : "UiPath Package Generated",
+            description: pres?.deployEnabled
+              ? "Package generated successfully. You can now deploy to UiPath."
+              : "Package generated. Review the assessed status for deployment readiness.",
           });
         }
       }
@@ -416,17 +434,17 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
           return;
         }
         const finalRun = currentRunRef.current;
-        if (finalRun && finalRun.runId === runId && (finalRun.status === "BUILDING" || finalRun.status === "PENDING")) {
+        if (finalRun && finalRun.runId === runId && (finalRun.status === "BUILDING" || finalRun.status === "PENDING" || finalRun.status === "generation_finished")) {
           setCurrentRun(prev => {
             if (!prev || prev.runId !== runId) return prev;
-            const updated = { ...prev, status: "READY" as UiPathRunStatus };
+            const updated = { ...prev, status: "handoff_only" as UiPathRunStatus };
             currentRunRef.current = updated;
             return updated;
           });
           setCompletedRuns(prev => {
             const next = new Map(prev);
             const cur = currentRunRef.current;
-            next.set(runId, { runId, status: cur?.status || "READY", warnings: cur?.warnings, complianceScore: cur?.complianceScore, completenessLevel: cur?.completenessLevel, outcomeSummary: cur?.outcomeSummary });
+            next.set(runId, { runId, status: cur?.status || "handoff_only", warnings: cur?.warnings, complianceScore: cur?.complianceScore, completenessLevel: cur?.completenessLevel, outcomeSummary: cur?.outcomeSummary });
             return next;
           });
         }
@@ -492,10 +510,11 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
         const data = await res.json();
         if (!data.run) return;
         const run = data.run;
-        const isActive = run.status === "BUILDING" || run.status === "PENDING";
+        const mappedRunStatus = mapLegacyStatus(run.status) as UiPathRunStatus;
+        const isActive = mappedRunStatus === "BUILDING" || mappedRunStatus === "PENDING";
         const runState: UiPathRunState = {
           runId: run.runId,
-          status: run.status,
+          status: mappedRunStatus,
           source: run.source,
           warnings: run.warnings,
           complianceScore: run.complianceScore,
@@ -513,10 +532,10 @@ export function useUiPathRun(ideaId: string): UseUiPathRunReturn {
           setGenerationStartTime(run.createdAt || Date.now());
           setCancelState("idle");
           subscribeToStream(ideaId, run.runId, true);
-        } else if (run.status !== "CANCELLED") {
+        } else if (mappedRunStatus !== "CANCELLED") {
           setCompletedRuns(new Map([[run.runId, {
             runId: run.runId,
-            status: run.status,
+            status: mappedRunStatus,
             warnings: run.warnings,
             complianceScore: run.complianceScore,
             completenessLevel: run.completenessLevel,

@@ -99,6 +99,14 @@ export const insertDeploymentManifestSchema = createInsertSchema(deploymentManif
 export type DeploymentManifest = typeof deploymentManifests.$inferSelect;
 export type InsertDeploymentManifest = z.infer<typeof insertDeploymentManifestSchema>;
 
+/**
+ * GenerationRunStatus tracks both DB-persisted run statuses and the defect-aware
+ * assessed terminal states. Legacy DB values (`completed`, `completed_with_warnings`,
+ * `blocked`) are preserved for backward compatibility with existing rows.
+ * New pipeline runs produce assessed terminal statuses (`studio_stable`,
+ * `openable_with_warnings`, `handoff_only`, `structurally_invalid`) at read/render time
+ * via `mapLegacyStatus()` from `shared/models/package-status.ts`.
+ */
 export const GENERATION_RUN_STATUSES = [
   "running",
   "spec_generating",
@@ -112,6 +120,10 @@ export const GENERATION_RUN_STATUSES = [
   "completed_with_warnings",
   "blocked",
   "failed",
+  "studio_stable",
+  "openable_with_warnings",
+  "handoff_only",
+  "structurally_invalid",
 ] as const;
 export type GenerationRunStatus = (typeof GENERATION_RUN_STATUSES)[number];
 

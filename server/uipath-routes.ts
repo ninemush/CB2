@@ -554,6 +554,44 @@ export function registerUiPathRoutes(app: Express): void {
       return res.status(400).json({ message: "SDD must be approved first" });
     }
 
+    /**
+     * Deploy gate: only `studio_stable` packages may be deployed to Orchestrator.
+     * Artifact availability (download/DHG) is intentionally decoupled from deployability.
+     * This gate uses the assessed status from the cached pipeline result when available,
+     * falling back to a conservative mapping of the DB-persisted status.
+     */
+    const { mapLegacyStatus: mapStatus } = await import("../shared/models/package-status");
+    const cachedForGate = getCachedPipelineResult(ideaId);
+    if (cachedForGate) {
+      const assessed = mapStatus(cachedForGate.status);
+      if (assessed !== "studio_stable") {
+        return res.status(400).json({
+          message: `Deployment blocked — package status is "${assessed}". Only studio_stable packages can be deployed to Orchestrator.`,
+        });
+      }
+    } else {
+      const latestRun = await storage.getLatestGenerationRunForIdea(ideaId);
+      if (!latestRun) {
+        return res.status(400).json({
+          message: "Deployment blocked — no generation run found. Generate a package first.",
+        });
+      }
+      let parsedOutcome: Record<string, unknown> | null = null;
+      try { if (latestRun.outcomeReport) parsedOutcome = JSON.parse(latestRun.outcomeReport); } catch {}
+      const { isAssessedTerminalStatus: isAssessedCheck } = await import("../shared/models/package-status");
+      let assessed: string;
+      if (parsedOutcome?.assessedStatus && isAssessedCheck(parsedOutcome.assessedStatus as string)) {
+        assessed = parsedOutcome.assessedStatus as string;
+      } else {
+        assessed = mapStatus(latestRun.status, parsedOutcome?.assessedStatus === "studio_stable");
+      }
+      if (assessed !== "studio_stable") {
+        return res.status(400).json({
+          message: `Deployment blocked — package status is "${assessed}". Only studio_stable packages can be deployed to Orchestrator.`,
+        });
+      }
+    }
+
     const messages = await chatStorage.getMessagesByIdeaId(ideaId);
     const uipathMsg = findUiPathMessage(messages);
     if (!uipathMsg) {
@@ -2362,12 +2400,19 @@ export function registerUiPathRoutes(app: Express): void {
     try { if (dbRun.phaseProgress) parsedPhaseProgress = JSON.parse(dbRun.phaseProgress); } catch (e: any) { /* corrupt phaseProgress JSON */ }
     try { if (dbRun.outcomeReport) parsedOutcomeReport = JSON.parse(dbRun.outcomeReport); } catch (e: any) { /* corrupt outcomeReport JSON */ }
 
-    const statusMap: Record<string, string> = {
-      running: "BUILDING",
-      completed: "READY",
-      completed_with_warnings: "READY_WITH_WARNINGS",
-      failed: "FAILED",
-      cancelled: "CANCELLED",
+    const { mapLegacyStatus: mapDbStatus, isAssessedTerminalStatus: isAssessedTerm } = await import("../shared/models/package-status");
+
+    const dbStatusToAssessed = (dbStatus: string, outcomeReport: any): string => {
+      const processMap: Record<string, string> = {
+        running: "BUILDING",
+        cancelled: "CANCELLED",
+      };
+      if (processMap[dbStatus]) return processMap[dbStatus];
+      if (outcomeReport?.assessedStatus && isAssessedTerm(outcomeReport.assessedStatus)) {
+        return outcomeReport.assessedStatus;
+      }
+      const hasPassingValidation = outcomeReport?.assessedStatus === "studio_stable";
+      return mapDbStatus(dbStatus, hasPassingValidation);
     };
 
     const sourceMap: Record<string, string> = {
@@ -2379,7 +2424,7 @@ export function registerUiPathRoutes(app: Express): void {
     return res.json({
       run: {
         ...dbRun,
-        status: isActive ? "BUILDING" : (statusMap[dbRun.status] || dbRun.status),
+        status: isActive ? "BUILDING" : dbStatusToAssessed(dbRun.status, parsedOutcomeReport),
         source: sourceMap[dbRun.triggeredBy || ""] || "auto",
         phaseProgress: parsedPhaseProgress,
         outcomeReport: parsedOutcomeReport,
@@ -2417,11 +2462,26 @@ export function registerUiPathRoutes(app: Express): void {
 
     let parsedPhaseProgress = null;
     let parsedOutcomeReport = null;
-    try { if (dbRun.phaseProgress) parsedPhaseProgress = JSON.parse(dbRun.phaseProgress); } catch (e: any) { /* corrupt phaseProgress JSON */ }
-    try { if (dbRun.outcomeReport) parsedOutcomeReport = JSON.parse(dbRun.outcomeReport); } catch (e: any) { /* corrupt outcomeReport JSON */ }
+    try { if (dbRun.phaseProgress) parsedPhaseProgress = JSON.parse(dbRun.phaseProgress); } catch (e: unknown) { /* corrupt phaseProgress JSON */ }
+    try { if (dbRun.outcomeReport) parsedOutcomeReport = JSON.parse(dbRun.outcomeReport); } catch (e: unknown) { /* corrupt outcomeReport JSON */ }
+
+    const { mapLegacyStatus: mapRunStatus, isAssessedTerminalStatus: isRunAssessed } = await import("../shared/models/package-status");
+    let mappedRunStatus = dbRun.status;
+    if (!isActive) {
+      const processRunMap: Record<string, string> = { running: "BUILDING", cancelled: "CANCELLED" };
+      if (processRunMap[dbRun.status]) {
+        mappedRunStatus = processRunMap[dbRun.status];
+      } else if (parsedOutcomeReport?.assessedStatus && isRunAssessed(parsedOutcomeReport.assessedStatus)) {
+        mappedRunStatus = parsedOutcomeReport.assessedStatus;
+      } else {
+        mappedRunStatus = mapRunStatus(dbRun.status, parsedOutcomeReport?.assessedStatus === "studio_stable");
+      }
+    }
+
     return res.json({
       run: {
         ...dbRun,
+        status: mappedRunStatus,
         phaseProgress: parsedPhaseProgress,
         outcomeReport: parsedOutcomeReport,
         isActive: !!isActive,
@@ -2451,12 +2511,18 @@ export function registerUiPathRoutes(app: Express): void {
       if (!dbRun || dbRun.ideaId !== ideaId) {
         return res.status(404).json({ message: "Run not found" });
       }
-      const statusMap: Record<string, string> = {
-        running: "BUILDING", completed: "READY",
-        completed_with_warnings: "READY_WITH_WARNINGS",
-        failed: "FAILED", cancelled: "CANCELLED",
-      };
-      const finalStatus = statusMap[dbRun.status] || dbRun.status;
+      const { mapLegacyStatus: mapProgressStatus, isAssessedTerminalStatus: isProgressAssessed } = await import("../shared/models/package-status");
+      const processMap: Record<string, string> = { running: "BUILDING", cancelled: "CANCELLED" };
+      let parsedProgressOutcome: any = null;
+      try { if (dbRun.outcomeReport) parsedProgressOutcome = JSON.parse(dbRun.outcomeReport); } catch {}
+      let finalStatus: string;
+      if (processMap[dbRun.status]) {
+        finalStatus = processMap[dbRun.status];
+      } else if (parsedProgressOutcome?.assessedStatus && isProgressAssessed(parsedProgressOutcome.assessedStatus)) {
+        finalStatus = parsedProgressOutcome.assessedStatus;
+      } else {
+        finalStatus = mapProgressStatus(dbRun.status, parsedProgressOutcome?.assessedStatus === "studio_stable");
+      }
       if (afterIndex > 0) {
         return res.json({ events: [], totalStored: 1, status: finalStatus });
       }
@@ -2499,12 +2565,18 @@ export function registerUiPathRoutes(app: Express): void {
       res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders();
 
-      const statusMap: Record<string, string> = {
-        running: "BUILDING", completed: "READY",
-        completed_with_warnings: "READY_WITH_WARNINGS",
-        failed: "FAILED", cancelled: "CANCELLED",
-      };
-      const finalStatus = statusMap[dbRun.status] || dbRun.status;
+      const { mapLegacyStatus: mapStreamStatus, isAssessedTerminalStatus: isStreamAssessed } = await import("../shared/models/package-status");
+      const processStreamMap: Record<string, string> = { running: "BUILDING", cancelled: "CANCELLED" };
+      let parsedStreamOutcome: any = null;
+      try { if (dbRun.outcomeReport) parsedStreamOutcome = JSON.parse(dbRun.outcomeReport); } catch {}
+      let finalStatus: string;
+      if (processStreamMap[dbRun.status]) {
+        finalStatus = processStreamMap[dbRun.status];
+      } else if (parsedStreamOutcome?.assessedStatus && isStreamAssessed(parsedStreamOutcome.assessedStatus)) {
+        finalStatus = parsedStreamOutcome.assessedStatus;
+      } else {
+        finalStatus = mapStreamStatus(dbRun.status, parsedStreamOutcome?.assessedStatus === "studio_stable");
+      }
       res.write(`data: ${JSON.stringify({ done: true, status: finalStatus })}\n\n`);
       return res.end();
     }
@@ -2580,7 +2652,10 @@ export function registerUiPathRoutes(app: Express): void {
       if (typeof (res as any).flush === "function") (res as any).flush();
 
       if (dbActiveRun.completed) {
-        const resolvedStatus = dbActiveRun.finalStatus === "failed" ? "FAILED" : (dbActiveRun.finalStatus || "READY");
+        const { mapLegacyStatus: mapCompletedStatus } = await import("../shared/models/package-status");
+        const resolvedStatus = dbActiveRun.finalStatus
+          ? mapCompletedStatus(dbActiveRun.finalStatus === "failed" ? "FAILED" : dbActiveRun.finalStatus)
+          : "handoff_only";
         res.write(`data: ${JSON.stringify({ done: true, status: resolvedStatus })}\n\n`);
         return res.end();
       }
@@ -2591,7 +2666,7 @@ export function registerUiPathRoutes(app: Express): void {
           res.write(`data: ${JSON.stringify({ pipelineEvent: event })}\n\n`);
           if (typeof (res as any).flush === "function") (res as any).flush();
           if (event.type === "failed" || (event.type === "completed" && event.stage === "run_manager")) {
-            let eventStatus = event.type === "failed" ? "FAILED" : "READY";
+            let eventStatus = event.type === "failed" ? "FAILED" : "handoff_only";
             if (event.type === "completed" && event.message) {
               const statusMatch = event.message.match(/status:\s*(\S+)/);
               if (statusMatch) eventStatus = statusMatch[1];

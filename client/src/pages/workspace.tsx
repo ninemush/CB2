@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useRoute, Link, useLocation } from "wouter";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/hooks/use-auth";
+import { mapLegacyStatus, isAssessedTerminalStatus, STATUS_PRESENTATION, type AssessedTerminalStatus } from "@shared/models/package-status";
 import {
   ArrowLeft,
   Send,
@@ -29,6 +30,9 @@ import {
   Brain,
   Archive,
   AlertTriangle,
+  CheckCircle2,
+  PackageOpen,
+  XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -281,7 +285,7 @@ function PipelineLogPanel({
           <div className="flex items-center gap-2">
             <Package className="h-3.5 w-3.5 text-primary" />
             <span className="text-[11px] font-semibold text-foreground/80">
-              {isComplete ? "Pipeline Complete" : "Building UiPath Package"}
+              {isComplete ? (finalStatus && isAssessedTerminalStatus(finalStatus) ? STATUS_PRESENTATION[finalStatus as AssessedTerminalStatus].longLabel : "Pipeline Complete") : "Building UiPath Package"}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -486,7 +490,7 @@ function UiPathProgressPanel({
           <div className="flex items-center gap-2">
             <Package className="h-3.5 w-3.5 text-primary" />
             <span className="text-[11px] font-semibold text-foreground/80">
-              {cancelState === "cancelled" ? "Cancelled" : failedEntry ? "Pipeline Failed" : isComplete ? "Pipeline Complete" : "Generating UiPath Package"}
+              {cancelState === "cancelled" ? "Cancelled" : failedEntry ? "Pipeline Failed" : isComplete ? (finalStatus && isAssessedTerminalStatus(finalStatus) ? STATUS_PRESENTATION[finalStatus as AssessedTerminalStatus].longLabel : "Pipeline Complete") : "Generating UiPath Package"}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -709,28 +713,23 @@ function UiPathProgressPanel({
             </div>
           </div>
         )}
-        {isComplete && !failedEntry && (
-          <div className="px-3 py-2 border-t border-border/30 pipeline-fade-in">
-            <div className="flex items-center gap-1.5">
-              {finalStatus === "FALLBACK_READY" ? (
-                <>
-                  <AlertTriangle className="h-3 w-3 text-amber-500" />
-                  <span className="text-[11px] text-amber-500 font-medium" data-testid="pipeline-status-fallback">Needs work — structural defects detected</span>
-                </>
-              ) : finalStatus === "READY_WITH_WARNINGS" ? (
-                <>
-                  <AlertTriangle className="h-3 w-3 text-amber-400" />
-                  <span className="text-[11px] text-amber-400 font-medium" data-testid="pipeline-status-warnings">Ready with warnings</span>
-                </>
-              ) : (
-                <>
-                  <Check className="h-3 w-3 text-emerald-400" />
-                  <span className="text-[11px] text-emerald-400 font-medium" data-testid="pipeline-status-ready">Ready to deploy</span>
-                </>
-              )}
+        {isComplete && !failedEntry && (() => {
+          const assessed = finalStatus && isAssessedTerminalStatus(finalStatus) ? finalStatus as AssessedTerminalStatus : null;
+          const pres = assessed ? STATUS_PRESENTATION[assessed] : null;
+          const colorClass = pres?.textColorClass || "text-emerald-400";
+          const iconMap: Record<string, typeof Check> = { CheckCircle2, AlertTriangle, PackageOpen, XCircle };
+          const StatusIcon = pres ? (iconMap[pres.iconName] || Check) : Check;
+          return (
+            <div className="px-3 py-2 border-t border-border/30 pipeline-fade-in">
+              <div className="flex items-center gap-1.5">
+                <StatusIcon className={`h-3 w-3 ${colorClass}`} />
+                <span className={`text-[11px] ${colorClass} font-medium`} data-testid={`pipeline-status-${assessed || "complete"}`}>
+                  {pres ? pres.longLabel : "Pipeline Complete"}
+                </span>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );
@@ -2455,7 +2454,7 @@ function ChatPanel({ idea, switchProcessMapViewRef, onMapApprovalReady }: { idea
           if (msg.uipathData) {
             const linkedRunId = messageToRunId.get(msg.id);
             const completedRun = linkedRunId ? completedUiPathRuns.get(linkedRunId) : undefined;
-            const cardStatus = completedRun?.status as "BUILDING" | "READY" | "READY_WITH_WARNINGS" | "FALLBACK_READY" | "FAILED" | undefined;
+            const cardStatus = completedRun?.status as "BUILDING" | "studio_stable" | "openable_with_warnings" | "handoff_only" | "structurally_invalid" | "FAILED" | undefined;
             const cardWarnings = completedRun?.warnings;
             const cardComplianceScore = completedRun?.complianceScore;
             const cardCompletenessLevel = completedRun?.completenessLevel;

@@ -324,7 +324,7 @@ async function executeRun(
             if (callbacks?.onPackageResolved) callbacks.onPackageResolved(packageJson);
             if (callbacks?.onComplete) {
               callbacks.onComplete({
-                status: cachedResult.status || "READY",
+                status: cachedResult.status || "handoff_only",
                 packageJson,
                 pipelineResult: cachedResult,
                 cached: true,
@@ -544,7 +544,10 @@ async function executeRun(
 
     stopHeartbeat();
 
-    const isDegraded = pipelineResult.warnings?.length > 0 || pipelineResult.status === "FALLBACK_READY";
+    const isDegraded = pipelineResult.warnings?.length > 0 ||
+      pipelineResult.status === "handoff_only" ||
+      pipelineResult.status === "structurally_invalid" ||
+      pipelineResult.status === "openable_with_warnings";
     const outcomeSummary = runLogger.buildOutcomeSummary({
       status: isDegraded ? "succeeded_degraded" : "succeeded",
       degradations: isDegraded
@@ -556,6 +559,7 @@ async function executeRun(
     const outcomeReportJson = JSON.stringify({
       ...outcomeSummary,
       pipelineOutcome: pipelineResult.outcomeReport || undefined,
+      assessedStatus: pipelineResult.status,
     });
     await finishRun(runId, activeRun, phaseEvents, {
       status: isDegraded ? "completed_with_warnings" : "completed",
@@ -716,7 +720,18 @@ class RunError extends Error {
 
 import { EventEmitter } from "events";
 
-export type ObserverRunStatus = "PENDING" | "BUILDING" | "STALLED" | "READY" | "READY_WITH_WARNINGS" | "FALLBACK_READY" | "FAILED" | "CANCELLED";
+/**
+ * ObserverRunStatus uses defect-aware assessed terminal states.
+ *
+ * Semantic distinction:
+ * - `FAILED` = crash or unrecoverable system/process failure — the pipeline did not complete.
+ * - `structurally_invalid` = pipeline completed enough to assess, but artifact is structurally invalid.
+ *
+ * Artifact availability is intentionally decoupled from deployability:
+ * - Download/DHG remain available for ALL terminal states.
+ * - Only `studio_stable` may be deployed.
+ */
+export type ObserverRunStatus = "PENDING" | "BUILDING" | "STALLED" | "studio_stable" | "openable_with_warnings" | "handoff_only" | "structurally_invalid" | "FAILED" | "CANCELLED" | "generation_finished";
 
 export interface ObserverRunEvent {
   type: "status" | "progress" | "pipeline" | "heartbeat" | "metaValidation" | "done" | "error" | "warnings" | "complianceScore" | "outcomeSummary";
@@ -901,7 +916,7 @@ export function getObserverRunEvents(runId: string, afterIndex: number = 0): { e
 }
 
 export function isObserverTerminalStatus(status: ObserverRunStatus): boolean {
-  return status === "READY" || status === "READY_WITH_WARNINGS" || status === "FALLBACK_READY" || status === "FAILED" || status === "CANCELLED";
+  return status === "studio_stable" || status === "openable_with_warnings" || status === "handoff_only" || status === "structurally_invalid" || status === "FAILED" || status === "CANCELLED";
 }
 
 export function cleanupOldObserverRuns(): void {
