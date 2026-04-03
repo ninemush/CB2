@@ -1,5 +1,65 @@
 import { escapeXml } from "../lib/xml-utils";
 import { tryParseJsonValueIntent, buildExpression } from "./expression-builder";
+import { extractDeclaredVariables, findUndeclaredVariables } from "./vbnet-expression-linter";
+
+export interface ExpressionCanonicalizationFix {
+  file: string;
+  workflow: string;
+  activityType: string;
+  propertyName: string;
+  originalValue: string;
+  canonicalizedValue: string;
+  canonicalizationType: "json_child_element_normalize" | "json_target_normalize" | "json_value_normalize";
+  rationale: string;
+}
+
+export interface SymbolScopeDefect {
+  file: string;
+  workflow: string;
+  activityType: string;
+  propertyName: string;
+  referencedSymbol: string;
+  offendingExpression: string;
+  replacementType: "degradation_substitute";
+  safeReplacementValue: string;
+  originalDefectClass: "undeclared_variable_reference" | "undeclared_argument_reference";
+  severity: "execution_blocking" | "handoff_required";
+  rationale: string;
+}
+
+export interface SentinelReplacementRecord {
+  file: string;
+  workflow: string;
+  activityType: string;
+  propertyName: string;
+  originalValue: string;
+  replacementType: "degradation_substitute";
+  safeReplacementValue: string;
+  originalDefectClass: "placeholder_sentinel" | "todo_sentinel" | "handoff_sentinel" | "stub_sentinel";
+  severity: "execution_blocking" | "handoff_required";
+  rationale: string;
+}
+
+export interface UnresolvableJsonDefect {
+  file: string;
+  workflow: string;
+  activityType: string;
+  propertyName: string;
+  originalValue: string;
+  replacementType: "degradation_substitute";
+  safeReplacementValue: string;
+  originalDefectClass: "unresolvable_json_payload";
+  severity: "execution_blocking";
+  rationale: string;
+}
+
+export interface TargetValueCanonicalizationResult {
+  expressionCanonicalizationFixes: ExpressionCanonicalizationFix[];
+  symbolScopeDefects: SymbolScopeDefect[];
+  sentinelReplacements: SentinelReplacementRecord[];
+  unresolvableJsonDefects: UnresolvableJsonDefect[];
+  summary: string;
+}
 
 export interface InvokeSerializationFix {
   originalForm: string;
@@ -465,6 +525,477 @@ function scanForPlaceholderSentinels(
         rationale: `Placeholder sentinel in executable property ${propName} — requires business value`,
       });
     }
+  }
+}
+
+const CHILD_ELEMENT_PROPERTY_PATTERNS = [
+  { parentTag: "Assign", propName: "To", isTarget: true },
+  { parentTag: "Assign", propName: "Value", isTarget: false },
+  { parentTag: "LogMessage", propName: "Message", isTarget: false },
+  { parentTag: "LogMessage", propName: "Level", isTarget: false },
+  { parentTag: "If", propName: "Condition", isTarget: false },
+  { parentTag: "Throw", propName: "Exception", isTarget: false },
+  { parentTag: "AddQueueItem", propName: "QueueName", isTarget: false },
+  { parentTag: "AddQueueItem", propName: "ItemInformation", isTarget: false },
+  { parentTag: "SendSmtpMailMessage", propName: "Subject", isTarget: false },
+  { parentTag: "SendSmtpMailMessage", propName: "Body", isTarget: false },
+  { parentTag: "SendSmtpMailMessage", propName: "To", isTarget: true },
+];
+
+const SENTINEL_PLACEHOLDER_RE = /\bPLACEHOLDER\b|\bPLACEHOLDER_\w+/i;
+const SENTINEL_TODO_RE = /\bTODO:\s*implement\s+this\s+expression\b|\bTODO\b/i;
+const SENTINEL_HANDOFF_RE = /\bHANDOFF_\w+/;
+const SENTINEL_STUB_RE = /\bSTUB_\w+|\bASSEMBLY_FAILED\w*/;
+
+function classifySentinel(value: string): SentinelReplacementRecord["originalDefectClass"] | null {
+  if (SENTINEL_PLACEHOLDER_RE.test(value)) return "placeholder_sentinel";
+  if (SENTINEL_TODO_RE.test(value)) return "todo_sentinel";
+  if (SENTINEL_HANDOFF_RE.test(value)) return "handoff_sentinel";
+  if (SENTINEL_STUB_RE.test(value)) return "stub_sentinel";
+  return null;
+}
+
+function getSafeReplacementForProperty(propertyName: string, isTarget: boolean): string {
+  if (isTarget) return "Nothing";
+  const lowerProp = propertyName.toLowerCase();
+  if (lowerProp === "condition") return "False";
+  if (lowerProp === "message" || lowerProp === "text" || lowerProp === "subject" || lowerProp === "body" || lowerProp === "queuename") return '""';
+  if (lowerProp === "value") return '""';
+  if (lowerProp === "exception") return "Nothing";
+  return "Nothing";
+}
+
+function isTargetProperty(propertyName: string): boolean {
+  const lp = propertyName.toLowerCase();
+  return lp === "to" || lp === "result" || lp === "output";
+}
+
+function extractArgumentsFromContent(content: string): Map<string, { direction: string; type: string }> {
+  const args = new Map<string, { direction: string; type: string }>();
+  const propertyPattern = /<x:Property\s+([^>]+)\/?>/g;
+  let m;
+  while ((m = propertyPattern.exec(content)) !== null) {
+    const attrs = m[1];
+    const nameMatch = attrs.match(/Name="([^"]+)"/);
+    const typeMatch = attrs.match(/Type="([^"]+)"/);
+    if (!nameMatch) continue;
+    const name = nameMatch[1];
+    const typeAttr = typeMatch ? typeMatch[1] : "";
+    let direction = "InArgument";
+    if (/OutArgument/.test(typeAttr)) direction = "OutArgument";
+    else if (/InOutArgument/.test(typeAttr)) direction = "InOutArgument";
+    const innerTypeMatch = typeAttr.match(/\(([^)]+)\)/);
+    const type = innerTypeMatch ? innerTypeMatch[1] : "x:Object";
+    args.set(name, { direction, type });
+  }
+  return args;
+}
+
+function extractExpressionBearingProperties(content: string): Array<{ activityType: string; propertyName: string; value: string }> {
+  const results: Array<{ activityType: string; propertyName: string; value: string }> = [];
+  const commentClean = content.replace(/<!--[\s\S]*?-->/g, "");
+  const viewClean = commentClean
+    .replace(/<sap:WorkflowViewStateService\.ViewState[\s\S]*?<\/sap:WorkflowViewStateService\.ViewState>/gi, "")
+    .replace(/<sap2010:WorkflowViewState[\s\S]*?<\/sap2010:WorkflowViewState>/gi, "");
+
+  const tagPattern = /<(\w+(?::\w+)?)\s([^>]*?)(?:\/>|>)/g;
+  let tagMatch;
+  while ((tagMatch = tagPattern.exec(viewClean)) !== null) {
+    const actType = tagMatch[1];
+    if (/^(x:|mc:|sco:|s:)/.test(actType)) continue;
+    if (/^(Variable|Activity|Sequence\.Variables|Flowchart\.Variables|AssemblyReference)$/.test(actType)) continue;
+    const attrs = tagMatch[2];
+    const attrPattern = /(\w+(?:\.\w+)?)\s*=\s*"([^"]*)"/g;
+    let attrMatch;
+    while ((attrMatch = attrPattern.exec(attrs)) !== null) {
+      const propName = attrMatch[1];
+      if (/^(xmlns|x:|mc:|sap)/.test(propName) || propName === "DisplayName") continue;
+      results.push({ activityType: actType, propertyName: propName, value: attrMatch[2] });
+    }
+  }
+  return results;
+}
+
+function isExpressionLike(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return true;
+  if (/\b(in_|out_|io_|str_|int_|bool_|dbl_|obj_|dt_|ts_|drow_|qi_)\w+/.test(trimmed)) return true;
+  return false;
+}
+
+export function canonicalizeTargetValueExpressions(
+  entries: { name: string; content: string }[]
+): TargetValueCanonicalizationResult {
+  const fixes: ExpressionCanonicalizationFix[] = [];
+  const scopeDefects: SymbolScopeDefect[] = [];
+  const sentinelReplacements: SentinelReplacementRecord[] = [];
+  const unresolvableJsonDefects: UnresolvableJsonDefect[] = [];
+
+  for (const entry of entries) {
+    const normalizedName = normalizeFilePath(entry.name);
+    const workflowName = deriveWorkflowName(normalizedName);
+
+    canonicalizeChildElementJsonPayloads(entry, normalizedName, workflowName, fixes, unresolvableJsonDefects);
+
+    enforceSymbolScope(entry, normalizedName, workflowName, scopeDefects);
+
+    blockSentinelsInExecutableProperties(entry, normalizedName, workflowName, sentinelReplacements);
+  }
+
+  const totalActions = fixes.length + scopeDefects.length + sentinelReplacements.length + unresolvableJsonDefects.length;
+  const summary = totalActions > 0
+    ? `Target/value canonicalization: ${fixes.length} expression fix(es), ${scopeDefects.length} symbol scope defect(s), ${sentinelReplacements.length} sentinel replacement(s), ${unresolvableJsonDefects.length} unresolvable JSON defect(s)`
+    : "Target/value canonicalization: no issues found";
+
+  return {
+    expressionCanonicalizationFixes: fixes,
+    symbolScopeDefects: scopeDefects,
+    sentinelReplacements: sentinelReplacements,
+    unresolvableJsonDefects,
+    summary,
+  };
+}
+
+function canonicalizeChildElementJsonPayloads(
+  entry: { name: string; content: string },
+  normalizedName: string,
+  workflowName: string,
+  fixes: ExpressionCanonicalizationFix[],
+  unresolvableJsonDefects: UnresolvableJsonDefect[],
+): void {
+  let content = entry.content;
+  let changed = false;
+
+  for (const { parentTag, propName, isTarget } of CHILD_ELEMENT_PROPERTY_PATTERNS) {
+    const childElemPattern = new RegExp(
+      `(<(?:\\w+:)?${parentTag}\\.${propName}>)([\\s\\S]*?)(<\\/(?:\\w+:)?${parentTag}\\.${propName}>)`,
+      "g"
+    );
+    content = content.replace(childElemPattern, (fullMatch, openTag, inner, closeTag) => {
+      const argWrapperMatch = inner.match(
+        /(<(?:InArgument|OutArgument|InOutArgument)\b[^>]*>)([\s\S]*?)(<\/(?:InArgument|OutArgument|InOutArgument)>)/
+      );
+
+      let expressionContent: string;
+      let prefix = "";
+      let suffix = "";
+
+      if (argWrapperMatch) {
+        prefix = argWrapperMatch[1];
+        expressionContent = argWrapperMatch[2].trim();
+        suffix = argWrapperMatch[3];
+      } else {
+        expressionContent = inner.trim();
+      }
+
+      if (!JSON_EXPRESSION_PATTERN.test(expressionContent)) return fullMatch;
+
+      const jsonResult = tryNormalizeJsonExpression(expressionContent);
+      if (jsonResult.wasJson && jsonResult.normalized !== expressionContent) {
+        const canonType = isTarget ? "json_target_normalize" as const : "json_value_normalize" as const;
+        fixes.push({
+          file: normalizedName,
+          workflow: workflowName,
+          activityType: parentTag,
+          propertyName: propName,
+          originalValue: expressionContent.substring(0, 200),
+          canonicalizedValue: jsonResult.normalized,
+          canonicalizationType: canonType,
+          rationale: `JSON expression payload in child element <${parentTag}.${propName}> normalized to VB expression`,
+        });
+
+        changed = true;
+        if (argWrapperMatch) {
+          return `${openTag}${prefix}${jsonResult.normalized}${suffix}${closeTag}`;
+        } else {
+          return `${openTag}${jsonResult.normalized}${closeTag}`;
+        }
+      } else if (JSON_EXPRESSION_PATTERN.test(expressionContent)) {
+        const safeValue = getSafeReplacementForProperty(propName, isTarget);
+        unresolvableJsonDefects.push({
+          file: normalizedName,
+          workflow: workflowName,
+          activityType: parentTag,
+          propertyName: propName,
+          originalValue: expressionContent.substring(0, 200),
+          replacementType: "degradation_substitute",
+          safeReplacementValue: safeValue,
+          originalDefectClass: "unresolvable_json_payload",
+          severity: "execution_blocking",
+          rationale: `Unresolvable JSON payload in <${parentTag}.${propName}> replaced with platform-safe value "${safeValue}" — non-deterministic canonicalization, degradation substitute`,
+        });
+
+        changed = true;
+        if (argWrapperMatch) {
+          return `${openTag}${prefix}${safeValue}${suffix}${closeTag}`;
+        } else {
+          return `${openTag}${safeValue}${closeTag}`;
+        }
+      }
+
+      return fullMatch;
+    });
+  }
+
+  if (changed) {
+    entry.content = content;
+  }
+}
+
+function enforceSymbolScope(
+  entry: { name: string; content: string },
+  normalizedName: string,
+  workflowName: string,
+  scopeDefects: SymbolScopeDefect[],
+): void {
+  const declaredVars = extractDeclaredVariables(entry.content);
+  const declaredArgs = extractArgumentsFromContent(entry.content);
+
+  const allDeclared = new Set(declaredVars);
+  for (const argName of declaredArgs.keys()) {
+    allDeclared.add(argName);
+  }
+
+  let content = entry.content;
+  let changed = false;
+  const properties = extractExpressionBearingProperties(content);
+
+  for (const prop of properties) {
+    const value = prop.value.trim();
+    if (!value) continue;
+    if (!isExpressionLike(value)) continue;
+
+    let exprToCheck = value;
+    if (exprToCheck.startsWith("[") && exprToCheck.endsWith("]")) {
+      exprToCheck = exprToCheck.slice(1, -1);
+    }
+    if (!exprToCheck || exprToCheck.length < 2) continue;
+
+    if (/HANDOFF_|STUB_|ASSEMBLY_FAILED|PLACEHOLDER|TODO/.test(exprToCheck)) continue;
+
+    const undeclaredRefs = findUndeclaredVariables(exprToCheck, allDeclared);
+
+    if (undeclaredRefs.length === 0) {
+      const argPrefixPattern = /\b(in_\w+|out_\w+|io_\w+)\b/gi;
+      let argMatch;
+      while ((argMatch = argPrefixPattern.exec(exprToCheck)) !== null) {
+        const argRef = argMatch[1];
+        if (!allDeclared.has(argRef) && !undeclaredRefs.includes(argRef)) {
+          undeclaredRefs.push(argRef);
+        }
+      }
+    }
+
+    if (undeclaredRefs.length === 0) continue;
+
+    const isTarget = isTargetProperty(prop.propertyName);
+    const safeValue = getSafeReplacementForProperty(prop.propertyName, isTarget);
+
+    for (const ref of undeclaredRefs) {
+      const isArgRef = /^(in_|out_|io_)/i.test(ref);
+      const severity = isTarget ? "execution_blocking" as const : "handoff_required" as const;
+      scopeDefects.push({
+        file: normalizedName,
+        workflow: workflowName,
+        activityType: prop.activityType,
+        propertyName: prop.propertyName,
+        referencedSymbol: ref,
+        offendingExpression: value.substring(0, 200),
+        replacementType: "degradation_substitute",
+        safeReplacementValue: safeValue,
+        originalDefectClass: isArgRef ? "undeclared_argument_reference" : "undeclared_variable_reference",
+        severity,
+        rationale: `${isArgRef ? "Argument" : "Variable"} "${ref}" referenced in ${prop.propertyName} but not declared in workflow "${workflowName}" — expression replaced with "${safeValue}"`,
+      });
+    }
+
+    const escapedValue = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const attrReplacePattern = new RegExp(
+      `(\\b${prop.propertyName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=\\s*")${escapedValue}(")`
+    );
+    const newContent = content.replace(attrReplacePattern, `$1${safeValue}$2`);
+    if (newContent !== content) {
+      content = newContent;
+      changed = true;
+    }
+  }
+
+  for (const { parentTag, propName, isTarget } of CHILD_ELEMENT_PROPERTY_PATTERNS) {
+    const childElemPattern = new RegExp(
+      `(<(?:\\w+:)?${parentTag}\\.${propName}>)([\\s\\S]*?)(<\\/(?:\\w+:)?${parentTag}\\.${propName}>)`,
+      "g"
+    );
+    content = content.replace(childElemPattern, (fullMatch, openTag, inner, closeTag) => {
+      const argWrapperMatch = inner.match(
+        /(<(?:InArgument|OutArgument|InOutArgument)\b[^>]*>)([\s\S]*?)(<\/(?:InArgument|OutArgument|InOutArgument)>)/
+      );
+
+      let expressionContent: string;
+      if (argWrapperMatch) {
+        expressionContent = argWrapperMatch[2].trim();
+      } else {
+        expressionContent = inner.trim();
+      }
+
+      if (!expressionContent || !isExpressionLike(expressionContent)) return fullMatch;
+      if (/HANDOFF_|STUB_|ASSEMBLY_FAILED|PLACEHOLDER|TODO/.test(expressionContent)) return fullMatch;
+
+      let exprToCheck = expressionContent;
+      if (exprToCheck.startsWith("[") && exprToCheck.endsWith("]")) {
+        exprToCheck = exprToCheck.slice(1, -1);
+      }
+      if (!exprToCheck || exprToCheck.length < 2) return fullMatch;
+
+      const undeclaredRefs = findUndeclaredVariables(exprToCheck, allDeclared);
+
+      if (undeclaredRefs.length === 0) {
+        const argPrefixPattern = /\b(in_\w+|out_\w+|io_\w+)\b/gi;
+        let argMatch;
+        while ((argMatch = argPrefixPattern.exec(exprToCheck)) !== null) {
+          const argRef = argMatch[1];
+          if (!allDeclared.has(argRef) && !undeclaredRefs.includes(argRef)) {
+            undeclaredRefs.push(argRef);
+          }
+        }
+      }
+
+      if (undeclaredRefs.length === 0) return fullMatch;
+
+      const safeValue = getSafeReplacementForProperty(propName, isTarget);
+
+      for (const ref of undeclaredRefs) {
+        const isArgRef = /^(in_|out_|io_)/i.test(ref);
+        const severity = isTarget ? "execution_blocking" as const : "handoff_required" as const;
+        scopeDefects.push({
+          file: normalizedName,
+          workflow: workflowName,
+          activityType: parentTag,
+          propertyName: propName,
+          referencedSymbol: ref,
+          offendingExpression: expressionContent.substring(0, 200),
+          replacementType: "degradation_substitute",
+          safeReplacementValue: safeValue,
+          originalDefectClass: isArgRef ? "undeclared_argument_reference" : "undeclared_variable_reference",
+          severity,
+          rationale: `${isArgRef ? "Argument" : "Variable"} "${ref}" referenced in child element <${parentTag}.${propName}> but not declared in workflow "${workflowName}" — expression replaced with "${safeValue}"`,
+        });
+      }
+
+      changed = true;
+      if (argWrapperMatch) {
+        return `${openTag}${argWrapperMatch[1]}${safeValue}${argWrapperMatch[3]}${closeTag}`;
+      }
+      return `${openTag}${safeValue}${closeTag}`;
+    });
+  }
+
+  if (changed) {
+    entry.content = content;
+  }
+}
+
+function blockSentinelsInExecutableProperties(
+  entry: { name: string; content: string },
+  normalizedName: string,
+  workflowName: string,
+  sentinelReplacements: SentinelReplacementRecord[],
+): void {
+  let content = entry.content;
+  let changed = false;
+
+  const executableAttrPatterns = [
+    { pattern: /\b(Message)\s*=\s*"([^"]+)"/g, isTarget: false },
+    { pattern: /\b(Condition)\s*=\s*"([^"]+)"/g, isTarget: false },
+    { pattern: /\b(Value)\s*=\s*"([^"]+)"/g, isTarget: false },
+    { pattern: /\b(To)\s*=\s*"([^"]+)"/g, isTarget: true },
+    { pattern: /\b(Text)\s*=\s*"([^"]+)"/g, isTarget: false },
+    { pattern: /\b(Expression)\s*=\s*"([^"]+)"/g, isTarget: false },
+    { pattern: /\b(WorkflowFileName)\s*=\s*"([^"]+)"/g, isTarget: false },
+    { pattern: /\b(Exception)\s*=\s*"([^"]+)"/g, isTarget: true },
+    { pattern: /\b(Result)\s*=\s*"([^"]+)"/g, isTarget: true },
+    { pattern: /\b(Output)\s*=\s*"([^"]+)"/g, isTarget: true },
+  ];
+
+  for (const { pattern, isTarget } of executableAttrPatterns) {
+    const localPattern = new RegExp(pattern.source, pattern.flags);
+    let match;
+    while ((match = localPattern.exec(content)) !== null) {
+      const propName = match[1];
+      const value = match[2];
+
+      const sentinelClass = classifySentinel(value);
+      if (!sentinelClass) continue;
+
+      const safeValue = getSafeReplacementForProperty(propName, isTarget);
+      const activityContext = detectEnclosingActivity(content, match.index);
+
+      sentinelReplacements.push({
+        file: normalizedName,
+        workflow: workflowName,
+        activityType: activityContext,
+        propertyName: propName,
+        originalValue: value.substring(0, 200),
+        replacementType: "degradation_substitute",
+        safeReplacementValue: safeValue,
+        originalDefectClass: sentinelClass,
+        severity: "execution_blocking",
+        rationale: `Sentinel "${value.substring(0, 80)}" in executable property ${propName} replaced with platform-safe value "${safeValue}" — not executable, degradation substitute`,
+      });
+
+      content = content.replace(
+        `${propName}="${value}"`,
+        `${propName}="${safeValue}"`
+      );
+      changed = true;
+    }
+  }
+
+  for (const { parentTag, propName, isTarget } of CHILD_ELEMENT_PROPERTY_PATTERNS) {
+    const childElemPattern = new RegExp(
+      `(<(?:\\w+:)?${parentTag}\\.${propName}>)([\\s\\S]*?)(<\\/(?:\\w+:)?${parentTag}\\.${propName}>)`,
+      "g"
+    );
+    content = content.replace(childElemPattern, (fullMatch, openTag, inner, closeTag) => {
+      const argWrapperMatch = inner.match(
+        /(<(?:InArgument|OutArgument|InOutArgument)\b[^>]*>)([\s\S]*?)(<\/(?:InArgument|OutArgument|InOutArgument)>)/
+      );
+
+      let expressionContent: string;
+      if (argWrapperMatch) {
+        expressionContent = argWrapperMatch[2].trim();
+      } else {
+        expressionContent = inner.trim();
+      }
+
+      const sentinelClass = classifySentinel(expressionContent);
+      if (!sentinelClass) return fullMatch;
+
+      const safeValue = getSafeReplacementForProperty(propName, isTarget);
+
+      sentinelReplacements.push({
+        file: normalizedName,
+        workflow: workflowName,
+        activityType: parentTag,
+        propertyName: propName,
+        originalValue: expressionContent.substring(0, 200),
+        replacementType: "degradation_substitute",
+        safeReplacementValue: safeValue,
+        originalDefectClass: sentinelClass,
+        severity: "execution_blocking",
+        rationale: `Sentinel "${expressionContent.substring(0, 80)}" in child element <${parentTag}.${propName}> replaced with "${safeValue}" — degradation substitute`,
+      });
+
+      changed = true;
+      if (argWrapperMatch) {
+        return `${openTag}${argWrapperMatch[1]}${safeValue}${argWrapperMatch[3]}${closeTag}`;
+      }
+      return `${openTag}${safeValue}${closeTag}`;
+    });
+  }
+
+  if (changed) {
+    entry.content = content;
   }
 }
 

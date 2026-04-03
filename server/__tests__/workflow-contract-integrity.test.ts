@@ -1133,3 +1133,575 @@ describe("workflow-contract-integrity", () => {
     });
   });
 });
+
+import {
+  canonicalizeTargetValueExpressions,
+} from "../xaml/invoke-binding-canonicalizer";
+
+function makeAssignXaml(toValue: string, assignValue: string, variables: string = ""): string {
+  const varBlock = variables ? `<Sequence.Variables>${variables}</Sequence.Variables>` : "";
+  return `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    ${varBlock}
+    <Assign>
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:String">${toValue}</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:String">${assignValue}</InArgument>
+      </Assign.Value>
+    </Assign>
+  </Sequence>
+</Activity>`;
+}
+
+describe("target-value-canonicalization", () => {
+  describe("child-element JSON canonicalization", () => {
+    it("canonicalizes Assign.To with JSON-like variable payload", () => {
+      const json = '{"type":"variable","name":"str_Result"}';
+      const xaml = makeAssignXaml(json, '"hello"', '<Variable x:TypeArguments="x:String" Name="str_Result" />');
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      expect(result.expressionCanonicalizationFixes.length).toBeGreaterThan(0);
+      const fix = result.expressionCanonicalizationFixes.find(
+        f => f.propertyName === "To" && f.activityType === "Assign"
+      );
+      expect(fix).toBeDefined();
+      expect(fix!.canonicalizationType).toBe("json_target_normalize");
+      expect(fix!.canonicalizedValue).toBe("[str_Result]");
+      expect(entries[0].content).not.toContain('{"type":"variable"');
+      expect(entries[0].content).toContain("[str_Result]");
+    });
+
+    it("canonicalizes Assign.Value with JSON-like expression payload", () => {
+      const json = '{"type":"literal","value":"hello world"}';
+      const xaml = makeAssignXaml("[str_Target]", json);
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      expect(result.expressionCanonicalizationFixes.length).toBeGreaterThan(0);
+      const fix = result.expressionCanonicalizationFixes.find(
+        f => f.propertyName === "Value" && f.activityType === "Assign"
+      );
+      expect(fix).toBeDefined();
+      expect(fix!.canonicalizationType).toBe("json_value_normalize");
+      expect(entries[0].content).not.toContain('{"type":"literal"');
+    });
+
+    it("canonicalizes LogMessage.Message with JSON-like expression payload", () => {
+      const json = '{"type":"literal","value":"Processing complete"}';
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <ui:LogMessage Level="Info">
+      <ui:LogMessage.Message>
+        <InArgument x:TypeArguments="x:String">${json}</InArgument>
+      </ui:LogMessage.Message>
+    </ui:LogMessage>
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      expect(result.expressionCanonicalizationFixes.length).toBeGreaterThan(0);
+      const fix = result.expressionCanonicalizationFixes.find(
+        f => f.propertyName === "Message"
+      );
+      expect(fix).toBeDefined();
+      expect(entries[0].content).not.toContain('{"type":"literal"');
+    });
+
+    it("final XAML contains no internal object-shaped payloads after canonicalization", () => {
+      const json1 = '{"type":"variable","name":"str_Name"}';
+      const json2 = '{"type":"literal","value":"test"}';
+      const xaml = makeAssignXaml(json1, json2);
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      canonicalizeTargetValueExpressions(entries);
+
+      expect(entries[0].content).not.toMatch(/\{"type"\s*:/);
+      expect(entries[0].content).not.toMatch(/\{&quot;type&quot;\s*:/);
+    });
+  });
+
+  describe("symbol-scope enforcement", () => {
+    it("replaces undeclared variable reference in expression property with safe value", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <ui:LogMessage Level="Info" Message="[str_UndeclaredVar]" />
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      expect(result.symbolScopeDefects.length).toBeGreaterThan(0);
+      const defect = result.symbolScopeDefects.find(
+        d => d.referencedSymbol === "str_UndeclaredVar"
+      );
+      expect(defect).toBeDefined();
+      expect(defect!.replacementType).toBe("degradation_substitute");
+      expect(defect!.originalDefectClass).toBe("undeclared_variable_reference");
+      expect(defect!.safeReplacementValue).toBe('""');
+    });
+
+    it("replaces undeclared argument reference with safe value", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <ui:LogMessage Level="Info" Message="[in_UndeclaredArg]" />
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      expect(result.symbolScopeDefects.length).toBeGreaterThan(0);
+      const defect = result.symbolScopeDefects.find(
+        d => d.referencedSymbol === "in_UndeclaredArg"
+      );
+      expect(defect).toBeDefined();
+      expect(defect!.replacementType).toBe("degradation_substitute");
+      expect(defect!.originalDefectClass).toBe("undeclared_argument_reference");
+    });
+
+    it("does not fabricate missing symbols — replaces with safe value instead", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <Assign To="[str_MissingVar]" Value="[str_AnotherMissing]" />
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      expect(entries[0].content).not.toContain('<Variable Name="str_MissingVar"');
+      expect(entries[0].content).not.toContain('<Variable Name="str_AnotherMissing"');
+      if (result.symbolScopeDefects.length > 0) {
+        for (const defect of result.symbolScopeDefects) {
+          expect(defect.replacementType).toBe("degradation_substitute");
+        }
+      }
+    });
+
+    it("preserves declared variable references without modification", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <Sequence.Variables>
+      <Variable x:TypeArguments="x:String" Name="str_DeclaredVar" />
+    </Sequence.Variables>
+    <ui:LogMessage Level="Info" Message="[str_DeclaredVar]" />
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      const wrongDefects = result.symbolScopeDefects.filter(
+        d => d.referencedSymbol === "str_DeclaredVar"
+      );
+      expect(wrongDefects.length).toBe(0);
+      expect(entries[0].content).toContain('[str_DeclaredVar]');
+    });
+  });
+
+  describe("sentinel blocking", () => {
+    it("replaces PLACEHOLDER sentinel in executable property with safe value", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <ui:LogMessage Level="Info" Message="PLACEHOLDER_value_here" />
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      expect(result.sentinelReplacements.length).toBeGreaterThan(0);
+      const sentinel = result.sentinelReplacements.find(
+        s => s.originalDefectClass === "placeholder_sentinel"
+      );
+      expect(sentinel).toBeDefined();
+      expect(sentinel!.replacementType).toBe("degradation_substitute");
+      expect(sentinel!.severity).toBe("execution_blocking");
+      expect(entries[0].content).not.toContain("PLACEHOLDER");
+    });
+
+    it("replaces TODO sentinel in executable property", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <Assign To="[TODO]" Value="[str_Val]" />
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      expect(result.sentinelReplacements.length).toBeGreaterThan(0);
+      expect(entries[0].content).not.toMatch(/To="\[TODO\]"/);
+    });
+
+    it("replaces HANDOFF_ sentinel in child element property", () => {
+      const xaml = makeAssignXaml("HANDOFF_manual_fix", '"test"');
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      expect(result.sentinelReplacements.length).toBeGreaterThan(0);
+      const sentinel = result.sentinelReplacements.find(
+        s => s.originalDefectClass === "handoff_sentinel"
+      );
+      expect(sentinel).toBeDefined();
+      expect(entries[0].content).not.toContain("HANDOFF_manual_fix");
+    });
+
+    it("replaces STUB_ sentinel in executable property", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <ui:LogMessage Level="Info" Message="STUB_BLOCKING_FALLBACK" />
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      expect(result.sentinelReplacements.length).toBeGreaterThan(0);
+      expect(entries[0].content).not.toContain("STUB_BLOCKING_FALLBACK");
+    });
+
+    it("does not introduce XML/XAML comment-based placeholders", () => {
+      const xaml = makeAssignXaml("PLACEHOLDER_target", "PLACEHOLDER_value");
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      canonicalizeTargetValueExpressions(entries);
+
+      expect(entries[0].content).not.toContain("<!--");
+      expect(entries[0].content).not.toContain("-->");
+      expect(entries[0].content).not.toContain("PLACEHOLDER");
+    });
+  });
+
+  describe("type-appropriate safe replacement values", () => {
+    it("uses Nothing for target-bearing slots (Assign.To)", () => {
+      const xaml = makeAssignXaml("PLACEHOLDER_target", '"hello"');
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      const sentinel = result.sentinelReplacements.find(s => s.propertyName === "To");
+      expect(sentinel).toBeDefined();
+      expect(sentinel!.safeReplacementValue).toBe("Nothing");
+    });
+
+    it('uses "" for string-typed value properties (Message)', () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <ui:LogMessage Level="Info" Message="PLACEHOLDER_msg" />
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      const sentinel = result.sentinelReplacements.find(s => s.propertyName === "Message");
+      expect(sentinel).toBeDefined();
+      expect(sentinel!.safeReplacementValue).toBe('""');
+    });
+
+    it("uses False for Condition properties", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <If Condition="PLACEHOLDER_condition">
+      <If.Then><Sequence /></If.Then>
+    </If>
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      const sentinel = result.sentinelReplacements.find(s => s.propertyName === "Condition");
+      expect(sentinel).toBeDefined();
+      expect(sentinel!.safeReplacementValue).toBe("False");
+    });
+  });
+
+  describe("degradation substitute records", () => {
+    it("preserves original defect class without suppression", () => {
+      const xaml = makeAssignXaml("PLACEHOLDER_target", "PLACEHOLDER_value");
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      for (const sentinel of result.sentinelReplacements) {
+        expect(sentinel.replacementType).toBe("degradation_substitute");
+        expect(sentinel.originalDefectClass).toBeDefined();
+        expect(["placeholder_sentinel", "todo_sentinel", "handoff_sentinel", "stub_sentinel"]).toContain(sentinel.originalDefectClass);
+        expect(sentinel.severity).toBe("execution_blocking");
+      }
+    });
+
+    it("includes safeReplacementValue in each defect record", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <ui:LogMessage Level="Info" Message="[in_UndeclaredArg]" />
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      for (const defect of result.symbolScopeDefects) {
+        expect(defect.safeReplacementValue).toBeDefined();
+        expect(defect.safeReplacementValue.length).toBeGreaterThan(0);
+      }
+    });
+  });
+
+  describe("FinalQualityReport integration", () => {
+    it("sentinel replacements trigger degradation in final validation", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <ui:LogMessage Level="Info" Message="PLACEHOLDER_msg" />
+  </Sequence>
+</Activity>`;
+      const projectJson = JSON.stringify({
+        name: "TestProject",
+        dependencies: {},
+        studioVersion: "23.10.0",
+      });
+
+      const input: FinalArtifactValidationInput = {
+        xamlEntries: [{ name: "Main.xaml", content: xaml }],
+        projectJsonContent: projectJson,
+        targetFramework: "Windows",
+        hasNupkg: true,
+        contextMetadata: {
+          downgrades: [],
+          usedAIFallback: false,
+          pipelineWarnings: [],
+        },
+      };
+
+      const report = runFinalArtifactValidation(input);
+
+      expect(report.expressionCanonicalizationFixes).toBeDefined();
+      expect(report.symbolScopeDefects).toBeDefined();
+      expect(report.targetValueCanonicalizationSummary).toBeDefined();
+      expect(report.derivedStatus).not.toBe("studio_stable");
+    });
+
+    it("expressionCanonicalizationFixes populated for JSON child element payloads", () => {
+      const json = '{"type":"literal","value":"test"}';
+      const xaml = makeAssignXaml("[str_Target]", json, '<Variable x:TypeArguments="x:String" Name="str_Target" />');
+      const entries = [{ name: "Main.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      expect(result.expressionCanonicalizationFixes.length).toBeGreaterThan(0);
+      const fix = result.expressionCanonicalizationFixes.find(f => f.propertyName === "Value");
+      expect(fix).toBeDefined();
+      expect(entries[0].content).not.toMatch(/\{"type"\s*:/);
+    });
+
+    it("FinalQualityReport includes new diagnostic arrays", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <ui:LogMessage Level="Info" Message="test" />
+  </Sequence>
+</Activity>`;
+      const projectJson = JSON.stringify({
+        name: "TestProject",
+        dependencies: {},
+        studioVersion: "23.10.0",
+      });
+
+      const input: FinalArtifactValidationInput = {
+        xamlEntries: [{ name: "Main.xaml", content: xaml }],
+        projectJsonContent: projectJson,
+        targetFramework: "Windows",
+        hasNupkg: true,
+        contextMetadata: {
+          downgrades: [],
+          usedAIFallback: false,
+          pipelineWarnings: [],
+        },
+      };
+
+      const report = runFinalArtifactValidation(input);
+
+      expect(report.expressionCanonicalizationFixes).toBeDefined();
+      expect(Array.isArray(report.expressionCanonicalizationFixes)).toBe(true);
+      expect(report.symbolScopeDefects).toBeDefined();
+      expect(Array.isArray(report.symbolScopeDefects)).toBe(true);
+      expect(report.unresolvableJsonDefects).toBeDefined();
+      expect(Array.isArray(report.unresolvableJsonDefects)).toBe(true);
+      expect(report.sentinelReplacements).toBeDefined();
+      expect(Array.isArray(report.sentinelReplacements)).toBe(true);
+      expect(report.targetValueCanonicalizationSummary).toBeDefined();
+    });
+
+    it("no silent deletion or fabrication — all changes tracked", () => {
+      const json = '{"type":"variable","name":"str_Result"}';
+      const xaml = makeAssignXaml(json, '"hello"');
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      const totalChanges = result.expressionCanonicalizationFixes.length +
+        result.symbolScopeDefects.length +
+        result.sentinelReplacements.length;
+
+      if (entries[0].content !== xaml) {
+        expect(totalChanges).toBeGreaterThan(0);
+      }
+    });
+
+    it("deterministic canonicalization success produces correct VB expression", () => {
+      const json = '{"type":"variable","name":"str_Output"}';
+      const xaml = makeAssignXaml(json, '"constant"');
+      const entries = [{ name: "Test.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      const fix = result.expressionCanonicalizationFixes.find(f => f.propertyName === "To");
+      expect(fix).toBeDefined();
+      expect(fix!.canonicalizedValue).toBe("[str_Output]");
+    });
+  });
+
+  describe("unresolvable JSON defects", () => {
+    it("ambiguous JSON payload produces unresolvable defect, not a fix", () => {
+      const ambiguousJson = '{"type":"method_call","name":"DoSomething","value":{"args":[1,2]}}';
+      const xaml = makeAssignXaml("[str_Target]", ambiguousJson, '<Variable x:TypeArguments="x:String" Name="str_Target" />');
+      const entries = [{ name: "Main.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      expect(result.unresolvableJsonDefects.length).toBeGreaterThan(0);
+      const defect = result.unresolvableJsonDefects.find(d => d.propertyName === "Value");
+      expect(defect).toBeDefined();
+      expect(defect!.originalDefectClass).toBe("unresolvable_json_payload");
+      expect(defect!.replacementType).toBe("degradation_substitute");
+      expect(defect!.severity).toBe("execution_blocking");
+      expect(defect!.safeReplacementValue).toBeDefined();
+      expect(entries[0].content).not.toMatch(/method_call/);
+    });
+
+    it("unresolvable JSON triggers structurally_invalid in FinalQualityReport", () => {
+      const ambiguousJson = '{"type":"method_call","name":"DoSomething","value":{"args":[1,2]}}';
+      const xaml = makeAssignXaml("[str_Target]", ambiguousJson, '<Variable x:TypeArguments="x:String" Name="str_Target" />');
+      const projectJson = JSON.stringify({
+        name: "TestProject",
+        dependencies: {},
+        studioVersion: "23.10.0",
+      });
+
+      const input: FinalArtifactValidationInput = {
+        xamlEntries: [{ name: "Main.xaml", content: xaml }],
+        projectJsonContent: projectJson,
+        targetFramework: "Windows",
+        hasNupkg: true,
+        contextMetadata: {
+          downgrades: [],
+          usedAIFallback: false,
+          pipelineWarnings: [],
+        },
+      };
+
+      const report = runFinalArtifactValidation(input);
+
+      expect(report.unresolvableJsonDefects.length).toBeGreaterThan(0);
+      expect(report.derivedStatus).toBe("structurally_invalid");
+    });
+  });
+
+  describe("child-element symbol scope enforcement", () => {
+    it("replaces undeclared variable in child-element InArgument body", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <Assign>
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:String">[str_Result]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:String">[str_UndeclaredVar]</InArgument>
+      </Assign.Value>
+    </Assign>
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Main.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      const defects = result.symbolScopeDefects.filter(d => d.propertyName === "Value");
+      expect(defects.length).toBeGreaterThan(0);
+      expect(defects[0].referencedSymbol).toBe("str_UndeclaredVar");
+      expect(defects[0].originalDefectClass).toBe("undeclared_variable_reference");
+      expect(entries[0].content).not.toContain("[str_UndeclaredVar]");
+    });
+
+    it("replaces undeclared argument in child-element OutArgument body", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <Assign>
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:String">[out_MissingArg]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:String">"hello"</InArgument>
+      </Assign.Value>
+    </Assign>
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Main.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      const defects = result.symbolScopeDefects.filter(d => d.referencedSymbol === "out_MissingArg");
+      expect(defects.length).toBeGreaterThan(0);
+      expect(defects[0].originalDefectClass).toBe("undeclared_argument_reference");
+      expect(entries[0].content).not.toContain("[out_MissingArg]");
+    });
+
+    it("preserves declared variable in child-element body without modification", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity x:Class="Test" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence>
+    <Sequence.Variables>
+      <Variable x:TypeArguments="x:String" Name="str_DeclaredVar" />
+    </Sequence.Variables>
+    <Assign>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:String">[str_DeclaredVar]</InArgument>
+      </Assign.Value>
+    </Assign>
+  </Sequence>
+</Activity>`;
+      const entries = [{ name: "Main.xaml", content: xaml }];
+
+      const result = canonicalizeTargetValueExpressions(entries);
+
+      const defects = result.symbolScopeDefects.filter(d => d.referencedSymbol === "str_DeclaredVar");
+      expect(defects.length).toBe(0);
+      expect(entries[0].content).toContain("[str_DeclaredVar]");
+    });
+  });
+});
