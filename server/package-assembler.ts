@@ -7484,6 +7484,7 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
       const archiveFreezeResult = freezeArchiveWorkflows(phase1XamlEntries, authoritativeClassification);
       console.log(`[Archive Freeze] Freeze point established — ${archiveFreezeResult.frozenWorkflows.size} workflow(s) frozen with stageMarker=${archiveFreezeResult.freezeStageMarker}, timestamp=${archiveFreezeResult.freezeTimestamp}`);
 
+      const isPackageMode = true;
       deferredWrites = createGuardedDeferredWrites(deferredWrites, isPackageMode);
       console.log(`[Archive Freeze] deferredWrites now guarded — any post-freeze XAML mutation will be intercepted`);
 

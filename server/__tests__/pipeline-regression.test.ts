@@ -15,6 +15,7 @@ import {
   classifyWorkflowStatus,
   freezeArchiveWorkflows,
   resetMonotonicCounter,
+  resetArchiveFreeze,
   isArchiveFrozen,
   createGuardedDeferredWrites,
   verifyFrozenArchiveBuffer,
@@ -1324,6 +1325,39 @@ describe("Compiler-invariant regression tests", () => {
       const mainEntry = parity.entries.find((e: WorkflowStatusParityEntry) => normalizeClassifierFileName(e.file) === "main");
       expect(mainEntry.identicalContent).toBe(false);
       expect(mainEntry.divergenceReason).toContain("Content hash mismatch");
+    });
+  });
+
+  describe("Task 433 regression: isPackageMode defined at call site", () => {
+    beforeEach(() => {
+      resetMonotonicCounter();
+      resetArchiveFreeze();
+    });
+
+    it("createGuardedDeferredWrites with isPackageMode=true does not throw ReferenceError", () => {
+      const mainXaml = makeValidXaml("Main", `<ui:LogMessage Level="Info" Message="&quot;Test&quot;" DisplayName="Log" />`);
+      const entries = [{ name: "lib/Main.xaml", content: mainXaml }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      let deferredWrites = new Map<string, string>();
+      const isPackageMode = true;
+      deferredWrites = createGuardedDeferredWrites(deferredWrites, isPackageMode);
+
+      expect(() => deferredWrites.set("project.json", "{}")).not.toThrow();
+      expect(() => deferredWrites.set("lib/Main.xaml", mainXaml)).not.toThrow();
+    });
+
+    it("createGuardedDeferredWrites enforces fatal in package mode on mutation", () => {
+      const mainXaml = makeValidXaml("Main", `<ui:LogMessage Level="Info" Message="&quot;Test&quot;" DisplayName="Log" />`);
+      const entries = [{ name: "lib/Main.xaml", content: mainXaml }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const isPackageMode = true;
+      const deferredWrites = createGuardedDeferredWrites(new Map<string, string>(), isPackageMode);
+
+      expect(() => deferredWrites.set("lib/Main.xaml", mainXaml + "<!-- changed -->")).toThrow("Post-Freeze Mutation Violation");
     });
   });
 });
