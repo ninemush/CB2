@@ -14,6 +14,11 @@ import {
   type WorkflowGraphSummary,
   type WorkflowGraphValidationResult,
 } from "./xaml/workflow-graph-validator";
+import {
+  validateContractIntegrity,
+  type ContractIntegrityDefect,
+  type ContractNormalizationAction,
+} from "./xaml/workflow-contract-integrity";
 
 export interface FinalArtifactValidationInput {
   xamlEntries: { name: string; content: string }[];
@@ -77,6 +82,10 @@ export interface FinalQualityReport {
   };
   executablePathDefects: ExecutablePathDefect[];
   hasExecutablePathContamination: boolean;
+  contractIntegrityDefects: ContractIntegrityDefect[];
+  hasContractIntegrityIssues: boolean;
+  contractIntegritySummary?: string;
+  contractNormalizationActions: ContractNormalizationAction[];
   derivedStatus: PackageStatus;
   statusReason: string;
   outcomeContext?: PipelineOutcomeReport;
@@ -241,6 +250,8 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
 
   const executablePathResult = validateExecutablePaths(xamlEntries);
 
+  const contractIntegrityResult = validateContractIntegrity(xamlEntries);
+
   const mainXamlEntry = perFileResults.find(r => r.file === "Main.xaml");
   const entryPointHasBlockers = mainXamlEntry
     ? (mainXamlEntry.studioCompatibilityLevel === "studio-blocked" || mainXamlEntry.hasStubContent)
@@ -251,7 +262,7 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
   const hasAnyStubContent = perFileResults.some(r => r.hasStubContent);
   const qgIncomplete = qualityGateResult.completenessLevel === "incomplete";
 
-  const hasDegradation = entryPointHasBlockers || hasStructuralBlockers || hasAnyStubContent || qgIncomplete || executablePathResult.hasExecutablePathContamination || graphValidation.hasWorkflowGraphIntegrityIssues;
+  const hasDegradation = entryPointHasBlockers || hasStructuralBlockers || hasAnyStubContent || qgIncomplete || executablePathResult.hasExecutablePathContamination || graphValidation.hasWorkflowGraphIntegrityIssues || contractIntegrityResult.hasContractIntegrityIssues;
 
   let derivedStatus: PackageStatus;
   let statusReason: string;
@@ -280,11 +291,15 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
     if (entryPointHasBlockers) reasons.push("entry point (Main.xaml) has structural blockers or stub content");
     if (hasStructuralBlockers) reasons.push(`${studioBlockedCount} file(s) structurally blocked in final validation`);
     statusReason = `Structurally invalid: ${reasons.join(", ")}`;
-  } else if (graphValidation.workflowGraphDefects.some(d => d.severity === "execution_blocking")) {
+  } else if (graphValidation.workflowGraphDefects.some(d => d.severity === "execution_blocking") || contractIntegrityResult.contractIntegrityDefects.some(d => d.severity === "execution_blocking")) {
     derivedStatus = "structurally_invalid";
-    const blockingCount = graphValidation.workflowGraphDefects.filter(d => d.severity === "execution_blocking").length;
-    statusReason = `Structurally invalid: ${blockingCount} execution-blocking workflow graph defect(s) detected`;
-  } else if (hasAnyStubContent || qgIncomplete || executablePathResult.hasExecutablePathContamination || graphValidation.workflowGraphDefects.some(d => d.severity === "handoff_required")) {
+    const reasons: string[] = [];
+    const graphBlockingCount = graphValidation.workflowGraphDefects.filter(d => d.severity === "execution_blocking").length;
+    if (graphBlockingCount > 0) reasons.push(`${graphBlockingCount} execution-blocking workflow graph defect(s)`);
+    const contractBlockingCount = contractIntegrityResult.contractIntegrityDefects.filter(d => d.severity === "execution_blocking").length;
+    if (contractBlockingCount > 0) reasons.push(`${contractBlockingCount} execution-blocking contract integrity defect(s)`);
+    statusReason = `Structurally invalid: ${reasons.join(", ")} detected`;
+  } else if (hasAnyStubContent || qgIncomplete || executablePathResult.hasExecutablePathContamination || graphValidation.workflowGraphDefects.some(d => d.severity === "handoff_required") || contractIntegrityResult.contractIntegrityDefects.some(d => d.severity === "handoff_required")) {
     derivedStatus = "handoff_only";
     const reasons: string[] = [];
     if (hasAnyStubContent) reasons.push("stub content detected in finalized artifacts");
@@ -293,6 +308,10 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
     if (graphValidation.workflowGraphDefects.some(d => d.severity === "handoff_required")) {
       const handoffCount = graphValidation.workflowGraphDefects.filter(d => d.severity === "handoff_required").length;
       reasons.push(`${handoffCount} workflow graph integrity issue(s) require handoff`);
+    }
+    if (contractIntegrityResult.contractIntegrityDefects.some(d => d.severity === "handoff_required")) {
+      const handoffCount = contractIntegrityResult.contractIntegrityDefects.filter(d => d.severity === "handoff_required").length;
+      reasons.push(`${handoffCount} contract integrity issue(s) require handoff`);
     }
     statusReason = `Handoff only: ${reasons.join(", ")}`;
   } else if (hasStructuralWarnings || totalWarnings > 0) {
@@ -304,6 +323,10 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
   } else {
     derivedStatus = "studio_stable";
     statusReason = "All finalized artifacts validated — no blockers or warnings — studio stable";
+  }
+
+  if (contractIntegrityResult.contractNormalizationActions.length > 0 && derivedStatus === "studio_stable") {
+    statusReason = `${statusReason} (note: ${contractIntegrityResult.contractNormalizationActions.length} contract normalization(s) were applied — run was not clean from first principles)`;
   }
 
   return {
@@ -325,6 +348,10 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
     },
     executablePathDefects: executablePathResult.executablePathDefects,
     hasExecutablePathContamination: executablePathResult.hasExecutablePathContamination,
+    contractIntegrityDefects: contractIntegrityResult.contractIntegrityDefects,
+    hasContractIntegrityIssues: contractIntegrityResult.hasContractIntegrityIssues,
+    contractIntegritySummary: contractIntegrityResult.contractIntegritySummary,
+    contractNormalizationActions: contractIntegrityResult.contractNormalizationActions,
     derivedStatus,
     statusReason,
     outcomeContext: contextMetadata.outcomeReport,
