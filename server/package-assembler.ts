@@ -62,6 +62,7 @@ import archiver from "archiver";
   import { getAndClearPropertySerializationTrace, getAndClearInvokeContractTrace, getAndClearStageHashParity, updateStageHash, hasStageHash, emitInvokeContractTrace, runWithTraceContext } from "./pipeline-trace-collector";
   import { validateContractIntegrity, buildWorkflowContracts, extractInvocations, resolveTargetContract, type WorkflowContract, type ContractIntegrityDefect } from "./xaml/workflow-contract-integrity";
   import { canonicalizeInvokeBindings, canonicalizeTargetValueExpressions, type InvokeCanonicalizationResult, type TargetValueCanonicalizationResult } from "./xaml/invoke-binding-canonicalizer";
+  import { classifyFromArchiveBuffer, buildWorkflowStatusParity, normalizeClassifierFileName, AUTHORITATIVE_STUB_PATTERNS, verifyAndReclassifyFromArchive, assertClassificationFreshness, type WorkflowStatusClassifierResult, type WorkflowStatusParityEntry, type WorkflowStatusParityResult } from "./workflow-status-classifier";
 
 interface DomCorrectionResult {
   content: string;
@@ -6187,14 +6188,7 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
         .filter(v => v.severity === "error" && dhgStructuralDefectChecks.has(v.check))
         .map(v => v.file)
     );
-    const DHG_STUB_CONTENT_PATTERNS = [
-      "STUB_BLOCKING_FALLBACK",
-      "STUB: ",
-      "STUB_WORKFLOW_GENERATOR_FAILURE",
-      "stub — Final validation remediation",
-      "stub due to generation/compliance failure",
-      "Manual implementation required",
-    ];
+    const DHG_STUB_CONTENT_PATTERNS = AUTHORITATIVE_STUB_PATTERNS;
     const dhgFilesWithStubContent = new Set<string>();
     const dhgStudioNonLoadableFiles = new Set<string>();
     const dhgStudioLoadabilityReasons = new Map<string, string>();
@@ -7465,22 +7459,62 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
           const baseName = (k.split("/").pop() || k);
           return baseName.replace(/\.xaml$/i, "");
         });
+      const phase1Archive = new AdmZip();
+      for (const [path, content] of deferredWrites.entries()) {
+        phase1Archive.addFile(path, Buffer.from(content, "utf-8"));
+      }
+      const phase1Buffer = phase1Archive.toBuffer();
+      console.log(`[Phase 1 Archive] Finalized pre-DHG archive buffer (${phase1Buffer.length} bytes) for authoritative XAML classification`);
+
+      const authoritativeClassification = classifyFromArchiveBuffer(phase1Buffer);
+      console.log(`[Authoritative Classifier] Classified ${authoritativeClassification.classifications.length} workflow(s) from finalized Phase 1 archive buffer, stageMarker=${authoritativeClassification.stageMarker}, version=${authoritativeClassification.classifierVersion}`);
+      assemblerOutcomeReport._preArchiveClassification = authoritativeClassification;
+
+      const phase1XamlEntries: Array<{ name: string; content: string }> = [];
+      const phase1Zip = new AdmZip(phase1Buffer);
+      for (const zipEntry of phase1Zip.getEntries()) {
+        if (zipEntry.isDirectory || !zipEntry.entryName.endsWith(".xaml")) continue;
+        phase1XamlEntries.push({
+          name: zipEntry.entryName,
+          content: zipEntry.getData().toString("utf-8"),
+        });
+      }
+
       const dhgContext: DhgContext = {
         projectName,
         workflowNames: finalArchiveWfNames,
         generationMode: generationMode || undefined,
         generationModeReason: modeConfig.reason,
         analysis: dhgAnalysis,
+        authoritativeClassification,
       };
       const dhg = generateDhgFromOutcomeReport(assemblerOutcomeReport, dhgContext);
       archive.append(dhg, { name: `${libPath}/DeveloperHandoffGuide.md` });
 
-      const parityResult = assertDhgArchiveParity(dhg, finalArchiveWfNames, postGateArchiveXamlEntries);
+      const parityResult = assertDhgArchiveParity(dhg, finalArchiveWfNames, phase1XamlEntries, authoritativeClassification);
       if (!parityResult.passed) {
         throw new Error(`[Package-DHG Parity] FATAL DIVERGENCE: ${parityResult.divergences.join("; ")}`);
       } else {
         console.log(`[Package-DHG Parity] PASS — archive and DHG agree on ${finalArchiveWfNames.length} workflow(s) with matching statuses`);
       }
+
+      const dhgTierMap = new Map<string, string>();
+      const dhgTierPattern = /\|\s*\d+\s*\|\s*`([^`]+\.xaml)`\s*\|\s*(Generated|Handoff|Stub|Blocked)\s*\|/g;
+      let tierMatch;
+      while ((tierMatch = dhgTierPattern.exec(dhg)) !== null) {
+        const wfName = tierMatch[1].replace(/\.xaml$/i, "").toLowerCase();
+        dhgTierMap.set(wfName, tierMatch[2]);
+      }
+      const statusParityResult = buildWorkflowStatusParity(authoritativeClassification, dhgTierMap, phase1XamlEntries);
+      if (statusParityResult.divergenceCount > 0) {
+        console.warn(`[Workflow Status Parity] ${statusParityResult.divergenceCount} divergence(s) detected`);
+        for (const entry of statusParityResult.entries.filter(e => e.divergenceReason)) {
+          console.warn(`  - ${entry.file}: ${entry.divergenceReason}`);
+        }
+      } else {
+        console.log(`[Workflow Status Parity] PASS — all ${statusParityResult.entries.length} workflow(s) have consistent status`);
+      }
+      assemblerOutcomeReport.workflowStatusParity = statusParityResult.entries;
 
       console.log(`[UiPath] Generated Developer Handoff Guide (structured): ${finalArchiveWfNames.length} workflows, ${outcomeRemediations.length} remediations, REFramework=${useReFramework}`);
     }
@@ -7509,6 +7543,45 @@ ${depEntries}
   const buffer = await archive.finalize();
 
   runPostArchiveParityCheck(buffer, _archiveManifestTracker, _appendedContentHashes, xamlEntries, libPath);
+
+  {
+    const preArchiveClassification = assemblerOutcomeReport._preArchiveClassification;
+    if (preArchiveClassification) {
+      const archiveVerification = verifyAndReclassifyFromArchive(preArchiveClassification, buffer, libPath);
+      if (!archiveVerification.verified) {
+        const hashMismatchDetails = archiveVerification.hashMismatches.map(h =>
+          `${h.file}: pre=${h.preArchiveHash.substring(0, 12)} archive=${h.archiveHash.substring(0, 12)}`
+        );
+        const statusChangeDetails = archiveVerification.statusChanges.map(s =>
+          `${s.file}: ${s.preArchiveStatus} → ${s.archiveStatus}`
+        );
+        console.error(`[Post-Archive Classifier Verification] DIVERGENCE DETECTED:`);
+        if (hashMismatchDetails.length > 0) console.error(`  Hash mismatches: ${hashMismatchDetails.join("; ")}`);
+        if (statusChangeDetails.length > 0) console.error(`  Status changes: ${statusChangeDetails.join("; ")}`);
+        throw new Error(
+          `[Post-Archive Classifier Verification] FATAL: Archive bytes diverge from pre-archive classification. ` +
+          `${archiveVerification.hashMismatches.length} hash mismatch(es), ${archiveVerification.statusChanges.length} status change(s). ` +
+          `This indicates a late-stage mutation corrupted the archive.`
+        );
+      }
+      console.log(`[Post-Archive Classifier Verification] PASS — ${archiveVerification.reclassifiedCount} workflow(s) verified against finalized archive bytes, all classifications match`);
+      assertClassificationFreshness(archiveVerification.finalClassification);
+
+      if (assemblerOutcomeReport.workflowStatusParity) {
+        for (const parityEntry of assemblerOutcomeReport.workflowStatusParity) {
+          const reclassified = archiveVerification.finalClassification.classifications.find(
+            c => normalizeClassifierFileName(c.file) === normalizeClassifierFileName(parityEntry.file)
+          );
+          if (reclassified) {
+            parityEntry.postArchiveHash = reclassified.contentHash;
+            parityEntry.postArchiveStatus = reclassified.status;
+            parityEntry.postArchiveVerified = reclassified.contentHash === parityEntry.finalArchiveHash;
+          }
+        }
+        console.log(`[Post-Archive Parity] Annotated workflowStatusParity with post-finalization verification (provenance preserved)`);
+      }
+    }
+  }
 
   const finalXamlEntries = postGateXamlEntries.map(e => ({ name: e.name, content: e.content }));
   const finalDependencyMap = { ...deps };
@@ -7990,16 +8063,11 @@ export function createTrackedArchive() {
   return tracked;
 }
 
-const DHG_STUB_CONTENT_PATTERNS = [
-  "STUB_BLOCKING_FALLBACK", "STUB: ", "STUB_WORKFLOW_GENERATOR_FAILURE",
-  "stub — Final validation remediation", "ASSEMBLY_FAILED",
-  "Generator failed", "Generator could not",
-];
-
 export function assertDhgArchiveParity(
   dhgContent: string,
   archiveWorkflowNames: string[],
   archiveXamlEntries: Array<{ name: string; content: string }>,
+  authoritativeClassification?: WorkflowStatusClassifierResult,
 ): { passed: boolean; divergences: string[] } {
   const divergences: string[] = [];
 
@@ -8022,21 +8090,46 @@ export function assertDhgArchiveParity(
     divergences.push(`In DHG but not archive: ${inDhgNotArchive.join(", ")}`);
   }
 
+  const classMap = new Map<string, import("./workflow-status-classifier").WorkflowStatusClassification>();
+  if (authoritativeClassification) {
+    for (const c of authoritativeClassification.classifications) {
+      classMap.set(normalizeClassifierFileName(c.file), c);
+    }
+  }
+
   for (const [wfNameLower, dhgTier] of dhgWorkflowEntries) {
-    const archiveEntry = archiveXamlEntries.find(e => {
-      const entryName = (e.name.split("/").pop() || e.name).replace(/\.xaml$/i, "").toLowerCase();
-      return entryName === wfNameLower;
-    });
-    if (archiveEntry) {
-      const isActuallyStub = DHG_STUB_CONTENT_PATTERNS.some(p => archiveEntry.content.includes(p));
-      if (dhgTier === "Generated" && isActuallyStub) {
-        divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Generated" but archive content is a stub`);
-      } else if (dhgTier === "Handoff" && isActuallyStub) {
-        divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Handoff" but archive content is a stub`);
-      } else if (dhgTier === "Stub" && !isActuallyStub) {
-        divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Stub" but archive content is not a stub`);
-      } else if (dhgTier === "Blocked" && isActuallyStub) {
-        divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Blocked" but archive content is a stub`);
+    const authEntry = classMap.get(wfNameLower);
+    if (authEntry) {
+      const isStub = authEntry.status === "stub";
+      const isMalformed = authEntry.status === "malformed";
+      const isBlocked = authEntry.status === "blocked";
+      const isNonStub = authEntry.status === "non-stub";
+
+      if (dhgTier === "Generated" && (isStub || isMalformed || isBlocked)) {
+        divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Generated" but authoritative classifier says "${authEntry.status}" (${authEntry.rationale})`);
+      } else if (dhgTier === "Handoff" && (isStub || isMalformed || isBlocked)) {
+        divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Handoff" but authoritative classifier says "${authEntry.status}" (${authEntry.rationale})`);
+      } else if (dhgTier === "Stub" && !isStub) {
+        divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Stub" but authoritative classifier says "${authEntry.status}" (${authEntry.rationale})`);
+      } else if (dhgTier === "Blocked" && !(isMalformed || isBlocked)) {
+        divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Blocked" but authoritative classifier says "${authEntry.status}" (${authEntry.rationale})`);
+      }
+    } else {
+      const archiveEntry = archiveXamlEntries.find(e => {
+        const entryName = (e.name.split("/").pop() || e.name).replace(/\.xaml$/i, "").toLowerCase();
+        return entryName === wfNameLower;
+      });
+      if (archiveEntry) {
+        const isActuallyStub = AUTHORITATIVE_STUB_PATTERNS.some(p => archiveEntry.content.includes(p));
+        if (dhgTier === "Generated" && isActuallyStub) {
+          divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Generated" but archive content is a stub`);
+        } else if (dhgTier === "Handoff" && isActuallyStub) {
+          divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Handoff" but archive content is a stub`);
+        } else if (dhgTier === "Stub" && !isActuallyStub) {
+          divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Stub" but archive content is not a stub`);
+        } else if (dhgTier === "Blocked" && isActuallyStub) {
+          divergences.push(`Status mismatch: ${wfNameLower}.xaml — DHG says "Blocked" but archive content is a stub`);
+        }
       }
     }
   }

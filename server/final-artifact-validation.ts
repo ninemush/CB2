@@ -32,6 +32,7 @@ import {
   type SentinelReplacementRecord,
   type UnresolvableJsonDefect,
 } from "./xaml/invoke-binding-canonicalizer";
+import { AUTHORITATIVE_STUB_PATTERNS } from "./workflow-status-classifier";
 
 export interface FinalArtifactValidationInput {
   xamlEntries: { name: string; content: string }[];
@@ -135,15 +136,7 @@ const STUDIO_WARNING_CHECKS = new Set([
   "invalid-continue-on-error", "EXPRESSION_SYNTAX", "UNSAFE_VARIABLE_NAME", "empty-catches",
 ]);
 
-const STUB_CONTENT_PATTERNS = [
-  "STUB_BLOCKING_FALLBACK",
-  "STUB: ",
-  "STUB_WORKFLOW_GENERATOR_FAILURE",
-  "stub — Final validation remediation",
-  "ASSEMBLY_FAILED",
-  "Generator failed",
-  "Generator could not",
-];
+const STUB_CONTENT_PATTERNS = AUTHORITATIVE_STUB_PATTERNS;
 
 function checkFinalStudioLoadability(xamlContent: string): { loadable: boolean; reason?: string } {
   if (!xamlContent || xamlContent.trim().length === 0) {

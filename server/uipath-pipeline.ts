@@ -359,6 +359,8 @@ export interface PipelineOutcomeReport {
   unresolvableJsonDefects?: import("./xaml/invoke-binding-canonicalizer").UnresolvableJsonDefect[];
   canonicalizationArchiveParity?: Array<{ file: string; preCanonicalizationHash: string; canonicalizedHash: string; archivedHash: string; identical: boolean; mutated: boolean }>;
   preArchiveStructuralDefects?: Array<{ file: string; pattern: string; detail: string }>;
+  workflowStatusParity?: import("./workflow-status-classifier").WorkflowStatusParityEntry[];
+  _preArchiveClassification?: import("./workflow-status-classifier").WorkflowStatusClassifierResult;
 }
 
 export interface PipelineResult {

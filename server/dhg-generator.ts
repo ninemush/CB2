@@ -5,6 +5,8 @@ import type {
 } from "./uipath-pipeline";
 import type { DhgAnalysisResult, SddArtifactCrossReference } from "./xaml/dhg-analyzers";
 import type { FinalQualityReport } from "./final-artifact-validation";
+import type { WorkflowStatusClassifierResult, WorkflowStatusClassification } from "./workflow-status-classifier";
+import { normalizeClassifierFileName } from "./workflow-status-classifier";
 
 export interface HandoffBlockEntry {
   file: string;
@@ -107,6 +109,7 @@ export interface DhgContext {
   finalQualityReport?: FinalQualityReport;
   bindPointSummary?: BindPointSummary;
   sddBusinessStepsByWorkflow?: Map<string, number>;
+  authoritativeClassification?: WorkflowStatusClassifierResult;
 }
 
 interface WorkflowTierClassification {
@@ -135,6 +138,13 @@ function classifyWorkflows(
   context: DhgContext,
 ): WorkflowTierClassification[] {
   const fqr = context.finalQualityReport;
+  const authClassifier = context.authoritativeClassification;
+  const authClassMap = new Map<string, WorkflowStatusClassification>();
+  if (authClassifier) {
+    for (const c of authClassifier.classifications) {
+      authClassMap.set(normalizeClassifierFileName(c.file), c);
+    }
+  }
   const studioCompat = report.studioCompatibility || [];
   const activityRemediations = report.remediations.filter(r => r.level === "activity");
   const sequenceRemediations = report.remediations.filter(r => r.level === "sequence");
@@ -161,7 +171,26 @@ function classifyWorkflows(
     let hasPlaceholders: boolean;
     let studioLevel: string | undefined;
 
-    if (fqr) {
+    const authEntry = authClassMap.get(wf.toLowerCase());
+
+    if (authEntry) {
+      isStubbed = authEntry.status === "stub";
+      isStudioBlocked = authEntry.status === "malformed" || authEntry.status === "blocked";
+      if (isStudioBlocked) {
+        failureSummary = authEntry.rationale;
+      }
+      studioLevel = (authEntry.status === "malformed" || authEntry.status === "blocked") ? "studio-blocked"
+        : authEntry.status === "stub" ? "studio-warnings"
+        : "studio-clean";
+
+      isFullyGenerated = !isStubbed && !isStudioBlocked;
+      hasRemediation = [...report.remediations, ...report.propertyRemediations].some(
+        r => r.file === wfFile || r.file === wf
+      );
+      hasPlaceholders = report.qualityWarnings.some(
+        w => w.check === "placeholder-value" && (w.file === wfFile || w.file === wf)
+      );
+    } else if (fqr) {
       const fqrEntry = fqr.perFileResults.find(r => r.file === wfFile || r.file === wf);
       isStubbed = fqrEntry?.hasStubContent ?? false;
       isStudioBlocked = fqrEntry?.studioCompatibilityLevel === "studio-blocked";
@@ -207,7 +236,9 @@ function classifyWorkflows(
     const handoffBlockCount = wfDegraded.length + wfActivityRems.length + wfSequenceRems.length + wfStructuralLeafRems.length + wfStubbedEmissions.length;
     const hasHandoffBlocks = handoffBlockCount > 0;
 
-    const isWorkflowStub = wfWorkflowRems.length > 0 || (isStubbed && !hasHandoffBlocks);
+    const isWorkflowStub = authEntry
+      ? isStubbed
+      : wfWorkflowRems.length > 0 || (isStubbed && !hasHandoffBlocks);
 
     const spMetrics = report.structuralPreservationMetrics?.find(m => m.file === wfFile || m.file === wf);
     const sddStepCount = context.sddBusinessStepsByWorkflow?.get(wf);
