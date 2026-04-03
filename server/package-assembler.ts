@@ -134,7 +134,6 @@ function applyDomBasedCatalogCorrections(
           }
         } else if (corr.correction.type === "move-to-child-element") {
           const propName = corr.correction.property;
-          if (shortTag === "Assign" && (propName === "To" || propName === "Value")) continue;
           if (attrKey in nodeAttrs) {
             const propVal = nodeAttrs[attrKey];
             delete nodeAttrs[attrKey];
@@ -155,7 +154,6 @@ function applyDomBasedCatalogCorrections(
           }
         } else if (corr.correction.type === "wrap-in-argument" && corr.correction.argumentWrapper) {
           const propName = corr.correction.property;
-          if (shortTag === "Assign" && (propName === "To" || propName === "Value")) continue;
           const childPropTag = `${tagName}.${propName}`;
           const children = node[tagName] || [];
           for (const child of children) {
@@ -5165,10 +5163,6 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
 
                 if (correction.type === "move-to-child-element") {
                   const propName = correction.property;
-                  const className2 = fullTag.includes(":") ? fullTag.split(":").pop()! : fullTag;
-                  if (className2 === "Assign" && (propName === "To" || propName === "Value")) {
-                    continue;
-                  }
                   const propVal = attrs[propName];
                   if (propVal !== undefined) {
                     const wrapper = correction.argumentWrapper || "InArgument";
@@ -5209,10 +5203,6 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
                 } else if (correction.type === "wrap-in-argument" && correction.argumentWrapper) {
                   const propName = correction.property;
                   const className = fullTag.includes(":") ? fullTag.split(":").pop()! : fullTag;
-
-                  if (className === "Assign" && (propName === "To" || propName === "Value")) {
-                    continue;
-                  }
 
                   const escapedClassName = className.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                   const wrapper = correction.argumentWrapper;
@@ -5953,16 +5943,22 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
         } else {
           console.warn(`[UiPath Parity] No deferredWrites key found for basename "${corruptedFile}" during final validation remediation — skipping deferred update`);
         }
+        const fileSpecificErrors = severeValidationErrors
+          .filter(v => v.file === corruptedFile)
+          .map(v => `[${v.check}] ${v.detail}`);
+        const specificErrorDetail = fileSpecificErrors.length > 0
+          ? fileSpecificErrors.join("; ")
+          : "No specific error details captured";
         outcomeRemediations.push({
           level: "workflow",
           file: corruptedFile,
           remediationCode: "STUB_WORKFLOW_BLOCKING",
-          reason: `Final validation: XAML well-formedness violations — replaced with stub`,
+          reason: `Final validation: XAML well-formedness violations — replaced with stub. Details: ${specificErrorDetail}`,
           classifiedCheck: "xml-wellformedness",
-          developerAction: `Fix XML structure in ${corruptedFile} — ensure proper nesting and closing tags`,
+          developerAction: `Fix XML structure in ${corruptedFile} — ${specificErrorDetail}`,
           estimatedEffortMinutes: 15,
         });
-        console.warn(`[UiPath Pre-Package Validation] Remediated corrupted file "${corruptedFile}" with stub workflow`);
+        console.warn(`[UiPath Pre-Package Validation] Remediated corrupted file "${corruptedFile}" with stub workflow. Specific errors: ${specificErrorDetail}`);
       }
 
       if (remediationFailed) {
@@ -7090,13 +7086,14 @@ export async function buildNuGetPackage(pkg: UiPathPackage, version: string = "1
             });
             sanitized = stubXaml;
             deferredWrites.set(path, sanitized);
+            const archiveGateErrors = recheck.errors.length > 0 ? recheck.errors.join("; ") : wellFormed.errors.join("; ");
             outcomeRemediations.push({
               level: "workflow",
               file: fileName,
               remediationCode: "STUB_WORKFLOW_BLOCKING",
-              reason: `Archive gate: XAML well-formedness failure — replaced with stub`,
+              reason: `Archive gate: XAML well-formedness failure — replaced with stub. Details: ${archiveGateErrors}`,
               classifiedCheck: "xml-wellformedness",
-              developerAction: `Fix XML structure in ${fileName} — ensure proper nesting and closing tags`,
+              developerAction: `Fix XML structure in ${fileName} — ${archiveGateErrors}`,
               estimatedEffortMinutes: 15,
             });
             autoFixSummary.push(`Replaced ${fileName} with Studio-openable stub due to XML well-formedness failure`);

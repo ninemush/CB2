@@ -143,7 +143,7 @@ export function validateXamlContent(xamlEntries: { name: string; content: string
       if (result !== true) {
         const err = result.err;
         const detail = err
-          ? `XML parse error at line ${err.line}, col ${err.col}: ${err.msg.substring(0, 200)}`
+          ? `XML parse error at line ${err.line}, col ${err.col} (code: ${err.code}): ${err.msg.substring(0, 200)}`
           : "XML parse error: unknown";
         console.warn(`[XAML wellformedness] Validation failed for ${shortName}: ${detail}\nFull XAML content:\n${content}`);
         violations.push({

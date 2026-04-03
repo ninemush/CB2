@@ -1795,29 +1795,7 @@ export function normalizeXaml(rawXaml: string, targetFramework: TargetFramework 
     console.log(`[Compliance READ-ONLY] sanitizeXmlArtifacts detected issues (not mutated)`);
   }
 
-  const KNOWN_PREFIXED_ACTIVITIES = [
-    "InvokeWorkflowFile", "RetryScope", "AddQueueItem", "GetTransactionItem",
-    "SetTransactionStatus", "LogMessage", "GetCredential", "GetAsset",
-    "TakeScreenshot", "AddLogFields", "Comment", "ShouldRetry",
-    "ReadTextFile", "WriteTextFile", "PathExists",
-    "HttpClient", "DeserializeJson", "SerializeJson",
-    "SendSmtpMailMessage", "SendOutlookMailMessage", "GetImapMailMessage",
-    "GetOutlookMailMessages", "SendMail", "GetMail",
-    "ExcelApplicationScope", "UseExcel", "ExcelReadRange", "ExcelWriteRange",
-    "ExcelWriteCell", "ReadRange", "WriteRange",
-    "ExecuteQuery", "ExecuteNonQuery", "ConnectToDatabase",
-    "ElementExists", "Click", "TypeInto", "GetText", "OpenBrowser",
-    "NavigateTo", "AttachBrowser", "AttachWindow", "UseApplicationBrowser",
-    "UseBrowser", "UseApplication",
-    "CreateFormTask", "WaitForFormTaskAndResume",
-    "CreateEntity", "CreateEntityRecord", "QueryEntity", "UpdateEntity",
-    "DeleteEntity", "GetEntityById",
-    "MLSkill", "Predict",
-    "DigitizeDocument", "ClassifyDocument", "ExtractDocumentData", "ValidateDocumentData",
-    "MultipleAssign", "WaitForDownload", "RepeatUntil",
-    "BuildDataTable", "FilterDataTable", "SortDataTable", "RemoveDuplicateRows",
-    "JoinDataTables", "OutputDataTable", "AddDataRow", "RemoveDataRow", "LookupDataTable",
-  ];
+  const KNOWN_PREFIXED_ACTIVITIES = Object.keys(GUARANTEED_ACTIVITY_PREFIX_MAP);
 
   for (const actName of KNOWN_PREFIXED_ACTIVITIES) {
     const prefix = getActivityPrefix(actName);
