@@ -48,476 +48,105 @@ export function normalizeActivityName(name: string): string {
   return ACTIVITY_NAME_ALIAS_MAP[name] || name;
 }
 
-const FALLBACK_REGISTRY: Record<string, ActivityRegistryEntry> = {
-  "ui:Click": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["ClickType", "MouseButton", "KeyModifiers", "CursorPosition", "DelayAfter", "DelayBefore", "TimeoutMS", "ContinueOnError", "InformativeScreenshot"],
-    },
-    versionedProperties: [
-      { name: "InformativeScreenshot", addedInMajor: 23 },
-    ],
-  },
-  "ui:TypeInto": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Text", "ClickBeforeTyping", "EmptyField", "DelayBetweenKeys", "DelayAfter", "DelayBefore", "TimeoutMS", "ContinueOnError", "InformativeScreenshot"],
-    },
-    versionedProperties: [
-      { name: "InformativeScreenshot", addedInMajor: 23 },
-    ],
-  },
-  "ui:GetText": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Value", "DelayAfter", "DelayBefore", "TimeoutMS", "ContinueOnError", "InformativeScreenshot"],
-    },
-    versionedProperties: [
-      { name: "InformativeScreenshot", addedInMajor: 23 },
-    ],
-  },
-  "ui:OpenBrowser": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Url", "BrowserType", "NewSession", "Private", "Hidden", "ContinueOnError"],
-    },
-  },
-  "ui:UseBrowser": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Url", "BrowserType", "InformativeScreenshot"],
-    },
-    versionedProperties: [
-      { name: "InformativeScreenshot", addedInMajor: 23 },
-    ],
-  },
-  "ui:NavigateTo": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Url", "ContinueOnError"],
-    },
-  },
-  "ui:AttachBrowser": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["BrowserType", "Title", "Url", "ContinueOnError"],
-    },
-  },
-  "ui:AttachWindow": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["ContinueOnError"],
-    },
-  },
-  "ui:UseApplicationBrowser": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Url", "BrowserType", "InformativeScreenshot"],
-    },
-    versionedProperties: [
-      { name: "InformativeScreenshot", addedInMajor: 23 },
-    ],
-  },
-  "ui:ElementExists": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Result", "TimeoutMS", "ContinueOnError"],
-    },
-  },
-  "ui:TakeScreenshot": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["Result", "TimeoutMS"],
-    },
-  },
-  "ui:UseApplication": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["ApplicationPath", "Arguments"],
-    },
-  },
-  "ui:ExcelApplicationScope": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["WorkbookPath", "AutoSave", "Visible", "CreateNewFile", "ReadOnly", "Password", "EditPassword"],
-    },
-    versionedProperties: [
-      { name: "EditPassword", addedInMajor: 2 },
-    ],
-  },
-  "ui:UseExcel": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["WorkbookPath", "CreateNewFile", "ReadOnly", "Password"],
-    },
-  },
-  "ui:ExcelReadRange": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["SheetName", "Range", "DataTable", "AddHeaders", "UseFilter"],
-    },
-  },
-  "ui:ExcelWriteRange": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["SheetName", "StartingCell", "DataTable", "AddHeaders"],
-    },
-  },
-  "ui:ExcelWriteCell": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["SheetName", "Cell", "Value"],
-    },
-  },
-  "ui:ReadRange": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["SheetName", "Range", "DataTable", "AddHeaders"],
-    },
-  },
-  "ui:WriteRange": {
-    package: "UiPath.Excel.Activities",
-    properties: {
-      optional: ["SheetName", "StartingCell", "DataTable", "AddHeaders"],
-    },
-  },
-  "ui:SendSmtpMailMessage": {
-    package: "UiPath.Mail.Activities",
-    properties: {
-      optional: ["To", "Cc", "Bcc", "Subject", "Body", "IsBodyHtml", "Server", "Port", "SecureConnection", "Email", "Password"],
-    },
-  },
-  "ui:SendOutlookMailMessage": {
-    package: "UiPath.Mail.Activities",
-    properties: {
-      optional: ["To", "Cc", "Bcc", "Subject", "Body", "IsBodyHtml", "Account", "Attachments"],
-    },
-  },
-  "ui:GetImapMailMessage": {
-    package: "UiPath.Mail.Activities",
-    properties: {
-      optional: ["Server", "Port", "Email", "Password", "SecureConnection", "Top", "MailFolder", "OnlyUnreadMessages"],
-    },
-  },
-  "ui:GetOutlookMailMessages": {
-    package: "UiPath.Mail.Activities",
-    properties: {
-      optional: ["Account", "MailFolder", "Top", "Filter", "OnlyUnreadMessages", "OrderByDate"],
-    },
-  },
-  "ui:SendMail": {
-    package: "UiPath.Mail.Activities",
-    properties: {
-      optional: ["To", "Cc", "Bcc", "Subject", "Body", "IsBodyHtml"],
-    },
-  },
-  "ui:GetMail": {
-    package: "UiPath.Mail.Activities",
-    properties: {
-      optional: ["Top", "MailFolder", "OnlyUnreadMessages"],
-    },
-  },
-  "ui:HttpClient": {
-    package: "UiPath.WebAPI.Activities",
-    properties: {
-      optional: ["EndPoint", "Endpoint", "Method", "AcceptFormat", "Body", "BodyFormat", "Headers", "ResponseContent", "ResponseStatus", "TimeoutMS", "Url"],
-    },
-  },
-  "ui:DeserializeJson": {
-    package: "UiPath.WebAPI.Activities",
-    properties: {
-      optional: ["JsonString", "JsonObject"],
-    },
-  },
-  "ui:SerializeJson": {
-    package: "UiPath.WebAPI.Activities",
-    properties: {
-      optional: ["JsonObject", "JsonString"],
-    },
-  },
-  "ui:ExecuteQuery": {
-    package: "UiPath.Database.Activities",
-    properties: {
-      optional: ["ConnectionString", "ProviderName", "Sql", "DataTable", "Parameters", "TimeoutMS"],
-    },
-  },
-  "ui:ExecuteNonQuery": {
-    package: "UiPath.Database.Activities",
-    properties: {
-      optional: ["ConnectionString", "ProviderName", "Sql", "AffectedRecords", "Parameters"],
-    },
-  },
-  "ui:ConnectToDatabase": {
-    package: "UiPath.Database.Activities",
-    properties: {
-      optional: ["ConnectionString", "ProviderName", "DatabaseConnection"],
-    },
-  },
-  "ui:AddQueueItem": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["QueueName", "Reference", "Priority", "DeferDate", "DueDate", "ItemInformation"],
-    },
-  },
-  "ui:GetTransactionItem": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["QueueName", "TransactionItem"],
-    },
-  },
-  "ui:SetTransactionStatus": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["TransactionItem", "Status", "ErrorType", "Reason"],
-    },
-  },
-  "ui:GetCredential": {
-    package: "UiPath.System.Activities",
-    properties: {
-      required: ["AssetName"],
-      optional: ["Username", "Password"],
-    },
-  },
-  "ui:GetAsset": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["AssetName", "Value"],
-    },
-  },
-  "ui:ReadTextFile": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["FileName", "Content", "Encoding"],
-    },
-  },
-  "ui:WriteTextFile": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["FileName", "Text", "Content", "Encoding"],
-    },
-  },
-  "ui:PathExists": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["Path", "PathType", "Result"],
-    },
-  },
-  "ui:LogMessage": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["Level", "Message"],
-    },
-  },
-  "ui:InvokeWorkflowFile": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["WorkflowFileName", "Arguments", "Isolated"],
-    },
-  },
-  "ui:Comment": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["Text"],
-    },
-  },
-  "ui:AddLogFields": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["Fields"],
-    },
-  },
-  "ui:ShouldRetry": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: [],
-    },
-  },
-  "ui:RetryScope": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: ["NumberOfRetries", "RetryInterval"],
-    },
-  },
-  "ui:CreateFormTask": {
-    package: "UiPath.Persistence.Activities",
-    properties: {
-      optional: ["TaskCatalog", "TaskTitle", "TaskPriority", "TaskObject", "TaskData"],
-    },
-  },
-  "ui:WaitForFormTaskAndResume": {
-    package: "UiPath.Persistence.Activities",
-    properties: {
-      optional: ["TaskObject", "TaskAction", "TaskOutput"],
-    },
-  },
-  "ui:MLSkill": {
-    package: "UiPath.MLActivities",
-    properties: {
-      optional: ["SkillName", "Input", "Output", "TimeoutMS"],
-    },
-  },
-  "ui:Predict": {
-    package: "UiPath.MLActivities",
-    properties: {
-      optional: ["ModelName", "Input", "Output"],
-    },
-  },
-  "ui:DigitizeDocument": {
-    package: "UiPath.IntelligentOCR.Activities",
-    properties: {
-      optional: ["DocumentPath", "DocumentObjectModel", "OcrEngine"],
-    },
-  },
-  "ui:ClassifyDocument": {
-    package: "UiPath.IntelligentOCR.Activities",
-    properties: {
-      optional: ["DocumentObjectModel", "DocumentPath", "ClassifierResult"],
-    },
-  },
-  "ui:ExtractDocumentData": {
-    package: "UiPath.IntelligentOCR.Activities",
-    properties: {
-      optional: ["DocumentObjectModel", "DocumentPath", "ExtractorResult"],
-    },
-  },
-  "ui:ValidateDocumentData": {
-    package: "UiPath.IntelligentOCR.Activities",
-    properties: {
-      optional: ["DocumentObjectModel", "DocumentPath", "AutoValidated"],
-    },
-  },
-  "ui:CloseApplication": {
-    package: "UiPath.UIAutomation.Activities",
-    properties: {
-      optional: ["DisplayName"],
-    },
-  },
-  "ui:KillProcess": {
-    package: "UiPath.System.Activities",
-    properties: {
-      required: ["ProcessName"],
-      optional: ["DisplayName"],
-    },
-  },
-  "Assign": {
-    package: "",
-    properties: {
-      optional: ["To", "Value"],
-    },
-  },
-  "ui:Assign": {
-    package: "",
-    properties: {
-      optional: ["To", "Value"],
-    },
-  },
-  "Throw": {
-    package: "",
-    properties: {
-      optional: ["Exception"],
-    },
-  },
-  "ui:Throw": {
-    package: "",
-    properties: {
-      optional: ["Exception"],
-    },
-  },
-  "ui:DeserializeJSON": {
-    package: "UiPath.WebAPI.Activities",
-    properties: {
-      optional: ["JsonString", "JsonObject"],
-    },
-  },
-  "ui:Delay": {
-    package: "UiPath.System.Activities",
-    properties: {
-      required: ["Duration"],
-      optional: ["DisplayName"],
-    },
-  },
-  "Rethrow": {
-    package: "",
-    properties: {
-      optional: [],
-    },
-  },
-  "ui:Rethrow": {
-    package: "UiPath.System.Activities",
-    properties: {
-      optional: [],
-    },
-  },
-  "TryCatch": {
-    package: "System.Activities",
-    properties: {
-      optional: ["Try", "Catches", "Finally"],
-    },
-  },
-  "ForEach": {
-    package: "System.Activities",
-    properties: {
-      optional: ["Values", "Body", "x:TypeArguments"],
-    },
-  },
-  "ParallelForEach": {
-    package: "System.Activities",
-    properties: {
-      optional: ["Values", "Body", "CompletionCondition", "x:TypeArguments"],
-    },
-  },
-  "If": {
-    package: "System.Activities",
-    properties: {
-      required: ["Condition"],
-      optional: ["Then", "Else"],
-    },
-  },
-  "Switch": {
-    package: "System.Activities",
-    properties: {
-      optional: ["Expression", "Default", "x:TypeArguments"],
-    },
-  },
-  "While": {
-    package: "System.Activities",
-    properties: {
-      required: ["Condition"],
-      optional: ["Body"],
-    },
-  },
-  "DoWhile": {
-    package: "System.Activities",
-    properties: {
-      required: ["Condition"],
-      optional: ["Body"],
-    },
-  },
-  "Sequence": {
-    package: "System.Activities",
-    properties: {
-      optional: [],
-    },
-  },
-  "Assign": {
-    package: "System.Activities",
-    properties: {
-      optional: ["To", "Value", "x:TypeArguments"],
-    },
-  },
-  "Delay": {
-    package: "System.Activities",
-    properties: {
-      optional: ["Duration"],
-    },
-  },
-  "Throw": {
-    package: "System.Activities",
-    properties: {
-      optional: ["Exception"],
-    },
-  },
-};
+function buildFallbackRegistry(): Record<string, ActivityRegistryEntry> {
+  const uiAuto = "UiPath.UIAutomation.Activities";
+  const uiSys = "UiPath.System.Activities";
+  const excel = "UiPath.Excel.Activities";
+  const mail = "UiPath.Mail.Activities";
+  const webapi = "UiPath.WebAPI.Activities";
+  const db = "UiPath.Database.Activities";
+  const persist = "UiPath.Persistence.Activities";
+  const ml = "UiPath.MLActivities";
+  const ocr = "UiPath.IntelligentOCR.Activities";
+  const sysAct = "System.Activities";
+
+  const stub = (pkg: string, opt?: string[]): ActivityRegistryEntry => ({
+    package: pkg,
+    properties: { optional: opt || [] },
+  });
+
+  const stubReq = (pkg: string, req: string[], opt?: string[]): ActivityRegistryEntry => ({
+    package: pkg,
+    properties: { required: req, optional: opt || [] },
+  });
+
+  return {
+    "ui:Click": { package: uiAuto, properties: { optional: ["ClickType", "MouseButton", "KeyModifiers", "CursorPosition", "DelayAfter", "DelayBefore", "TimeoutMS", "ContinueOnError", "InformativeScreenshot"] }, versionedProperties: [{ name: "InformativeScreenshot", addedInMajor: 23 }] },
+    "ui:TypeInto": { package: uiAuto, properties: { optional: ["Text", "ClickBeforeTyping", "EmptyField", "DelayBetweenKeys", "DelayAfter", "DelayBefore", "TimeoutMS", "ContinueOnError", "InformativeScreenshot"] }, versionedProperties: [{ name: "InformativeScreenshot", addedInMajor: 23 }] },
+    "ui:GetText": { package: uiAuto, properties: { optional: ["Value", "DelayAfter", "DelayBefore", "TimeoutMS", "ContinueOnError", "InformativeScreenshot"] }, versionedProperties: [{ name: "InformativeScreenshot", addedInMajor: 23 }] },
+    "ui:OpenBrowser": stub(uiAuto, ["Url", "BrowserType", "NewSession", "Private", "Hidden", "ContinueOnError"]),
+    "ui:UseBrowser": { package: uiAuto, properties: { optional: ["Url", "BrowserType", "InformativeScreenshot"] }, versionedProperties: [{ name: "InformativeScreenshot", addedInMajor: 23 }] },
+    "ui:NavigateTo": stub(uiAuto, ["Url", "ContinueOnError"]),
+    "ui:AttachBrowser": stub(uiAuto, ["BrowserType", "Title", "Url", "ContinueOnError"]),
+    "ui:AttachWindow": stub(uiAuto, ["ContinueOnError"]),
+    "ui:UseApplicationBrowser": { package: uiAuto, properties: { optional: ["Url", "BrowserType", "InformativeScreenshot"] }, versionedProperties: [{ name: "InformativeScreenshot", addedInMajor: 23 }] },
+    "ui:ElementExists": stub(uiAuto, ["Result", "TimeoutMS", "ContinueOnError"]),
+    "ui:TakeScreenshot": stub(uiAuto, ["Result", "TimeoutMS"]),
+    "ui:UseApplication": stub(uiAuto, ["ApplicationPath", "Arguments"]),
+    "ui:CloseApplication": stub(uiAuto, ["DisplayName"]),
+    "ui:ExcelApplicationScope": { package: excel, properties: { optional: ["WorkbookPath", "AutoSave", "Visible", "CreateNewFile", "ReadOnly", "Password", "EditPassword"] }, versionedProperties: [{ name: "EditPassword", addedInMajor: 2 }] },
+    "ui:UseExcel": stub(excel, ["WorkbookPath", "CreateNewFile", "ReadOnly", "Password"]),
+    "ui:ExcelReadRange": stub(excel, ["SheetName", "Range", "DataTable", "AddHeaders", "UseFilter"]),
+    "ui:ExcelWriteRange": stub(excel, ["SheetName", "StartingCell", "DataTable", "AddHeaders"]),
+    "ui:ExcelWriteCell": stub(excel, ["SheetName", "Cell", "Value"]),
+    "ui:ReadRange": stub(excel, ["SheetName", "Range", "DataTable", "AddHeaders"]),
+    "ui:WriteRange": stub(excel, ["SheetName", "StartingCell", "DataTable", "AddHeaders"]),
+    "ui:SendSmtpMailMessage": stub(mail, ["To", "Cc", "Bcc", "Subject", "Body", "IsBodyHtml", "Server", "Port", "SecureConnection", "Email", "Password"]),
+    "ui:SendOutlookMailMessage": stub(mail, ["To", "Cc", "Bcc", "Subject", "Body", "IsBodyHtml", "Account", "Attachments"]),
+    "ui:GetImapMailMessage": stub(mail, ["Server", "Port", "Email", "Password", "SecureConnection", "Top", "MailFolder", "OnlyUnreadMessages"]),
+    "ui:GetOutlookMailMessages": stub(mail, ["Account", "MailFolder", "Top", "Filter", "OnlyUnreadMessages", "OrderByDate"]),
+    "ui:SendMail": stub(mail, ["To", "Cc", "Bcc", "Subject", "Body", "IsBodyHtml"]),
+    "ui:GetMail": stub(mail, ["Top", "MailFolder", "OnlyUnreadMessages"]),
+    "ui:HttpClient": stub(webapi, ["EndPoint", "Endpoint", "Method", "AcceptFormat", "Body", "BodyFormat", "Headers", "ResponseContent", "ResponseStatus", "TimeoutMS", "Url"]),
+    "ui:DeserializeJson": stub(webapi, ["JsonString", "JsonObject"]),
+    "ui:SerializeJson": stub(webapi, ["JsonObject", "JsonString"]),
+    "ui:DeserializeJSON": stub(webapi, ["JsonString", "JsonObject"]),
+    "ui:ExecuteQuery": stub(db, ["ConnectionString", "ProviderName", "Sql", "DataTable", "Parameters", "TimeoutMS"]),
+    "ui:ExecuteNonQuery": stub(db, ["ConnectionString", "ProviderName", "Sql", "AffectedRecords", "Parameters"]),
+    "ui:ConnectToDatabase": stub(db, ["ConnectionString", "ProviderName", "DatabaseConnection"]),
+    "ui:AddQueueItem": stub(uiSys, ["QueueName", "Reference", "Priority", "DeferDate", "DueDate", "ItemInformation"]),
+    "ui:GetTransactionItem": stub(uiSys, ["QueueName", "TransactionItem"]),
+    "ui:SetTransactionStatus": stub(uiSys, ["TransactionItem", "Status", "ErrorType", "Reason"]),
+    "ui:GetCredential": stubReq(uiSys, ["AssetName"], ["Username", "Password"]),
+    "ui:GetAsset": stub(uiSys, ["AssetName", "Value"]),
+    "ui:ReadTextFile": stub(uiSys, ["FileName", "Content", "Encoding"]),
+    "ui:WriteTextFile": stub(uiSys, ["FileName", "Text", "Content", "Encoding"]),
+    "ui:PathExists": stub(uiSys, ["Path", "PathType", "Result"]),
+    "ui:LogMessage": stubReq(uiSys, ["Message"], ["Level"]),
+    "ui:InvokeWorkflowFile": stubReq(uiSys, ["WorkflowFileName"], ["Arguments", "Isolated"]),
+    "ui:Comment": stub(uiSys, ["Text"]),
+    "ui:AddLogFields": stub(uiSys, ["Fields"]),
+    "ui:ShouldRetry": stub(uiSys),
+    "ui:RetryScope": stub(uiSys, ["NumberOfRetries", "RetryInterval"]),
+    "ui:KillProcess": stubReq(uiSys, ["ProcessName"], ["DisplayName"]),
+    "ui:Delay": stubReq(uiSys, ["Duration"], ["DisplayName"]),
+    "ui:Rethrow": stub(uiSys),
+    "ui:CreateFormTask": stub(persist, ["TaskCatalog", "TaskTitle", "TaskPriority", "TaskObject", "TaskData"]),
+    "ui:WaitForFormTaskAndResume": stub(persist, ["TaskObject", "TaskAction", "TaskOutput"]),
+    "ui:MLSkill": stub(ml, ["SkillName", "Input", "Output", "TimeoutMS"]),
+    "ui:Predict": stub(ml, ["ModelName", "Input", "Output"]),
+    "ui:DigitizeDocument": stub(ocr, ["DocumentPath", "DocumentObjectModel", "OcrEngine"]),
+    "ui:ClassifyDocument": stub(ocr, ["DocumentObjectModel", "DocumentPath", "ClassifierResult"]),
+    "ui:ExtractDocumentData": stub(ocr, ["DocumentObjectModel", "DocumentPath", "ExtractorResult"]),
+    "ui:ValidateDocumentData": stub(ocr, ["DocumentObjectModel", "DocumentPath", "AutoValidated"]),
+    "ui:Assign": stub("", ["To", "Value"]),
+    "ui:Throw": stub("", ["Exception"]),
+    "Assign": stub(sysAct, ["To", "Value", "x:TypeArguments"]),
+    "Throw": stub(sysAct, ["Exception"]),
+    "Rethrow": stub(sysAct),
+    "TryCatch": stub(sysAct, ["Try", "Catches", "Finally"]),
+    "ForEach": stub(sysAct, ["Values", "Body", "x:TypeArguments"]),
+    "ParallelForEach": stub(sysAct, ["Values", "Body", "CompletionCondition", "x:TypeArguments"]),
+    "If": stubReq(sysAct, ["Condition"], ["Then", "Else"]),
+    "Switch": stub(sysAct, ["Expression", "Default", "x:TypeArguments"]),
+    "While": stubReq(sysAct, ["Condition"], ["Body"]),
+    "DoWhile": stubReq(sysAct, ["Condition"], ["Body"]),
+    "Sequence": stub(sysAct),
+    "Delay": stub(sysAct, ["Duration"]),
+  };
+}
+
+const FALLBACK_REGISTRY = buildFallbackRegistry();
 
 function buildRegistryFromCatalog(): Record<string, ActivityRegistryEntry> {
   if (!catalogService.isLoaded()) return {};

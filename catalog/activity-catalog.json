@@ -1,7 +1,7 @@
 {
   "catalogVersion": "2.0.0",
-  "generatedAt": "2026-04-02T11:31:16.685Z",
-  "lastVerifiedAt": "2026-04-02T11:31:16.685Z",
+  "generatedAt": "2026-04-03T03:54:49.734Z",
+  "lastVerifiedAt": "2026-04-03T03:54:49.734Z",
   "studioVersion": "25.10.0",
   "packages": [
     {
@@ -13,31 +13,6 @@
       "clrNamespace": "System.Activities",
       "assembly": "System.Activities",
       "activities": [
-        {
-          "className": "Throw",
-          "displayName": "Throw",
-          "browsable": true,
-          "processTypes": [
-            "general",
-            "api-integration",
-            "document-processing",
-            "attended-ui",
-            "unattended-ui",
-            "orchestration"
-          ],
-          "properties": [
-            {
-              "name": "Exception",
-              "direction": "In",
-              "clrType": "System.Exception",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "required": false,
-              "typeArguments": "s:Exception"
-            }
-          ],
-          "emissionApproved": true
-        },
         {
           "className": "FlowDecision",
           "namespace": "System.Activities.Statements",
@@ -77,90 +52,6 @@
             }
           ],
           "displayName": "Flow Switch",
-          "browsable": true,
-          "emissionApproved": true
-        },
-        {
-          "className": "While",
-          "namespace": "System.Activities.Statements",
-          "processTypes": [
-            "general"
-          ],
-          "properties": [
-            {
-              "name": "Condition",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "typeArguments": null,
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "required": true
-            }
-          ],
-          "displayName": "While",
-          "browsable": true,
-          "emissionApproved": true
-        },
-        {
-          "className": "DoWhile",
-          "namespace": "System.Activities.Statements",
-          "processTypes": [
-            "general"
-          ],
-          "properties": [
-            {
-              "name": "Condition",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "typeArguments": null,
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "required": true
-            }
-          ],
-          "displayName": "Do While",
-          "browsable": true,
-          "emissionApproved": true
-        },
-        {
-          "className": "Switch",
-          "namespace": "System.Activities.Statements",
-          "processTypes": [
-            "general"
-          ],
-          "properties": [
-            {
-              "name": "Expression",
-              "direction": "In",
-              "clrType": "System.Object",
-              "typeArguments": null,
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "required": true
-            }
-          ],
-          "displayName": "Switch",
-          "browsable": true,
-          "emissionApproved": true
-        },
-        {
-          "className": "Delay",
-          "namespace": "System.Activities.Statements",
-          "processTypes": [
-            "general"
-          ],
-          "properties": [
-            {
-              "name": "Duration",
-              "direction": "In",
-              "clrType": "System.TimeSpan",
-              "typeArguments": null,
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": true
-            }
-          ],
-          "displayName": "Delay",
           "browsable": true,
           "emissionApproved": true
         },
@@ -294,6 +185,177 @@
               "argumentWrapper": "InArgument",
               "typeArguments": "x:String",
               "required": true
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true
+        },
+        {
+          "className": "While",
+          "displayName": "While",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "document-processing",
+            "attended-ui",
+            "unattended-ui",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "Condition",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true
+        },
+        {
+          "className": "DoWhile",
+          "displayName": "Do While",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "document-processing",
+            "attended-ui",
+            "unattended-ui",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "Condition",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true
+        },
+        {
+          "className": "Switch",
+          "displayName": "Switch",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "document-processing",
+            "attended-ui",
+            "unattended-ui",
+            "orchestration"
+          ],
+          "properties": [],
+          "emissionApproved": true,
+          "propertiesComplete": true
+        },
+        {
+          "className": "Throw",
+          "displayName": "Throw",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "document-processing",
+            "attended-ui",
+            "unattended-ui",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "Exception",
+              "direction": "In",
+              "clrType": "System.Exception",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "s:Exception",
+              "required": false
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true
+        },
+        {
+          "className": "Rethrow",
+          "displayName": "Rethrow",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "document-processing",
+            "attended-ui",
+            "unattended-ui",
+            "orchestration"
+          ],
+          "properties": [],
+          "emissionApproved": true,
+          "propertiesComplete": true
+        },
+        {
+          "className": "Delay",
+          "displayName": "Delay",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "document-processing",
+            "attended-ui",
+            "unattended-ui",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "Duration",
+              "direction": "In",
+              "clrType": "System.TimeSpan",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true
+        },
+        {
+          "className": "ParallelForEach",
+          "displayName": "Parallel For Each",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "document-processing",
+            "attended-ui",
+            "unattended-ui",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "Values",
+              "direction": "In",
+              "clrType": "System.Collections.IEnumerable",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": true
+            },
+            {
+              "name": "CompletionCondition",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
             }
           ],
           "emissionApproved": true,
@@ -4838,6 +4900,56 @@
           "emissionApproved": true
         },
         {
+          "className": "CreateEntityRecord",
+          "displayName": "Create Entity Record",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "EntityType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "EntityObject",
+              "direction": "In",
+              "clrType": "System.Object",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:Object",
+              "required": true
+            },
+            {
+              "name": "Result",
+              "direction": "Out",
+              "clrType": "System.Object",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:Object",
+              "required": false
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true
+        },
+        {
           "className": "QueryEntity",
           "displayName": "Query Entity",
           "browsable": true,
@@ -7065,7 +7177,7 @@
               "required": false
             }
           ],
-          "emissionApproved": false
+          "emissionApproved": true
         },
         {
           "className": "GoogleCalendarCreateEvent",
@@ -7150,7 +7262,7 @@
               "required": false
             }
           ],
-          "emissionApproved": false
+          "emissionApproved": true
         },
         {
           "className": "GoogleContactsSearchContacts",
@@ -7190,7 +7302,7 @@
               "required": false
             }
           ],
-          "emissionApproved": false
+          "emissionApproved": true
         },
         {
           "className": "GoogleContactsGetContact",
@@ -7220,7 +7332,7 @@
               "required": false
             }
           ],
-          "emissionApproved": false
+          "emissionApproved": true
         }
       ]
     },
@@ -11196,254 +11308,6 @@
     },
     {
       "packageId": "UiPath.WebAPI.Activities",
-      "activities": [
-        {
-          "className": "HttpClient",
-          "displayName": "HTTP Client",
-          "browsable": true,
-          "processTypes": [
-            "api-integration",
-            "general",
-            "orchestration"
-          ],
-          "properties": [
-            {
-              "name": "EndpointUrl",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": true,
-              "typeArguments": "x:String"
-            },
-            {
-              "name": "EndPoint",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": "x:String"
-            },
-            {
-              "name": "Endpoint",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": "x:String"
-            },
-            {
-              "name": "Method",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": true,
-              "typeArguments": null,
-              "validValues": [
-                "GET",
-                "POST",
-                "PUT",
-                "DELETE",
-                "PATCH",
-                "HEAD",
-                "OPTIONS"
-              ]
-            },
-            {
-              "name": "AcceptFormat",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null,
-              "validValues": [
-                "ANY",
-                "JSON",
-                "XML"
-              ]
-            },
-            {
-              "name": "Body",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "required": false,
-              "typeArguments": "x:String"
-            },
-            {
-              "name": "BodyFormat",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null,
-              "validValues": [
-                "application/json",
-                "application/xml",
-                "text/plain",
-                "application/x-www-form-urlencoded"
-              ]
-            },
-            {
-              "name": "Headers",
-              "direction": "In",
-              "clrType": "System.Collections.Generic.Dictionary`2[System.String,System.String]",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            },
-            {
-              "name": "ResponseContent",
-              "direction": "Out",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "required": false,
-              "typeArguments": "x:String"
-            },
-            {
-              "name": "ResponseStatusCode",
-              "direction": "Out",
-              "clrType": "System.Int32",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "required": false,
-              "typeArguments": "x:Int32"
-            },
-            {
-              "name": "Timeout",
-              "direction": "In",
-              "clrType": "System.TimeSpan",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            },
-            {
-              "name": "TimeoutMS",
-              "direction": "In",
-              "clrType": "System.Int32",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            },
-            {
-              "name": "Url",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": "x:String"
-            }
-          ],
-          "emissionApproved": true
-        },
-        {
-          "className": "DeserializeJson",
-          "displayName": "Deserialize JSON",
-          "browsable": true,
-          "processTypes": [
-            "api-integration",
-            "general"
-          ],
-          "properties": [
-            {
-              "name": "JsonString",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "required": true,
-              "typeArguments": "x:String"
-            },
-            {
-              "name": "Result",
-              "direction": "Out",
-              "clrType": "System.Object",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "required": true,
-              "typeArguments": "x:Object"
-            }
-          ],
-          "emissionApproved": true
-        },
-        {
-          "className": "DeserializeJSON",
-          "displayName": "Deserialize JSON (alt)",
-          "browsable": true,
-          "processTypes": [
-            "api-integration",
-            "general"
-          ],
-          "properties": [
-            {
-              "name": "JsonString",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "required": true,
-              "typeArguments": "x:String"
-            },
-            {
-              "name": "Result",
-              "direction": "Out",
-              "clrType": "System.Object",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "required": true,
-              "typeArguments": "x:Object"
-            }
-          ],
-          "emissionApproved": true
-        },
-        {
-          "className": "SerializeJson",
-          "displayName": "Serialize JSON",
-          "browsable": true,
-          "processTypes": [
-            "api-integration",
-            "general"
-          ],
-          "properties": [
-            {
-              "name": "JsonObject",
-              "direction": "In",
-              "clrType": "Newtonsoft.Json.Linq.JObject",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            },
-            {
-              "name": "JsonString",
-              "direction": "Out",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": "x:String"
-            }
-          ],
-          "emissionApproved": true
-        }
-      ],
-      "version": "1.21.0",
-      "feedStatus": "unverified",
-      "preferredVersion": "1.21.0"
-    },
-    {
-      "packageId": "UiPath.WebAPI.Activities",
       "version": "2.4.0",
       "feedStatus": "verified",
       "preferredVersion": "2.4.0",
@@ -11633,6 +11497,162 @@
               "typeArguments": null,
               "required": false,
               "default": "30000"
+            }
+          ],
+          "emissionApproved": true
+        },
+        {
+          "className": "HttpClient",
+          "displayName": "HTTP Client",
+          "browsable": true,
+          "processTypes": [
+            "api-integration",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "EndPoint",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": true
+            },
+            {
+              "name": "Method",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true,
+              "validValues": [
+                "GET",
+                "POST",
+                "PUT",
+                "DELETE",
+                "PATCH",
+                "HEAD",
+                "OPTIONS"
+              ],
+              "default": "GET"
+            },
+            {
+              "name": "AcceptFormat",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "validValues": [
+                "JSON",
+                "XML",
+                "ANY"
+              ],
+              "default": "JSON"
+            },
+            {
+              "name": "BodyFormat",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "validValues": [
+                "application/json",
+                "application/xml",
+                "text/plain"
+              ],
+              "default": "application/json"
+            },
+            {
+              "name": "Body",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": false
+            },
+            {
+              "name": "Headers",
+              "direction": "In",
+              "clrType": "System.Collections.Generic.Dictionary",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "scg:Dictionary(x:String,x:String)",
+              "required": false
+            },
+            {
+              "name": "ResponseContent",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:String",
+              "required": false
+            },
+            {
+              "name": "ResponseStatus",
+              "direction": "Out",
+              "clrType": "System.Int32",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:Int32",
+              "required": false
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "30000"
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true
+        },
+        {
+          "className": "DeserializeJSON",
+          "displayName": "Deserialize JSON (Legacy)",
+          "browsable": false,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [
+            {
+              "name": "JsonString",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": true
+            },
+            {
+              "name": "JsonObject",
+              "direction": "Out",
+              "clrType": "Newtonsoft.Json.Linq.JObject",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:Object",
+              "required": false
             }
           ],
           "emissionApproved": true

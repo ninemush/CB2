@@ -321,11 +321,10 @@ export function resolveActivityToPackage(activityName: string): string | null {
 export function getActivityPrefixStrict(templateName: string): string | null {
   if (SYSTEM_ACTIVITIES_NO_PREFIX.has(templateName)) return "";
 
-  if (GUARANTEED_ACTIVITY_PREFIX_MAP[templateName] !== undefined) {
-    return GUARANTEED_ACTIVITY_PREFIX_MAP[templateName];
-  }
-
   if (catalogService.isLoaded()) {
+    const catalogPrefix = catalogService.getPrefixForActivity(templateName);
+    if (catalogPrefix !== null) return catalogPrefix;
+
     const nsInfo = catalogService.getNamespaceInfoForActivity(templateName);
     if (nsInfo) return nsInfo.prefix;
 
@@ -334,6 +333,10 @@ export function getActivityPrefixStrict(templateName: string): string | null {
       const pkgInfo = PACKAGE_NAMESPACE_MAP[schema.packageId];
       if (pkgInfo) return pkgInfo.prefix;
     }
+  }
+
+  if (GUARANTEED_ACTIVITY_PREFIX_MAP[templateName] !== undefined) {
+    return GUARANTEED_ACTIVITY_PREFIX_MAP[templateName];
   }
 
   return null;
@@ -1795,7 +1798,9 @@ export function normalizeXaml(rawXaml: string, targetFramework: TargetFramework 
     console.log(`[Compliance READ-ONLY] sanitizeXmlArtifacts detected issues (not mutated)`);
   }
 
-  const KNOWN_PREFIXED_ACTIVITIES = Object.keys(GUARANTEED_ACTIVITY_PREFIX_MAP);
+  const KNOWN_PREFIXED_ACTIVITIES = catalogService.isLoaded()
+    ? catalogService.getAllPrefixableActivityNames()
+    : Object.keys(GUARANTEED_ACTIVITY_PREFIX_MAP);
 
   for (const actName of KNOWN_PREFIXED_ACTIVITIES) {
     const prefix = getActivityPrefix(actName);

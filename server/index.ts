@@ -4,6 +4,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { catalogService } from "./catalog/catalog-service";
 import { reconcileOrphanedRuns } from "./uipath-run-manager";
+import { GUARANTEED_ACTIVITY_PREFIX_MAP } from "./xaml/xaml-compliance";
 
 const app = express();
 const httpServer = createServer(app);
@@ -70,6 +71,7 @@ process.on("uncaughtException", (err) => {
     catalogService.load();
     if (catalogService.isLoaded()) {
       console.log(`[Server] Activity catalog loaded successfully at startup`);
+      catalogService.checkCatalogCoverage(GUARANTEED_ACTIVITY_PREFIX_MAP);
     } else {
       const reason = catalogService.getLastLoadError?.() || "unknown";
       console.error(`[Server] WARNING: Activity catalog failed to load at startup: ${reason} — pipeline builds will abort until catalog is available`);

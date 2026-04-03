@@ -178,6 +178,20 @@ class CatalogService {
     }
   }
 
+  checkCatalogCoverage(hardcodedActivityPrefixMap: Record<string, string>): void {
+    if (!this.loaded || !this.catalog) return;
+    const catalogActivities = new Set(this.getAllActivityClassNames());
+    const missing: string[] = [];
+    for (const actName of Object.keys(hardcodedActivityPrefixMap)) {
+      if (!catalogActivities.has(actName)) {
+        missing.push(actName);
+      }
+    }
+    if (missing.length > 0) {
+      console.warn(`[Activity Catalog] WARNING: ${missing.length} activities in hardcoded prefix map are missing from catalog: ${missing.slice(0, 20).join(", ")}${missing.length > 20 ? ` ... and ${missing.length - 20} more` : ""}`);
+    }
+  }
+
   private checkCatalogFreshness(): void {
     if (!this.catalog?.lastVerifiedAt) return;
 
@@ -422,6 +436,51 @@ class CatalogService {
     if (!prop) return null;
 
     return prop.clrType;
+  }
+
+  getActivityPrefixMap(): Record<string, string> {
+    if (!this.loaded || !this.catalog) return {};
+    const map: Record<string, string> = {};
+    for (const pkg of this.catalog.packages) {
+      if (!pkg.prefix && pkg.prefix !== "") continue;
+      for (const act of pkg.activities) {
+        map[act.className] = pkg.prefix!;
+      }
+    }
+    return map;
+  }
+
+  getPrefixForActivity(className: string): string | null {
+    if (!this.loaded || !this.catalog) return null;
+    const schema = this.getActivitySchema(className);
+    if (!schema) return null;
+    const pkg = this.packageIndex.get(schema.packageId);
+    if (!pkg) return null;
+    if (pkg.prefix !== undefined) return pkg.prefix;
+    return null;
+  }
+
+  getAllPrefixableActivityNames(): string[] {
+    if (!this.loaded || !this.catalog) return [];
+    const names: string[] = [];
+    for (const pkg of this.catalog.packages) {
+      if (pkg.prefix === undefined || pkg.prefix === "") continue;
+      for (const act of pkg.activities) {
+        names.push(act.className);
+      }
+    }
+    return names;
+  }
+
+  getAllActivityClassNames(): string[] {
+    if (!this.loaded || !this.catalog) return [];
+    const names: string[] = [];
+    for (const pkg of this.catalog.packages) {
+      for (const act of pkg.activities) {
+        names.push(act.className);
+      }
+    }
+    return names;
   }
 
   getAllPackageNamespaceEntries(): Array<{ packageId: string; prefix: string; clrNamespace: string; assembly: string }> {
