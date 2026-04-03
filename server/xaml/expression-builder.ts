@@ -1,6 +1,100 @@
 import { z } from "zod";
 import { convertMixedLiteralBracketToConcat } from "./xaml-compliance";
 
+export interface JsonValueIntentDiagnostic {
+  originalRaw: string;
+  parsedIntentType: string;
+  normalizedOutput: string;
+  fallbackUsed: boolean;
+}
+
+let _jsonValueIntentDiagnostics: JsonValueIntentDiagnostic[] = [];
+
+export function getAndClearJsonValueIntentDiagnostics(): JsonValueIntentDiagnostic[] {
+  const diagnostics = _jsonValueIntentDiagnostics;
+  _jsonValueIntentDiagnostics = [];
+  return diagnostics;
+}
+
+export function getJsonValueIntentDiagnostics(): ReadonlyArray<JsonValueIntentDiagnostic> {
+  return _jsonValueIntentDiagnostics;
+}
+
+export function tryParseJsonValueIntent(s: string): { intent: ValueIntent; fallbackUsed: boolean } | null {
+  const trimmed = s.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+  if (!/"type"/.test(trimmed) && !/&quot;type&quot;/.test(trimmed)) return null;
+
+  const literalOrVbMatch = trimmed.match(
+    /^\{\s*"type"\s*:\s*"(literal|vb_expression)"\s*,\s*"value"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}$/
+  );
+  if (literalOrVbMatch) {
+    const type = literalOrVbMatch[1] as "literal" | "vb_expression";
+    const value = literalOrVbMatch[2].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    return { intent: { type, value } as ValueIntent, fallbackUsed: false };
+  }
+
+  const variableMatch = trimmed.match(
+    /^\{\s*"type"\s*:\s*"variable"\s*,\s*"name"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}$/
+  );
+  if (variableMatch) {
+    const name = variableMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    return { intent: { type: "variable", name } as ValueIntent, fallbackUsed: false };
+  }
+
+  const reversedValueMatch = trimmed.match(
+    /^\{\s*"value"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"type"\s*:\s*"(literal|vb_expression)"\s*\}$/
+  );
+  if (reversedValueMatch) {
+    const type = reversedValueMatch[2] as "literal" | "vb_expression";
+    const value = reversedValueMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    return { intent: { type, value } as ValueIntent, fallbackUsed: false };
+  }
+
+  const reversedNameMatch = trimmed.match(
+    /^\{\s*"name"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"type"\s*:\s*"variable"\s*\}$/
+  );
+  if (reversedNameMatch) {
+    const name = reversedNameMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    return { intent: { type: "variable", name } as ValueIntent, fallbackUsed: false };
+  }
+
+  const decodedEntities = trimmed
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+  if (decodedEntities !== trimmed && decodedEntities.startsWith('{')) {
+    const result = tryParseJsonValueIntent(decodedEntities);
+    if (result) return result;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed === "object" && parsed !== null && typeof parsed.type === "string") {
+      if ((parsed.type === "literal" || parsed.type === "vb_expression") && typeof parsed.value === "string") {
+        return { intent: { type: parsed.type, value: parsed.value } as ValueIntent, fallbackUsed: true };
+      }
+      if (parsed.type === "variable" && typeof parsed.name === "string") {
+        return { intent: { type: "variable", name: parsed.name } as ValueIntent, fallbackUsed: true };
+      }
+    }
+  } catch {
+  }
+
+  return null;
+}
+
+export function emitJsonResolutionDiagnostic(originalRaw: string, intent: ValueIntent, normalizedOutput: string, fallbackUsed: boolean): void {
+  const diagnostic: JsonValueIntentDiagnostic = {
+    originalRaw,
+    parsedIntentType: intent.type,
+    normalizedOutput,
+    fallbackUsed,
+  };
+  _jsonValueIntentDiagnostics.push(diagnostic);
+  console.log(`[Expression Builder] JSON ValueIntent resolved: type=${intent.type}, fallback=${fallbackUsed}, raw=${originalRaw.substring(0, 120)}, output=${normalizedOutput.substring(0, 120)}`);
+}
 
 const VARIABLE_NAME_ONLY = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
@@ -176,6 +270,13 @@ export function normalizeStringToExpression(val: string, isDeclared?: (name: str
     return `""`;
   }
 
+  const jsonResult = tryParseJsonValueIntent(trimmed);
+  if (jsonResult) {
+    const resolved = buildExpression(jsonResult.intent);
+    emitJsonResolutionDiagnostic(trimmed, jsonResult.intent, resolved, jsonResult.fallbackUsed);
+    return resolved;
+  }
+
   const isPromptProp = propertyName ? PROMPT_PROPERTY_NAMES.has(propertyName) : false;
   if (isPromptProp && !trimmed.startsWith("[") && !/^".*"$/.test(trimmed)) {
     const escaped = trimmed.replace(/"/g, '""');
@@ -277,6 +378,13 @@ export function normalizePropertyToValueIntent(
 
   if (isPlaceholderSentinel(trimmed)) {
     return { type: "literal", value: trimmed };
+  }
+
+  const jsonResult = tryParseJsonValueIntent(trimmed);
+  if (jsonResult) {
+    const resolved = buildExpression(jsonResult.intent);
+    emitJsonResolutionDiagnostic(trimmed, jsonResult.intent, resolved, jsonResult.fallbackUsed);
+    return jsonResult.intent;
   }
 
   const isPromptProp = propertyName ? PROMPT_PROPERTY_NAMES.has(propertyName) : false;

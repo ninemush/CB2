@@ -1410,7 +1410,7 @@ export async function compilePackageFromSpecs(
               const entry = finalXamlEntries[i];
               try {
                 const { XMLParser } = await import("fast-xml-parser");
-                const parser = new XMLParser({ ignoreAttributes: false, allowBooleanAttributes: true });
+                const parser = new XMLParser({ ignoreAttributes: false, allowBooleanAttributes: true, processEntities: false });
                 parser.parse(entry.content);
               } catch (xmlErr: any) {
                 const original = preCorrectionEntries.find(e => e.name === entry.name);

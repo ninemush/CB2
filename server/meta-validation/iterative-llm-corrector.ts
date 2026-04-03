@@ -349,6 +349,7 @@ export async function runIterativeLlmCorrection(
           const parser = new XMLParser({
             ignoreAttributes: false,
             allowBooleanAttributes: true,
+            processEntities: false,
           });
           parser.parse(correctedXaml);
         } catch (xmlErr: any) {

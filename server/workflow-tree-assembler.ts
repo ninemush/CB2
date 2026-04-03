@@ -18,7 +18,7 @@ import { buildTemplateBlock } from "./catalog/xaml-template-builder";
 import type { ProcessType } from "./catalog/catalog-service";
 import { escapeXml, escapeXmlExpression, normalizeXmlExpression, escapeXmlTextContent } from "./lib/xml-utils";
 import { XMLValidator } from "fast-xml-parser";
-import { buildExpression, isValueIntent, normalizeStringToExpression, normalizePropertyToValueIntent, type ValueIntent } from "./xaml/expression-builder";
+import { buildExpression, isValueIntent, normalizeStringToExpression, normalizePropertyToValueIntent, tryParseJsonValueIntent, emitJsonResolutionDiagnostic, type ValueIntent } from "./xaml/expression-builder";
 import { validateMapClrTypeOutput, reportCriticalTypeDiagnostic } from "./emission-gate";
 import { getActivityTag, getActivityPrefixStrict, injectMissingNamespaceDeclarations, ensureBracketWrapped, smartBracketWrap, looksLikePlainText, BARE_WORD_LITERALS_SET, CLR_NAMESPACE_TO_XAML_PREFIX } from "./xaml/xaml-compliance";
 import { lintExpression } from "./xaml/vbnet-expression-linter";
@@ -51,9 +51,27 @@ export interface AssemblyRemediationContext {
   escalationThreshold: number;
 }
 
+export interface ResidualJsonDefect {
+  templateName: string;
+  displayName: string;
+  propertyName: string;
+  rawPayload: string;
+}
+
 let _activeRemediationContext: AssemblyRemediationContext | null = null;
 let _activeDeclarationLookup: ((name: string) => boolean) | null = null;
 let _lateDiscoveredVariables: VariableDeclaration[] = [];
+let _residualJsonDefects: ResidualJsonDefect[] = [];
+
+export function getAndClearResidualJsonDefects(): ResidualJsonDefect[] {
+  const defects = _residualJsonDefects;
+  _residualJsonDefects = [];
+  return defects;
+}
+
+export function getResidualJsonDefects(): ReadonlyArray<ResidualJsonDefect> {
+  return _residualJsonDefects;
+}
 
 export function setRemediationContext(ctx: AssemblyRemediationContext): void {
   _activeRemediationContext = ctx;
@@ -1422,14 +1440,11 @@ export function getPropString(props: Record<string, PropertyValue>, ...keys: str
 }
 
 function extractValueIntentFromString(s: string): string | null {
-  const patterns = [
-    /^\{"type":"[^"]*","value":"([^"]*)"\}$/,
-    /^\{&quot;type&quot;:&quot;[^&]*&quot;,&quot;value&quot;:&quot;([^&]*)&quot;\}$/,
-    /^\{type:[^,]*,value:([^}]*)\}$/,
-  ];
-  for (const pat of patterns) {
-    const m = s.match(pat);
-    if (m) return m[1];
+  const jsonResult = tryParseJsonValueIntent(s);
+  if (jsonResult) {
+    const resolved = buildExpression(jsonResult.intent);
+    emitJsonResolutionDiagnostic(s, jsonResult.intent, resolved, jsonResult.fallbackUsed);
+    return resolved;
   }
   return null;
 }
@@ -1985,6 +2000,52 @@ function resolveUseExcelTemplate(
     `</${tag}>`;
 }
 
+function sanitizeResidualJsonInAttributes(xmlString: string, templateName: string, displayName: string): string {
+  return xmlString.replace(
+    /(\w+)="([^"]*\{(?:&quot;|")type(?:&quot;|")[^"]*)"/g,
+    (match, attrName: string, attrValue: string) => {
+      const decoded = attrValue
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>');
+
+      const jsonResult = tryParseJsonValueIntent(decoded);
+      if (jsonResult) {
+        const resolved = buildExpression(jsonResult.intent);
+        const escaped = escapeXml(resolved);
+        emitJsonResolutionDiagnostic(decoded, jsonResult.intent, resolved, jsonResult.fallbackUsed);
+        return `${attrName}="${escaped}"`;
+      }
+
+      console.warn(`[Tree Assembler] Post-emission safety net: unresolvable residual JSON in attribute "${attrName}" on ${templateName} — preserved as structured defect`);
+      if (_activeRemediationContext) {
+        _activeRemediationContext.propertyRemediations.push({
+          level: "property",
+          file: _activeRemediationContext.fileName,
+          remediationCode: "STUB_PROPERTY_BAD_EXPRESSION",
+          originalTag: templateName,
+          originalDisplayName: displayName,
+          propertyName: attrName,
+          reason: `Unresolvable residual JSON payload in attribute "${attrName}": ${decoded.substring(0, 200)}`,
+          classifiedCheck: "RESIDUAL_JSON_PAYLOAD",
+          developerAction: `Resolve JSON expression intermediate in property "${attrName}" on "${displayName}" (${templateName})`,
+          estimatedEffortMinutes: 10,
+        });
+      } else {
+        _residualJsonDefects.push({
+          templateName,
+          displayName,
+          propertyName: attrName,
+          rawPayload: decoded.substring(0, 500),
+        });
+      }
+
+      return match;
+    },
+  );
+}
+
 function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, emissionContext: EmissionContext = "normal"): string {
   const props = node.properties || {};
   const displayName = escapeXml(node.displayName);
@@ -2047,7 +2108,19 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
     if (key.startsWith("_") || key === "displayName" || key === "DisplayName") continue;
 
     const propClrType = schema ? (schema.activity.properties.find((p: any) => p.name === key)?.clrType) : undefined;
-    let value = isValueIntent(rawValue) ? buildExpression(rawValue as ValueIntent) : normalizeStringToExpression(typeof rawValue === "string" ? rawValue : coercePropToString(rawValue), _activeDeclarationLookup || undefined, propClrType);
+
+    let preprocessedRawValue = rawValue;
+    if (typeof rawValue === "string" && !isValueIntent(rawValue)) {
+      const jsonParsed = tryParseJsonValueIntent(rawValue);
+      if (jsonParsed) {
+        preprocessedRawValue = jsonParsed.intent;
+        const resolvedExpr = buildExpression(jsonParsed.intent);
+        emitJsonResolutionDiagnostic(rawValue, jsonParsed.intent, resolvedExpr, jsonParsed.fallbackUsed);
+        console.log(`[Tree Assembler] resolveDynamicTemplate pre-processed JSON string for property "${key}": type=${jsonParsed.intent.type}, fallback=${jsonParsed.fallbackUsed}, raw=${rawValue.substring(0, 120)}`);
+      }
+    }
+
+    let value = isValueIntent(preprocessedRawValue) ? buildExpression(preprocessedRawValue as ValueIntent) : normalizeStringToExpression(typeof preprocessedRawValue === "string" ? preprocessedRawValue : coercePropToString(preprocessedRawValue), _activeDeclarationLookup || undefined, propClrType);
 
     if (propClrType && /Boolean/i.test(propClrType)) {
       const stripped = value.replace(/^"+|"+$/g, "").replace(/^'+|'+$/g, "").replace(/&quot;/g, "").trim();
@@ -2168,11 +2241,16 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
     );
   }
 
+  let xmlResult: string;
   if (childParts.length === 0) {
-    return `<${tag} ${attrParts.join(" ")} />`;
+    xmlResult = `<${tag} ${attrParts.join(" ")} />`;
+  } else {
+    xmlResult = `<${tag} ${attrParts.join(" ")}>\n${childParts.join("\n")}\n</${tag}>`;
   }
 
-  return `<${tag} ${attrParts.join(" ")}>\n${childParts.join("\n")}\n</${tag}>`;
+  xmlResult = sanitizeResidualJsonInAttributes(xmlResult, templateName, node.displayName);
+
+  return xmlResult;
 }
 
 const HIGH_RISK_TEMPLATES = new Set([
