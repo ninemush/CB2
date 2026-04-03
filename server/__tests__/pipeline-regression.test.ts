@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { XMLValidator } from "fast-xml-parser";
 import { buildDeterministicScaffold } from "../deterministic-scaffold";
 import {
@@ -10,7 +10,24 @@ import {
   ensureBalancedParens,
 } from "../workflow-tree-assembler";
 import type { PropertyValue } from "../workflow-spec-types";
-import { checkStudioLoadability, resolveDependencies } from "../package-assembler";
+import { checkStudioLoadability, resolveDependencies, assertDhgArchiveParity } from "../package-assembler";
+import {
+  classifyWorkflowStatus,
+  freezeArchiveWorkflows,
+  resetMonotonicCounter,
+  isArchiveFrozen,
+  createGuardedDeferredWrites,
+  verifyFrozenArchiveBuffer,
+  getMutationTrace,
+  assertNoPostFreezeMutation,
+  assertNoPostFreezeStatusMutation,
+  buildWorkflowStatusParity,
+  normalizeClassifierFileName,
+  type PostClassifierMutationTraceEntry,
+  type FrozenWorkflowEntry,
+  type WorkflowStatusParityEntry,
+} from "../workflow-status-classifier";
+import AdmZip from "adm-zip";
 import { runQualityGate, type QualityGateInput } from "../uipath-quality-gate";
 import { normalizeXaml, smartBracketWrap, ensureBracketWrapped, looksLikePlainText, BARE_WORD_LITERALS_SET, CLR_NAMESPACE_TO_XAML_PREFIX, PACKAGE_NAMESPACE_MAP, injectMissingNamespaceDeclarations } from "../xaml/xaml-compliance";
 import { normalizePropertyToValueIntent } from "../xaml/expression-builder";
@@ -1163,5 +1180,150 @@ describe("Compiler-invariant regression tests", () => {
         expect(xaml).toContain("<AssemblyReference>UiPath.Core.Activities</AssemblyReference>");
       });
     }
+  });
+
+  describe("post-classifier archive freeze — integrated pipeline guards", () => {
+    beforeEach(() => {
+      resetMonotonicCounter();
+    });
+
+    it("guarded deferredWrites blocks post-freeze XAML mutation in package mode", () => {
+      const mainXaml = makeValidXaml("Main", `<ui:LogMessage Level="Info" Message="&quot;Hello&quot;" DisplayName="Log" />`);
+      const entries = [{ name: "lib/Main.xaml", content: mainXaml }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const deferredWrites = new Map<string, string>();
+      deferredWrites.set("lib/Main.xaml", mainXaml);
+      const guarded = createGuardedDeferredWrites(deferredWrites, true);
+
+      expect(() => guarded.set("lib/Main.xaml", mainXaml + "<!-- mutation -->")).toThrow("Post-Freeze Mutation Violation");
+    });
+
+    it("guarded deferredWrites allows non-XAML writes after freeze", () => {
+      const mainXaml = makeValidXaml("Main", `<ui:LogMessage Level="Info" Message="&quot;Hello&quot;" DisplayName="Log" />`);
+      const entries = [{ name: "lib/Main.xaml", content: mainXaml }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const deferredWrites = new Map<string, string>();
+      const guarded = createGuardedDeferredWrites(deferredWrites, true);
+
+      expect(() => guarded.set("project.json", '{"name":"test"}')).not.toThrow();
+      expect(guarded.get("project.json")).toBe('{"name":"test"}');
+    });
+
+    it("guarded deferredWrites allows identical XAML content write after freeze", () => {
+      const mainXaml = makeValidXaml("Main", `<ui:LogMessage Level="Info" Message="&quot;Hello&quot;" DisplayName="Log" />`);
+      const entries = [{ name: "lib/Main.xaml", content: mainXaml }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const deferredWrites = new Map<string, string>();
+      const guarded = createGuardedDeferredWrites(deferredWrites, true);
+
+      expect(() => guarded.set("lib/Main.xaml", mainXaml)).not.toThrow();
+    });
+
+    it("verifyFrozenArchiveBuffer detects divergence between frozen and archive content", () => {
+      const mainXaml = makeValidXaml("Main", `<ui:LogMessage Level="Info" Message="&quot;Hello&quot;" DisplayName="Log" />`);
+      const entries = [{ name: "lib/Main.xaml", content: mainXaml }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const zip = new AdmZip();
+      zip.addFile("lib/Main.xaml", Buffer.from(mainXaml + "<!-- corrupted -->", "utf-8"));
+      const buffer = zip.toBuffer();
+
+      const result = verifyFrozenArchiveBuffer(buffer, "lib");
+      expect(result.verified).toBe(false);
+      expect(result.mismatches).toHaveLength(1);
+      expect(result.mismatches[0].file).toBe("Main.xaml");
+    });
+
+    it("verifyFrozenArchiveBuffer passes when archive matches frozen content", () => {
+      const mainXaml = makeValidXaml("Main", `<ui:LogMessage Level="Info" Message="&quot;Hello&quot;" DisplayName="Log" />`);
+      const entries = [{ name: "lib/Main.xaml", content: mainXaml }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const zip = new AdmZip();
+      zip.addFile("lib/Main.xaml", Buffer.from(mainXaml, "utf-8"));
+      const buffer = zip.toBuffer();
+
+      const result = verifyFrozenArchiveBuffer(buffer, "lib");
+      expect(result.verified).toBe(true);
+      expect(result.mismatches).toHaveLength(0);
+    });
+
+    it("mutation trace includes both pre-freeze snapshots and post-freeze violations", () => {
+      const mainXaml = makeValidXaml("Main", `<ui:LogMessage Level="Info" Message="&quot;Hello&quot;" DisplayName="Log" />`);
+      const stubXaml = `<Activity mc:Ignorable="sap sap2010" x:Class="Helper"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="STUB_BLOCKING_FALLBACK: workflow stubbed due to generation failure">
+    <ui:Comment DisplayName="STUB: Manual implementation required" />
+  </Sequence>
+</Activity>`;
+      const entries = [
+        { name: "lib/Main.xaml", content: mainXaml },
+        { name: "lib/Helper.xaml", content: stubXaml },
+      ];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      try { assertNoPostFreezeMutation("late-repair", "Main.xaml", mainXaml + "<!-- m -->", "xaml_bytes", "test"); } catch {}
+      try { assertNoPostFreezeStatusMutation("dhg-override", "Helper.xaml", "non-stub", "test"); } catch {}
+
+      const trace = getMutationTrace();
+      const allowed = trace.entries.filter((e: PostClassifierMutationTraceEntry) => e.allowed);
+      const blocked = trace.entries.filter((e: PostClassifierMutationTraceEntry) => !e.allowed);
+      expect(allowed).toHaveLength(2);
+      expect(blocked).toHaveLength(2);
+      expect(trace.summary.totalAllowedPreFreezeMutations).toBe(2);
+      expect(trace.summary.totalBlockedMutations).toBe(2);
+    });
+
+    it("integrated freeze + parity: frozen content passes DHG-archive parity", () => {
+      const mainXaml = makeValidXaml("Main", `<ui:LogMessage Level="Info" Message="&quot;Hello&quot;" DisplayName="Log" />`);
+      const stubXaml = `<Activity mc:Ignorable="sap sap2010" x:Class="Helper"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="STUB_BLOCKING_FALLBACK: workflow stubbed due to generation failure">
+    <ui:Comment DisplayName="STUB: Manual implementation required" />
+  </Sequence>
+</Activity>`;
+      const entries = [
+        { name: "lib/Main.xaml", content: mainXaml },
+        { name: "lib/Helper.xaml", content: stubXaml },
+      ];
+      const classification = classifyWorkflowStatus(entries);
+      const freeze = freezeArchiveWorkflows(entries, classification);
+
+      const frozenEntries = Array.from(freeze.frozenWorkflows.values()).map((fw: FrozenWorkflowEntry) => ({
+        name: fw.file,
+        content: fw.content,
+      }));
+
+      const dhg = "| 1 | `Main.xaml` | Generated | 5 |\n| 2 | `Helper.xaml` | Stub | 1 |";
+      const parityResult = assertDhgArchiveParity(dhg, ["Main", "Helper"], frozenEntries, classification);
+      expect(parityResult.passed).toBe(true);
+    });
+
+    it("integrated freeze + parity: stale (pre-freeze mutated) content causes parity failure", () => {
+      const mainXaml = makeValidXaml("Main", `<ui:LogMessage Level="Info" Message="&quot;Hello&quot;" DisplayName="Log" />`);
+      const entries = [{ name: "lib/Main.xaml", content: mainXaml }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const staleEntries = [{ name: "lib/Main.xaml", content: mainXaml + "<!-- stale mutation -->" }];
+      const dhgTierMap = new Map([["main", "Generated"]]);
+      const parity = buildWorkflowStatusParity(classification, dhgTierMap, staleEntries);
+      const mainEntry = parity.entries.find((e: WorkflowStatusParityEntry) => normalizeClassifierFileName(e.file) === "main");
+      expect(mainEntry.identicalContent).toBe(false);
+      expect(mainEntry.divergenceReason).toContain("Content hash mismatch");
+    });
   });
 });

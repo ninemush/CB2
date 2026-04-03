@@ -361,6 +361,7 @@ export interface PipelineOutcomeReport {
   preArchiveStructuralDefects?: Array<{ file: string; pattern: string; detail: string }>;
   workflowStatusParity?: import("./workflow-status-classifier").WorkflowStatusParityEntry[];
   _preArchiveClassification?: import("./workflow-status-classifier").WorkflowStatusClassifierResult;
+  postClassifierMutationTrace?: import("./workflow-status-classifier").PostClassifierMutationTrace;
 }
 
 export interface PipelineResult {

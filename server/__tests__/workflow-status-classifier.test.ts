@@ -9,6 +9,15 @@ import {
   verifyAndReclassifyFromArchive,
   assertClassificationFreshness,
   recordArchiveFinalization,
+  freezeArchiveWorkflows,
+  isArchiveFrozen,
+  getArchiveFreezePoint,
+  resetArchiveFreeze,
+  assertNoPostFreezeMutation,
+  assertNoPostFreezeStatusMutation,
+  checkPostFreezeDeferredWriteMutation,
+  getMutationTrace,
+  recordMutationAttempt,
   AUTHORITATIVE_STUB_PATTERNS,
   CLASSIFIER_VERSION,
   type WorkflowStatusClassifierResult,
@@ -538,6 +547,279 @@ describe("workflow-status-classifier", () => {
       const result = classifyWorkflowStatus(entries);
       const statuses = new Set(result.classifications.map(c => c.status));
       expect(statuses).toEqual(new Set(["non-stub", "stub", "malformed", "blocked"]));
+    });
+  });
+
+  describe("archive freeze — post-classifier mutation elimination", () => {
+    it("should freeze archive workflows after classification", () => {
+      const entries = [
+        { name: "lib/Main.xaml", content: VALID_GENERATED_XAML },
+        { name: "lib/Helper.xaml", content: STUB_XAML },
+      ];
+      const classification = classifyWorkflowStatus(entries);
+
+      expect(isArchiveFrozen()).toBe(false);
+      const freeze = freezeArchiveWorkflows(entries, classification);
+
+      expect(isArchiveFrozen()).toBe(true);
+      expect(freeze.frozenWorkflows.size).toBe(2);
+      expect(freeze.frozenFilenames).toHaveLength(2);
+      expect(freeze.classification).toBe(classification);
+
+      const mainFrozen = freeze.frozenWorkflows.get("main");
+      expect(mainFrozen).toBeDefined();
+      expect(mainFrozen!.status).toBe("non-stub");
+      expect(mainFrozen!.content).toBe(VALID_GENERATED_XAML);
+
+      const helperFrozen = freeze.frozenWorkflows.get("helper");
+      expect(helperFrozen).toBeDefined();
+      expect(helperFrozen!.status).toBe("stub");
+    });
+
+    it("should trigger fatal failure on workflow bytes mutation after freeze", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const mutatedContent = VALID_GENERATED_XAML + "<!-- late mutation -->";
+      expect(() => assertNoPostFreezeMutation(
+        "late-stage-repair",
+        "Main.xaml",
+        mutatedContent,
+        "xaml_bytes",
+        "Attempted repair after freeze",
+      )).toThrow("Post-Freeze Mutation Violation");
+    });
+
+    it("should trigger fatal failure on workflow status mutation after freeze", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      expect(() => assertNoPostFreezeStatusMutation(
+        "dhg-status-inference",
+        "Main.xaml",
+        "stub",
+        "DHG tried to override status",
+      )).toThrow("Post-Freeze Mutation Violation");
+    });
+
+    it("should not throw when workflow bytes are unchanged after freeze", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      expect(() => assertNoPostFreezeMutation(
+        "parity-check",
+        "Main.xaml",
+        VALID_GENERATED_XAML,
+        "xaml_bytes",
+        "Read-only check",
+      )).not.toThrow();
+    });
+
+    it("should not throw when workflow status is unchanged after freeze", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      expect(() => assertNoPostFreezeStatusMutation(
+        "parity-check",
+        "Main.xaml",
+        "non-stub",
+        "Read-only check",
+      )).not.toThrow();
+    });
+
+    it("should block deferredWrites mutation on frozen XAML in package mode", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const mutatedContent = VALID_GENERATED_XAML + "<!-- injected -->";
+      expect(() => checkPostFreezeDeferredWriteMutation(
+        "stub-injection",
+        "lib/Main.xaml",
+        mutatedContent,
+        true,
+      )).toThrow("Post-Freeze Mutation Violation");
+    });
+
+    it("should not block deferredWrites mutation on non-XAML files", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      expect(() => checkPostFreezeDeferredWriteMutation(
+        "config-update",
+        "lib/project.json",
+        '{"updated": true}',
+        true,
+      )).not.toThrow();
+    });
+
+    it("should block stub injection after freeze", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const stubContent = `<Activity><Sequence DisplayName="STUB_BLOCKING_FALLBACK"></Sequence></Activity>`;
+      expect(() => assertNoPostFreezeMutation(
+        "stub-injection",
+        "Main.xaml",
+        stubContent,
+        "stub_injection",
+        "Attempted to inject stub after freeze",
+      )).toThrow("Post-Freeze Mutation Violation");
+    });
+
+    it("should block placeholder injection after freeze", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const placeholderContent = VALID_GENERATED_XAML.replace("Set Variable", "PLACEHOLDER_VALUE");
+      expect(() => assertNoPostFreezeMutation(
+        "placeholder-injection",
+        "Main.xaml",
+        placeholderContent,
+        "placeholder_injection",
+        "Attempted placeholder injection after freeze",
+      )).toThrow("Post-Freeze Mutation Violation");
+    });
+
+    it("should record mutation attempts in mutation trace", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      try {
+        assertNoPostFreezeMutation(
+          "late-repair",
+          "Main.xaml",
+          VALID_GENERATED_XAML + "<!-- mutation -->",
+          "xaml_bytes",
+          "test mutation",
+        );
+      } catch {}
+
+      const trace = getMutationTrace();
+      const preFreezeEntries = trace.entries.filter(e => e.stage === "pre-freeze-snapshot");
+      const blockedEntries = trace.entries.filter(e => !e.allowed);
+      expect(preFreezeEntries).toHaveLength(1);
+      expect(blockedEntries).toHaveLength(1);
+      expect(blockedEntries[0].stage).toBe("late-repair");
+      expect(blockedEntries[0].file).toBe("Main.xaml");
+      expect(blockedEntries[0].mutationType).toBe("xaml_bytes");
+      expect(blockedEntries[0].allowed).toBe(false);
+      expect(trace.summary.totalAttemptedMutations).toBe(2);
+      expect(trace.summary.totalBlockedMutations).toBe(1);
+      expect(trace.summary.totalAllowedPreFreezeMutations).toBe(1);
+      expect(trace.summary.totalPostFreezeViolations).toBe(1);
+    });
+
+    it("should pass DHG generation from frozen content through parity", () => {
+      const entries = [
+        { name: "lib/Main.xaml", content: VALID_GENERATED_XAML },
+        { name: "lib/Helper.xaml", content: STUB_XAML },
+      ];
+      const classification = classifyWorkflowStatus(entries);
+      const freeze = freezeArchiveWorkflows(entries, classification);
+
+      const frozenEntries = Array.from(freeze.frozenWorkflows.values()).map(fw => ({
+        name: fw.file,
+        content: fw.content,
+      }));
+      const dhg = "| 1 | `Main.xaml` | Generated | 5 |\n| 2 | `Helper.xaml` | Stub | 1 |";
+      const result = assertDhgArchiveParity(dhg, ["Main", "Helper"], frozenEntries, classification);
+      expect(result.passed).toBe(true);
+    });
+
+    it("should detect parity failure when stale pre-freeze content is used", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const staleEntries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML + "<!-- stale -->" }];
+      const dhg = "| 1 | `Main.xaml` | Generated | 5 |";
+      const parity = buildWorkflowStatusParity(classification, new Map([["main", "Generated"]]), staleEntries);
+      const mainEntry = parity.entries.find(e => normalizeClassifierFileName(e.file) === "main");
+      expect(mainEntry!.identicalContent).toBe(false);
+      expect(mainEntry!.divergenceReason).toContain("Content hash mismatch");
+    });
+
+    it("should reset freeze state on resetMonotonicCounter", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+      expect(isArchiveFrozen()).toBe(true);
+
+      resetMonotonicCounter();
+      expect(isArchiveFrozen()).toBe(false);
+      expect(getArchiveFreezePoint()).toBeNull();
+    });
+
+    it("should reset freeze state on resetArchiveFreeze", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+      expect(isArchiveFrozen()).toBe(true);
+
+      resetArchiveFreeze();
+      expect(isArchiveFrozen()).toBe(false);
+    });
+
+    it("should not enforce freeze when no freeze has been established", () => {
+      expect(isArchiveFrozen()).toBe(false);
+      expect(() => assertNoPostFreezeMutation(
+        "some-stage",
+        "Main.xaml",
+        "any content",
+        "xaml_bytes",
+        "no freeze yet",
+      )).not.toThrow();
+    });
+
+    it("should include stage-attributed error details in mutation violation", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const mutated = VALID_GENERATED_XAML + "<!-- mutation -->";
+      try {
+        assertNoPostFreezeMutation("test-stage", "Main.xaml", mutated, "xaml_bytes", "test reason");
+        expect.unreachable("Should have thrown");
+      } catch (e: unknown) {
+        const err = e as Error;
+        expect(err.message).toContain("test-stage");
+        expect(err.message).toContain("Main.xaml");
+        expect(err.message).toContain("xaml_bytes");
+        expect(err.message).toContain("preHash=");
+        expect(err.message).toContain("postHash=");
+      }
+    });
+
+    it("should produce compact mutation trace summary", () => {
+      resetArchiveFreeze();
+      const entries = [
+        { name: "lib/Main.xaml", content: VALID_GENERATED_XAML },
+        { name: "lib/Helper.xaml", content: STUB_XAML },
+      ];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      try { assertNoPostFreezeMutation("stage-a", "Main.xaml", VALID_GENERATED_XAML + "<!-- m1 -->", "xaml_bytes", "r1"); } catch {}
+      try { assertNoPostFreezeStatusMutation("stage-b", "Helper.xaml", "non-stub", "r2"); } catch {}
+
+      const trace = getMutationTrace();
+      const preFreezeEntries = trace.entries.filter(e => e.stage === "pre-freeze-snapshot");
+      const blockedEntries = trace.entries.filter(e => !e.allowed);
+      expect(preFreezeEntries).toHaveLength(2);
+      expect(blockedEntries).toHaveLength(2);
+      expect(trace.summary.totalAttemptedMutations).toBe(4);
+      expect(trace.summary.totalBlockedMutations).toBe(2);
+      expect(trace.summary.totalPostFreezeViolations).toBe(2);
+      expect(trace.summary.totalAllowedPreFreezeMutations).toBe(2);
     });
   });
 });

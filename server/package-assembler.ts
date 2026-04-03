@@ -62,7 +62,7 @@ import archiver from "archiver";
   import { getAndClearPropertySerializationTrace, getAndClearInvokeContractTrace, getAndClearStageHashParity, updateStageHash, hasStageHash, emitInvokeContractTrace, runWithTraceContext } from "./pipeline-trace-collector";
   import { validateContractIntegrity, buildWorkflowContracts, extractInvocations, resolveTargetContract, type WorkflowContract, type ContractIntegrityDefect } from "./xaml/workflow-contract-integrity";
   import { canonicalizeInvokeBindings, canonicalizeTargetValueExpressions, type InvokeCanonicalizationResult, type TargetValueCanonicalizationResult } from "./xaml/invoke-binding-canonicalizer";
-  import { classifyFromArchiveBuffer, buildWorkflowStatusParity, normalizeClassifierFileName, AUTHORITATIVE_STUB_PATTERNS, verifyAndReclassifyFromArchive, assertClassificationFreshness, type WorkflowStatusClassifierResult, type WorkflowStatusParityEntry, type WorkflowStatusParityResult } from "./workflow-status-classifier";
+  import { classifyFromArchiveBuffer, buildWorkflowStatusParity, normalizeClassifierFileName, AUTHORITATIVE_STUB_PATTERNS, verifyAndReclassifyFromArchive, assertClassificationFreshness, freezeArchiveWorkflows, isArchiveFrozen, getArchiveFreezePoint, resetArchiveFreeze, checkPostFreezeDeferredWriteMutation, getMutationTrace, recordMutationAttempt, assertNoPostFreezeStatusMutation, createGuardedDeferredWrites, verifyFrozenArchiveBuffer, type WorkflowStatusClassifierResult, type WorkflowStatusParityEntry, type WorkflowStatusParityResult, type PostClassifierMutationTrace } from "./workflow-status-classifier";
 
 interface DomCorrectionResult {
   content: string;
@@ -3192,7 +3192,7 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
 
     const analysisReports: { fileName: string; report: AnalysisReport }[] = [];
     const xamlEntries: { name: string; content: string }[] = [];
-    const deferredWrites = new Map<string, string>();
+    let deferredWrites: Map<string, string> = new Map<string, string>();
     const apEnabled = !!pkg.internal?.autopilotEnabled || !!(_probeCacheSnapshot?.flags?.autopilot);
     const earlyStubFallbacks: string[] = [];
     const complianceFallbacks: Array<{ file: string; reason: string; wasFullStub: boolean }> = [];
@@ -7480,6 +7480,13 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
         });
       }
 
+      resetArchiveFreeze();
+      const archiveFreezeResult = freezeArchiveWorkflows(phase1XamlEntries, authoritativeClassification);
+      console.log(`[Archive Freeze] Freeze point established — ${archiveFreezeResult.frozenWorkflows.size} workflow(s) frozen with stageMarker=${archiveFreezeResult.freezeStageMarker}, timestamp=${archiveFreezeResult.freezeTimestamp}`);
+
+      deferredWrites = createGuardedDeferredWrites(deferredWrites, isPackageMode);
+      console.log(`[Archive Freeze] deferredWrites now guarded — any post-freeze XAML mutation will be intercepted`);
+
       const dhgContext: DhgContext = {
         projectName,
         workflowNames: finalArchiveWfNames,
@@ -7505,6 +7512,23 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
         const wfName = tierMatch[1].replace(/\.xaml$/i, "").toLowerCase();
         dhgTierMap.set(wfName, tierMatch[2]);
       }
+
+      if (isArchiveFrozen()) {
+        const dhgStatusMap: Record<string, string> = { "Generated": "non-stub", "Handoff": "non-stub", "Stub": "stub", "Blocked": "blocked" };
+        for (const [wfName, dhgTier] of Array.from(dhgTierMap.entries())) {
+          const mappedStatus = dhgStatusMap[dhgTier];
+          if (mappedStatus) {
+            assertNoPostFreezeStatusMutation(
+              "dhg-tier-mapping",
+              wfName + ".xaml",
+              mappedStatus as "stub" | "non-stub" | "blocked" | "malformed",
+              `DHG tier "${dhgTier}" maps to status "${mappedStatus}"`,
+            );
+          }
+        }
+        console.log(`[Archive Freeze] DHG tier-to-status mapping verified against frozen statuses — ${dhgTierMap.size} workflow(s) checked`);
+      }
+
       const statusParityResult = buildWorkflowStatusParity(authoritativeClassification, dhgTierMap, phase1XamlEntries);
       if (statusParityResult.divergenceCount > 0) {
         console.warn(`[Workflow Status Parity] ${statusParityResult.divergenceCount} divergence(s) detected`);
@@ -7543,6 +7567,21 @@ ${depEntries}
   const buffer = await archive.finalize();
 
   runPostArchiveParityCheck(buffer, _archiveManifestTracker, _appendedContentHashes, xamlEntries, libPath);
+
+  if (isArchiveFrozen()) {
+    const frozenVerification = verifyFrozenArchiveBuffer(buffer, libPath);
+    if (!frozenVerification.verified) {
+      const mismatchDetails = frozenVerification.mismatches.map(m =>
+        `${m.file}: frozen=${m.frozenHash.substring(0, 12)} archive=${m.archiveHash.substring(0, 12)}`
+      );
+      throw new Error(
+        `[Post-Archive Freeze Verification] FATAL: Finalized archive buffer diverges from frozen content. ` +
+        `${frozenVerification.mismatches.length} mismatch(es): ${mismatchDetails.join("; ")}. ` +
+        `This indicates a late-stage mutation corrupted the archive after the classifier freeze.`
+      );
+    }
+    console.log(`[Post-Archive Freeze Verification] PASS — finalized archive buffer matches all ${getArchiveFreezePoint()!.frozenWorkflows.size} frozen workflow(s)`);
+  }
 
   {
     const preArchiveClassification = assemblerOutcomeReport._preArchiveClassification;
@@ -7672,21 +7711,16 @@ ${depEntries}
   const filesWithStubContent = new Set<string>();
   const studioNonLoadableFiles = new Set<string>();
   const studioLoadabilityReasons = new Map<string, string>();
+  const freezePoint = getArchiveFreezePoint();
   for (const entry of xamlEntries) {
     const shortName = entry.name.split("/").pop() || entry.name;
     if (STUB_CONTENT_PATTERNS.some(pattern => entry.content.includes(pattern))) {
       filesWithStubContent.add(shortName);
     }
-    let loadability = checkStudioLoadability(entry.content);
-    if (!loadability.loadable && loadability.repairable) {
-      const repair = repairMissingImplementation(entry.content, shortName);
-      if (repair.repaired) {
-        entry.content = repair.content;
-        const archivePath = Array.from(deferredWrites.keys()).find(k => (k.split("/").pop() || k) === shortName);
-        if (archivePath) deferredWrites.set(archivePath, repair.content);
-        loadability = checkStudioLoadability(entry.content);
-      }
-    }
+    const frozenContent = freezePoint
+      ? freezePoint.frozenWorkflows.get(normalizeClassifierFileName(shortName))?.content || entry.content
+      : entry.content;
+    const loadability = checkStudioLoadability(frozenContent);
     if (!loadability.loadable) {
       studioNonLoadableFiles.add(shortName);
       studioLoadabilityReasons.set(shortName, loadability.reason || "Unknown Studio-loadability failure");
@@ -7969,6 +8003,7 @@ ${depEntries}
     unresolvableJsonDefects: preArchiveTargetValueCanonicalization ? preArchiveTargetValueCanonicalization.unresolvableJsonDefects : undefined,
     canonicalizationArchiveParity: canonicalizationArchiveParity.length > 0 ? canonicalizationArchiveParity : undefined,
     preArchiveStructuralDefects: preArchiveStructuralDefects.length > 0 ? preArchiveStructuralDefects : undefined,
+    postClassifierMutationTrace: getMutationTrace(),
   };
 
   if (buildCacheKey && fingerprint) {

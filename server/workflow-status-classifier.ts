@@ -38,6 +38,8 @@ let _latestArchiveFinalizationMarker = 0;
 export function resetMonotonicCounter(): void {
   _monotonicCounter = 0;
   _latestArchiveFinalizationMarker = 0;
+  _archiveFreezePoint = null;
+  _mutationTraceEntries = [];
 }
 
 function nextStageMarker(): number {
@@ -251,6 +253,317 @@ export function verifyAndReclassifyFromArchive(
 export function normalizeClassifierFileName(name: string): string {
   const baseName = (name.split("/").pop() || name);
   return baseName.replace(/\.xaml$/i, "").toLowerCase();
+}
+
+export interface FrozenWorkflowEntry {
+  file: string;
+  content: string;
+  contentHash: string;
+  status: WorkflowStatus;
+  rationale: string;
+}
+
+export interface ArchiveFreezePoint {
+  frozenWorkflows: Map<string, FrozenWorkflowEntry>;
+  frozenFilenames: string[];
+  classification: WorkflowStatusClassifierResult;
+  freezeTimestamp: number;
+  freezeStageMarker: number;
+}
+
+export interface PostClassifierMutationTraceEntry {
+  stage: string;
+  file: string;
+  mutationType: "xaml_bytes" | "workflow_status" | "deferred_write" | "archive_buffer" | "stub_injection" | "placeholder_injection";
+  preHash: string;
+  postHash: string;
+  allowed: boolean;
+  reason: string;
+  changedBytes: boolean;
+  changedStatus: boolean;
+  enforcementAction: "none" | "blocked" | "fatal";
+}
+
+export interface PostClassifierMutationTrace {
+  entries: PostClassifierMutationTraceEntry[];
+  summary: {
+    totalAttemptedMutations: number;
+    totalBlockedMutations: number;
+    totalAllowedPreFreezeMutations: number;
+    totalPostFreezeViolations: number;
+  };
+}
+
+let _archiveFreezePoint: ArchiveFreezePoint | null = null;
+let _mutationTraceEntries: PostClassifierMutationTraceEntry[] = [];
+
+export function freezeArchiveWorkflows(
+  xamlEntries: Array<{ name: string; content: string }>,
+  classification: WorkflowStatusClassifierResult,
+): ArchiveFreezePoint {
+  const frozenWorkflows = new Map<string, FrozenWorkflowEntry>();
+  const frozenFilenames: string[] = [];
+
+  const classMap = new Map<string, WorkflowStatusClassification>();
+  for (const c of classification.classifications) {
+    classMap.set(normalizeClassifierFileName(c.file), c);
+  }
+
+  for (const entry of xamlEntries) {
+    const baseName = (entry.name.split("/").pop() || entry.name);
+    const normalized = normalizeClassifierFileName(baseName);
+    const hash = computeContentHash(entry.content);
+    const classEntry = classMap.get(normalized);
+
+    frozenWorkflows.set(normalized, {
+      file: baseName,
+      content: entry.content,
+      contentHash: hash,
+      status: classEntry?.status || "non-stub",
+      rationale: classEntry?.rationale || "No classifier entry found at freeze time",
+    });
+    frozenFilenames.push(normalized);
+  }
+
+  const freezePoint: ArchiveFreezePoint = {
+    frozenWorkflows,
+    frozenFilenames,
+    classification,
+    freezeTimestamp: Date.now(),
+    freezeStageMarker: classification.stageMarker,
+  };
+
+  _archiveFreezePoint = freezePoint;
+
+  for (const [normalized, frozenEntry] of Array.from(frozenWorkflows.entries())) {
+    recordMutationAttempt({
+      stage: "pre-freeze-snapshot",
+      file: frozenEntry.file,
+      mutationType: "xaml_bytes",
+      preHash: "N/A",
+      postHash: frozenEntry.contentHash,
+      allowed: true,
+      reason: `Workflow "${frozenEntry.file}" content captured at freeze point (status=${frozenEntry.status})`,
+      changedBytes: false,
+      changedStatus: false,
+      enforcementAction: "none",
+    });
+  }
+
+  console.log(`[Archive Freeze] Froze ${frozenWorkflows.size} workflow(s) at stageMarker=${classification.stageMarker}`);
+
+  return freezePoint;
+}
+
+export function getArchiveFreezePoint(): ArchiveFreezePoint | null {
+  return _archiveFreezePoint;
+}
+
+export function isArchiveFrozen(): boolean {
+  return _archiveFreezePoint !== null;
+}
+
+export function resetArchiveFreeze(): void {
+  _archiveFreezePoint = null;
+  _mutationTraceEntries = [];
+}
+
+export function recordMutationAttempt(entry: PostClassifierMutationTraceEntry): void {
+  _mutationTraceEntries.push(entry);
+}
+
+export function getMutationTrace(): PostClassifierMutationTrace {
+  const entries = [..._mutationTraceEntries];
+  const totalAttemptedMutations = entries.length;
+  const totalBlockedMutations = entries.filter(e => !e.allowed).length;
+  const totalAllowedPreFreezeMutations = entries.filter(e => e.allowed).length;
+  const totalPostFreezeViolations = entries.filter(e => !e.allowed).length;
+
+  return {
+    entries,
+    summary: {
+      totalAttemptedMutations,
+      totalBlockedMutations,
+      totalAllowedPreFreezeMutations,
+      totalPostFreezeViolations,
+    },
+  };
+}
+
+export function assertNoPostFreezeMutation(
+  stage: string,
+  file: string,
+  currentContent: string,
+  mutationType: PostClassifierMutationTraceEntry["mutationType"],
+  reason: string,
+): void {
+  if (!_archiveFreezePoint) return;
+
+  const normalized = normalizeClassifierFileName(file);
+  const frozenEntry = _archiveFreezePoint.frozenWorkflows.get(normalized);
+  if (!frozenEntry) return;
+
+  const currentHash = computeContentHash(currentContent);
+  if (currentHash !== frozenEntry.contentHash) {
+    const traceEntry: PostClassifierMutationTraceEntry = {
+      stage,
+      file: frozenEntry.file,
+      mutationType,
+      preHash: frozenEntry.contentHash,
+      postHash: currentHash,
+      allowed: false,
+      reason,
+      changedBytes: true,
+      changedStatus: false,
+      enforcementAction: "fatal",
+    };
+    recordMutationAttempt(traceEntry);
+
+    throw new Error(
+      `[Post-Freeze Mutation Violation] FATAL: Stage "${stage}" attempted to mutate frozen workflow "${frozenEntry.file}" after archive freeze. ` +
+      `mutationType=${mutationType}, preHash=${frozenEntry.contentHash.substring(0, 12)}, postHash=${currentHash.substring(0, 12)}, reason=${reason}. ` +
+      `No mutations are permitted after the authoritative classifier has frozen archive-bound content.`
+    );
+  }
+}
+
+export function assertNoPostFreezeStatusMutation(
+  stage: string,
+  file: string,
+  newStatus: WorkflowStatus,
+  reason: string,
+): void {
+  if (!_archiveFreezePoint) return;
+
+  const normalized = normalizeClassifierFileName(file);
+  const frozenEntry = _archiveFreezePoint.frozenWorkflows.get(normalized);
+  if (!frozenEntry) return;
+
+  if (newStatus !== frozenEntry.status) {
+    const traceEntry: PostClassifierMutationTraceEntry = {
+      stage,
+      file: frozenEntry.file,
+      mutationType: "workflow_status",
+      preHash: frozenEntry.status,
+      postHash: newStatus,
+      allowed: false,
+      reason,
+      changedBytes: false,
+      changedStatus: true,
+      enforcementAction: "fatal",
+    };
+    recordMutationAttempt(traceEntry);
+
+    throw new Error(
+      `[Post-Freeze Mutation Violation] FATAL: Stage "${stage}" attempted to mutate frozen workflow status for "${frozenEntry.file}" after archive freeze. ` +
+      `frozenStatus=${frozenEntry.status}, attemptedStatus=${newStatus}, reason=${reason}. ` +
+      `No status mutations are permitted after the authoritative classifier has frozen workflow statuses.`
+    );
+  }
+}
+
+export function checkPostFreezeDeferredWriteMutation(
+  stage: string,
+  archivePath: string,
+  newContent: string,
+  isPackageMode: boolean,
+): void {
+  if (!_archiveFreezePoint) return;
+
+  const baseName = (archivePath.split("/").pop() || archivePath);
+  if (!baseName.endsWith(".xaml")) return;
+
+  const normalized = normalizeClassifierFileName(baseName);
+  const frozenEntry = _archiveFreezePoint.frozenWorkflows.get(normalized);
+  if (!frozenEntry) return;
+
+  const newHash = computeContentHash(newContent);
+  if (newHash !== frozenEntry.contentHash) {
+    const traceEntry: PostClassifierMutationTraceEntry = {
+      stage,
+      file: frozenEntry.file,
+      mutationType: "deferred_write",
+      preHash: frozenEntry.contentHash,
+      postHash: newHash,
+      allowed: false,
+      reason: `deferredWrites.set("${archivePath}") after archive freeze`,
+      changedBytes: true,
+      changedStatus: false,
+      enforcementAction: isPackageMode ? "fatal" : "blocked",
+    };
+    recordMutationAttempt(traceEntry);
+
+    if (isPackageMode) {
+      throw new Error(
+        `[Post-Freeze Mutation Violation] FATAL: Stage "${stage}" attempted to mutate deferredWrites for frozen workflow "${frozenEntry.file}" after archive freeze. ` +
+        `preHash=${frozenEntry.contentHash.substring(0, 12)}, postHash=${newHash.substring(0, 12)}. ` +
+        `No deferredWrites mutations are permitted after archive freeze in package mode.`
+      );
+    }
+  }
+}
+
+export function createGuardedDeferredWrites(
+  original: Map<string, string>,
+  isPackageMode: boolean,
+): Map<string, string> {
+  const handler: ProxyHandler<Map<string, string>> = {
+    get(target, prop, receiver) {
+      if (prop === "set") {
+        return function guardedSet(key: string, value: string) {
+          checkPostFreezeDeferredWriteMutation("post-freeze-deferredWrites-guard", key, value, isPackageMode);
+          return target.set(key, value);
+        };
+      }
+      const val = Reflect.get(target, prop, receiver);
+      return typeof val === "function" ? val.bind(target) : val;
+    }
+  };
+  return new Proxy(original, handler);
+}
+
+export function verifyFrozenArchiveBuffer(
+  archiveBuffer: Buffer,
+  libPath: string,
+): { verified: boolean; mismatches: Array<{ file: string; frozenHash: string; archiveHash: string }> } {
+  if (!_archiveFreezePoint) return { verified: true, mismatches: [] };
+
+  const zip = new AdmZip(archiveBuffer);
+  const mismatches: Array<{ file: string; frozenHash: string; archiveHash: string }> = [];
+
+  for (const [normalized, frozenEntry] of Array.from(_archiveFreezePoint.frozenWorkflows.entries())) {
+    let found = false;
+    for (const zipEntry of zip.getEntries()) {
+      if (zipEntry.isDirectory || !zipEntry.entryName.endsWith(".xaml")) continue;
+      const zipBaseName = zipEntry.entryName.split("/").pop() || zipEntry.entryName;
+      if (normalizeClassifierFileName(zipBaseName) === normalized) {
+        const archiveContent = zipEntry.getData().toString("utf-8");
+        const archiveHash = computeContentHash(archiveContent);
+        if (archiveHash !== frozenEntry.contentHash) {
+          mismatches.push({ file: frozenEntry.file, frozenHash: frozenEntry.contentHash, archiveHash });
+          recordMutationAttempt({
+            stage: "post-archive-freeze-verification",
+            file: frozenEntry.file,
+            mutationType: "archive_buffer",
+            preHash: frozenEntry.contentHash,
+            postHash: archiveHash,
+            allowed: false,
+            reason: `Archive buffer content diverged from frozen content for ${frozenEntry.file}`,
+            changedBytes: true,
+            changedStatus: false,
+            enforcementAction: "fatal",
+          });
+        }
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      mismatches.push({ file: frozenEntry.file, frozenHash: frozenEntry.contentHash, archiveHash: "MISSING" });
+    }
+  }
+
+  return { verified: mismatches.length === 0, mismatches };
 }
 
 export interface WorkflowStatusParityEntry {
