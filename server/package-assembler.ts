@@ -3,6 +3,7 @@ import archiver from "archiver";
   import { createHash } from "crypto";
   import { PassThrough } from "stream";
   import { recordTransform, getCurrentRunId } from "./llm-trace-collector";
+  import { applyRequiredPropertyEnforcement } from "./required-property-enforcer";
   import {
     generateRichXamlFromSpec,
     generateRichXamlFromNodes,
@@ -1241,19 +1242,6 @@ const PROPERTY_NAME_CORRECTIONS: Array<{
   { activityClass: "SetTransactionStatus", wrong: "StatusInfo", correct: "Status", note: "UiPath.Core.Activities 23.10+: property is Status, not StatusInfo" },
 ];
 
-function getPlaceholderForClrType(clrType: string): string {
-  const placeholders: Record<string, string> = {
-    "System.String": "PLACEHOLDER",
-    "System.Int32": "0",
-    "System.Int64": "0",
-    "System.Boolean": "False",
-    "System.Double": "0.0",
-    "System.TimeSpan": "00:00:00",
-    "System.Object": "Nothing",
-  };
-  return placeholders[clrType] || "PLACEHOLDER";
-}
-
 function inferTransitionTargetFromDisplayName(displayName: string, stateNames: string[], stateDisplayNames: Map<string, string>): string | null {
   const arrowMatch = displayName.match(/(?:->|→|->|&gt;)\s*(.+)$/);
   if (!arrowMatch) return null;
@@ -1596,7 +1584,7 @@ function runPostAssemblyValidation(
   }
 
   if (catalogService.isLoaded()) {
-    const missingPropRepairs: Array<{ activityTag: string; propName: string; placeholder: string }> = [];
+    const missingPropRepairs: Array<{ activityTag: string; propName: string; defaultValue: string; isStructuredDefect: boolean }> = [];
     const activityTagPattern = /<((?:[a-z]+:)?[A-Z][A-Za-z]+)\s([^>]*?)(?:\/>|>)/g;
     let actFamilyMatch;
     const checkedActivities = new Set<string>();
@@ -1616,29 +1604,50 @@ function runPostAssemblyValidation(
         const bodySection = endIdx > 0 ? allXamlContent.substring(actFamilyMatch.index, endIdx) : tagStr;
         if (bodySection.includes(`${activityTag}.${propDef.name}`)) continue;
 
-        const placeholder = getPlaceholderForClrType(propDef.clrType || "System.String");
-        missingPropRepairs.push({ activityTag, propName: propDef.name, placeholder });
-        warnings.push(`${schema.activity.displayName || activityTag} activity is missing required property "${propDef.name}" — auto-injected placeholder`);
-        remediations.push({
-          code: "MISSING_REQUIRED_PROPERTY_INJECTED",
-          detail: `${activityTag}.${propDef.name} set to ${placeholder} — developer must provide actual value`,
-        });
-        const traceRunId = getCurrentRunId();
-        if (traceRunId) {
-          recordTransform(traceRunId, {
-            stage: "auto_injected_property",
-            file: "package",
-            description: `Auto-injected required property ${activityTag}.${propDef.name} with placeholder "${placeholder}"`,
-            after: placeholder,
+        const contractDefault = propDef.default || (propDef.validValues && propDef.validValues.length > 0 ? propDef.validValues[0] : null);
+        const hasContractFallback = contractDefault != null && contractDefault !== "" && !/^PLACEHOLDER/i.test(contractDefault);
+
+        if (hasContractFallback) {
+          missingPropRepairs.push({ activityTag, propName: propDef.name, defaultValue: contractDefault!, isStructuredDefect: false });
+          warnings.push(`${schema.activity.displayName || activityTag} activity is missing required property "${propDef.name}" — auto-filled with contract default`);
+          remediations.push({
+            code: "MISSING_REQUIRED_PROPERTY_BOUND",
+            detail: `${activityTag}.${propDef.name} set to contract default "${contractDefault}"`,
           });
+          const traceRunId = getCurrentRunId();
+          if (traceRunId) {
+            recordTransform(traceRunId, {
+              stage: "required_property_enforcement",
+              file: "package",
+              description: `Contract-bound: required property ${activityTag}.${propDef.name} set to "${contractDefault}"`,
+              after: contractDefault!,
+            });
+          }
+        } else {
+          missingPropRepairs.push({ activityTag, propName: propDef.name, defaultValue: "", isStructuredDefect: true });
+          warnings.push(`${schema.activity.displayName || activityTag} activity is missing required property "${propDef.name}" — structured defect recorded (no value injected)`);
+          remediations.push({
+            code: "MISSING_REQUIRED_PROPERTY_DEFECT",
+            detail: `${activityTag}.${propDef.name} has no valid source binding and no contract-valid fallback — structured defect, property left absent`,
+          });
+          const traceRunId = getCurrentRunId();
+          if (traceRunId) {
+            recordTransform(traceRunId, {
+              stage: "required_property_enforcement",
+              file: "package",
+              description: `Structured defect: required property ${activityTag}.${propDef.name} has no contract-valid binding — property not injected`,
+              after: "[DEFECT: no value injected]",
+            });
+          }
         }
       }
       checkedActivities.add(activityTag);
     }
 
-    if (missingPropRepairs.length > 0) {
-      for (const repair of missingPropRepairs) {
-        const attrInjection = ` ${repair.propName}="${repair.placeholder}"`;
+    const contractBoundRepairs = missingPropRepairs.filter(r => !r.isStructuredDefect);
+    if (contractBoundRepairs.length > 0) {
+      for (const repair of contractBoundRepairs) {
+        const attrInjection = ` ${repair.propName}="${repair.defaultValue}"`;
         const selfClosingPattern = new RegExp(`(<${repair.activityTag}\\s[^>]*?)(/?>)`, "g");
         const applyRepair = (content: string): string => {
           return content.replace(selfClosingPattern, (match: string, prefix: string, closing: string) => {
@@ -1655,7 +1664,11 @@ function runPostAssemblyValidation(
           entry.content = applyRepair(entry.content);
         }
       }
-      console.log(`[Post-Assembly] Auto-injected ${missingPropRepairs.length} missing required property placeholder(s)`);
+    }
+    if (missingPropRepairs.length > 0) {
+      const defectCount = missingPropRepairs.filter(r => r.isStructuredDefect).length;
+      const boundCount = contractBoundRepairs.length;
+      console.log(`[Post-Assembly] Required property enforcement: ${boundCount} contract-bound, ${defectCount} structured defect(s) — zero sentinel placeholders injected, defect properties left absent`);
     }
   }
 
@@ -4971,27 +4984,25 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
         const afterTagSafety = content
           .replace(/<(ui:)?(?:TODO_|PLACEHOLDER_)(\w+)\b[^>]*?>[\s\S]*?<\/\1?(?:TODO_|PLACEHOLDER_)\2>/g, commentReplacement)
           .replace(/<(ui:)?(?:TODO_|PLACEHOLDER_)\w+\b[^>]*?\/>/g, commentReplacement);
-        let cleaned = afterTagSafety
-          .replace(/\[(?:PLACEHOLDER_\w*|TODO_\w*)\]/g, '[Nothing]')
-          .replace(/="(?:PLACEHOLDER_\w*|TODO_\w*)"/g, '="[Nothing]"');
+        let cleaned = afterTagSafety;
 
-        cleaned = cleaned.replace(/="([^"]*\b(?:TODO|PLACEHOLDER)\b[^"]*)"/g, (_match, val) => {
-          if (/^PLACEHOLDER_\w*$/.test(val) || /^TODO_\w*$/.test(val)) {
-            return '="[Nothing]"';
+        cleaned = cleaned.replace(/\s+\w+="(?:\[?(?:PLACEHOLDER_?\w*|TODO_?\w*|STUB_?\w*|HANDOFF_?\w*)\]?)"/g, '');
+
+        cleaned = cleaned.replace(/\s+(\w+)="([^"]*)"/g, (attrMatch, _name, val) => {
+          const trimmed = val.trim();
+          if (/^(?:PLACEHOLDER(?:_\w*)?|TODO(?:_\w*)?|STUB(?:_\w*)?|HANDOFF(?:_\w*)?)$/i.test(trimmed)) return '';
+          const unwrapped = trimmed.replace(/^\[|\]$/g, '').trim();
+          if (/^(?:PLACEHOLDER(?:_\w*)?|TODO(?:_\w*)?|STUB(?:_\w*)?|HANDOFF(?:_\w*)?)$/i.test(unwrapped)) return '';
+          return attrMatch;
+        });
+
+        cleaned = cleaned.replace(/>([^<]*)</g, (_match, textContent) => {
+          const trimmed = textContent.trim();
+          if (/^(?:PLACEHOLDER(?:_\w*)?|TODO(?:_\w*)?|STUB(?:_\w*)?|HANDOFF(?:_\w*)?)$/i.test(trimmed)) {
+            return `><`;
           }
-          return `="HANDOFF: ${val.replace(/\bTODO\b/g, "HANDOFF_TODO").replace(/\bPLACEHOLDER\b/g, "HANDOFF_PLACEHOLDER")}"`;
+          return _match;
         });
-
-        cleaned = cleaned.replace(/>([^<]*\b(?:TODO|PLACEHOLDER)\b[^<]*)</g, (_match, textContent) => {
-          const sanitized = textContent
-            .replace(/\bTODO\b/g, "HANDOFF_TODO")
-            .replace(/\bPLACEHOLDER\b/g, "HANDOFF_PLACEHOLDER");
-          return `>${sanitized}<`;
-        });
-
-        cleaned = cleaned
-          .replace(/(?<!HANDOFF_)PLACEHOLDER_\w*/g, '')
-          .replace(/(?<!HANDOFF_)TODO_\w*/g, '');
         xamlEntries[i] = { ...xamlEntries[i], content: cleaned };
         const archivePath = Array.from(deferredWrites.keys()).find(
           p => (p.split("/").pop() || p) === (xamlEntries[i].name.split("/").pop() || xamlEntries[i].name)
@@ -7187,6 +7198,7 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
 
     let preArchiveInvokeCanonicalization: InvokeCanonicalizationResult | undefined;
     let preArchiveTargetValueCanonicalization: TargetValueCanonicalizationResult | undefined;
+    let preArchiveEnforcement: ReturnType<typeof applyRequiredPropertyEnforcement> | undefined;
     const preArchiveStructuralDefects: Array<{ file: string; pattern: string; detail: string }> = [];
     const preCanonicalizationHashes = new Map<string, string>();
 
@@ -7205,6 +7217,25 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
       preArchiveTargetValueCanonicalization = canonicalizeTargetValueExpressions(postGateXamlEntries);
       if (preArchiveTargetValueCanonicalization.expressionCanonicalizationFixes.length > 0 || preArchiveTargetValueCanonicalization.symbolScopeDefects.length > 0 || preArchiveTargetValueCanonicalization.sentinelReplacements.length > 0 || preArchiveTargetValueCanonicalization.unresolvableJsonDefects.length > 0) {
         console.log(`[Pre-Archive Canonicalization] ${preArchiveTargetValueCanonicalization.summary}`);
+      }
+
+      console.log(`[Pre-Archive Enforcement] Running required property enforcement on ${postGateXamlEntries.length} XAML entries BEFORE archive write...`);
+      preArchiveEnforcement = applyRequiredPropertyEnforcement(postGateXamlEntries, true);
+      if (preArchiveEnforcement.enforcementResult.totalEnforced > 0 || preArchiveEnforcement.enforcementResult.totalDefects > 0) {
+        console.log(`[Pre-Archive Enforcement] ${preArchiveEnforcement.enforcementResult.summary}`);
+      }
+      if (!preArchiveEnforcement.guardResult.passed) {
+        console.warn(`[Pre-Archive Enforcement] Pre-compliance guard FAILED: ${preArchiveEnforcement.guardResult.violations.length} sentinel value(s) remain in required properties`);
+      }
+      for (let ei = 0; ei < postGateXamlEntries.length; ei++) {
+        const updatedEntry = preArchiveEnforcement.entries.find(e => e.name === postGateXamlEntries[ei].name);
+        if (updatedEntry && updatedEntry.content !== postGateXamlEntries[ei].content) {
+          postGateXamlEntries[ei] = updatedEntry;
+          const archiveKey = Array.from(deferredWrites.keys()).find(k => (k.split("/").pop() || k) === (postGateXamlEntries[ei].name.split("/").pop() || postGateXamlEntries[ei].name));
+          if (archiveKey) {
+            deferredWrites.set(archiveKey, updatedEntry.content);
+          }
+        }
       }
 
       const MALFORMED_QUOTING_PATTERN = /(?:AssetName|AssetValue|Value|Text|Message)="\[(?:&quot;|")\w+(?:&quot;|")]/;
@@ -8064,6 +8095,13 @@ ${depEntries}
     residualExpressionSerializationDefects: preArchiveInvokeCanonicalization ? preArchiveInvokeCanonicalization.residualExpressionSerializationDefects : undefined,
     sentinelReplacements: preArchiveTargetValueCanonicalization ? preArchiveTargetValueCanonicalization.sentinelReplacements : undefined,
     unresolvableJsonDefects: preArchiveTargetValueCanonicalization ? preArchiveTargetValueCanonicalization.unresolvableJsonDefects : undefined,
+    requiredPropertyBindings: preArchiveEnforcement?.enforcementResult.requiredPropertyBindings,
+    unresolvedRequiredPropertyDefects: preArchiveEnforcement?.enforcementResult.unresolvedRequiredPropertyDefects,
+    expressionLoweringFixes: preArchiveEnforcement?.enforcementResult.expressionLoweringFixes,
+    expressionLoweringFailures: preArchiveEnforcement?.enforcementResult.expressionLoweringFailures,
+    requiredPropertyEnforcementSummary: preArchiveEnforcement?.enforcementResult.summary,
+    preComplianceGuardPassed: preArchiveEnforcement?.guardResult.passed,
+    preComplianceGuardViolationCount: preArchiveEnforcement?.guardResult.violations.length,
     canonicalizationArchiveParity: canonicalizationArchiveParity.length > 0 ? canonicalizationArchiveParity : undefined,
     preArchiveStructuralDefects: preArchiveStructuralDefects.length > 0 ? preArchiveStructuralDefects : undefined,
     postClassifierMutationTrace: getMutationTrace(),

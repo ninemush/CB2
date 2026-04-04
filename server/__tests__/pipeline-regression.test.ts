@@ -43,6 +43,15 @@ import { checkNormalizationInvariants } from "../emission-gate";
 import { metadataService } from "../catalog/metadata-service";
 import { ACTIVITY_DEFINITIONS_REGISTRY } from "../catalog/activity-definitions";
 import {
+  isSentinelValue,
+  isGenericTypeDefault,
+  hasContractValidFallback,
+  tryLowerStructuredExpression,
+  enforceRequiredProperties,
+  runPreCompliancePackageModeGuard,
+  applyRequiredPropertyEnforcement,
+} from "../required-property-enforcer";
+import {
   generateReframeworkMainXaml,
   generateGetTransactionDataXaml,
   generateInitAllSettingsXaml,
@@ -1624,6 +1633,427 @@ describe("Compiler-invariant regression tests", () => {
 
       const stillAuth = getAuthoritativeXamlForArchive();
       expect(stillAuth[0].content).toBe(authContent);
+    });
+  });
+
+  describe("Required Property Enforcement (Task #436)", () => {
+    const ENFORCEMENT_TEST_XAML = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="Main"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <Sequence DisplayName="Main Sequence" sap2010:WorkflowViewState.IdRef="MainSequence_1">
+    <ui:LogMessage DisplayName="Log Start" Level="Info" Message="Starting" />
+  </Sequence>
+</Activity>`;
+
+    it("isSentinelValue correctly identifies all sentinel patterns", () => {
+      expect(isSentinelValue("PLACEHOLDER")).toBe(true);
+      expect(isSentinelValue("placeholder")).toBe(true);
+      expect(isSentinelValue("PLACEHOLDER_System_String")).toBe(true);
+      expect(isSentinelValue("TODO")).toBe(true);
+      expect(isSentinelValue("TODO_implement")).toBe(true);
+      expect(isSentinelValue("STUB")).toBe(true);
+      expect(isSentinelValue("STUB_BLOCKING")).toBe(true);
+      expect(isSentinelValue("HANDOFF")).toBe(true);
+      expect(isSentinelValue("HANDOFF_STRING_FORMAT_UNSAFE")).toBe(true);
+
+      expect(isSentinelValue("")).toBe(false);
+      expect(isSentinelValue("False")).toBe(false);
+      expect(isSentinelValue("0")).toBe(false);
+      expect(isSentinelValue("Nothing")).toBe(false);
+      expect(isSentinelValue("Hello World")).toBe(false);
+      expect(isSentinelValue("[myVariable]")).toBe(false);
+    });
+
+    it("hasContractValidFallback returns valid fallback for properties with defaults", () => {
+      const propWithDefault = { name: "Body", clrType: "System.String", required: true, default: "Hello" } as { name: string; clrType: string; required: boolean; default?: string; validValues?: string[] };
+      const result = hasContractValidFallback(propWithDefault);
+      expect(result.valid).toBe(true);
+      expect(result.fallbackValue).toBe("Hello");
+    });
+
+    it("hasContractValidFallback rejects sentinel defaults", () => {
+      const propWithSentinel = { name: "Body", clrType: "System.String", required: true, default: "PLACEHOLDER" } as { name: string; clrType: string; required: boolean; default?: string; validValues?: string[] };
+      const result = hasContractValidFallback(propWithSentinel);
+      expect(result.valid).toBe(false);
+    });
+
+    it("hasContractValidFallback uses validValues when no default", () => {
+      const propWithEnum = { name: "LogLevel", clrType: "System.String", required: true, validValues: ["Info", "Warn", "Error"] } as { name: string; clrType: string; required: boolean; default?: string; validValues?: string[] };
+      const result = hasContractValidFallback(propWithEnum);
+      expect(result.valid).toBe(true);
+      expect(result.fallbackValue).toBe("Info");
+    });
+
+    it("hasContractValidFallback returns invalid for Boolean types without explicit default", () => {
+      const boolProp = { name: "IsEnabled", clrType: "System.Boolean", required: true } as { name: string; clrType: string; required: boolean; default?: string; validValues?: string[] };
+      const result = hasContractValidFallback(boolProp);
+      expect(result.valid).toBe(false);
+    });
+
+    it("tryLowerStructuredExpression passes through plain values", () => {
+      const result = tryLowerStructuredExpression("[myVariable]");
+      expect(result.lowered).toBe(true);
+      expect(result.result).toBe("[myVariable]");
+    });
+
+    it("tryLowerStructuredExpression returns lowered=true or false for ValueIntent patterns", () => {
+      const result = tryLowerStructuredExpression('{"type":"expression","value":"someExpr"}');
+      expect(typeof result.lowered).toBe("boolean");
+      if (!result.lowered) {
+        expect(result.reason).toBeTruthy();
+      }
+    });
+
+    it("pre-compliance guard detects sentinel values in XAML attributes", () => {
+      const xamlWithSentinel = `<SendMail DisplayName="Send Email" Subject="Test" Body="PLACEHOLDER" To="test@example.com" />`;
+      const entries = [{ name: "Main.xaml", content: xamlWithSentinel }];
+      const guardResult = runPreCompliancePackageModeGuard(entries);
+      expect(guardResult.passed).toBe(false);
+      expect(guardResult.violations.length).toBeGreaterThan(0);
+    });
+
+    it("sentinel detection covers all sentinel categories", () => {
+      expect(isSentinelValue("PLACEHOLDER")).toBe(true);
+      expect(isSentinelValue("TODO")).toBe(true);
+      expect(isSentinelValue("STUB")).toBe(true);
+      expect(isSentinelValue("HANDOFF")).toBe(true);
+      expect(isSentinelValue("PLACEHOLDER_System_Object")).toBe(true);
+      expect(isSentinelValue("TODO_implement_later")).toBe(true);
+      expect(isSentinelValue("STUB_BLOCKING_FALLBACK")).toBe(true);
+      expect(isSentinelValue("HANDOFF_STRING_FORMAT_UNSAFE")).toBe(true);
+
+      expect(isSentinelValue("user@example.com")).toBe(false);
+      expect(isSentinelValue("Send Email")).toBe(false);
+      expect(isSentinelValue("True")).toBe(false);
+    });
+
+    it("applyRequiredPropertyEnforcement returns structured result with all diagnostic arrays", () => {
+      const entries = [{ name: "Main.xaml", content: ENFORCEMENT_TEST_XAML }];
+      const result = applyRequiredPropertyEnforcement(entries, true);
+
+      expect(result).toHaveProperty("entries");
+      expect(result).toHaveProperty("enforcementResult");
+      expect(result).toHaveProperty("guardResult");
+
+      expect(result.enforcementResult).toHaveProperty("requiredPropertyBindings");
+      expect(result.enforcementResult).toHaveProperty("unresolvedRequiredPropertyDefects");
+      expect(result.enforcementResult).toHaveProperty("expressionLoweringFixes");
+      expect(result.enforcementResult).toHaveProperty("expressionLoweringFailures");
+      expect(result.enforcementResult).toHaveProperty("totalEnforced");
+      expect(result.enforcementResult).toHaveProperty("totalDefects");
+      expect(result.enforcementResult).toHaveProperty("hasBlockingDefects");
+      expect(result.enforcementResult).toHaveProperty("summary");
+
+      expect(Array.isArray(result.enforcementResult.requiredPropertyBindings)).toBe(true);
+      expect(Array.isArray(result.enforcementResult.unresolvedRequiredPropertyDefects)).toBe(true);
+      expect(Array.isArray(result.enforcementResult.expressionLoweringFixes)).toBe(true);
+      expect(Array.isArray(result.enforcementResult.expressionLoweringFailures)).toBe(true);
+    });
+
+    it("enforceRequiredProperties uses conservative enforcement when catalog is not loaded", () => {
+      const entries = [{ name: "Main.xaml", content: ENFORCEMENT_TEST_XAML }];
+      const result = enforceRequiredProperties(entries, true);
+      expect(result.totalEnforced).toBe(0);
+      expect(result.summary).toContain("conservative enforcement");
+    });
+
+    it("XAML placeholder cleanup removes sentinel-only attributes entirely", () => {
+      const inputXaml = `<SendMail DisplayName="Send" Body="PLACEHOLDER" Subject="TODO" />`;
+      let cleaned = inputXaml;
+      cleaned = cleaned.replace(/\s+\w+="(?:\[?(?:PLACEHOLDER_?\w*|TODO_?\w*|STUB_?\w*|HANDOFF_?\w*)\]?)"/g, '');
+      cleaned = cleaned.replace(/\s+(\w+)="([^"]*)"/g, (attrMatch, _name, val) => {
+        const trimmed = val.trim();
+        if (/^(?:PLACEHOLDER(?:_\w*)?|TODO(?:_\w*)?|STUB(?:_\w*)?|HANDOFF(?:_\w*)?)$/i.test(trimmed)) return '';
+        return attrMatch;
+      });
+      expect(cleaned).not.toContain("PLACEHOLDER");
+      expect(cleaned).not.toContain("TODO");
+      expect(cleaned).not.toContain("Body=");
+      expect(cleaned).not.toContain("Subject=");
+      expect(cleaned).toContain('DisplayName="Send"');
+    });
+
+    it("cleanup preserves attributes with TODO/PLACEHOLDER as substring of legitimate value", () => {
+      const content = `<SendMail DisplayName="Send" Subject="Review TODO items for project" Body="PLACEHOLDER" />`;
+      let cleaned = content;
+      cleaned = cleaned.replace(/\s+\w+="(?:\[?(?:PLACEHOLDER_?\w*|TODO_?\w*|STUB_?\w*|HANDOFF_?\w*)\]?)"/g, '');
+      cleaned = cleaned.replace(/\s+(\w+)="([^"]*)"/g, (attrMatch, _name, val) => {
+        const trimmed = val.trim();
+        if (/^(?:PLACEHOLDER(?:_\w*)?|TODO(?:_\w*)?|STUB(?:_\w*)?|HANDOFF(?:_\w*)?)$/i.test(trimmed)) return '';
+        return attrMatch;
+      });
+      expect(cleaned).toContain('Subject="Review TODO items for project"');
+      expect(cleaned).not.toContain("Body=");
+    });
+
+    it("placeholder cleanup removes sentinel attributes without HANDOFF prefix", () => {
+      const testContent = `<LogMessage DisplayName="Log" Message="PLACEHOLDER" Level="Info" />`;
+      let cleaned = testContent;
+      cleaned = cleaned.replace(/\s+\w+="(?:\[?(?:PLACEHOLDER_?\w*|TODO_?\w*|STUB_?\w*|HANDOFF_?\w*)\]?)"/g, '');
+      cleaned = cleaned.replace(/\s+(\w+)="([^"]*)"/g, (attrMatch, _name, val) => {
+        const trimmed = val.trim();
+        if (/^(?:PLACEHOLDER(?:_\w*)?|TODO(?:_\w*)?|STUB(?:_\w*)?|HANDOFF(?:_\w*)?)$/i.test(trimmed)) return '';
+        return attrMatch;
+      });
+      expect(cleaned).not.toContain("PLACEHOLDER");
+      expect(cleaned).not.toContain("Message=");
+      expect(cleaned).toContain('Level="Info"');
+    });
+
+    it("stripSentinelValuesFromRequiredProperties removes sentinel attributes from XAML content", () => {
+      const xamlWithSentinels = `<SendMail DisplayName="Send" Body="PLACEHOLDER" Subject="TODO_implement" To="STUB" />`;
+      const result = applyRequiredPropertyEnforcement(
+        [{ name: "Test.xaml", content: xamlWithSentinels }],
+        true,
+      );
+      const outputContent = result.entries[0].content;
+      expect(outputContent).not.toContain("PLACEHOLDER");
+      expect(outputContent).not.toContain("TODO_implement");
+      expect(outputContent).not.toContain("STUB");
+      expect(outputContent).not.toContain("Body=");
+      expect(outputContent).not.toContain("Subject=");
+      expect(outputContent).not.toContain("To=");
+      expect(outputContent).toContain('DisplayName="Send"');
+    });
+
+    it("stripping preserves non-sentinel attribute values", () => {
+      const xamlMixed = `<SendMail DisplayName="Send Email" Body="PLACEHOLDER" To="user@example.com" Subject="Hello World" />`;
+      const result = applyRequiredPropertyEnforcement(
+        [{ name: "Test.xaml", content: xamlMixed }],
+        true,
+      );
+      const outputContent = result.entries[0].content;
+      expect(outputContent).not.toContain("PLACEHOLDER");
+      expect(outputContent).not.toContain("Body=");
+      expect(outputContent).toContain('To="user@example.com"');
+      expect(outputContent).toContain('Subject="Hello World"');
+      expect(outputContent).toContain('DisplayName="Send Email"');
+    });
+
+    it("stripping handles bracket-wrapped sentinels like [PLACEHOLDER]", () => {
+      const xamlBracketSentinel = `<Assign DisplayName="Set Var" To="[PLACEHOLDER]" Value="Hello" />`;
+      const result = applyRequiredPropertyEnforcement(
+        [{ name: "Test.xaml", content: xamlBracketSentinel }],
+        true,
+      );
+      const outputContent = result.entries[0].content;
+      expect(outputContent).not.toContain("[PLACEHOLDER]");
+      expect(outputContent).not.toContain("To=");
+      expect(outputContent).toContain('Value="Hello"');
+    });
+
+    it("HANDOFF sentinel values are removed in package mode", () => {
+      const xamlHandoff = `<SendMail DisplayName="Send" Body="HANDOFF_STRING_FORMAT_UNSAFE" />`;
+      const result = applyRequiredPropertyEnforcement(
+        [{ name: "Test.xaml", content: xamlHandoff }],
+        true,
+      );
+      const outputContent = result.entries[0].content;
+      expect(outputContent).not.toContain("HANDOFF");
+      expect(outputContent).not.toContain("Body=");
+      expect(outputContent).toContain('DisplayName="Send"');
+    });
+
+    it("attribute boundary matching does not confuse Name with DisplayName", () => {
+      const xaml = `<TypeInto DisplayName="TypeInto1" Name="PLACEHOLDER" Text="Hello" />`;
+      const result = applyRequiredPropertyEnforcement(
+        [{ name: "Test.xaml", content: xaml }],
+        true,
+      );
+      const outputContent = result.entries[0].content;
+      expect(outputContent).not.toContain('Name="PLACEHOLDER"');
+      expect(outputContent).toContain('DisplayName="TypeInto1"');
+      expect(outputContent).toContain('Text="Hello"');
+    });
+
+    it("attribute boundary matching does not confuse Path with FolderPath", () => {
+      const xaml = `<ReadTextFile FolderPath="/documents" Path="PLACEHOLDER" DisplayName="Read" />`;
+      const result = applyRequiredPropertyEnforcement(
+        [{ name: "Test.xaml", content: xaml }],
+        true,
+      );
+      const outputContent = result.entries[0].content;
+      expect(outputContent).not.toContain('Path="PLACEHOLDER"');
+      expect(outputContent).toContain('FolderPath="/documents"');
+      expect(outputContent).toContain('DisplayName="Read"');
+    });
+
+    it("instance-addressed injection does not affect unrelated same-type activities", () => {
+      const xaml = [
+        `<SendMail DisplayName="Send1" Body="Hello" Subject="Test" To="a@b.com" />`,
+        `<SendMail DisplayName="Send2" To="c@d.com" />`,
+      ].join("\n");
+      const result = applyRequiredPropertyEnforcement(
+        [{ name: "Test.xaml", content: xaml }],
+        true,
+      );
+      const output = result.entries[0].content;
+      expect(output).toContain('DisplayName="Send1"');
+      expect(output).toContain('DisplayName="Send2"');
+      expect(output).toContain('Body="Hello"');
+    });
+
+    it("global lowering failures are recorded as structured defects for unresolvable expressions", () => {
+      const xamlWithBadExpr = `<Assign DisplayName="Assign1" Value='{"type":"unknown_xyz","value":"bad_val"}' />`;
+      const result = applyRequiredPropertyEnforcement(
+        [{ name: "Test.xaml", content: xamlWithBadExpr }],
+        true,
+      );
+      const allFailures = result.enforcementResult.expressionLoweringFailures;
+      const hasGlobalFailure = allFailures.some(f => f.failureReason.includes("Global lowering failed"));
+      if (allFailures.length > 0) {
+        expect(allFailures[0].severity).toBe("execution_blocking");
+        expect(allFailures[0].packageModeOutcome).toBe("structured_defect");
+      }
+      const outputContent = result.entries[0].content;
+      expect(outputContent).toContain('{"type":"unknown_xyz","value":"bad_val"}');
+    });
+
+    it("enforcement diagnostics are computed on original content before mutation", () => {
+      const xamlWithSentinels = `<SendMail DisplayName="Send" Body="PLACEHOLDER" />`;
+      const result = applyRequiredPropertyEnforcement(
+        [{ name: "Test.xaml", content: xamlWithSentinels }],
+        true,
+      );
+      const outputContent = result.entries[0].content;
+      expect(outputContent).not.toContain("PLACEHOLDER");
+      expect(outputContent).not.toContain("Body=");
+    });
+
+    it("enforcement result binding record has correct shape", () => {
+      const binding = {
+        file: "Main.xaml",
+        workflow: "Main",
+        activityType: "SendMail",
+        propertyName: "Body",
+        sourceBinding: "contract-default",
+        originalValue: "",
+        resolvedValue: "Hello",
+        severity: "info" as const,
+        packageModeOutcome: "bound" as const,
+        occurrenceIndex: 0,
+      };
+      expect(binding.severity).toBe("info");
+      expect(binding.packageModeOutcome).toBe("bound");
+      expect(binding.file).toBe("Main.xaml");
+      expect(binding.occurrenceIndex).toBe(0);
+    });
+
+    it("enforcement result defect record has correct shape", () => {
+      const defect = {
+        file: "Main.xaml",
+        workflow: "Main",
+        activityType: "SendMail",
+        propertyName: "Body",
+        failureReason: "No contract-valid fallback",
+        originalValue: "",
+        severity: "execution_blocking" as const,
+        packageModeOutcome: "structured_defect" as const,
+      };
+      expect(defect.severity).toBe("execution_blocking");
+      expect(defect.packageModeOutcome).toBe("structured_defect");
+    });
+
+    it("conservative enforcement produces defects for sentinel values without catalog", () => {
+      const xaml = `<SendMail DisplayName="Send" Body="PLACEHOLDER" Subject="Review TODO items" />`;
+      const result = enforceRequiredProperties(
+        [{ name: "Main.xaml", content: xaml }],
+        true,
+      );
+      const sentinelDefects = result.unresolvedRequiredPropertyDefects.filter(
+        d => d.originalValue === "PLACEHOLDER"
+      );
+      expect(sentinelDefects.length).toBe(1);
+      expect(sentinelDefects[0].propertyName).toBe("Body");
+      expect(sentinelDefects[0].severity).toBe("execution_blocking");
+      const subjectDefects = result.unresolvedRequiredPropertyDefects.filter(
+        d => d.propertyName === "Subject"
+      );
+      expect(subjectDefects.length).toBe(0);
+    });
+
+    it("pre-compliance guard detects sentinels via broad scan when catalog not loaded", () => {
+      const xamlWithSentinels = `<SendMail DisplayName="Send" Body="PLACEHOLDER" Subject="TODO_impl" To="STUB_val" />`;
+      const entries = [{ name: "Main.xaml", content: xamlWithSentinels }];
+      const guardResult = runPreCompliancePackageModeGuard(entries);
+      expect(guardResult.passed).toBe(false);
+      expect(guardResult.violations.length).toBeGreaterThan(0);
+      expect(guardResult.summary).toContain("broad scan");
+    });
+
+    it("guard without catalog passes for clean XAML via broad scan", () => {
+      const cleanXaml = `<SendMail DisplayName="Send Email" Body="Hello World" Subject="Test" To="user@example.com" />`;
+      const entries = [{ name: "Main.xaml", content: cleanXaml }];
+      const guardResult = runPreCompliancePackageModeGuard(entries);
+      expect(guardResult.passed).toBe(true);
+      expect(guardResult.summary).toContain("catalog unavailable");
+    });
+
+    it("applyRequiredPropertyEnforcement removes sentinel attributes in package mode", () => {
+      const xamlWithSentinels = `<SendMail DisplayName="Send" Body="PLACEHOLDER" />`;
+      const result = applyRequiredPropertyEnforcement(
+        [{ name: "Main.xaml", content: xamlWithSentinels }],
+        true,
+      );
+      expect(result.entries[0].content).not.toContain("Body=");
+      expect(result.entries[0].content).not.toContain("PLACEHOLDER");
+      expect(result.entries[0].content).toContain('DisplayName="Send"');
+    });
+
+    it("non-package mode skips sentinel stripping and guard", () => {
+      const xamlWithSentinels = `<SendMail DisplayName="Send" Body="PLACEHOLDER" />`;
+      const result = applyRequiredPropertyEnforcement(
+        [{ name: "Main.xaml", content: xamlWithSentinels }],
+        false,
+      );
+      expect(result.entries[0].content).toContain("PLACEHOLDER");
+      expect(result.guardResult.passed).toBe(true);
+      expect(result.guardResult.summary).toContain("Not package mode");
+    });
+
+    it("isGenericTypeDefault detects generic type defaults", () => {
+      expect(isGenericTypeDefault("", "System.String")).toBe(true);
+      expect(isGenericTypeDefault("0", "System.Int32")).toBe(true);
+      expect(isGenericTypeDefault("False", "System.Boolean")).toBe(true);
+      expect(isGenericTypeDefault("Nothing", "System.Object")).toBe(true);
+      expect(isGenericTypeDefault("Hello", "System.String")).toBe(false);
+      expect(isGenericTypeDefault("42", "System.Int32")).toBe(false);
+      expect(isGenericTypeDefault("True", "System.Boolean")).toBe(false);
+    });
+
+    it("lowerStructuredExpressionsInContent preserves original on failure", () => {
+      const originalContent = '<Activity Value=\'{"type":"expr","value":"badExpr"}\' />';
+      const entries = [{ name: "Test.xaml", content: originalContent }];
+      const result = applyRequiredPropertyEnforcement(entries, true);
+      expect(result.entries[0].content).toContain('{"type":"expr","value":"badExpr"}');
+    });
+
+    it("child element sentinel values are detected by conservative enforcement", () => {
+      const xamlWithChildSentinel = `<ui:SendMail DisplayName="Send">
+  <ui:SendMail.Body>PLACEHOLDER</ui:SendMail.Body>
+</ui:SendMail>`;
+      const entries = [{ name: "Test.xaml", content: xamlWithChildSentinel }];
+      const result = enforceRequiredProperties(entries, true);
+      expect(result.summary).toContain("conservative enforcement");
+    });
+
+    it("multiple sentinel types are all removed in single pass", () => {
+      const xaml = `<Activity Prop1="PLACEHOLDER" Prop2="TODO_x" Prop3="STUB_y" Prop4="HANDOFF_z" Prop5="ValidValue" />`;
+      const result = applyRequiredPropertyEnforcement(
+        [{ name: "Test.xaml", content: xaml }],
+        true,
+      );
+      const out = result.entries[0].content;
+      expect(out).not.toContain("Prop1=");
+      expect(out).not.toContain("Prop2=");
+      expect(out).not.toContain("Prop3=");
+      expect(out).not.toContain("Prop4=");
+      expect(out).toContain('Prop5="ValidValue"');
     });
   });
 });

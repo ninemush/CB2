@@ -33,6 +33,15 @@ import {
   type UnresolvableJsonDefect,
 } from "./xaml/invoke-binding-canonicalizer";
 import { AUTHORITATIVE_STUB_PATTERNS } from "./workflow-status-classifier";
+import {
+  applyRequiredPropertyEnforcement,
+  type RequiredPropertyEnforcementResult,
+  type PreComplianceGuardResult,
+  type RequiredPropertyBinding,
+  type UnresolvedRequiredPropertyDefect,
+  type ExpressionLoweringFix,
+  type ExpressionLoweringFailure,
+} from "./required-property-enforcer";
 
 export interface FinalArtifactValidationInput {
   xamlEntries: { name: string; content: string }[];
@@ -109,6 +118,13 @@ export interface FinalQualityReport {
   unresolvableJsonDefects: UnresolvableJsonDefect[];
   sentinelReplacements: SentinelReplacementRecord[];
   targetValueCanonicalizationSummary?: string;
+  requiredPropertyBindings: RequiredPropertyBinding[];
+  unresolvedRequiredPropertyDefects: UnresolvedRequiredPropertyDefect[];
+  expressionLoweringFixes: ExpressionLoweringFix[];
+  expressionLoweringFailures: ExpressionLoweringFailure[];
+  requiredPropertyEnforcementSummary?: string;
+  preComplianceGuardPassed: boolean;
+  preComplianceGuardViolationCount: number;
   derivedStatus: PackageStatus;
   statusReason: string;
   outcomeContext?: PipelineOutcomeReport;
@@ -217,7 +233,12 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
 
   const graphValidation = validateWorkflowGraph(xamlEntries);
 
-  const perFileResults: PerFileValidation[] = xamlEntries.map(entry => {
+  const enforcementApplication = applyRequiredPropertyEnforcement(xamlEntries, input.hasNupkg);
+  const requiredPropertyEnforcement = enforcementApplication.enforcementResult;
+  const preComplianceGuard = enforcementApplication.guardResult;
+  const enforcedEntries = enforcementApplication.entries;
+
+  const perFileResults: PerFileValidation[] = enforcedEntries.map(entry => {
     const shortName = entry.name.split("/").pop() || entry.name;
 
     const loadability = checkFinalStudioLoadability(entry.content);
@@ -291,7 +312,10 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
   const hasSymbolScopeDefects = targetValueResult.symbolScopeDefects.length > 0;
   const hasSentinelReplacements = targetValueResult.sentinelReplacements.length > 0;
   const hasUnresolvableJsonDefects = targetValueResult.unresolvableJsonDefects.length > 0;
-  const hasDegradation = entryPointHasBlockers || hasStructuralBlockers || hasAnyStubContent || qgIncomplete || executablePathResult.hasExecutablePathContamination || graphValidation.hasWorkflowGraphIntegrityIssues || contractIntegrityResult.hasContractIntegrityIssues || hasResidualDefects || hasSymbolScopeDefects || hasSentinelReplacements || hasUnresolvableJsonDefects;
+  const hasRequiredPropertyDefects = requiredPropertyEnforcement.unresolvedRequiredPropertyDefects.length > 0;
+  const hasExpressionLoweringFailures = requiredPropertyEnforcement.expressionLoweringFailures.length > 0;
+  const preComplianceGuardFailed = !preComplianceGuard.passed;
+  const hasDegradation = entryPointHasBlockers || hasStructuralBlockers || hasAnyStubContent || qgIncomplete || executablePathResult.hasExecutablePathContamination || graphValidation.hasWorkflowGraphIntegrityIssues || contractIntegrityResult.hasContractIntegrityIssues || hasResidualDefects || hasSymbolScopeDefects || hasSentinelReplacements || hasUnresolvableJsonDefects || hasRequiredPropertyDefects || hasExpressionLoweringFailures || preComplianceGuardFailed;
 
   let derivedStatus: PackageStatus;
   let statusReason: string;
@@ -320,7 +344,7 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
     if (entryPointHasBlockers) reasons.push("entry point (Main.xaml) has structural blockers or stub content");
     if (hasStructuralBlockers) reasons.push(`${studioBlockedCount} file(s) structurally blocked in final validation`);
     statusReason = `Structurally invalid: ${reasons.join(", ")}`;
-  } else if (graphValidation.workflowGraphDefects.some(d => d.severity === "execution_blocking") || contractIntegrityResult.contractIntegrityDefects.some(d => d.severity === "execution_blocking") || allResidualDefects.some(d => d.severity === "execution_blocking") || targetValueResult.sentinelReplacements.some(d => d.severity === "execution_blocking") || targetValueResult.symbolScopeDefects.some(d => d.severity === "execution_blocking") || hasUnresolvableJsonDefects) {
+  } else if (graphValidation.workflowGraphDefects.some(d => d.severity === "execution_blocking") || contractIntegrityResult.contractIntegrityDefects.some(d => d.severity === "execution_blocking") || allResidualDefects.some(d => d.severity === "execution_blocking") || targetValueResult.sentinelReplacements.some(d => d.severity === "execution_blocking") || targetValueResult.symbolScopeDefects.some(d => d.severity === "execution_blocking") || hasUnresolvableJsonDefects || requiredPropertyEnforcement.unresolvedRequiredPropertyDefects.some(d => d.severity === "execution_blocking") || requiredPropertyEnforcement.expressionLoweringFailures.some(d => d.severity === "execution_blocking") || preComplianceGuardFailed) {
     derivedStatus = "structurally_invalid";
     const reasons: string[] = [];
     const graphBlockingCount = graphValidation.workflowGraphDefects.filter(d => d.severity === "execution_blocking").length;
@@ -334,8 +358,13 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
     const scopeBlockingCount = targetValueResult.symbolScopeDefects.filter(d => d.severity === "execution_blocking").length;
     if (scopeBlockingCount > 0) reasons.push(`${scopeBlockingCount} execution-blocking symbol scope defect(s)`);
     if (hasUnresolvableJsonDefects) reasons.push(`${targetValueResult.unresolvableJsonDefects.length} unresolvable JSON payload(s) replaced with degradation substitutes`);
+    const reqPropBlockingCount = requiredPropertyEnforcement.unresolvedRequiredPropertyDefects.filter(d => d.severity === "execution_blocking").length;
+    if (reqPropBlockingCount > 0) reasons.push(`${reqPropBlockingCount} unresolved required property defect(s)`);
+    const exprLoweringBlockingCount = requiredPropertyEnforcement.expressionLoweringFailures.filter(d => d.severity === "execution_blocking").length;
+    if (exprLoweringBlockingCount > 0) reasons.push(`${exprLoweringBlockingCount} expression lowering failure(s)`);
+    if (preComplianceGuardFailed) reasons.push(`pre-compliance guard failed: ${preComplianceGuard.violations.length} sentinel violation(s) detected`);
     statusReason = `Structurally invalid: ${reasons.join(", ")} detected`;
-  } else if (hasAnyStubContent || qgIncomplete || executablePathResult.hasExecutablePathContamination || graphValidation.workflowGraphDefects.some(d => d.severity === "handoff_required") || contractIntegrityResult.contractIntegrityDefects.some(d => d.severity === "handoff_required") || allResidualDefects.some(d => d.severity === "handoff_required") || hasSymbolScopeDefects || hasSentinelReplacements) {
+  } else if (hasAnyStubContent || qgIncomplete || executablePathResult.hasExecutablePathContamination || graphValidation.workflowGraphDefects.some(d => d.severity === "handoff_required") || contractIntegrityResult.contractIntegrityDefects.some(d => d.severity === "handoff_required") || allResidualDefects.some(d => d.severity === "handoff_required") || hasSymbolScopeDefects || hasSentinelReplacements || requiredPropertyEnforcement.unresolvedRequiredPropertyDefects.some(d => d.severity === "handoff_required") || requiredPropertyEnforcement.expressionLoweringFailures.some(d => d.severity === "handoff_required")) {
     derivedStatus = "handoff_only";
     const reasons: string[] = [];
     if (hasAnyStubContent) reasons.push("stub content detected in finalized artifacts");
@@ -358,6 +387,14 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
     }
     if (hasSentinelReplacements) {
       reasons.push(`${targetValueResult.sentinelReplacements.length} sentinel(s) replaced with degradation substitutes`);
+    }
+    if (requiredPropertyEnforcement.unresolvedRequiredPropertyDefects.some(d => d.severity === "handoff_required")) {
+      const handoffCount = requiredPropertyEnforcement.unresolvedRequiredPropertyDefects.filter(d => d.severity === "handoff_required").length;
+      reasons.push(`${handoffCount} unresolved required property defect(s) require handoff`);
+    }
+    if (requiredPropertyEnforcement.expressionLoweringFailures.some(d => d.severity === "handoff_required")) {
+      const handoffCount = requiredPropertyEnforcement.expressionLoweringFailures.filter(d => d.severity === "handoff_required").length;
+      reasons.push(`${handoffCount} expression lowering failure(s) require handoff`);
     }
     statusReason = `Handoff only: ${reasons.join(", ")}`;
   } else if (hasStructuralWarnings || totalWarnings > 0) {
@@ -407,6 +444,13 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
     unresolvableJsonDefects: targetValueResult.unresolvableJsonDefects,
     sentinelReplacements: targetValueResult.sentinelReplacements,
     targetValueCanonicalizationSummary: targetValueResult.summary,
+    requiredPropertyBindings: requiredPropertyEnforcement.requiredPropertyBindings,
+    unresolvedRequiredPropertyDefects: requiredPropertyEnforcement.unresolvedRequiredPropertyDefects,
+    expressionLoweringFixes: requiredPropertyEnforcement.expressionLoweringFixes,
+    expressionLoweringFailures: requiredPropertyEnforcement.expressionLoweringFailures,
+    requiredPropertyEnforcementSummary: requiredPropertyEnforcement.summary,
+    preComplianceGuardPassed: preComplianceGuard.passed,
+    preComplianceGuardViolationCount: preComplianceGuard.violations.length,
     derivedStatus,
     statusReason,
     outcomeContext: contextMetadata.outcomeReport,

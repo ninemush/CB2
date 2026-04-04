@@ -69,13 +69,6 @@ function isPlaceholderSentinel(value: string): boolean {
   return value.startsWith(PLACEHOLDER_SENTINEL_PREFIX);
 }
 
-function getDefaultForType(clrType: string): string {
-  if (clrType.includes("Boolean") || clrType === "bool") return "False";
-  if (clrType.includes("Int") || clrType.includes("Double") || clrType.includes("Decimal") || clrType === "int") return "0";
-  if (clrType.includes("TimeSpan")) return "00:00:00";
-  if (clrType.includes("String") || clrType === "string") return "";
-  return `PLACEHOLDER_${clrType.replace(/[^a-zA-Z0-9]/g, "_")}`;
-}
 
 const CRITICAL_REQUIRED_PROPERTIES: Record<string, Set<string>> = {
   "IntegrationServiceHTTPRequest": new Set(["Endpoint"]),
@@ -338,36 +331,41 @@ function validateActivityNode(
         }
       }
 
-      const defaultValue = prop.default || (prop.validValues && prop.validValues.length > 0 ? prop.validValues[0] : getDefaultForType(prop.clrType));
+      const contractDefault = prop.default || (prop.validValues && prop.validValues.length > 0 ? prop.validValues[0] : null);
+      const hasContractFallback = contractDefault != null && contractDefault !== "" && !isPlaceholderSentinel(contractDefault);
 
       const activityCriticalProps = CRITICAL_REQUIRED_PROPERTIES[node.template];
       const isCriticalProperty = activityCriticalProps?.has(prop.name);
 
-      if (isCriticalProperty && (isPlaceholderSentinel(defaultValue) || defaultValue === "")) {
+      if (!hasContractFallback) {
         report.issues.push({
-          severity: "error",
-          code: "CRITICAL_REQUIRED_UNFILLED",
+          severity: isCriticalProperty ? "error" : "warning",
+          code: isCriticalProperty ? "CRITICAL_REQUIRED_UNFILLED" : "REQUIRED_PROPERTY_NO_CONTRACT_FALLBACK",
           activityTemplate: node.template,
           activityDisplayName: node.displayName,
           property: prop.name,
-          message: `Critical required property "${prop.name}" on ${node.template} has no valid default — cannot emit PLACEHOLDER sentinel. Resolve upstream or provide a valid value.`,
+          message: `Required property "${prop.name}" on ${node.template} has no contract-valid fallback (no documented default or validValues) — structured defect recorded.`,
           autoFixed: false,
         });
-        console.warn(`[SpecValidator] CRITICAL: ${node.template}."${prop.name}" unfilled — blocking emission`);
+        if (isCriticalProperty) {
+          console.warn(`[SpecValidator] CRITICAL: ${node.template}."${prop.name}" unfilled — blocking emission`);
+        } else {
+          console.warn(`[SpecValidator] DEFECT: ${node.template}."${prop.name}" has no contract-valid fallback — structured defect`);
+        }
       } else {
-        filteredProperties[prop.name] = defaultValue;
+        filteredProperties[prop.name] = contractDefault;
         report.missingRequiredFilled++;
-        if (isPlaceholderSentinel(defaultValue)) {
+        if (isPlaceholderSentinel(contractDefault)) {
           report.issues.push({
             severity: "warning",
             code: "MISSING_REQUIRED_FILLED_PLACEHOLDER",
             activityTemplate: node.template,
             activityDisplayName: node.displayName,
             property: prop.name,
-            message: `Missing required property "${prop.name}" on ${node.template} — filled with PLACEHOLDER sentinel: "${defaultValue}". Review before deployment.`,
+            message: `Missing required property "${prop.name}" on ${node.template} — filled with PLACEHOLDER sentinel: "${contractDefault}". Review before deployment.`,
             autoFixed: true,
           });
-          console.warn(`[SpecValidator] Filled ${node.template}."${prop.name}" with PLACEHOLDER sentinel: "${defaultValue}" — needs review`);
+          console.warn(`[SpecValidator] Filled ${node.template}."${prop.name}" with PLACEHOLDER sentinel: "${contractDefault}" — needs review`);
         } else {
           report.issues.push({
             severity: "warning",
@@ -375,10 +373,10 @@ function validateActivityNode(
             activityTemplate: node.template,
             activityDisplayName: node.displayName,
             property: prop.name,
-            message: `Missing required property "${prop.name}" on ${node.template} — filled with default: "${defaultValue}".`,
+            message: `Missing required property "${prop.name}" on ${node.template} — filled with contract default: "${contractDefault}".`,
             autoFixed: true,
           });
-          console.log(`[SpecValidator] Filled missing required ${node.template}."${prop.name}" with default: "${defaultValue}"`);
+          console.log(`[SpecValidator] Filled missing required ${node.template}."${prop.name}" with contract default: "${contractDefault}"`);
         }
       }
     }

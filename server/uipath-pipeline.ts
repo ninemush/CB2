@@ -357,6 +357,13 @@ export interface PipelineOutcomeReport {
   residualExpressionSerializationDefects?: import("./xaml/invoke-binding-canonicalizer").ResidualExpressionSerializationDefect[];
   sentinelReplacements?: import("./xaml/invoke-binding-canonicalizer").SentinelReplacementRecord[];
   unresolvableJsonDefects?: import("./xaml/invoke-binding-canonicalizer").UnresolvableJsonDefect[];
+  requiredPropertyBindings?: import("./required-property-enforcer").RequiredPropertyBinding[];
+  unresolvedRequiredPropertyDefects?: import("./required-property-enforcer").UnresolvedRequiredPropertyDefect[];
+  expressionLoweringFixes?: import("./required-property-enforcer").ExpressionLoweringFix[];
+  expressionLoweringFailures?: import("./required-property-enforcer").ExpressionLoweringFailure[];
+  requiredPropertyEnforcementSummary?: string;
+  preComplianceGuardPassed?: boolean;
+  preComplianceGuardViolationCount?: number;
   canonicalizationArchiveParity?: Array<{ file: string; preCanonicalizationHash: string; canonicalizedHash: string; archivedHash: string; identical: boolean; mutated: boolean }>;
   preArchiveStructuralDefects?: Array<{ file: string; pattern: string; detail: string }>;
   workflowStatusParity?: import("./workflow-status-classifier").WorkflowStatusParityEntry[];
