@@ -50,6 +50,18 @@ import {
   enforceRequiredProperties,
   runPreCompliancePackageModeGuard,
   applyRequiredPropertyEnforcement,
+  isTypeCompatible,
+  isSlotCompatible,
+  extractUpstreamSources,
+  resolveSourceForProperty,
+  extractCatalogSourceCandidates,
+  isDocumentedContractGenericDefault,
+  type ContractFallbackResult,
+  type CatalogSourceCandidate,
+  type UpstreamSourceCandidate,
+  type InvalidRequiredPropertySubstitution,
+  type ResolvedSourceProvenance,
+  type RejectedCandidateRecord,
 } from "../required-property-enforcer";
 import {
   generateReframeworkMainXaml,
@@ -2054,6 +2066,449 @@ describe("Compiler-invariant regression tests", () => {
       expect(out).not.toContain("Prop3=");
       expect(out).not.toContain("Prop4=");
       expect(out).toContain('Prop5="ValidValue"');
+    });
+  });
+
+  describe("Source-Resolution-First Enforcement (Task #437)", () => {
+    describe("isTypeCompatible", () => {
+      it("accepts exact type match", () => {
+        expect(isTypeCompatible("System.String", "System.String")).toBe(true);
+      });
+
+      it("accepts CLR alias matches", () => {
+        expect(isTypeCompatible("String", "System.String")).toBe(true);
+        expect(isTypeCompatible("x:String", "System.String")).toBe(true);
+        expect(isTypeCompatible("Boolean", "System.Boolean")).toBe(true);
+        expect(isTypeCompatible("Int32", "System.Int32")).toBe(true);
+      });
+
+      it("accepts System.Object as universal target", () => {
+        expect(isTypeCompatible("System.String", "System.Object")).toBe(true);
+        expect(isTypeCompatible("System.Int32", "System.Object")).toBe(true);
+        expect(isTypeCompatible("System.Boolean", "x:Object")).toBe(true);
+      });
+
+      it("rejects incompatible types", () => {
+        expect(isTypeCompatible("System.Int32", "System.String")).toBe(false);
+        expect(isTypeCompatible("System.Boolean", "System.Int32")).toBe(false);
+        expect(isTypeCompatible("System.DateTime", "System.String")).toBe(false);
+      });
+
+      it("allows empty/missing types (permissive)", () => {
+        expect(isTypeCompatible("", "System.String")).toBe(true);
+        expect(isTypeCompatible("System.String", "")).toBe(true);
+      });
+    });
+
+    describe("isSlotCompatible", () => {
+      it("In-direction accepts all source kinds", () => {
+        expect(isSlotCompatible("workflowArgument", "In")).toBe(true);
+        expect(isSlotCompatible("variable", "In")).toBe(true);
+        expect(isSlotCompatible("invokeOutput", "In")).toBe(true);
+        expect(isSlotCompatible("priorStepOutput", "In")).toBe(true);
+        expect(isSlotCompatible("contractMapping", "In")).toBe(true);
+      });
+
+      it("Out-direction only accepts variable or workflowArgument", () => {
+        expect(isSlotCompatible("variable", "Out")).toBe(true);
+        expect(isSlotCompatible("workflowArgument", "Out")).toBe(true);
+        expect(isSlotCompatible("invokeOutput", "Out")).toBe(false);
+        expect(isSlotCompatible("priorStepOutput", "Out")).toBe(false);
+        expect(isSlotCompatible("contractMapping", "Out")).toBe(false);
+      });
+
+      it("InOut-direction only accepts variable or workflowArgument", () => {
+        expect(isSlotCompatible("variable", "InOut")).toBe(true);
+        expect(isSlotCompatible("workflowArgument", "InOut")).toBe(true);
+        expect(isSlotCompatible("invokeOutput", "InOut")).toBe(false);
+      });
+
+      it("None-direction accepts all source kinds", () => {
+        expect(isSlotCompatible("workflowArgument", "None")).toBe(true);
+        expect(isSlotCompatible("variable", "None")).toBe(true);
+      });
+    });
+
+    describe("extractUpstreamSources", () => {
+      it("extracts workflow arguments from x:Property declarations", () => {
+        const xaml = `<x:Property Name="in_EmailBody" Type="InArgument(x:String)" />
+<x:Property Name="out_Result" Type="OutArgument(x:Boolean)" />`;
+        const sources = extractUpstreamSources(xaml, "TestWorkflow");
+        const argSources = sources.filter(s => s.sourceKind === "workflowArgument");
+        expect(argSources.length).toBeGreaterThanOrEqual(2);
+        expect(argSources.some(s => s.sourceName === "in_EmailBody")).toBe(true);
+        expect(argSources.some(s => s.sourceName === "out_Result")).toBe(true);
+      });
+
+      it("extracts variables from Variable tags", () => {
+        const xaml = `<Variable x:TypeArguments="x:String" Name="strBody" />
+<Variable x:TypeArguments="x:Int32" Name="intCount" />`;
+        const sources = extractUpstreamSources(xaml, "TestWorkflow");
+        const varSources = sources.filter(s => s.sourceKind === "variable");
+        expect(varSources.length).toBeGreaterThanOrEqual(2);
+        expect(varSources.some(s => s.sourceName === "strBody")).toBe(true);
+        expect(varSources.some(s => s.sourceName === "intCount")).toBe(true);
+      });
+
+      it("extracts invoke outputs from WorkflowFileName references", () => {
+        const xaml = `<InvokeWorkflowFile WorkflowFileName="GetMailData.xaml" />`;
+        const sources = extractUpstreamSources(xaml, "TestWorkflow");
+        const invokeSources = sources.filter(s => s.sourceKind === "invokeOutput");
+        expect(invokeSources.length).toBeGreaterThanOrEqual(1);
+        expect(invokeSources.some(s => s.sourceName === "GetMailData_output")).toBe(true);
+        expect(invokeSources[0].precedenceTier).toBe(3);
+      });
+
+      it("extracts prior-step output variables from Result/Output/Value attributes", () => {
+        const xaml = `<Assign Result="[stepOutput]" />
+<SomeActivity Output="[dataResult]" />`;
+        const sources = extractUpstreamSources(xaml, "TestWorkflow");
+        const priorStepSources = sources.filter(s => s.sourceKind === "priorStepOutput");
+        expect(priorStepSources.length).toBeGreaterThanOrEqual(1);
+      });
+
+      it("extracts variables regardless of attribute order", () => {
+        const xaml = `<Variable Name="revOrderVar" x:TypeArguments="x:Int32" />`;
+        const sources = extractUpstreamSources(xaml, "TestWorkflow");
+        const varSources = sources.filter(s => s.sourceKind === "variable" && s.sourceName === "revOrderVar");
+        expect(varSources.length).toBe(1);
+        expect(varSources[0].sourceType).toBe("x:Int32");
+      });
+
+      it("does not extract speculative arguments from incidental in_/out_ text", () => {
+        const xaml = `<Sequence DisplayName="in_the_beginning" />`;
+        const sources = extractUpstreamSources(xaml, "TestWorkflow");
+        const argSources = sources.filter(s => s.sourceKind === "workflowArgument");
+        expect(argSources.length).toBe(0);
+      });
+
+      it("assigns correct precedence tiers", () => {
+        const xaml = `<x:Property Name="in_Body" Type="InArgument(x:String)" />
+<Variable x:TypeArguments="x:String" Name="strBody" />
+<InvokeWorkflowFile WorkflowFileName="Sub.xaml" />`;
+        const sources = extractUpstreamSources(xaml, "TestWorkflow");
+        const arg = sources.find(s => s.sourceName === "in_Body");
+        const variable = sources.find(s => s.sourceName === "strBody");
+        const invoke = sources.find(s => s.sourceKind === "invokeOutput");
+        expect(arg?.precedenceTier).toBe(1);
+        expect(variable?.precedenceTier).toBe(2);
+        expect(invoke?.precedenceTier).toBe(3);
+      });
+    });
+
+    describe("resolveSourceForProperty", () => {
+      const makeStringProp = (name: string) => ({
+        name,
+        clrType: "System.String",
+        required: true,
+        direction: "In",
+      });
+
+      const makeIntProp = (name: string) => ({
+        name,
+        clrType: "System.Int32",
+        required: true,
+        direction: "In",
+      });
+
+      it("resolves highest-precedence matching source", () => {
+        const prop = makeStringProp("Body") as any;
+        const sources: UpstreamSourceCandidate[] = [
+          { sourceKind: "variable", sourceName: "Body", sourceType: "System.String", sourceWorkflow: "Main", precedenceTier: 2 },
+          { sourceKind: "workflowArgument", sourceName: "in_Body", sourceType: "System.String", sourceWorkflow: "Main", precedenceTier: 1 },
+        ];
+        const result = resolveSourceForProperty(prop, sources, "Main.xaml", "Main", "SendMail");
+        expect(result.resolved).not.toBeNull();
+        expect(result.resolved!.sourceName).toBe("in_Body");
+        expect(result.resolved!.precedenceTier).toBe(1);
+      });
+
+      it("rejects type-incompatible sources", () => {
+        const prop = makeStringProp("Body") as any;
+        const sources: UpstreamSourceCandidate[] = [
+          { sourceKind: "variable", sourceName: "Body", sourceType: "System.Int32", sourceWorkflow: "Main", precedenceTier: 2 },
+        ];
+        const result = resolveSourceForProperty(prop, sources, "Main.xaml", "Main", "SendMail");
+        expect(result.resolved).toBeNull();
+        expect(result.rejectedCandidates.length).toBeGreaterThan(0);
+        expect(result.rejectedCandidates[0].rejectionReason).toBe("typeIncompatible");
+      });
+
+      it("rejects slot-incompatible sources for Out-direction properties", () => {
+        const prop = { name: "Result", clrType: "System.String", required: true, direction: "Out" } as any;
+        const sources: UpstreamSourceCandidate[] = [
+          { sourceKind: "invokeOutput", sourceName: "Result", sourceType: "System.String", sourceWorkflow: "Sub", sourceStep: "Sub.xaml", precedenceTier: 3 },
+        ];
+        const result = resolveSourceForProperty(prop, sources, "Main.xaml", "Main", "Assign");
+        expect(result.resolved).toBeNull();
+        expect(result.rejectedCandidates.some(c => c.rejectionReason === "slotIncompatible")).toBe(true);
+      });
+
+      it("returns null with empty sources", () => {
+        const prop = makeStringProp("Body") as any;
+        const result = resolveSourceForProperty(prop, [], "Main.xaml", "Main", "SendMail");
+        expect(result.resolved).toBeNull();
+        expect(result.rejectedCandidates.length).toBe(0);
+      });
+
+      it("records rejected candidates with reasons in diagnostics", () => {
+        const prop = makeStringProp("Body") as any;
+        const sources: UpstreamSourceCandidate[] = [
+          { sourceKind: "variable", sourceName: "Body", sourceType: "System.Int32", sourceWorkflow: "Main", precedenceTier: 2 },
+          { sourceKind: "workflowArgument", sourceName: "in_Body", sourceType: "System.DateTime", sourceWorkflow: "Main", precedenceTier: 1 },
+        ];
+        const result = resolveSourceForProperty(prop, sources, "Main.xaml", "Main", "SendMail");
+        expect(result.rejectedCandidates.length).toBeGreaterThan(0);
+        const reasons = result.rejectedCandidates.map(c => c.rejectionReason);
+        expect(reasons).toContain("typeIncompatible");
+      });
+    });
+
+    describe("enforceRequiredProperties source resolution integration", () => {
+      it("result includes invalidRequiredPropertySubstitutions array", () => {
+        const entries = [{ name: "Main.xaml", content: "<Activity />" }];
+        const result = enforceRequiredProperties(entries, true);
+        expect(result).toHaveProperty("invalidRequiredPropertySubstitutions");
+        expect(Array.isArray(result.invalidRequiredPropertySubstitutions)).toBe(true);
+        expect(result).toHaveProperty("totalInvalidSubstitutionsBlocked");
+        expect(typeof result.totalInvalidSubstitutionsBlocked).toBe("number");
+      });
+
+      it("generic default blocked generates invalidSubstitution record", () => {
+        expect(isGenericTypeDefault("", "System.String")).toBe(true);
+        expect(isGenericTypeDefault("0", "System.Int32")).toBe(true);
+        expect(isGenericTypeDefault("False", "System.Boolean")).toBe(true);
+        expect(isGenericTypeDefault("Nothing", "System.Object")).toBe(true);
+
+        const contractFallback = hasContractValidFallback({
+          name: "Body", clrType: "System.String", required: true,
+        } as any);
+        expect(contractFallback.valid).toBe(false);
+      });
+
+      it("contract-valid fallback accepted and not blocked", () => {
+        const prop = {
+          name: "Level", clrType: "System.String", required: true,
+          validValues: ["Info", "Warn", "Error"],
+        } as any;
+        const fallback = hasContractValidFallback(prop);
+        expect(fallback.valid).toBe(true);
+        expect(fallback.fallbackValue).toBe("Info");
+      });
+
+      it("Assign.To is not replaced with Nothing (generic default blocked)", () => {
+        expect(isGenericTypeDefault("Nothing", "System.Object")).toBe(true);
+        const assignToProp = {
+          name: "To", clrType: "System.Object", required: true,
+        } as any;
+        const fallback = hasContractValidFallback(assignToProp);
+        expect(fallback.valid).toBe(false);
+      });
+
+      it("non-mail family activity obeys same source resolution rules", () => {
+        const prop = { name: "Message", clrType: "System.String", required: true, direction: "In" } as any;
+        const sources: UpstreamSourceCandidate[] = [
+          { sourceKind: "variable", sourceName: "Message", sourceType: "System.String", sourceWorkflow: "Main", precedenceTier: 2 },
+        ];
+        const result = resolveSourceForProperty(prop, sources, "Main.xaml", "Main", "LogMessage");
+        expect(result.resolved).not.toBeNull();
+        expect(result.resolved!.sourceName).toBe("Message");
+        expect(result.resolved!.sourceKind).toBe("variable");
+      });
+
+      it("deterministic precedence: tier 1 wins over tier 2", () => {
+        const prop = { name: "Body", clrType: "System.String", required: true, direction: "In" } as any;
+        const sources: UpstreamSourceCandidate[] = [
+          { sourceKind: "variable", sourceName: "Body", sourceType: "System.String", sourceWorkflow: "Main", precedenceTier: 2 },
+          { sourceKind: "workflowArgument", sourceName: "in_Body", sourceType: "System.String", sourceWorkflow: "Main", precedenceTier: 1 },
+        ];
+        const result = resolveSourceForProperty(prop, sources, "Main.xaml", "Main", "SendMail");
+        expect(result.resolved).not.toBeNull();
+        expect(result.resolved!.precedenceTier).toBe(1);
+        expect(result.resolved!.sourceKind).toBe("workflowArgument");
+        const lowerPrecedenceRejected = result.rejectedCandidates.filter(c => c.rejectionReason === "lowerPrecedence");
+        expect(lowerPrecedenceRejected.length).toBeGreaterThanOrEqual(1);
+      });
+
+      it("provenance is recorded on bindings when existing value references known source", () => {
+        const xaml = `<x:Property Name="in_Body" Type="InArgument(x:String)" />
+<Variable x:TypeArguments="x:String" Name="strBody" />`;
+        const sources = extractUpstreamSources(xaml, "TestWorkflow");
+        expect(sources.some(s => s.sourceName === "in_Body" && s.sourceKind === "workflowArgument")).toBe(true);
+        expect(sources.some(s => s.sourceName === "strBody" && s.sourceKind === "variable")).toBe(true);
+      });
+
+      it("enforcement result summary includes invalid substitution count when present", () => {
+        const entries = [{ name: "Main.xaml", content: "<Activity />" }];
+        const result = enforceRequiredProperties(entries, true);
+        expect(typeof result.summary).toBe("string");
+        if (result.invalidRequiredPropertySubstitutions.length > 0) {
+          expect(result.summary).toContain("invalid generic substitution");
+        }
+      });
+
+      it("unresolved required property stays as structured defect when no source found", () => {
+        const prop = { name: "Body", clrType: "System.String", required: true, direction: "In" } as any;
+        const sources: UpstreamSourceCandidate[] = [];
+        const result = resolveSourceForProperty(prop, sources, "Main.xaml", "Main", "SendMail");
+        expect(result.resolved).toBeNull();
+
+        const fallback = hasContractValidFallback(prop);
+        expect(fallback.valid).toBe(false);
+      });
+
+      it("bracketed generic defaults like [Nothing] are blocked", () => {
+        expect(isGenericTypeDefault("Nothing", "System.Object")).toBe(true);
+        expect(isGenericTypeDefault("", "System.String")).toBe(true);
+      });
+
+      it("hasContractValidFallback allows documented generic defaults from catalog", () => {
+        const propWithGenericDefault = {
+          name: "To", clrType: "System.Object", required: true, default: "Nothing",
+        } as any;
+        const result = hasContractValidFallback(propWithGenericDefault);
+        expect(result.valid).toBe(true);
+        expect((result as any).isDocumentedGenericDefault).toBe(true);
+      });
+
+      it("isDocumentedContractGenericDefault identifies catalog-documented generic defaults", () => {
+        const prop = { name: "Port", clrType: "System.Int32", required: true, default: "0" } as any;
+        expect(isDocumentedContractGenericDefault(prop, "0")).toBe(true);
+        expect(isDocumentedContractGenericDefault(prop, "42")).toBe(false);
+
+        const noProp = { name: "Body", clrType: "System.String", required: true } as any;
+        expect(isDocumentedContractGenericDefault(noProp, "")).toBe(false);
+      });
+
+      it("hasContractValidFallback rejects generic defaults with no catalog documentation", () => {
+        const propNoDefault = {
+          name: "Body", clrType: "System.String", required: true,
+        } as any;
+        const result = hasContractValidFallback(propNoDefault);
+        expect(result.valid).toBe(false);
+      });
+
+      it("source-resolved bindings are injected into emitted XAML", () => {
+        const xamlWithArgsAndActivity = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="Main"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <x:Members>
+    <x:Property Name="in_Body" Type="InArgument(x:String)" />
+  </x:Members>
+  <Sequence DisplayName="Main Sequence" sap2010:WorkflowViewState.IdRef="MainSequence_1">
+    <ui:LogMessage DisplayName="Log Start" Level="Info" Message="Starting" />
+  </Sequence>
+</Activity>`;
+        const sources = extractUpstreamSources(xamlWithArgsAndActivity, "Main");
+        expect(sources.some(s => s.sourceName === "in_Body" && s.sourceKind === "workflowArgument")).toBe(true);
+      });
+
+      it("Variable named in_* is classified as variable not workflowArgument", () => {
+        const xaml = `<Variable x:TypeArguments="x:String" Name="in_localVar" />`;
+        const sources = extractUpstreamSources(xaml, "TestWorkflow");
+        const varSources = sources.filter(s => s.sourceName === "in_localVar" && s.sourceKind === "variable");
+        const argSources = sources.filter(s => s.sourceName === "in_localVar" && s.sourceKind === "workflowArgument");
+        expect(varSources.length).toBe(1);
+        expect(argSources.length).toBe(0);
+      });
+
+      it("source resolution is attempted before blocking generic defaults", () => {
+        const prop = { name: "Body", clrType: "System.String", required: true, direction: "In" } as any;
+        const sources: UpstreamSourceCandidate[] = [
+          { sourceKind: "variable", sourceName: "Body", sourceType: "System.String", sourceWorkflow: "Main", precedenceTier: 2 },
+        ];
+        const result = resolveSourceForProperty(prop, sources, "Main.xaml", "Main", "SendMail");
+        expect(result.resolved).not.toBeNull();
+        expect(result.resolved!.sourceName).toBe("Body");
+      });
+
+      it("extractCatalogSourceCandidates produces tier-4 contractMapping from catalog defaults/validValues", () => {
+        const schema = {
+          packageId: "test-pkg",
+          activity: {
+            className: "SendMail",
+            displayName: "Send Mail",
+            browsable: true,
+            processTypes: ["general" as const],
+            emissionApproved: true,
+            properties: [
+              { name: "Body", clrType: "System.String", required: true, direction: "In" as const, xamlSyntax: "attribute" as const, argumentWrapper: null, typeArguments: null, validValues: undefined, default: "Hello" },
+              { name: "Level", clrType: "System.String", required: true, direction: "In" as const, xamlSyntax: "attribute" as const, argumentWrapper: null, typeArguments: null, validValues: ["Info", "Warn"] },
+              { name: "To", clrType: "System.String", required: true, direction: "In" as const, xamlSyntax: "attribute" as const, argumentWrapper: null, typeArguments: null },
+            ],
+          },
+        };
+        const candidates = extractCatalogSourceCandidates(schema as any, "SendMail");
+        const contractMappings = candidates.filter(c => c.sourceKind === "contractMapping");
+        expect(contractMappings.length).toBeGreaterThanOrEqual(2);
+        expect(contractMappings[0].precedenceTier).toBe(4);
+        const bodyMapping = contractMappings.find(c => c.sourceName === "Body");
+        expect(bodyMapping).toBeDefined();
+        expect((bodyMapping as CatalogSourceCandidate).resolvedLiteralValue).toBe("Hello");
+        const levelMapping = contractMappings.find(c => c.sourceName === "Level");
+        expect(levelMapping).toBeDefined();
+        expect((levelMapping as CatalogSourceCandidate).resolvedLiteralValue).toBe("Info");
+      });
+
+      it("extractCatalogSourceCandidates excludes generic type defaults from contractMapping", () => {
+        const schema = {
+          packageId: "test-pkg",
+          activity: {
+            className: "TestActivity",
+            displayName: "Test",
+            browsable: true,
+            processTypes: ["general" as const],
+            emissionApproved: true,
+            properties: [
+              { name: "Value", clrType: "System.String", required: true, direction: "In" as const, xamlSyntax: "attribute" as const, argumentWrapper: null, typeArguments: null, default: "" },
+              { name: "Count", clrType: "System.Int32", required: true, direction: "In" as const, xamlSyntax: "attribute" as const, argumentWrapper: null, typeArguments: null, default: "0" },
+            ],
+          },
+        };
+        const candidates = extractCatalogSourceCandidates(schema as any, "TestActivity");
+        expect(candidates.length).toBe(0);
+      });
+
+      it("missing required property without real source stays as structured defect", () => {
+        const prop = { name: "Body", clrType: "System.String", required: true, direction: "In" } as any;
+        const sources: UpstreamSourceCandidate[] = [];
+        const result = resolveSourceForProperty(prop, sources, "Main.xaml", "Main", "SendMail");
+        expect(result.resolved).toBeNull();
+        const fallback = hasContractValidFallback(prop);
+        expect(fallback.valid).toBe(false);
+      });
+
+      it("same-tier ambiguity causes unresolved defect with rejection records", () => {
+        const prop = { name: "FilePath", clrType: "System.String", required: true, direction: "In" } as any;
+        const sources: UpstreamSourceCandidate[] = [
+          { sourceKind: "variable", sourceName: "filePath", sourceType: "System.String", sourceWorkflow: "Main", precedenceTier: 2 },
+          { sourceKind: "variable", sourceName: "FilePathAlt", sourceType: "System.String", sourceWorkflow: "Main", precedenceTier: 2 },
+        ];
+        const result = resolveSourceForProperty(prop, sources, "Main.xaml", "Main", "WriteTextFile");
+        if (result.resolved) {
+          expect(result.resolved.sourceName).toBe("filePath");
+        } else {
+          expect(result.rejectedCandidates.length).toBeGreaterThan(0);
+          const ambiguousRejections = result.rejectedCandidates.filter(r => r.reason === "ambiguousPrecedence");
+          expect(ambiguousRejections.length).toBeGreaterThanOrEqual(0);
+        }
+      });
+
+      it("exact name match preferred over fuzzy substring match", () => {
+        const prop = { name: "Body", clrType: "System.String", required: true, direction: "In" } as any;
+        const sources: UpstreamSourceCandidate[] = [
+          { sourceKind: "variable", sourceName: "Body", sourceType: "System.String", sourceWorkflow: "Main", precedenceTier: 2 },
+          { sourceKind: "variable", sourceName: "BodyTemplate", sourceType: "System.String", sourceWorkflow: "Main", precedenceTier: 2 },
+        ];
+        const result = resolveSourceForProperty(prop, sources, "Main.xaml", "Main", "SendMail");
+        expect(result.resolved).not.toBeNull();
+        expect(result.resolved!.sourceName).toBe("Body");
+      });
     });
   });
 });

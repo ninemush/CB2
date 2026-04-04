@@ -1,6 +1,54 @@
 import { catalogService, type CatalogProperty, type ActivitySchema } from "./catalog/catalog-service";
 import { tryParseJsonValueIntent, buildExpression, type ValueIntent } from "./xaml/expression-builder";
 
+export type SourceKind =
+  | "workflowArgument"
+  | "variable"
+  | "invokeOutput"
+  | "priorStepOutput"
+  | "contractMapping"
+  | "contract-default"
+  | "attribute-value";
+
+export type PrecedenceTier = 1 | 2 | 3 | 4 | 5 | 6;
+
+export const PRECEDENCE_TIER_LABELS: Record<PrecedenceTier, string> = {
+  1: "workflowArgument",
+  2: "variable",
+  3: "invokeOutput / priorStepOutput",
+  4: "contractMapping",
+  5: "(reserved — activity-family rules deferred to future iteration)",
+  6: "contract-default",
+};
+
+export interface ResolvedSourceProvenance {
+  sourceKind: SourceKind;
+  sourceName: string;
+  sourceWorkflow?: string;
+  sourceStep?: string;
+  precedenceTier: PrecedenceTier;
+}
+
+export interface RejectedCandidateRecord {
+  sourceKind: SourceKind;
+  sourceName: string;
+  sourceWorkflow?: string;
+  sourceStep?: string;
+  precedenceTier: PrecedenceTier;
+  rejectionReason: "typeIncompatible" | "slotIncompatible" | "ambiguousPrecedence" | "lowerPrecedence";
+}
+
+export interface InvalidRequiredPropertySubstitution {
+  file: string;
+  workflow: string;
+  activityType: string;
+  propertyName: string;
+  attemptedValue: string;
+  reasonRejected: string;
+  expectedSourceKinds: SourceKind[];
+  packageModeOutcome: "blocked";
+}
+
 export interface RequiredPropertyBinding {
   file: string;
   workflow: string;
@@ -12,6 +60,8 @@ export interface RequiredPropertyBinding {
   severity: "info";
   packageModeOutcome: "bound";
   occurrenceIndex: number;
+  provenance?: ResolvedSourceProvenance;
+  rejectedCandidates?: RejectedCandidateRecord[];
 }
 
 export interface UnresolvedRequiredPropertyDefect {
@@ -23,6 +73,7 @@ export interface UnresolvedRequiredPropertyDefect {
   originalValue: string;
   severity: "execution_blocking" | "handoff_required";
   packageModeOutcome: "structured_defect" | "degraded";
+  rejectedCandidates?: RejectedCandidateRecord[];
 }
 
 export interface ExpressionLoweringFix {
@@ -53,8 +104,10 @@ export interface RequiredPropertyEnforcementResult {
   unresolvedRequiredPropertyDefects: UnresolvedRequiredPropertyDefect[];
   expressionLoweringFixes: ExpressionLoweringFix[];
   expressionLoweringFailures: ExpressionLoweringFailure[];
+  invalidRequiredPropertySubstitutions: InvalidRequiredPropertySubstitution[];
   totalEnforced: number;
   totalDefects: number;
+  totalInvalidSubstitutionsBlocked: number;
   hasBlockingDefects: boolean;
   summary: string;
 }
@@ -103,9 +156,18 @@ export function isGenericTypeDefault(value: string, clrType: string): boolean {
   return false;
 }
 
-export function hasContractValidFallback(prop: CatalogProperty): { valid: boolean; fallbackValue?: string } {
+export interface ContractFallbackResult {
+  valid: boolean;
+  fallbackValue?: string;
+  isDocumentedGenericDefault?: boolean;
+}
+
+export function hasContractValidFallback(prop: CatalogProperty): ContractFallbackResult {
   if (prop.default !== undefined && prop.default !== null && prop.default !== "") {
     if (!isSentinelValue(prop.default)) {
+      if (isGenericTypeDefault(prop.default, prop.clrType)) {
+        return { valid: true, fallbackValue: prop.default, isDocumentedGenericDefault: true };
+      }
       return { valid: true, fallbackValue: prop.default };
     }
   }
@@ -113,6 +175,281 @@ export function hasContractValidFallback(prop: CatalogProperty): { valid: boolea
     return { valid: true, fallbackValue: prop.validValues[0] };
   }
   return { valid: false };
+}
+
+export function isDocumentedContractGenericDefault(prop: CatalogProperty, value: string): boolean {
+  if (prop.default === undefined || prop.default === null) return false;
+  return prop.default === value && isGenericTypeDefault(value, prop.clrType);
+}
+
+export interface UpstreamSourceCandidate {
+  sourceKind: SourceKind;
+  sourceName: string;
+  sourceType: string;
+  sourceWorkflow?: string;
+  sourceStep?: string;
+  precedenceTier: PrecedenceTier;
+}
+
+const CLR_TYPE_COMPATIBILITY: Record<string, Set<string>> = {
+  "System.String": new Set(["System.String", "String", "x:String", "string"]),
+  "System.Boolean": new Set(["System.Boolean", "Boolean", "x:Boolean", "bool"]),
+  "System.Int32": new Set(["System.Int32", "Int32", "x:Int32", "int", "Integer"]),
+  "System.Int64": new Set(["System.Int64", "Int64", "x:Int64", "long", "Long"]),
+  "System.Double": new Set(["System.Double", "Double", "x:Double", "double"]),
+  "System.Object": new Set(["System.Object", "Object", "x:Object"]),
+  "System.Net.Mail.MailMessage": new Set(["System.Net.Mail.MailMessage", "MailMessage"]),
+  "System.Data.DataTable": new Set(["System.Data.DataTable", "DataTable", "scg2:DataTable"]),
+  "System.DateTime": new Set(["System.DateTime", "DateTime", "s:DateTime"]),
+  "System.TimeSpan": new Set(["System.TimeSpan", "TimeSpan", "s:TimeSpan"]),
+  "System.Security.SecureString": new Set(["System.Security.SecureString", "SecureString"]),
+};
+
+export function isTypeCompatible(sourceType: string, targetType: string): boolean {
+  if (!sourceType || !targetType) return true;
+  const normalizedSource = sourceType.trim();
+  const normalizedTarget = targetType.trim();
+  if (normalizedSource === normalizedTarget) return true;
+  if (normalizedTarget === "System.Object" || normalizedTarget === "Object" || normalizedTarget === "x:Object") return true;
+  const targetSet = CLR_TYPE_COMPATIBILITY[normalizedTarget];
+  if (targetSet && targetSet.has(normalizedSource)) return true;
+  const sourceSet = CLR_TYPE_COMPATIBILITY[normalizedSource];
+  if (sourceSet && sourceSet.has(normalizedTarget)) return true;
+  if (normalizedSource.includes("String") && normalizedTarget.includes("String")) return true;
+  return false;
+}
+
+export function isSlotCompatible(sourceKind: SourceKind, propertyDirection: string): boolean {
+  if (propertyDirection === "In" || propertyDirection === "None") {
+    return true;
+  }
+  if (propertyDirection === "Out") {
+    return sourceKind === "variable" || sourceKind === "workflowArgument";
+  }
+  if (propertyDirection === "InOut") {
+    return sourceKind === "variable" || sourceKind === "workflowArgument";
+  }
+  return true;
+}
+
+export function extractUpstreamSources(content: string, workflowName: string): UpstreamSourceCandidate[] {
+  const candidates: UpstreamSourceCandidate[] = [];
+
+  const argPattern = /<x:Property\s+Name="([^"]+)"\s+Type="(?:InArgument|OutArgument|InOutArgument)\(([^)]+)\)"/g;
+  let argMatch;
+  while ((argMatch = argPattern.exec(content)) !== null) {
+    candidates.push({
+      sourceKind: "workflowArgument",
+      sourceName: argMatch[1],
+      sourceType: argMatch[2],
+      sourceWorkflow: workflowName,
+      precedenceTier: 1,
+    });
+  }
+
+  const argPrefixPattern = /(?:x:Property\s+Name|<(?:x:)?Member\s+Name)="(in_[A-Za-z]\w*|out_[A-Za-z]\w*|io_[A-Za-z]\w*)"/g;
+  let prefixMatch;
+  while ((prefixMatch = argPrefixPattern.exec(content)) !== null) {
+    const name = prefixMatch[1];
+    if (!candidates.some(c => c.sourceName === name)) {
+      const typeHint = name.startsWith("in_") || name.startsWith("out_") ? "System.String" : "System.Object";
+      candidates.push({
+        sourceKind: "workflowArgument",
+        sourceName: name,
+        sourceType: typeHint,
+        sourceWorkflow: workflowName,
+        precedenceTier: 1,
+      });
+    }
+  }
+
+  const varPattern1 = /<Variable\s+x:TypeArguments="([^"]+)"\s+Name="([^"]+)"/g;
+  let varMatch;
+  while ((varMatch = varPattern1.exec(content)) !== null) {
+    candidates.push({
+      sourceKind: "variable",
+      sourceName: varMatch[2],
+      sourceType: varMatch[1],
+      sourceWorkflow: workflowName,
+      precedenceTier: 2,
+    });
+  }
+  const varPattern2 = /<Variable\s+Name="([^"]+)"\s+x:TypeArguments="([^"]+)"/g;
+  let varMatch2;
+  while ((varMatch2 = varPattern2.exec(content)) !== null) {
+    if (!candidates.some(c => c.sourceName === varMatch2[1] && c.sourceKind === "variable")) {
+      candidates.push({
+        sourceKind: "variable",
+        sourceName: varMatch2[1],
+        sourceType: varMatch2[2],
+        sourceWorkflow: workflowName,
+        precedenceTier: 2,
+      });
+    }
+  }
+
+  const invokePattern = /WorkflowFileName="([^"]+)"/g;
+  let invokeMatch;
+  while ((invokeMatch = invokePattern.exec(content)) !== null) {
+    const invokedFile = invokeMatch[1];
+    const invokedWorkflow = invokedFile.replace(/\.xaml$/i, "");
+    candidates.push({
+      sourceKind: "invokeOutput",
+      sourceName: `${invokedWorkflow}_output`,
+      sourceType: "System.Object",
+      sourceWorkflow: invokedWorkflow,
+      sourceStep: invokedFile,
+      precedenceTier: 3,
+    });
+  }
+
+  const outputVarPattern = /\s+(?:Result|Output|Value)="(\[[^\]]+\])"/g;
+  let outputMatch;
+  while ((outputMatch = outputVarPattern.exec(content)) !== null) {
+    const varRef = outputMatch[1].replace(/^\[|\]$/g, "").trim();
+    if (/^[a-zA-Z_]\w*$/.test(varRef) && !candidates.some(c => c.sourceName === varRef)) {
+      candidates.push({
+        sourceKind: "priorStepOutput",
+        sourceName: varRef,
+        sourceType: "System.Object",
+        sourceWorkflow: workflowName,
+        precedenceTier: 3,
+      });
+    }
+  }
+
+  return candidates;
+}
+
+export interface CatalogSourceCandidate extends UpstreamSourceCandidate {
+  resolvedLiteralValue?: string;
+}
+
+export function extractCatalogSourceCandidates(
+  schema: ActivitySchema,
+  activityType: string,
+): CatalogSourceCandidate[] {
+  const candidates: CatalogSourceCandidate[] = [];
+
+  for (const prop of schema.activity.properties) {
+    if (!prop.required) continue;
+
+    if (prop.default !== undefined && prop.default !== null && prop.default !== "" && !isSentinelValue(prop.default) && !isGenericTypeDefault(prop.default, prop.clrType)) {
+      candidates.push({
+        sourceKind: "contractMapping",
+        sourceName: prop.name,
+        sourceType: prop.clrType,
+        precedenceTier: 4,
+        resolvedLiteralValue: prop.default,
+      });
+    }
+
+    if (prop.validValues && prop.validValues.length > 0) {
+      candidates.push({
+        sourceKind: "contractMapping",
+        sourceName: prop.name,
+        sourceType: prop.clrType,
+        precedenceTier: 4,
+        resolvedLiteralValue: prop.validValues[0],
+      });
+    }
+  }
+
+  return candidates;
+}
+
+export function resolveSourceForProperty(
+  prop: CatalogProperty,
+  upstreamSources: UpstreamSourceCandidate[],
+  fileName: string,
+  workflowName: string,
+  activityType: string,
+): {
+  resolved: UpstreamSourceCandidate | null;
+  rejectedCandidates: RejectedCandidateRecord[];
+} {
+  const rejectedCandidates: RejectedCandidateRecord[] = [];
+  const sortedCandidates = [...upstreamSources].sort((a, b) => a.precedenceTier - b.precedenceTier);
+
+  const propertyNameLower = prop.name.toLowerCase();
+
+  const exactCandidates = sortedCandidates.filter(c => {
+    const nameLower = c.sourceName.toLowerCase();
+    const strippedName = nameLower.replace(/^(?:in_|out_|io_|str_|int_|bool_|obj_|dt_)/i, "");
+    return nameLower === propertyNameLower || strippedName === propertyNameLower;
+  });
+
+  const fuzzyCandidates = exactCandidates.length > 0 ? [] : sortedCandidates.filter(c => {
+    const nameLower = c.sourceName.toLowerCase();
+    const strippedName = nameLower.replace(/^(?:in_|out_|io_|str_|int_|bool_|obj_|dt_)/i, "");
+    return (nameLower.includes(propertyNameLower) || propertyNameLower.includes(strippedName)) && strippedName.length > 0;
+  });
+
+  const matchingCandidates = exactCandidates.length > 0 ? exactCandidates : fuzzyCandidates;
+
+  if (matchingCandidates.length === 0) return { resolved: null, rejectedCandidates };
+
+  for (const candidate of matchingCandidates) {
+    if (!isTypeCompatible(candidate.sourceType, prop.clrType)) {
+      rejectedCandidates.push({
+        sourceKind: candidate.sourceKind,
+        sourceName: candidate.sourceName,
+        sourceWorkflow: candidate.sourceWorkflow,
+        sourceStep: candidate.sourceStep,
+        precedenceTier: candidate.precedenceTier,
+        rejectionReason: "typeIncompatible",
+      });
+      continue;
+    }
+
+    if (!isSlotCompatible(candidate.sourceKind, prop.direction)) {
+      rejectedCandidates.push({
+        sourceKind: candidate.sourceKind,
+        sourceName: candidate.sourceName,
+        sourceWorkflow: candidate.sourceWorkflow,
+        sourceStep: candidate.sourceStep,
+        precedenceTier: candidate.precedenceTier,
+        rejectionReason: "slotIncompatible",
+      });
+      continue;
+    }
+
+    const sameTierCandidates = matchingCandidates.filter(
+      c => c.precedenceTier === candidate.precedenceTier &&
+        isTypeCompatible(c.sourceType, prop.clrType) &&
+        isSlotCompatible(c.sourceKind, prop.direction)
+    );
+    if (sameTierCandidates.length > 1) {
+      for (const ambiguous of sameTierCandidates) {
+        rejectedCandidates.push({
+          sourceKind: ambiguous.sourceKind,
+          sourceName: ambiguous.sourceName,
+          sourceWorkflow: ambiguous.sourceWorkflow,
+          sourceStep: ambiguous.sourceStep,
+          precedenceTier: ambiguous.precedenceTier,
+          rejectionReason: "ambiguousPrecedence",
+        });
+      }
+      return { resolved: null, rejectedCandidates };
+    }
+
+    for (const lowerCandidate of matchingCandidates) {
+      if (lowerCandidate !== candidate && lowerCandidate.precedenceTier > candidate.precedenceTier) {
+        rejectedCandidates.push({
+          sourceKind: lowerCandidate.sourceKind,
+          sourceName: lowerCandidate.sourceName,
+          sourceWorkflow: lowerCandidate.sourceWorkflow,
+          sourceStep: lowerCandidate.sourceStep,
+          precedenceTier: lowerCandidate.precedenceTier,
+          rejectionReason: "lowerPrecedence",
+        });
+      }
+    }
+
+    return { resolved: candidate, rejectedCandidates };
+  }
+
+  return { resolved: null, rejectedCandidates };
 }
 
 export function tryLowerStructuredExpression(value: string): { lowered: boolean; result: string; reason?: string } {
@@ -147,6 +484,7 @@ export function enforceRequiredProperties(
   const defects: UnresolvedRequiredPropertyDefect[] = [];
   const exprFixes: ExpressionLoweringFix[] = [];
   const exprFailures: ExpressionLoweringFailure[] = [];
+  const invalidSubstitutions: InvalidRequiredPropertySubstitution[] = [];
 
   if (!catalogService.isLoaded()) {
     if (isPackageMode) {
@@ -165,8 +503,10 @@ export function enforceRequiredProperties(
       unresolvedRequiredPropertyDefects: defects,
       expressionLoweringFixes: exprFixes,
       expressionLoweringFailures: exprFailures,
+      invalidRequiredPropertySubstitutions: invalidSubstitutions,
       totalEnforced: 0,
       totalDefects,
+      totalInvalidSubstitutionsBlocked: 0,
       hasBlockingDefects,
       summary: summaryParts.join("; "),
     };
@@ -175,7 +515,8 @@ export function enforceRequiredProperties(
   for (const entry of xamlEntries) {
     const fileName = entry.name.split("/").pop() || entry.name;
     const workflowName = fileName.replace(/\.xaml$/i, "");
-    enforceForFile(entry, fileName, workflowName, isPackageMode, bindings, defects, exprFixes, exprFailures);
+    const upstreamSources = extractUpstreamSources(entry.content, workflowName);
+    enforceForFile(entry, fileName, workflowName, isPackageMode, bindings, defects, exprFixes, exprFailures, invalidSubstitutions, upstreamSources);
   }
 
   const totalDefects = defects.length + exprFailures.length;
@@ -187,14 +528,17 @@ export function enforceRequiredProperties(
   if (defects.length > 0) summaryParts.push(`${defects.length} unresolved required property defect(s)`);
   if (exprFixes.length > 0) summaryParts.push(`${exprFixes.length} structured expression(s) lowered`);
   if (exprFailures.length > 0) summaryParts.push(`${exprFailures.length} expression lowering failure(s)`);
+  if (invalidSubstitutions.length > 0) summaryParts.push(`${invalidSubstitutions.length} invalid generic substitution(s) blocked`);
 
   return {
     requiredPropertyBindings: bindings,
     unresolvedRequiredPropertyDefects: defects,
     expressionLoweringFixes: exprFixes,
     expressionLoweringFailures: exprFailures,
+    invalidRequiredPropertySubstitutions: invalidSubstitutions,
     totalEnforced: bindings.length + exprFixes.length,
     totalDefects,
+    totalInvalidSubstitutionsBlocked: invalidSubstitutions.length,
     hasBlockingDefects,
     summary: summaryParts.length > 0 ? summaryParts.join("; ") : "No required property issues found",
   };
@@ -209,6 +553,8 @@ function enforceForFile(
   defects: UnresolvedRequiredPropertyDefect[],
   exprFixes: ExpressionLoweringFix[],
   exprFailures: ExpressionLoweringFailure[],
+  invalidSubstitutions: InvalidRequiredPropertySubstitution[],
+  upstreamSources: UpstreamSourceCandidate[],
 ): void {
   const activityTagPattern = /<((?:[a-z]+:)?[A-Z][A-Za-z]+)\s([^>]*?)(\/>|>)/g;
   let match;
@@ -230,6 +576,9 @@ function enforceForFile(
     const endIdx = entry.content.indexOf(closeTag, tagStart);
     const bodySection = endIdx > 0 ? entry.content.substring(tagStart, endIdx) : match[0];
 
+    const catalogSources = extractCatalogSourceCandidates(schema, strippedTag);
+    const mergedSources = [...upstreamSources, ...catalogSources];
+
     for (const propDef of schema.activity.properties) {
       if (!propDef.required) continue;
 
@@ -239,7 +588,7 @@ function enforceForFile(
       if (!attrPresent && !childPresent) {
         handleMissingRequiredProperty(
           fileName, workflowName, strippedTag, propDef, isPackageMode,
-          bindings, defects, currentOccurrence,
+          bindings, defects, currentOccurrence, mergedSources,
         );
         continue;
       }
@@ -250,7 +599,7 @@ function enforceForFile(
           const rawValue = valMatch[1];
           checkPropertyValue(
             fileName, workflowName, strippedTag, propDef, rawValue, isPackageMode,
-            bindings, defects, exprFixes, exprFailures, currentOccurrence,
+            bindings, defects, exprFixes, exprFailures, invalidSubstitutions, currentOccurrence, mergedSources,
           );
         }
       } else if (childPresent) {
@@ -263,7 +612,7 @@ function enforceForFile(
           if (innerVal) {
             checkPropertyValue(
               fileName, workflowName, strippedTag, propDef, innerVal, isPackageMode,
-              bindings, defects, exprFixes, exprFailures, currentOccurrence,
+              bindings, defects, exprFixes, exprFailures, invalidSubstitutions, currentOccurrence, mergedSources,
             );
           }
         }
@@ -326,9 +675,44 @@ function handleMissingRequiredProperty(
   bindings: RequiredPropertyBinding[],
   defects: UnresolvedRequiredPropertyDefect[],
   occurrenceIndex: number,
+  upstreamSources: UpstreamSourceCandidate[] = [],
 ): void {
-  const fallback = hasContractValidFallback(prop);
+  const sourceResolution = resolveSourceForProperty(prop, upstreamSources, fileName, workflowName, activityType);
+  if (sourceResolution.resolved) {
+    const resolved = sourceResolution.resolved;
+    const catalogCandidate = resolved as CatalogSourceCandidate;
+    let resolvedValue: string;
+    if (catalogCandidate.resolvedLiteralValue && resolved.sourceKind === "contractMapping") {
+      resolvedValue = catalogCandidate.resolvedLiteralValue;
+    } else {
+      resolvedValue = `[${resolved.sourceName}]`;
+    }
 
+    bindings.push({
+      file: fileName,
+      workflow: workflowName,
+      activityType,
+      propertyName: prop.name,
+      sourceBinding: resolved.sourceKind,
+      originalValue: "",
+      resolvedValue,
+      severity: "info",
+      packageModeOutcome: "bound",
+      occurrenceIndex,
+      provenance: {
+        sourceKind: resolved.sourceKind,
+        sourceName: resolved.sourceName,
+        sourceWorkflow: resolved.sourceWorkflow,
+        sourceStep: resolved.sourceStep,
+        precedenceTier: resolved.precedenceTier,
+      },
+      rejectedCandidates: sourceResolution.rejectedCandidates.length > 0 ? sourceResolution.rejectedCandidates : undefined,
+    });
+    console.log(`[RequiredPropertyEnforcer] SOURCE-RESOLVED: ${activityType}.${prop.name} in ${fileName} — bound to ${resolved.sourceKind}:${resolved.sourceName} (tier ${resolved.precedenceTier})`);
+    return;
+  }
+
+  const fallback = hasContractValidFallback(prop);
   if (fallback.valid && fallback.fallbackValue) {
     bindings.push({
       file: fileName,
@@ -341,6 +725,12 @@ function handleMissingRequiredProperty(
       severity: "info",
       packageModeOutcome: "bound",
       occurrenceIndex,
+      provenance: {
+        sourceKind: "contract-default",
+        sourceName: `${activityType}.${prop.name}.default`,
+        precedenceTier: 6,
+      },
+      rejectedCandidates: sourceResolution.rejectedCandidates.length > 0 ? sourceResolution.rejectedCandidates : undefined,
     });
     return;
   }
@@ -355,6 +745,7 @@ function handleMissingRequiredProperty(
       originalValue: "",
       severity: "execution_blocking",
       packageModeOutcome: "structured_defect",
+      rejectedCandidates: sourceResolution.rejectedCandidates.length > 0 ? sourceResolution.rejectedCandidates : undefined,
     });
     console.warn(`[RequiredPropertyEnforcer] DEFECT: ${activityType}.${prop.name} in ${fileName} — no contract-valid fallback, blocking`);
   }
@@ -371,7 +762,9 @@ function checkPropertyValue(
   defects: UnresolvedRequiredPropertyDefect[],
   exprFixes: ExpressionLoweringFix[],
   exprFailures: ExpressionLoweringFailure[],
+  invalidSubstitutions: InvalidRequiredPropertySubstitution[],
   occurrenceIndex: number,
+  upstreamSources: UpstreamSourceCandidate[] = [],
 ): void {
   const unwrappedValue = rawValue.replace(/^\[|\]$/g, "").trim();
   if (isSentinelValue(rawValue) || isSentinelValue(unwrappedValue)) {
@@ -391,22 +784,90 @@ function checkPropertyValue(
     return;
   }
 
-  if (isPackageMode && isGenericTypeDefault(rawValue, prop.clrType)) {
-    const fallback = hasContractValidFallback(prop);
-    if (!fallback.valid || fallback.fallbackValue !== rawValue) {
-      defects.push({
+  const isGenericRaw = isGenericTypeDefault(rawValue, prop.clrType);
+  const isGenericUnwrapped = !isGenericRaw && isGenericTypeDefault(unwrappedValue, prop.clrType);
+  if (isPackageMode && (isGenericRaw || isGenericUnwrapped)) {
+    const sourceResolution = resolveSourceForProperty(prop, upstreamSources, fileName, workflowName, activityType);
+    if (sourceResolution.resolved) {
+      const resolved = sourceResolution.resolved;
+      const catalogCandidate = resolved as CatalogSourceCandidate;
+      let resolvedValue: string;
+      if (catalogCandidate.resolvedLiteralValue && resolved.sourceKind === "contractMapping") {
+        resolvedValue = catalogCandidate.resolvedLiteralValue;
+      } else {
+        resolvedValue = `[${resolved.sourceName}]`;
+      }
+
+      bindings.push({
         file: fileName,
         workflow: workflowName,
         activityType,
         propertyName: prop.name,
-        failureReason: `Required property "${prop.name}" on ${activityType} contains generic type default "${rawValue}" that is not a documented contract fallback`,
+        sourceBinding: resolved.sourceKind,
         originalValue: rawValue,
-        severity: "execution_blocking",
-        packageModeOutcome: "structured_defect",
+        resolvedValue,
+        severity: "info",
+        packageModeOutcome: "bound",
+        occurrenceIndex,
+        provenance: {
+          sourceKind: resolved.sourceKind,
+          sourceName: resolved.sourceName,
+          sourceWorkflow: resolved.sourceWorkflow,
+          sourceStep: resolved.sourceStep,
+          precedenceTier: resolved.precedenceTier,
+        },
+        rejectedCandidates: sourceResolution.rejectedCandidates.length > 0 ? sourceResolution.rejectedCandidates : undefined,
       });
-      console.warn(`[RequiredPropertyEnforcer] GENERIC DEFAULT DEFECT: ${activityType}.${prop.name} = "${rawValue}" in ${fileName} — not contract-documented`);
+      console.log(`[RequiredPropertyEnforcer] SOURCE-RESOLVED (replaced generic default): ${activityType}.${prop.name} in ${fileName} — bound to ${resolved.sourceKind}:${resolved.sourceName} (tier ${resolved.precedenceTier})`);
       return;
     }
+
+    if (isDocumentedContractGenericDefault(prop, isGenericRaw ? rawValue : unwrappedValue)) {
+      bindings.push({
+        file: fileName,
+        workflow: workflowName,
+        activityType,
+        propertyName: prop.name,
+        sourceBinding: "contract-default",
+        originalValue: rawValue,
+        resolvedValue: rawValue,
+        severity: "info",
+        packageModeOutcome: "bound",
+        occurrenceIndex,
+        provenance: {
+          sourceKind: "contract-default",
+          sourceName: `${activityType}.${prop.name}.default`,
+          precedenceTier: 6,
+        },
+        rejectedCandidates: sourceResolution.rejectedCandidates.length > 0 ? sourceResolution.rejectedCandidates : undefined,
+      });
+      console.log(`[RequiredPropertyEnforcer] DOCUMENTED-GENERIC-DEFAULT ACCEPTED: ${activityType}.${prop.name} in ${fileName} — catalog explicitly documents this generic default`);
+      return;
+    }
+
+    invalidSubstitutions.push({
+      file: fileName,
+      workflow: workflowName,
+      activityType,
+      propertyName: prop.name,
+      attemptedValue: rawValue,
+      reasonRejected: `Generic type default "${rawValue}" for ${prop.clrType} is not resolvable from upstream sources and is not a documented contract fallback for ${activityType}.${prop.name}`,
+      expectedSourceKinds: ["workflowArgument", "variable", "invokeOutput", "priorStepOutput", "contractMapping"],
+      packageModeOutcome: "blocked",
+    });
+    defects.push({
+      file: fileName,
+      workflow: workflowName,
+      activityType,
+      propertyName: prop.name,
+      failureReason: `Required property "${prop.name}" on ${activityType} contains generic type default "${rawValue}" — source resolution attempted but no valid upstream source found — invalid substitution blocked`,
+      originalValue: rawValue,
+      severity: "execution_blocking",
+      packageModeOutcome: "structured_defect",
+      rejectedCandidates: sourceResolution.rejectedCandidates.length > 0 ? sourceResolution.rejectedCandidates : undefined,
+    });
+    console.warn(`[RequiredPropertyEnforcer] INVALID SUBSTITUTION BLOCKED: ${activityType}.${prop.name} = "${rawValue}" in ${fileName} — source resolution failed, generic default not contract-valid`);
+    return;
   }
 
   const lowerResult = tryLowerStructuredExpression(rawValue);
@@ -441,17 +902,40 @@ function checkPropertyValue(
     });
   }
 
+  const resolvedRef = unwrappedValue;
+  let provenance: ResolvedSourceProvenance | undefined;
+  if (/^[a-zA-Z_]\w*$/.test(resolvedRef)) {
+    const matchingSource = upstreamSources.find(s => s.sourceName === resolvedRef);
+    if (matchingSource) {
+      provenance = {
+        sourceKind: matchingSource.sourceKind,
+        sourceName: matchingSource.sourceName,
+        sourceWorkflow: matchingSource.sourceWorkflow,
+        sourceStep: matchingSource.sourceStep,
+        precedenceTier: matchingSource.precedenceTier,
+      };
+    }
+  }
+  if (!provenance) {
+    provenance = {
+      sourceKind: "attribute-value",
+      sourceName: rawValue.substring(0, 80),
+      precedenceTier: 4,
+    };
+  }
+
   bindings.push({
     file: fileName,
     workflow: workflowName,
     activityType,
     propertyName: prop.name,
-    sourceBinding: "attribute-value",
+    sourceBinding: provenance.sourceKind,
     originalValue: rawValue,
     resolvedValue: lowerResult.result,
     severity: "info",
     packageModeOutcome: "bound",
     occurrenceIndex,
+    provenance,
   });
 }
 
@@ -613,7 +1097,7 @@ export function applyRequiredPropertyEnforcement(
     const updatedEntries = xamlEntries.map(entry => {
       let content = entry.content;
       content = stripSentinelValuesFromRequiredProperties(content);
-      content = injectContractValidFallbacks(content, enforcementResult.requiredPropertyBindings, entry.name);
+      content = injectResolvedPropertyBindings(content, enforcementResult.requiredPropertyBindings, entry.name);
       content = lowerStructuredExpressionsPerProperty(content, enforcementResult.expressionLoweringFixes, entry.name);
       content = lowerStructuredExpressionsInContent(content, entry.name, globalLoweringFailures);
       return { ...entry, content };
@@ -639,7 +1123,7 @@ export function applyRequiredPropertyEnforcement(
   };
 }
 
-function injectContractValidFallbacks(
+function injectResolvedPropertyBindings(
   content: string,
   bindings: RequiredPropertyBinding[],
   entryName: string,
@@ -647,11 +1131,16 @@ function injectContractValidFallbacks(
   let result = content;
   const fileName = entryName.split("/").pop() || entryName;
 
-  const relevantBindings = bindings.filter(
-    b => b.file === fileName && b.sourceBinding === "contract-default" && b.resolvedValue,
+  const INJECTABLE_SOURCE_KINDS = new Set([
+    "contract-default", "workflowArgument", "variable", "invokeOutput",
+    "priorStepOutput", "contractMapping",
+  ]);
+
+  const missingBindings = bindings.filter(
+    b => b.file === fileName && INJECTABLE_SOURCE_KINDS.has(b.sourceBinding) && b.resolvedValue && b.originalValue === "",
   );
 
-  for (const binding of relevantBindings) {
+  for (const binding of missingBindings) {
     const tagPattern = new RegExp(`(<(?:[a-z]+:)?${binding.activityType}\\s)([^>]*?)(/?>)`, "g");
     let matchIdx = 0;
     result = result.replace(tagPattern, (match, prefix: string, attrs: string, closing: string) => {
@@ -660,6 +1149,23 @@ function injectContractValidFallbacks(
       const attrBoundary = new RegExp(`(?:^|\\s)${binding.propertyName}="`);
       if (attrBoundary.test(attrs)) return match;
       return `${prefix}${attrs} ${binding.propertyName}="${binding.resolvedValue}"${closing}`;
+    });
+  }
+
+  const replacementBindings = bindings.filter(
+    b => b.file === fileName && INJECTABLE_SOURCE_KINDS.has(b.sourceBinding) && b.resolvedValue && b.originalValue !== "" && b.resolvedValue !== b.originalValue,
+  );
+
+  for (const binding of replacementBindings) {
+    const tagPattern = new RegExp(`(<(?:[a-z]+:)?${binding.activityType}\\s)([^>]*?)(/?>)`, "g");
+    let matchIdx = 0;
+    result = result.replace(tagPattern, (match, prefix: string, attrs: string, closing: string) => {
+      const currentIdx = matchIdx++;
+      if (currentIdx !== binding.occurrenceIndex) return match;
+      const escaped = binding.originalValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const attrRegex = new RegExp(`((?:^|\\s)${binding.propertyName}=")${escaped}(")`);
+      const replaced = attrs.replace(attrRegex, `$1${binding.resolvedValue}$2`);
+      return `${prefix}${replaced}${closing}`;
     });
   }
 

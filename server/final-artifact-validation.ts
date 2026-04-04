@@ -41,6 +41,7 @@ import {
   type UnresolvedRequiredPropertyDefect,
   type ExpressionLoweringFix,
   type ExpressionLoweringFailure,
+  type InvalidRequiredPropertySubstitution,
 } from "./required-property-enforcer";
 
 export interface FinalArtifactValidationInput {
@@ -122,6 +123,8 @@ export interface FinalQualityReport {
   unresolvedRequiredPropertyDefects: UnresolvedRequiredPropertyDefect[];
   expressionLoweringFixes: ExpressionLoweringFix[];
   expressionLoweringFailures: ExpressionLoweringFailure[];
+  invalidRequiredPropertySubstitutions: InvalidRequiredPropertySubstitution[];
+  totalInvalidSubstitutionsBlocked: number;
   requiredPropertyEnforcementSummary?: string;
   preComplianceGuardPassed: boolean;
   preComplianceGuardViolationCount: number;
@@ -314,8 +317,9 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
   const hasUnresolvableJsonDefects = targetValueResult.unresolvableJsonDefects.length > 0;
   const hasRequiredPropertyDefects = requiredPropertyEnforcement.unresolvedRequiredPropertyDefects.length > 0;
   const hasExpressionLoweringFailures = requiredPropertyEnforcement.expressionLoweringFailures.length > 0;
+  const hasInvalidSubstitutions = requiredPropertyEnforcement.invalidRequiredPropertySubstitutions.length > 0;
   const preComplianceGuardFailed = !preComplianceGuard.passed;
-  const hasDegradation = entryPointHasBlockers || hasStructuralBlockers || hasAnyStubContent || qgIncomplete || executablePathResult.hasExecutablePathContamination || graphValidation.hasWorkflowGraphIntegrityIssues || contractIntegrityResult.hasContractIntegrityIssues || hasResidualDefects || hasSymbolScopeDefects || hasSentinelReplacements || hasUnresolvableJsonDefects || hasRequiredPropertyDefects || hasExpressionLoweringFailures || preComplianceGuardFailed;
+  const hasDegradation = entryPointHasBlockers || hasStructuralBlockers || hasAnyStubContent || qgIncomplete || executablePathResult.hasExecutablePathContamination || graphValidation.hasWorkflowGraphIntegrityIssues || contractIntegrityResult.hasContractIntegrityIssues || hasResidualDefects || hasSymbolScopeDefects || hasSentinelReplacements || hasUnresolvableJsonDefects || hasRequiredPropertyDefects || hasExpressionLoweringFailures || hasInvalidSubstitutions || preComplianceGuardFailed;
 
   let derivedStatus: PackageStatus;
   let statusReason: string;
@@ -448,6 +452,8 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
     unresolvedRequiredPropertyDefects: requiredPropertyEnforcement.unresolvedRequiredPropertyDefects,
     expressionLoweringFixes: requiredPropertyEnforcement.expressionLoweringFixes,
     expressionLoweringFailures: requiredPropertyEnforcement.expressionLoweringFailures,
+    invalidRequiredPropertySubstitutions: requiredPropertyEnforcement.invalidRequiredPropertySubstitutions,
+    totalInvalidSubstitutionsBlocked: requiredPropertyEnforcement.totalInvalidSubstitutionsBlocked,
     requiredPropertyEnforcementSummary: requiredPropertyEnforcement.summary,
     preComplianceGuardPassed: preComplianceGuard.passed,
     preComplianceGuardViolationCount: preComplianceGuard.violations.length,
