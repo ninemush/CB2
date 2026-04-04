@@ -35,11 +35,165 @@ export interface WorkflowStatusClassifierResult {
 let _monotonicCounter = 0;
 let _latestArchiveFinalizationMarker = 0;
 
+export interface SealedAuthoritativeEntry {
+  name: string;
+  content: string;
+  contentHash: string;
+}
+
+export interface ArchiveAuthorityDiagnostics {
+  authoritativeSource: "postGateXamlEntries";
+  nonAuthoritativeSource: "deferredWrites";
+  accessorUsed: boolean;
+  perFile: Array<{
+    file: string;
+    authoritativeHash: string;
+    appendedHash: string;
+    identical: boolean;
+  }>;
+  directAccessAttemptsBlocked: number;
+  nonAuthoritativeConsultedAfterFreeze: boolean;
+  violationReason: string | null;
+}
+
+interface SealedAuthoritativeSource {
+  entries: Map<string, SealedAuthoritativeEntry>;
+  sealTimestamp: number;
+  accessorUsed: boolean;
+  directAccessAttemptsBlocked: number;
+  nonAuthoritativeConsultedAfterFreeze: boolean;
+  appendedHashes: Map<string, string>;
+  violationReason: string | null;
+}
+
+let _sealedAuthoritativeSource: SealedAuthoritativeSource | null = null;
+let _accessorCallActive = false;
+
+export function sealAuthoritativeXamlSource(
+  entries: Array<{ name: string; content: string }>,
+): void {
+  const sealed = new Map<string, SealedAuthoritativeEntry>();
+  for (const entry of entries) {
+    if (!entry.name.endsWith(".xaml")) continue;
+    const hash = computeContentHash(entry.content);
+    sealed.set(entry.name, { name: entry.name, content: entry.content, contentHash: hash });
+  }
+  _sealedAuthoritativeSource = {
+    entries: sealed,
+    sealTimestamp: Date.now(),
+    accessorUsed: false,
+    directAccessAttemptsBlocked: 0,
+    nonAuthoritativeConsultedAfterFreeze: false,
+    appendedHashes: new Map(),
+    violationReason: null,
+  };
+  console.log(`[Archive Authority] Sealed ${sealed.size} XAML entries as authoritative source (postGateXamlEntries)`);
+}
+
+/**
+ * Authoritative accessor for archive-bound XAML content.
+ *
+ * Lifecycle contract:
+ *   1. sealAuthoritativeXamlSource() — seals postGateXamlEntries as authoritative
+ *   2. getAuthoritativeXamlForArchive() — sole legal path for archive append (callable after seal)
+ *   3. freezeArchiveWorkflows() — establishes freeze; after freeze, direct reads are blocked
+ *
+ * The accessor is valid after seal (step 1). After freeze (step 3), it remains the sole
+ * exempted path — all direct reads from postGateXamlEntries or deferredWrites for
+ * archive-bound XAML are blocked by the runtime invariant.
+ */
+export function getAuthoritativeXamlForArchive(): Array<SealedAuthoritativeEntry> {
+  if (!_sealedAuthoritativeSource) {
+    throw new Error(
+      "[Archive Authority] FATAL: getAuthoritativeXamlForArchive() called before authoritative source is sealed. " +
+      "Call sealAuthoritativeXamlSource() first."
+    );
+  }
+  _sealedAuthoritativeSource.accessorUsed = true;
+  _accessorCallActive = true;
+  const result = Array.from(_sealedAuthoritativeSource.entries.values());
+  _accessorCallActive = false;
+  return result;
+}
+
+export function recordAuthoritativeAppendHash(fileName: string, appendedHash: string): void {
+  if (_sealedAuthoritativeSource) {
+    _sealedAuthoritativeSource.appendedHashes.set(fileName, appendedHash);
+  }
+}
+
+export function isAuthoritativeXamlSealed(): boolean {
+  return _sealedAuthoritativeSource !== null;
+}
+
+export function assertArchiveBoundXamlReadAllowed(
+  source: "postGateXamlEntries" | "deferredWrites",
+  file: string,
+  isPackageMode: boolean,
+): void {
+  if (!_archiveFreezePoint) return;
+  if (_accessorCallActive) return;
+
+  const normalized = normalizeClassifierFileName(file);
+  const frozenEntry = _archiveFreezePoint.frozenWorkflows.get(normalized);
+  if (!frozenEntry) return;
+
+  if (_sealedAuthoritativeSource) {
+    _sealedAuthoritativeSource.directAccessAttemptsBlocked++;
+    if (source === "deferredWrites") {
+      _sealedAuthoritativeSource.nonAuthoritativeConsultedAfterFreeze = true;
+    }
+    _sealedAuthoritativeSource.violationReason =
+      `Direct ${source} content read for archive-bound XAML "${file}" after freeze`;
+  }
+
+  if (isPackageMode) {
+    throw new Error(
+      `[Archive Authority] FATAL: Direct ${source} content read for archive-bound XAML "${file}" after freeze. ` +
+      `Use getAuthoritativeXamlForArchive() accessor instead. Direct reads from postGateXamlEntries or deferredWrites ` +
+      `are forbidden after freeze in package mode.`
+    );
+  }
+}
+
+export function getArchiveAuthorityDiagnostics(): ArchiveAuthorityDiagnostics | null {
+  if (!_sealedAuthoritativeSource) return null;
+
+  const perFile: ArchiveAuthorityDiagnostics["perFile"] = [];
+  for (const [name, entry] of _sealedAuthoritativeSource.entries) {
+    const shortName = name.split("/").pop() || name;
+    const appendedHash = _sealedAuthoritativeSource.appendedHashes.get(name) || "not-appended";
+    perFile.push({
+      file: shortName,
+      authoritativeHash: entry.contentHash,
+      appendedHash,
+      identical: entry.contentHash === appendedHash,
+    });
+  }
+
+  return {
+    authoritativeSource: "postGateXamlEntries",
+    nonAuthoritativeSource: "deferredWrites",
+    accessorUsed: _sealedAuthoritativeSource.accessorUsed,
+    perFile,
+    directAccessAttemptsBlocked: _sealedAuthoritativeSource.directAccessAttemptsBlocked,
+    nonAuthoritativeConsultedAfterFreeze: _sealedAuthoritativeSource.nonAuthoritativeConsultedAfterFreeze,
+    violationReason: _sealedAuthoritativeSource.violationReason,
+  };
+}
+
+export function resetAuthoritativeSeal(): void {
+  _sealedAuthoritativeSource = null;
+  _accessorCallActive = false;
+}
+
 export function resetMonotonicCounter(): void {
   _monotonicCounter = 0;
   _latestArchiveFinalizationMarker = 0;
   _archiveFreezePoint = null;
   _mutationTraceEntries = [];
+  _sealedAuthoritativeSource = null;
+  _accessorCallActive = false;
 }
 
 function nextStageMarker(): number {
@@ -535,6 +689,12 @@ export function createGuardedPostGateEntries(
     const baseName = (entry.name.split("/").pop() || entry.name);
     if (!baseName.endsWith(".xaml")) return entry;
     return new Proxy(entry, {
+      get(target, prop, receiver) {
+        if (prop === "content") {
+          assertArchiveBoundXamlReadAllowed("postGateXamlEntries", baseName, isPackageMode);
+        }
+        return Reflect.get(target, prop, receiver);
+      },
       set(target, prop, value) {
         if (prop === "content" && typeof value === "string") {
           if (!_archiveFreezePoint) {
@@ -582,6 +742,13 @@ export function createGuardedDeferredWrites(
   original: Map<string, string>,
   isPackageMode: boolean,
 ): Map<string, string> {
+  function guardXamlContentRead(key: string): void {
+    if (key.endsWith(".xaml")) {
+      const baseName = key.split("/").pop() || key;
+      assertArchiveBoundXamlReadAllowed("deferredWrites", baseName, isPackageMode);
+    }
+  }
+
   const handler: ProxyHandler<Map<string, string>> = {
     get(target, prop, receiver) {
       if (prop === "set") {
@@ -589,6 +756,71 @@ export function createGuardedDeferredWrites(
           checkPostFreezeDeferredWriteMutation("post-freeze-deferredWrites-guard", key, value, isPackageMode);
           return target.set(key, value);
         };
+      }
+      if (prop === "get") {
+        return function guardedGet(key: string) {
+          guardXamlContentRead(key);
+          return target.get(key);
+        };
+      }
+      if (prop === "forEach") {
+        return function guardedForEach(
+          callback: (value: string, key: string, map: Map<string, string>) => void,
+          thisArg?: unknown,
+        ) {
+          target.forEach((value, key, map) => {
+            guardXamlContentRead(key);
+            callback.call(thisArg, value, key, map);
+          });
+        };
+      }
+      if (prop === "entries") {
+        return function guardedEntries() {
+          const iter = target.entries();
+          return {
+            [Symbol.iterator]() { return this; },
+            next(): IteratorResult<[string, string]> {
+              const result = iter.next();
+              if (!result.done) {
+                guardXamlContentRead(result.value[0]);
+              }
+              return result;
+            },
+          };
+        };
+      }
+      if (prop === "values") {
+        return function guardedValues() {
+          const entries = Array.from(target.entries());
+          let index = 0;
+          return {
+            [Symbol.iterator]() { return this; },
+            next(): IteratorResult<string> {
+              if (index >= entries.length) return { done: true, value: undefined };
+              const [key, value] = entries[index++];
+              guardXamlContentRead(key);
+              return { done: false, value };
+            },
+          };
+        };
+      }
+      if (prop === Symbol.iterator) {
+        return function guardedIterator() {
+          const iter = target.entries();
+          return {
+            [Symbol.iterator]() { return this; },
+            next(): IteratorResult<[string, string]> {
+              const result = iter.next();
+              if (!result.done) {
+                guardXamlContentRead(result.value[0]);
+              }
+              return result;
+            },
+          };
+        };
+      }
+      if (prop === "size") {
+        return target.size;
       }
       const val = Reflect.get(target, prop, receiver);
       return typeof val === "function" ? val.bind(target) : val;

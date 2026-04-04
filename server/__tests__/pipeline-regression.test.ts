@@ -25,6 +25,10 @@ import {
   assertNoPostFreezeStatusMutation,
   buildWorkflowStatusParity,
   normalizeClassifierFileName,
+  sealAuthoritativeXamlSource,
+  getAuthoritativeXamlForArchive,
+  recordAuthoritativeAppendHash,
+  getArchiveAuthorityDiagnostics,
   type PostClassifierMutationTraceEntry,
   type FrozenWorkflowEntry,
   type WorkflowStatusParityEntry,
@@ -1531,6 +1535,95 @@ describe("Compiler-invariant regression tests", () => {
       expect(Object.keys(trace.perFileMutationCounts!).length).toBeGreaterThanOrEqual(2);
       expect(trace.filesChangedAfterFreeze).toBeDefined();
       expect(trace.filesChangedAfterFreeze!.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe("Task 435 regression: archive append authority unification", () => {
+    const VALID_XAML = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="Main"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation">
+  <Sequence DisplayName="Main Sequence">
+    <Sequence.Variables>
+      <Variable x:TypeArguments="x:String" Name="TestVar" Default="hello" />
+    </Sequence.Variables>
+  </Sequence>
+</Activity>`;
+
+    it("full integration: seal → accessor → append → freeze → guard lifecycle", () => {
+      const postGateEntries = [
+        { name: "lib/Main.xaml", content: VALID_XAML },
+        { name: "lib/Helper.xaml", content: VALID_XAML.replace("Main Sequence", "Helper Sequence") },
+      ];
+
+      sealAuthoritativeXamlSource(postGateEntries);
+      const authEntries = getAuthoritativeXamlForArchive();
+
+      expect(authEntries).toHaveLength(2);
+      expect(authEntries[0].content).toBe(postGateEntries[0].content);
+      expect(authEntries[1].content).toBe(postGateEntries[1].content);
+
+      for (const entry of authEntries) {
+        const hash = Buffer.from(entry.content).toString("base64").slice(0, 16);
+        recordAuthoritativeAppendHash(entry.name, hash);
+      }
+
+      const classification = classifyWorkflowStatus(postGateEntries);
+      freezeArchiveWorkflows(postGateEntries, classification);
+
+      const guarded = createGuardedPostGateEntries(postGateEntries, true);
+      expect(() => {
+        const _content = guarded[0].content;
+      }).toThrow(/Archive Authority.*FATAL/);
+
+      const dw = new Map<string, string>();
+      dw.set("lib/Main.xaml", VALID_XAML);
+      const guardedDw = createGuardedDeferredWrites(dw, true);
+      expect(() => {
+        guardedDw.get("lib/Main.xaml");
+      }).toThrow(/Archive Authority.*FATAL/);
+
+      const postFreezeAuth = getAuthoritativeXamlForArchive();
+      expect(postFreezeAuth).toHaveLength(2);
+      expect(postFreezeAuth[0].content).toBe(postGateEntries[0].content);
+
+      const diag = getArchiveAuthorityDiagnostics();
+      expect(diag).not.toBeNull();
+      expect(diag!.authoritativeSource).toBe("postGateXamlEntries");
+      expect(diag!.accessorUsed).toBe(true);
+      expect(diag!.perFile).toHaveLength(2);
+      for (const pf of diag!.perFile) {
+        expect(pf.authoritativeHash).toBeDefined();
+        expect(pf.appendedHash).toBeDefined();
+      }
+    });
+
+    it("archive XAML content only comes from sealed authoritative entries, not deferredWrites", () => {
+      const authContent = VALID_XAML;
+      const driftedContent = VALID_XAML + "<!-- drifted -->";
+
+      const postGateEntries = [{ name: "lib/Main.xaml", content: authContent }];
+      sealAuthoritativeXamlSource(postGateEntries);
+
+      const authEntries = getAuthoritativeXamlForArchive();
+      expect(authEntries[0].content).toBe(authContent);
+      expect(authEntries[0].content).not.toBe(driftedContent);
+
+      const dw = new Map<string, string>();
+      dw.set("lib/Main.xaml", driftedContent);
+
+      const classification = classifyWorkflowStatus(postGateEntries);
+      freezeArchiveWorkflows(postGateEntries, classification);
+
+      const guardedDw = createGuardedDeferredWrites(dw, true);
+      expect(() => guardedDw.get("lib/Main.xaml")).toThrow(/Archive Authority.*FATAL/);
+      expect(() => { for (const [_k, _v] of guardedDw.entries()) {} }).toThrow(/Archive Authority.*FATAL/);
+
+      const stillAuth = getAuthoritativeXamlForArchive();
+      expect(stillAuth[0].content).toBe(authContent);
     });
   });
 });

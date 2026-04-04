@@ -62,7 +62,7 @@ import archiver from "archiver";
   import { getAndClearPropertySerializationTrace, getAndClearInvokeContractTrace, getAndClearStageHashParity, updateStageHash, hasStageHash, emitInvokeContractTrace, runWithTraceContext } from "./pipeline-trace-collector";
   import { validateContractIntegrity, buildWorkflowContracts, extractInvocations, resolveTargetContract, type WorkflowContract, type ContractIntegrityDefect } from "./xaml/workflow-contract-integrity";
   import { canonicalizeInvokeBindings, canonicalizeTargetValueExpressions, type InvokeCanonicalizationResult, type TargetValueCanonicalizationResult } from "./xaml/invoke-binding-canonicalizer";
-  import { classifyFromArchiveBuffer, buildWorkflowStatusParity, normalizeClassifierFileName, AUTHORITATIVE_STUB_PATTERNS, verifyAndReclassifyFromArchive, assertClassificationFreshness, freezeArchiveWorkflows, isArchiveFrozen, getArchiveFreezePoint, resetArchiveFreeze, checkPostFreezeDeferredWriteMutation, getMutationTrace, recordMutationAttempt, assertNoPostFreezeStatusMutation, createGuardedDeferredWrites, createGuardedPostGateEntries, verifyFrozenArchiveBuffer, type WorkflowStatusClassifierResult, type WorkflowStatusParityEntry, type WorkflowStatusParityResult, type PostClassifierMutationTrace } from "./workflow-status-classifier";
+  import { classifyFromArchiveBuffer, buildWorkflowStatusParity, normalizeClassifierFileName, AUTHORITATIVE_STUB_PATTERNS, verifyAndReclassifyFromArchive, assertClassificationFreshness, freezeArchiveWorkflows, isArchiveFrozen, getArchiveFreezePoint, resetArchiveFreeze, checkPostFreezeDeferredWriteMutation, getMutationTrace, recordMutationAttempt, assertNoPostFreezeStatusMutation, createGuardedDeferredWrites, createGuardedPostGateEntries, verifyFrozenArchiveBuffer, sealAuthoritativeXamlSource, getAuthoritativeXamlForArchive, recordAuthoritativeAppendHash, isAuthoritativeXamlSealed, getArchiveAuthorityDiagnostics, resetAuthoritativeSeal, type WorkflowStatusClassifierResult, type WorkflowStatusParityEntry, type WorkflowStatusParityResult, type PostClassifierMutationTrace, type ArchiveAuthorityDiagnostics } from "./workflow-status-classifier";
 
 interface DomCorrectionResult {
   content: string;
@@ -7299,32 +7299,27 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
       }
     }
 
+    sealAuthoritativeXamlSource(postGateXamlEntries);
+    console.log(`[Archive Authority] postGateXamlEntries designated as the single authoritative source for archive-bound XAML at append time`);
+
     const canonicalizationArchiveParity: Array<{ file: string; preCanonicalizationHash: string; canonicalizedHash: string; archivedHash: string; identical: boolean; mutated: boolean }> = [];
 
-    for (const entry of postGateXamlEntries) {
-      const shortName = entry.name.split("/").pop() || entry.name;
-      const deferredContent = deferredWrites.get(entry.name);
-      if (deferredContent !== undefined && deferredContent !== entry.content) {
-        const entryHash = createHash("sha256").update(entry.content).digest("hex").substring(0, 12);
-        const deferredHash = createHash("sha256").update(deferredContent).digest("hex").substring(0, 12);
-        throw new Error(
-          `[Pre-Archive Integrity] FATAL: postGateXamlEntries and deferredWrites diverge for "${shortName}" at archive append. ` +
-          `postGate=${entryHash}, deferred=${deferredHash}. Single authoritative source invariant violated.`
-        );
-      }
-      const preHash = preCanonicalizationHashes.get(entry.name) || "unknown";
-      const canonicalizedHash = createHash("sha256").update(entry.content).digest("hex");
-      const archivedContent = entry.content;
+    const authoritativeEntries = getAuthoritativeXamlForArchive();
+    for (const sealedEntry of authoritativeEntries) {
+      const shortName = sealedEntry.name.split("/").pop() || sealedEntry.name;
+      const preHash = preCanonicalizationHashes.get(sealedEntry.name) || "unknown";
+      const archivedContent = sealedEntry.content;
       updateStageHash(shortName, "archivedFile", archivedContent);
-      archive.append(archivedContent, { name: entry.name });
+      archive.append(archivedContent, { name: sealedEntry.name });
       const archivedHash = createHash("sha256").update(archivedContent).digest("hex");
+      recordAuthoritativeAppendHash(sealedEntry.name, archivedHash);
       canonicalizationArchiveParity.push({
         file: shortName,
         preCanonicalizationHash: preHash,
-        canonicalizedHash,
+        canonicalizedHash: sealedEntry.contentHash,
         archivedHash,
-        identical: canonicalizedHash === archivedHash,
-        mutated: preHash !== canonicalizedHash,
+        identical: sealedEntry.contentHash === archivedHash,
+        mutated: preHash !== sealedEntry.contentHash,
       });
     }
 
@@ -7600,6 +7595,12 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
       }
       assemblerOutcomeReport.workflowStatusParity = statusParityResult.entries;
 
+      const archiveAuthorityDiag = getArchiveAuthorityDiagnostics();
+      if (archiveAuthorityDiag) {
+        archive.append(JSON.stringify(archiveAuthorityDiag, null, 2), { name: `${libPath}/archiveAuthority.json` });
+        console.log(`[Archive Authority] Emitted archiveAuthority debug artifact: accessorUsed=${archiveAuthorityDiag.accessorUsed}, directAccessBlocked=${archiveAuthorityDiag.directAccessAttemptsBlocked}, nonAuthConsulted=${archiveAuthorityDiag.nonAuthoritativeConsultedAfterFreeze}`);
+      }
+
       console.log(`[UiPath] Generated Developer Handoff Guide (structured): ${finalArchiveWfNames.length} workflows, ${outcomeRemediations.length} remediations, REFramework=${useReFramework}`);
     }
 
@@ -7682,7 +7683,9 @@ ${depEntries}
     }
   }
 
-  const finalXamlEntries = postGateXamlEntries.map(e => ({ name: e.name, content: e.content }));
+  const finalXamlEntries = isAuthoritativeXamlSealed()
+    ? getAuthoritativeXamlForArchive().map(e => ({ name: e.name, content: e.content }))
+    : postGateXamlEntries.map(e => ({ name: e.name, content: e.content }));
   const finalDependencyMap = { ...deps };
   const finalArchiveManifest = allArchivePaths;
 

@@ -21,6 +21,13 @@ import {
   createGuardedDeferredWrites,
   createGuardedPostGateEntries,
   verifyFrozenArchiveBuffer,
+  sealAuthoritativeXamlSource,
+  getAuthoritativeXamlForArchive,
+  recordAuthoritativeAppendHash,
+  isAuthoritativeXamlSealed,
+  getArchiveAuthorityDiagnostics,
+  resetAuthoritativeSeal,
+  assertArchiveBoundXamlReadAllowed,
   AUTHORITATIVE_STUB_PATTERNS,
   CLASSIFIER_VERSION,
   type WorkflowStatusClassifierResult,
@@ -952,6 +959,307 @@ describe("workflow-status-classifier", () => {
       const result = verifyFrozenArchiveBuffer(buffer, "lib");
       expect(result.verified).toBe(true);
       expect(result.mismatches).toHaveLength(0);
+    });
+  });
+
+  describe("Archive append authority unification (Task #435)", () => {
+    beforeEach(() => {
+      resetMonotonicCounter();
+      resetAuthoritativeSeal();
+    });
+
+    it("archive append uses the accessor exclusively after seal", () => {
+      const entries = [
+        { name: "lib/Main.xaml", content: VALID_GENERATED_XAML },
+        { name: "lib/Helper.xaml", content: STUB_XAML },
+      ];
+
+      sealAuthoritativeXamlSource(entries);
+      expect(isAuthoritativeXamlSealed()).toBe(true);
+
+      const authEntries = getAuthoritativeXamlForArchive();
+      expect(authEntries).toHaveLength(2);
+
+      for (const entry of authEntries) {
+        expect(entry.content).toBeTruthy();
+        expect(entry.contentHash).toMatch(/^[0-9a-f]{64}$/);
+        recordAuthoritativeAppendHash(entry.name, entry.contentHash);
+      }
+
+      const diag = getArchiveAuthorityDiagnostics();
+      expect(diag).not.toBeNull();
+      expect(diag!.accessorUsed).toBe(true);
+      expect(diag!.authoritativeSource).toBe("postGateXamlEntries");
+      expect(diag!.nonAuthoritativeSource).toBe("deferredWrites");
+      for (const pf of diag!.perFile) {
+        expect(pf.identical).toBe(true);
+      }
+    });
+
+    it("getAuthoritativeXamlForArchive throws if called before seal", () => {
+      expect(() => getAuthoritativeXamlForArchive()).toThrow(/before authoritative source is sealed/);
+    });
+
+    it("direct content reads from postGateXamlEntries after freeze are blocked by runtime invariant", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      sealAuthoritativeXamlSource(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const guarded = createGuardedPostGateEntries(entries, true);
+      expect(() => {
+        const _content = guarded[0].content;
+      }).toThrow(/Archive Authority.*FATAL.*Direct postGateXamlEntries content read/);
+    });
+
+    it("direct content reads from deferredWrites (.get for .xaml keys) after freeze are blocked", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      sealAuthoritativeXamlSource(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const dw = new Map<string, string>();
+      dw.set("lib/Main.xaml", VALID_GENERATED_XAML);
+      const guarded = createGuardedDeferredWrites(dw, true);
+      expect(() => {
+        guarded.get("lib/Main.xaml");
+      }).toThrow(/Archive Authority.*FATAL.*Direct deferredWrites content read/);
+    });
+
+    it("non-authoritative source (deferredWrites) cannot provide archive-bound bytes after freeze", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      sealAuthoritativeXamlSource(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      expect(() => {
+        assertArchiveBoundXamlReadAllowed("deferredWrites", "Main.xaml", true);
+      }).toThrow(/Archive Authority.*FATAL.*Direct deferredWrites content read/);
+
+      const diag = getArchiveAuthorityDiagnostics();
+      expect(diag!.nonAuthoritativeConsultedAfterFreeze).toBe(true);
+      expect(diag!.directAccessAttemptsBlocked).toBeGreaterThan(0);
+    });
+
+    it("non-authoritative mutation after freeze is blocked (existing guard preserved)", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const dw = new Map<string, string>();
+      dw.set("lib/Main.xaml", VALID_GENERATED_XAML);
+      const guarded = createGuardedDeferredWrites(dw, true);
+      expect(() => {
+        guarded.set("lib/Main.xaml", VALID_GENERATED_XAML + "<!-- mutated -->");
+      }).toThrow(/Post-Freeze Mutation Violation/);
+    });
+
+    it("pre-archive integrity passes when only the accessor is used", () => {
+      const entries = [
+        { name: "lib/Main.xaml", content: VALID_GENERATED_XAML },
+        { name: "lib/Helper.xaml", content: STUB_XAML },
+      ];
+
+      sealAuthoritativeXamlSource(entries);
+      const authEntries = getAuthoritativeXamlForArchive();
+
+      for (const entry of authEntries) {
+        recordAuthoritativeAppendHash(entry.name, entry.contentHash);
+      }
+
+      const diag = getArchiveAuthorityDiagnostics();
+      expect(diag).not.toBeNull();
+      expect(diag!.accessorUsed).toBe(true);
+      expect(diag!.violationReason).toBeNull();
+      for (const pf of diag!.perFile) {
+        expect(pf.identical).toBe(true);
+      }
+    });
+
+    it("intentional bypass of the accessor triggers fatal failure after freeze", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      sealAuthoritativeXamlSource(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      expect(() => {
+        assertArchiveBoundXamlReadAllowed("postGateXamlEntries", "Main.xaml", true);
+      }).toThrow(/Archive Authority.*FATAL/);
+    });
+
+    it("runtime invariant does not block non-archive metadata reads (name, keys)", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      sealAuthoritativeXamlSource(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const guarded = createGuardedPostGateEntries(entries, true);
+      expect(() => {
+        const _name = guarded[0].name;
+      }).not.toThrow();
+
+      const dw = new Map<string, string>();
+      dw.set("lib/Main.xaml", VALID_GENERATED_XAML);
+      dw.set("project.json", "{}");
+      const guardedDw = createGuardedDeferredWrites(dw, true);
+      expect(() => {
+        const _keys = Array.from(guardedDw.keys());
+      }).not.toThrow();
+      expect(() => {
+        const _size = guardedDw.size;
+      }).not.toThrow();
+      expect(() => {
+        guardedDw.get("project.json");
+      }).not.toThrow();
+    });
+
+    it("direct content reads via deferredWrites.entries() after freeze are blocked", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      sealAuthoritativeXamlSource(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const dw = new Map<string, string>();
+      dw.set("lib/Main.xaml", VALID_GENERATED_XAML);
+      dw.set("project.json", "{}");
+      const guarded = createGuardedDeferredWrites(dw, true);
+      expect(() => {
+        for (const [_key, _value] of guarded.entries()) {}
+      }).toThrow(/Archive Authority.*FATAL.*Direct deferredWrites content read/);
+    });
+
+    it("direct content reads via deferredWrites.forEach() after freeze are blocked", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      sealAuthoritativeXamlSource(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const dw = new Map<string, string>();
+      dw.set("lib/Main.xaml", VALID_GENERATED_XAML);
+      const guarded = createGuardedDeferredWrites(dw, true);
+      expect(() => {
+        guarded.forEach((_v, _k) => {});
+      }).toThrow(/Archive Authority.*FATAL.*Direct deferredWrites content read/);
+    });
+
+    it("direct content reads via deferredWrites.values() after freeze are blocked", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      sealAuthoritativeXamlSource(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const dw = new Map<string, string>();
+      dw.set("lib/Main.xaml", VALID_GENERATED_XAML);
+      const guarded = createGuardedDeferredWrites(dw, true);
+      expect(() => {
+        for (const _v of guarded.values()) {}
+      }).toThrow(/Archive Authority.*FATAL.*Direct deferredWrites content read/);
+    });
+
+    it("direct content reads via for-of iteration on deferredWrites after freeze are blocked", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      sealAuthoritativeXamlSource(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const dw = new Map<string, string>();
+      dw.set("lib/Main.xaml", VALID_GENERATED_XAML);
+      const guarded = createGuardedDeferredWrites(dw, true);
+      expect(() => {
+        for (const [_key, _value] of guarded) {}
+      }).toThrow(/Archive Authority.*FATAL.*Direct deferredWrites content read/);
+    });
+
+    it("non-xaml entries in deferredWrites are accessible via entries/forEach after freeze", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      sealAuthoritativeXamlSource(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      const dw = new Map<string, string>();
+      dw.set("project.json", "{}");
+      const guarded = createGuardedDeferredWrites(dw, true);
+      const collected: string[] = [];
+      expect(() => {
+        guarded.forEach((v, k) => { collected.push(k); });
+      }).not.toThrow();
+      expect(collected).toContain("project.json");
+    });
+
+    it("normalized filename mapping still works for sealed entries", () => {
+      const entries = [
+        { name: "MyProject/lib/Process.xaml", content: VALID_GENERATED_XAML },
+        { name: "lib/Helper.xaml", content: STUB_XAML },
+      ];
+
+      sealAuthoritativeXamlSource(entries);
+      const authEntries = getAuthoritativeXamlForArchive();
+      expect(authEntries).toHaveLength(2);
+
+      const names = authEntries.map(e => e.name);
+      expect(names).toContain("MyProject/lib/Process.xaml");
+      expect(names).toContain("lib/Helper.xaml");
+    });
+
+    it("archiveAuthority diagnostics contains all required fields", () => {
+      const entries = [
+        { name: "lib/Main.xaml", content: VALID_GENERATED_XAML },
+        { name: "lib/Helper.xaml", content: STUB_XAML },
+      ];
+
+      sealAuthoritativeXamlSource(entries);
+      const authEntries = getAuthoritativeXamlForArchive();
+      for (const entry of authEntries) {
+        recordAuthoritativeAppendHash(entry.name, entry.contentHash);
+      }
+
+      const diag = getArchiveAuthorityDiagnostics();
+      expect(diag).not.toBeNull();
+      expect(diag!.authoritativeSource).toBe("postGateXamlEntries");
+      expect(diag!.nonAuthoritativeSource).toBe("deferredWrites");
+      expect(typeof diag!.accessorUsed).toBe("boolean");
+      expect(Array.isArray(diag!.perFile)).toBe(true);
+      expect(diag!.perFile.length).toBe(2);
+      for (const pf of diag!.perFile) {
+        expect(pf.file).toBeTruthy();
+        expect(pf.authoritativeHash).toMatch(/^[0-9a-f]{64}$/);
+        expect(pf.appendedHash).toMatch(/^[0-9a-f]{64}$/);
+        expect(typeof pf.identical).toBe("boolean");
+      }
+      expect(typeof diag!.directAccessAttemptsBlocked).toBe("number");
+      expect(typeof diag!.nonAuthoritativeConsultedAfterFreeze).toBe("boolean");
+    });
+
+    it("accessor is not blocked by the runtime invariant (sole exempted path)", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      sealAuthoritativeXamlSource(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      expect(() => {
+        const authEntries = getAuthoritativeXamlForArchive();
+        expect(authEntries).toHaveLength(1);
+        expect(authEntries[0].content).toBe(VALID_GENERATED_XAML);
+      }).not.toThrow();
+    });
+
+    it("direct access attempts are counted in diagnostics", () => {
+      const entries = [{ name: "lib/Main.xaml", content: VALID_GENERATED_XAML }];
+      const classification = classifyWorkflowStatus(entries);
+      sealAuthoritativeXamlSource(entries);
+      freezeArchiveWorkflows(entries, classification);
+
+      try {
+        assertArchiveBoundXamlReadAllowed("postGateXamlEntries", "Main.xaml", true);
+      } catch (_e) {}
+      try {
+        assertArchiveBoundXamlReadAllowed("deferredWrites", "Main.xaml", true);
+      } catch (_e) {}
+
+      const diag = getArchiveAuthorityDiagnostics();
+      expect(diag!.directAccessAttemptsBlocked).toBe(2);
+      expect(diag!.nonAuthoritativeConsultedAfterFreeze).toBe(true);
+      expect(diag!.violationReason).toBeTruthy();
     });
   });
 });
