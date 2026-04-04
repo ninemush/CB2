@@ -1,5 +1,10 @@
 import { ACTIVITY_REGISTRY, DESIGNER_PROPERTIES } from "../uipath-activity-registry";
 import { lintExpression } from "./vbnet-expression-linter";
+import { getFilteredSchema, registerStage } from "../catalog/filtered-schema-lookup";
+
+registerStage("executable-path-validator");
+
+let _validatorTargetFramework: "Windows" | "Portable" | undefined;
 
 export type DefectType =
   | "placeholder"
@@ -75,6 +80,8 @@ function deriveWorkflowName(fileName: string): string {
 
 function getRegistryEntry(activityType: string): { required: string[]; optional: string[] } | null {
   const normalizedType = activityType.replace(/^.*:/, "");
+
+  getFilteredSchema(activityType, "executable-path-validator", _validatorTargetFramework);
 
   const entry = ACTIVITY_REGISTRY[activityType];
   if (entry) {
@@ -377,7 +384,9 @@ function checkPropertyForDefects(
 
 export function validateExecutablePaths(
   xamlEntries: { name: string; content: string }[],
+  targetFramework?: "Windows" | "Portable",
 ): ExecutablePathValidationResult {
+  _validatorTargetFramework = targetFramework;
   const allDefects: ExecutablePathDefect[] = [];
 
   for (const entry of xamlEntries) {

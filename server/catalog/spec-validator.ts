@@ -18,6 +18,9 @@ export interface SpecValidationReport {
   totalActivities: number;
   validActivities: number;
   unknownActivities: number;
+  deprecatedActivities: number;
+  nonEmissionApprovedActivities: number;
+  targetIncompatibleActivities: number;
   strippedProperties: number;
   excessiveStrippingCount: number;
   enumCorrections: number;
@@ -52,6 +55,9 @@ function createEmptyReport(catalogLoaded: boolean = true, catalogLoadError?: str
     totalActivities: 0,
     validActivities: 0,
     unknownActivities: 0,
+    deprecatedActivities: 0,
+    nonEmissionApprovedActivities: 0,
+    targetIncompatibleActivities: 0,
     strippedProperties: 0,
     excessiveStrippingCount: 0,
     enumCorrections: 0,
@@ -762,6 +768,9 @@ export function formatValidationReportForDhg(report: SpecValidationReport): stri
   md += `| Total activities checked | ${report.totalActivities} |\n`;
   md += `| Valid activities | ${report.validActivities} |\n`;
   md += `| Unknown → Comment stubs | ${report.unknownActivities} |\n`;
+  if (report.deprecatedActivities) md += `| Deprecated activities | ${report.deprecatedActivities} |\n`;
+  if (report.nonEmissionApprovedActivities) md += `| Non-emission-approved activities | ${report.nonEmissionApprovedActivities} |\n`;
+  if (report.targetIncompatibleActivities) md += `| Target-incompatible activities | ${report.targetIncompatibleActivities} |\n`;
   md += `| Non-catalog properties stripped | ${report.strippedProperties} |\n`;
   md += `| Activities with excessive stripping | ${report.excessiveStrippingCount} |\n`;
   md += `| Enum values auto-corrected | ${report.enumCorrections} |\n`;

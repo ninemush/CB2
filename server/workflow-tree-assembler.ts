@@ -12,7 +12,10 @@ import type {
   PropertyValue,
 } from "./workflow-spec-types";
 import { catalogService } from "./catalog/catalog-service";
+import { getFilteredSchema, registerStage } from "./catalog/filtered-schema-lookup";
 import { inferTypeFromPrefix, PREFIXED_VAR_REF_REGEX, DEMOTION_WHITELIST_REGEX } from "./shared/type-inference";
+
+registerStage("workflow-tree-assembler");
 import type { ActivityValidationResult, ValidationCorrection } from "./catalog/catalog-service";
 import { buildTemplateBlock } from "./catalog/xaml-template-builder";
 import type { ProcessType } from "./catalog/catalog-service";
@@ -61,6 +64,7 @@ export interface ResidualJsonDefect {
 
 let _activeRemediationContext: AssemblyRemediationContext | null = null;
 let _activeDeclarationLookup: ((name: string) => boolean) | null = null;
+let _activeTargetFramework: "Windows" | "Portable" = "Windows";
 let _lateDiscoveredVariables: VariableDeclaration[] = [];
 let _residualJsonDefects: ResidualJsonDefect[] = [];
 
@@ -82,6 +86,10 @@ export function clearRemediationContext(): AssemblyRemediationContext | null {
   const ctx = _activeRemediationContext;
   _activeRemediationContext = null;
   return ctx;
+}
+
+export function setAssemblyTargetFramework(tf: "Windows" | "Portable"): void {
+  _activeTargetFramework = tf;
 }
 
 function recordPropertyRemediation(
@@ -1306,8 +1314,9 @@ function applyCatalogConformance(xml: string): string {
 
   const { tag, className } = parsed;
   const templateName = className;
-  const schema = catalogService.getActivitySchema(templateName);
-  if (!schema) return xml;
+  const filteredConformResult = getFilteredSchema(templateName, "workflow-tree-assembler", _activeTargetFramework);
+  if (filteredConformResult.status !== "approved") return xml;
+  const schema = filteredConformResult.schema;
 
   const validation = catalogService.validateEmittedActivity(
     tag,
@@ -1586,10 +1595,11 @@ export function resolveActivityTemplate(
   }
 
   if (catalogService.isLoaded()) {
-    const schema = catalogService.getActivitySchema(templateName);
-    if (!schema) {
+    const filteredTemplateResult = getFilteredSchema(templateName, "workflow-tree-assembler", _activeTargetFramework);
+    if (filteredTemplateResult.status !== "approved") {
       const isMandatoryPath = emissionContext === "mandatory-catch" || emissionContext === "mandatory-finally";
-      console.warn(`[Tree Assembler] Unknown template "${templateName}" — not in catalog${isMandatoryPath ? " (in mandatory path)" : ""}, emitting fallback`);
+      const rejectionLabel = filteredTemplateResult.status === "rejected" ? filteredTemplateResult.reason : "unknown-activity";
+      console.warn(`[Tree Assembler] Rejected template "${templateName}" (${rejectionLabel}) — not approved for emission${isMandatoryPath ? " (in mandatory path)" : ""}, emitting fallback`);
       if (_activeRemediationContext) {
         _activeRemediationContext.propertyRemediations.push({
           level: "activity",
@@ -1597,21 +1607,21 @@ export function resolveActivityTemplate(
           remediationCode: "STUB_ACTIVITY_CATALOG_VIOLATION",
           originalTag: templateName,
           originalDisplayName: node.displayName,
-          propertyName: isMandatoryPath ? "(unknown-template-mandatory-path)" : "(unknown-template)",
-          reason: `Activity "${templateName}" is not in the activity catalog. Business step "${node.displayName}" requires manual implementation.${isMandatoryPath ? " This activity is in a mandatory execution path — the workflow is BLOCKED until resolved." : ""}`,
+          propertyName: isMandatoryPath ? `(${rejectionLabel}-mandatory-path)` : `(${rejectionLabel})`,
+          reason: `Activity "${templateName}" is rejected (${rejectionLabel}). Business step "${node.displayName}" requires manual implementation.${isMandatoryPath ? " This activity is in a mandatory execution path — the workflow is BLOCKED until resolved." : ""}`,
           classifiedCheck: "CATALOG_VIOLATION",
           developerAction: `Verify and implement "${node.displayName}" (${templateName}) using supported activities`,
           estimatedEffortMinutes: isMandatoryPath ? 30 : 20,
         });
       }
       if (isMandatoryPath) {
-        return `<!-- BLOCKED: Unknown activity "${escapeXml(templateName)}" in mandatory ${emissionContext === "mandatory-catch" ? "catch" : "finally"} path — "${escapeXml(node.displayName)}" -->
-<ui:LogMessage Level="Error" Message="[&quot;BLOCKED: Unknown activity &apos;${escapeXml(templateName)}&apos; in mandatory path — business step &apos;${escapeXml(node.displayName)}&apos; requires manual implementation&quot;]" DisplayName="Log Blocked Activity (${escapeXml(node.displayName)})" />
+        return `<!-- BLOCKED: Rejected activity "${escapeXml(templateName)}" (${rejectionLabel}) in mandatory ${emissionContext === "mandatory-catch" ? "catch" : "finally"} path — "${escapeXml(node.displayName)}" -->
+<ui:LogMessage Level="Error" Message="[&quot;BLOCKED: Rejected activity &apos;${escapeXml(templateName)}&apos; (${rejectionLabel}) in mandatory path — business step &apos;${escapeXml(node.displayName)}&apos; requires manual implementation&quot;]" DisplayName="Log Blocked Activity (${escapeXml(node.displayName)})" />
 <Rethrow DisplayName="Rethrow — blocked activity &apos;${escapeXml(node.displayName)}&apos;" />`;
       }
-      return `<!-- WARNING: Unknown activity template "${escapeXml(templateName)}" — "${escapeXml(node.displayName)}" not found in catalog -->
-<ui:Comment Text="[BLOCKED] Unknown activity: ${escapeXml(templateName)}. Business step &quot;${escapeXml(node.displayName)}&quot; requires manual implementation." DisplayName="${escapeXml(node.displayName)} (unknown — manual implementation required)" />
-<ui:LogMessage Level="Warn" Message="[&quot;WARNING: Business step &apos;${escapeXml(node.displayName)}&apos; uses unknown activity &apos;${escapeXml(templateName)}&apos; — requires manual implementation&quot;]" DisplayName="Log Unknown Activity Warning" />`;
+      return `<!-- WARNING: Rejected activity template "${escapeXml(templateName)}" (${rejectionLabel}) — "${escapeXml(node.displayName)}" not approved for emission -->
+<ui:Comment Text="[BLOCKED] Rejected activity: ${escapeXml(templateName)} (${rejectionLabel}). Business step &quot;${escapeXml(node.displayName)}&quot; requires manual implementation." DisplayName="${escapeXml(node.displayName)} (${rejectionLabel} — manual implementation required)" />
+<ui:LogMessage Level="Warn" Message="[&quot;WARNING: Business step &apos;${escapeXml(node.displayName)}&apos; uses rejected activity &apos;${escapeXml(templateName)}&apos; (${rejectionLabel}) — requires manual implementation&quot;]" DisplayName="Log Rejected Activity Warning" />`;
     }
   } else {
     const isMandatoryPath = emissionContext === "mandatory-catch" || emissionContext === "mandatory-finally";
@@ -2088,7 +2098,10 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
 
   let schema: any = null;
   if (catalogService.isLoaded()) {
-    schema = catalogService.getActivitySchema(templateName);
+    const filteredDynResult = getFilteredSchema(templateName, "workflow-tree-assembler", _activeTargetFramework);
+    if (filteredDynResult.status === "approved") {
+      schema = filteredDynResult.schema;
+    }
   }
 
   const escalationThreshold = _activeRemediationContext?.escalationThreshold ?? PROPERTY_REMEDIATION_ESCALATION_THRESHOLD;

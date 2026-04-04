@@ -1,5 +1,6 @@
 import { catalogService, type CatalogPackage, type CatalogActivity, type ActivityCatalog } from "./catalog-service";
 import { metadataService, type StudioProfile } from "./metadata-service";
+import { WINDOWS_ONLY_PACKAGES } from "./prompt-guidance-filter-constants";
 
 export interface PromptGuidanceConfig {
   maxPackages?: number;
@@ -43,19 +44,6 @@ const MAX_ACTIVITIES_PER_PACKAGE = 8;
 const CONNECTOR_ONLY_PATTERNS = [
   "UiPath.IntegrationService.Activities",
 ];
-
-const WINDOWS_ONLY_PACKAGES = new Set([
-  "UiPath.UIAutomation.Activities",
-  "UiPath.UIAutomationNext.Activities",
-  "UiPath.Excel.Activities",
-  "UiPath.Word.Activities",
-  "UiPath.Presentations.Activities",
-  "UiPath.Terminal.Activities",
-  "UiPath.Citrix.Activities",
-  "UiPath.AzureWindowsVirtualDesktop.Activities",
-  "UiPath.Java.Activities",
-  "UiPath.SAP.BAPI.Activities",
-]);
 
 function isConnectorOnlyPackage(packageId: string): boolean {
   return CONNECTOR_ONLY_PATTERNS.includes(packageId);

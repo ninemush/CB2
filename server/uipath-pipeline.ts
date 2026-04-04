@@ -14,6 +14,8 @@ import {
 } from "./uipath-integration";
 import { catalogService } from "./catalog/catalog-service";
 import type { StudioProfile } from "./catalog/metadata-service";
+import { getAdoptionReport, resetLookupCounters } from "./catalog/filtered-schema-lookup";
+import { setAssemblyTargetFramework } from "./workflow-tree-assembler";
 import {
   normalizeXaml as normalizeXamlCompliance,
   validateXamlContent,
@@ -296,7 +298,10 @@ export type StubFailureCategory =
   | "compliance-failure"
   | "expression-syntax"
   | "undeclared-variable"
-  | "unknown-activity";
+  | "unknown-activity"
+  | "deprecated-activity"
+  | "non-emission-approved-activity"
+  | "target-incompatible-activity";
 
 export interface PerWorkflowStudioCompatibility {
   file: string;
@@ -323,6 +328,9 @@ export interface PipelineOutcomeReport {
     totalActivities: number;
     validActivities: number;
     unknownActivities: number;
+    deprecatedActivities: number;
+    nonEmissionApprovedActivities: number;
+    targetIncompatibleActivities: number;
     strippedProperties: number;
     enumCorrections: number;
     missingRequiredFilled: number;
@@ -365,6 +373,7 @@ export interface PipelineOutcomeReport {
   preComplianceGuardPassed?: boolean;
   preComplianceGuardViolationCount?: number;
   canonicalizationArchiveParity?: Array<{ file: string; preCanonicalizationHash: string; canonicalizedHash: string; archivedHash: string; identical: boolean; mutated: boolean }>;
+  catalogFilterAdoption?: import("./catalog/filtered-schema-lookup").StageAdoptionEntry[];
   preArchiveStructuralDefects?: Array<{ file: string; pattern: string; detail: string }>;
   workflowStatusParity?: import("./workflow-status-classifier").WorkflowStatusParityEntry[];
   _preArchiveClassification?: import("./workflow-status-classifier").WorkflowStatusClassifierResult;
@@ -727,6 +736,7 @@ function buildDhgFromBuildResult(
   const effectiveOutcomeReport = finalQualityReport?.outcomeContext || buildResult.outcomeReport;
 
   if (effectiveOutcomeReport) {
+    effectiveOutcomeReport.catalogFilterAdoption = getAdoptionReport();
     const qualityWarningCount = effectiveOutcomeReport.qualityWarnings.length;
     const remediationCount = effectiveOutcomeReport.remediations.length + effectiveOutcomeReport.propertyRemediations.length;
 
@@ -1434,6 +1444,7 @@ export async function compilePackageFromSpecs(
               buildResult.xamlEntries,
               confidenceResult.triggeredCategories,
               options?.onProgress,
+              "Windows",
             );
           }
 
@@ -1548,7 +1559,7 @@ export async function compilePackageFromSpecs(
             if (options?.onProgress) options.onProgress("Running iterative LLM self-correction...");
 
             const qgViolationsForIterative = (postCorrectionQualityGate?.violations || qgResult?.violations || [])
-              .filter(v => ["unknown-activity", "invalid-activity-property", "undeclared-variable", "expression-syntax"].includes(v.check))
+              .filter(v => ["unknown-activity", "deprecated-activity", "non-emission-approved-activity", "target-incompatible-activity", "invalid-activity-property", "undeclared-variable", "expression-syntax"].includes(v.check))
               .map(v => ({ check: v.check, file: v.file, detail: v.detail, severity: v.severity }));
 
             const workflowSpecs = enriched.workflows?.map((w: any) => ({
@@ -1965,6 +1976,9 @@ export async function generateUiPathPackage(
     forceRebuild?: boolean;
   },
 ): Promise<PipelineResult> {
+  const pipelineTargetFramework: "Windows" | "Portable" = "Windows";
+  resetLookupCounters();
+  setAssemblyTargetFramework(pipelineTargetFramework);
   const ver = options?.version || computeVersion();
   const requestedMode: GenerationMode | undefined = options?.generationMode;
   let mode: GenerationMode = requestedMode || "baseline_openable";

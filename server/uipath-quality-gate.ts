@@ -18,6 +18,9 @@ import { scoreSelectorQuality, generateSelectorWarnings, injectResilienceDefault
 import { XAML_INFRASTRUCTURE_TYPE_ARGUMENTS } from "./xaml/xaml-compliance";
 import { recordTransform, getCurrentRunId } from "./llm-trace-collector";
 import { UIPATH_PACKAGE_ALIAS_MAP } from "./uipath-shared";
+import { getFilteredSchema, registerStage, rejectionDetailMessage, type ActivityRejectionReason } from "./catalog/filtered-schema-lookup";
+
+registerStage("quality-gate");
 
 const KNOWN_ACTIVITIES = ACTIVITY_REGISTRY;
 
@@ -1117,17 +1120,23 @@ function checkAccuracy(input: QualityGateInput): QualityGateViolation[] {
     let match;
     while ((match = activityPattern.exec(content)) !== null) {
       const activityName = match[1];
-      const knownActivity = lookupActivity(activityName);
+      const lineNum = content.substring(0, match.index).split("\n").length;
 
-      if (!knownActivity) {
-        const lineNum = content.substring(0, match.index).split("\n").length;
+      const filteredResult = getFilteredSchema(activityName, "quality-gate", input.targetFramework);
+      if (filteredResult.status === "rejected") {
         violations.push({
           category: "accuracy",
           severity: "error",
-          check: "unknown-activity",
+          check: filteredResult.reason,
           file: shortName,
-          detail: `Line ${lineNum}: unknown activity "${activityName}" — not in known activity registry (may be hallucinated)`,
+          detail: rejectionDetailMessage(filteredResult.reason, activityName, lineNum),
         });
+        continue;
+      }
+
+      const knownActivity = lookupActivity(activityName);
+
+      if (!knownActivity) {
         continue;
       }
 
@@ -2434,7 +2443,8 @@ export function validatePackage(input: QualityGateInput): QualityGateResult {
         requiredProps = knownActivity.properties.required || [];
       }
       if (requiredProps.length === 0 && catalogService.isLoaded()) {
-        const schema = catalogService.getActivitySchema(activityName);
+        const filteredSchemaResult = getFilteredSchema(activityName, "quality-gate", input.targetFramework);
+        const schema = filteredSchemaResult.status === "approved" ? filteredSchemaResult.schema : null;
         if (schema) {
           requiredProps = schema.activity.properties
             .filter(p => p.required && p.direction !== "Out")
@@ -2616,6 +2626,9 @@ const WARNING_CHECKS = new Set([
   "CATALOG_VIOLATION",
   "missing-package-dep",
   "unknown-activity",
+  "deprecated-activity",
+  "non-emission-approved-activity",
+  "target-incompatible-activity",
   "undeclared-variable",
   "net45-in-portable",
   "legacy-modern-behavior",

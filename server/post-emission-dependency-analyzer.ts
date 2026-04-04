@@ -2,6 +2,9 @@ import { catalogService } from "./catalog/catalog-service";
 import { metadataService as _metadataService } from "./catalog/metadata-service";
 import { isFrameworkAssembly, UIPATH_PACKAGE_ALIAS_MAP } from "./uipath-shared";
 import { getActivityPackage, NAMESPACE_PREFIX_TO_PACKAGE } from "./uipath-activity-registry";
+import { getFilteredSchema, registerStage } from "./catalog/filtered-schema-lookup";
+
+registerStage("post-emission-dependency-analyzer");
 
 export type ResolutionSource =
   | "metadata_service"
@@ -301,14 +304,14 @@ export class PostEmissionDependencyAnalyzer {
     const allCandidates: Array<{ packageId: string; source: ResolutionSource }> = [];
 
     if (catalogService.isLoaded()) {
-      const schema = catalogService.getActivitySchema(className);
-      if (schema?.packageId) {
-        allCandidates.push({ packageId: schema.packageId, source: "catalog_service" });
+      const filteredResult = getFilteredSchema(className, "post-emission-dependency-analyzer", this.targetFramework);
+      if (filteredResult.status === "approved" && filteredResult.schema.packageId) {
+        allCandidates.push({ packageId: filteredResult.schema.packageId, source: "catalog_service" });
       }
       if (activityTag !== className) {
-        const directSchema = catalogService.getActivitySchema(activityTag);
-        if (directSchema?.packageId && directSchema.packageId !== schema?.packageId) {
-          allCandidates.push({ packageId: directSchema.packageId, source: "catalog_service" });
+        const filteredDirect = getFilteredSchema(activityTag, "post-emission-dependency-analyzer", this.targetFramework);
+        if (filteredDirect.status === "approved" && filteredDirect.schema.packageId && filteredDirect.schema.packageId !== (filteredResult.status === "approved" ? filteredResult.schema.packageId : null)) {
+          allCandidates.push({ packageId: filteredDirect.schema.packageId, source: "catalog_service" });
         }
       }
     }

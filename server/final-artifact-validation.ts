@@ -190,7 +190,8 @@ export interface FinalQualityReport {
 const STUDIO_BLOCKING_CHECKS = new Set([
   "empty-container", "empty-http-endpoint", "invalid-trycatch-structure",
   "invalid-catch-type", "invalid-activity-property", "undeclared-variable",
-  "unknown-activity", "undeclared-namespace", "invalid-type-argument",
+  "unknown-activity", "deprecated-activity", "non-emission-approved-activity", "target-incompatible-activity",
+  "undeclared-namespace", "invalid-type-argument",
   "invalid-default-value", "policy-blocked-activity", "pseudo-xaml",
   "fake-trycatch", "object-object", "EXPRESSION_SYNTAX_UNFIXABLE",
   "TYPE_MISMATCH", "FOREACH_TYPE_MISMATCH", "LITERAL_TYPE_ERROR",
@@ -510,7 +511,7 @@ function buildPackageCompletenessViolations(
 
 function buildDeclarationSummary(violations: QualityGateViolation[]): DeclarationValidationSummary {
   const undeclaredVariables = violations.filter(v => v.check === "undeclared-variable").length;
-  const unknownActivities = violations.filter(v => v.check === "unknown-activity").length;
+  const unknownActivities = violations.filter(v => v.check === "unknown-activity" || v.check === "deprecated-activity" || v.check === "non-emission-approved-activity" || v.check === "target-incompatible-activity").length;
   const undeclaredNamespaces = violations.filter(v => v.check === "undeclared-namespace").length;
   const invalidTypeArguments = violations.filter(v => v.check === "invalid-type-argument" || v.check === "unresolved-type-argument").length;
   return {
@@ -636,7 +637,7 @@ export function runFinalArtifactValidation(input: FinalArtifactValidationInput):
   const totalErrors = perFileResults.reduce((s, r) => s + r.errorCount, 0);
   const totalWarnings = perFileResults.reduce((s, r) => s + r.warningCount, 0);
 
-  const executablePathResult = validateExecutablePaths(xamlEntries);
+  const executablePathResult = validateExecutablePaths(xamlEntries, targetFramework);
 
   const contractIntegrityResult = validateContractIntegrity(xamlEntries);
 

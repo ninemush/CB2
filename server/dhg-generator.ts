@@ -930,6 +930,9 @@ export function generateDhgFromOutcomeReport(
     md += `| Total activities checked | ${pev.totalActivities} |\n`;
     md += `| Valid activities | ${pev.validActivities} |\n`;
     md += `| Unknown → Comment stubs | ${pev.unknownActivities} |\n`;
+    if (pev.deprecatedActivities) md += `| Deprecated activities | ${pev.deprecatedActivities} |\n`;
+    if (pev.nonEmissionApprovedActivities) md += `| Non-emission-approved activities | ${pev.nonEmissionApprovedActivities} |\n`;
+    if (pev.targetIncompatibleActivities) md += `| Target-incompatible activities | ${pev.targetIncompatibleActivities} |\n`;
     md += `| Non-catalog properties stripped | ${pev.strippedProperties} |\n`;
     md += `| Enum values auto-corrected | ${pev.enumCorrections} |\n`;
     md += `| Missing required props filled | ${pev.missingRequiredFilled} |\n`;
@@ -941,6 +944,18 @@ export function generateDhgFromOutcomeReport(
     md += `| Stage | Issues Caught/Fixed |\n|---|---|\n`;
     md += `| Pre-emission (spec validation) | ${preEmissionFixCount} auto-fixed, ${pev.issueCount} total issues |\n`;
     md += `| Post-emission (quality gate) | ${postEmissionIssueCount} warnings/remediations |\n\n`;
+  }
+
+  if (report.catalogFilterAdoption && report.catalogFilterAdoption.length > 0) {
+    sectionNum++;
+    md += `## ${sectionNum}. Catalog Filter Adoption Report\n\n`;
+    md += `Shows which pipeline stages use the filtered activity catalog (deprecated, non-emission-approved, and target-incompatible activities are excluded).\n\n`;
+    md += `| Stage | Adopted | Total Lookups | Approved | Deprecated | Non-Approved | Target-Incompatible | Unknown |\n`;
+    md += `|---|---|---|---|---|---|---|---|\n`;
+    for (const entry of report.catalogFilterAdoption) {
+      md += `| ${entry.stage} | ${entry.adopted ? "Yes" : "**No**"} | ${entry.lookups.total} | ${entry.lookups.approved} | ${entry.lookups.deprecated} | ${entry.lookups.nonEmissionApproved} | ${entry.lookups.targetIncompatible} | ${entry.lookups.unknown} |\n`;
+    }
+    md += `\n`;
   }
 
   md += `---\n\n`;

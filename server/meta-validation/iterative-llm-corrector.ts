@@ -5,6 +5,11 @@ import type { CorrectionSet } from "./meta-validator";
 import { getLLM, getActiveModel, type LLMProvider } from "../lib/llm";
 import { runQualityGate, type QualityGateViolation } from "../uipath-quality-gate";
 import { recordLlmCall, buildLlmTraceEntry, getCurrentRunId } from "../llm-trace-collector";
+import { registerStage } from "../catalog/filtered-schema-lookup";
+import { buildPromptPackageGuidance } from "../catalog/prompt-guidance-filter";
+import { metadataService } from "../catalog/metadata-service";
+
+registerStage("iterative-llm-corrector");
 
 const LLM_CORRECTION_MAX_ROUNDS = 2;
 const LLM_CORRECTION_MAX_TOKENS = 4000;
@@ -20,6 +25,9 @@ const FRAGILE_CATEGORIES: ErrorCategory[] = [
 
 const FIXABLE_QG_CHECKS = new Set([
   "unknown-activity",
+  "deprecated-activity",
+  "non-emission-approved-activity",
+  "target-incompatible-activity",
   "invalid-activity-property",
   "undeclared-variable",
   "expression-syntax",
@@ -124,15 +132,22 @@ ${JSON.stringify(workflowSpec.steps || [], null, 2)}
 `
     : "";
 
+  const profile = metadataService.getStudioProfile();
+  const { guidance: catalogGuidance } = buildPromptPackageGuidance(profile);
+  const catalogBlock = catalogGuidance
+    ? `\n## Approved Activity Catalog\nThe following activities and packages are approved for use. Use ONLY activities from this list.\n${catalogGuidance}\n`
+    : "";
+
   return `You are a UiPath XAML regeneration specialist. You are given:
 1. The ORIGINAL workflow specification (the authoritative description of what this workflow should do)
 2. The CURRENT XAML (which was generated from that spec but has defects)
 3. A list of specific defects found during validation
+4. The approved activity catalog (only these activities are valid)
 
 Your task: regenerate the workflow body to faithfully implement the original specification while eliminating the listed defects. Use the original spec as the primary guide for what activities, properties, and variables should exist. The current XAML provides structural context (namespaces, argument wiring, scoping) but may contain errors.
 
 ## Workflow: ${workflowName}
-${specBlock}
+${specBlock}${catalogBlock}
 ## Defects Found in Current XAML
 ${allIssues}
 

@@ -940,11 +940,11 @@ function classifyStubFailureCategory(
     };
   }
 
-  if (checks.has("unknown-activity") || checks.has("undeclared-namespace") || checks.has("policy-blocked-activity")) {
+  if (checks.has("unknown-activity") || checks.has("deprecated-activity") || checks.has("non-emission-approved-activity") || checks.has("target-incompatible-activity") || checks.has("undeclared-namespace") || checks.has("policy-blocked-activity")) {
     return {
       category: "unknown-activity",
-      summary: "Unknown or policy-blocked activities referenced in XAML",
-      developerAction: "Install required NuGet packages or replace blocked activities with approved alternatives",
+      summary: "Unknown, deprecated, non-approved, or policy-blocked activities referenced in XAML",
+      developerAction: "Install required NuGet packages or replace blocked/deprecated/non-approved activities with approved alternatives",
     };
   }
 
@@ -5222,6 +5222,9 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
         "fake-trycatch": "STUB_ACTIVITY_PSEUDO_XAML",
         "xml-wellformedness": "STUB_ACTIVITY_WELLFORMEDNESS",
         "unknown-activity": "STUB_ACTIVITY_UNKNOWN",
+        "deprecated-activity": "STUB_ACTIVITY_UNKNOWN",
+        "non-emission-approved-activity": "STUB_ACTIVITY_UNKNOWN",
+        "target-incompatible-activity": "STUB_ACTIVITY_UNKNOWN",
         "invalid-takescreenshot-result": "STUB_ACTIVITY_BLOCKED_PATTERN",
         "invalid-takescreenshot-outputpath": "STUB_ACTIVITY_BLOCKED_PATTERN",
         "invalid-takescreenshot-outputpath-attr": "STUB_ACTIVITY_BLOCKED_PATTERN",
@@ -5241,6 +5244,9 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
         "fake-trycatch": 20,
         "xml-wellformedness": 30,
         "unknown-activity": 15,
+        "deprecated-activity": 10,
+        "non-emission-approved-activity": 15,
+        "target-incompatible-activity": 15,
       };
       return effortMap[check] || 15;
     }
@@ -5258,6 +5264,9 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
         "fake-trycatch": `Restructure TryCatch in ${file} to use nested elements instead of string attributes`,
         "xml-wellformedness": `Fix XML structure in ${file} — ensure proper nesting and closing tags`,
         "unknown-activity": `Replace unknown ${actLabel} in ${file} with a valid UiPath activity`,
+        "deprecated-activity": `Replace deprecated ${actLabel} in ${file} with a modern alternative`,
+        "non-emission-approved-activity": `Replace non-emission-approved ${actLabel} in ${file} with an approved activity`,
+        "target-incompatible-activity": `Replace target-incompatible ${actLabel} in ${file} with a compatible activity`,
       };
       return actions[check] || `Manually implement ${actLabel} in ${file} — estimated ${estimateEffortForCheck(check)} min`;
     }
@@ -6235,6 +6244,9 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
       "invoke-arg-type-mismatch",
       "undeclared-variable",
       "unknown-activity",
+      "deprecated-activity",
+      "non-emission-approved-activity",
+      "target-incompatible-activity",
       "undeclared-namespace",
       "policy-blocked-activity",
       "invalid-takescreenshot-result",
@@ -6384,7 +6396,8 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
     const dhgStudioBlockingChecks = new Set([
       "empty-container", "empty-http-endpoint", "invalid-trycatch-structure",
       "invalid-catch-type", "invalid-activity-property",
-      "unknown-activity", "undeclared-namespace", "invalid-type-argument",
+      "unknown-activity", "deprecated-activity", "non-emission-approved-activity", "target-incompatible-activity",
+      "undeclared-namespace", "invalid-type-argument",
       "invalid-default-value", "policy-blocked-activity", "pseudo-xaml",
       "fake-trycatch", "object-object", "EXPRESSION_SYNTAX_UNFIXABLE",
       "TYPE_MISMATCH", "FOREACH_TYPE_MISMATCH", "LITERAL_TYPE_ERROR",
@@ -7817,6 +7830,9 @@ ${depEntries}
     "invoke-arg-type-mismatch",
     "undeclared-variable",
     "unknown-activity",
+    "deprecated-activity",
+    "non-emission-approved-activity",
+    "target-incompatible-activity",
     "undeclared-namespace",
     "policy-blocked-activity",
     "invalid-takescreenshot-result",
@@ -7912,6 +7928,9 @@ ${depEntries}
     "invalid-activity-property",
     "undeclared-variable",
     "unknown-activity",
+    "deprecated-activity",
+    "non-emission-approved-activity",
+    "target-incompatible-activity",
     "undeclared-namespace",
     "invalid-type-argument",
     "invalid-default-value",
@@ -8128,6 +8147,9 @@ ${depEntries}
       totalActivities: specValidationReport.totalActivities,
       validActivities: specValidationReport.validActivities,
       unknownActivities: specValidationReport.unknownActivities,
+      deprecatedActivities: specValidationReport.deprecatedActivities,
+      nonEmissionApprovedActivities: specValidationReport.nonEmissionApprovedActivities,
+      targetIncompatibleActivities: specValidationReport.targetIncompatibleActivities,
       strippedProperties: specValidationReport.strippedProperties,
       enumCorrections: specValidationReport.enumCorrections,
       missingRequiredFilled: specValidationReport.missingRequiredFilled,

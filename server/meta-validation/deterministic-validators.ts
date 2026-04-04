@@ -3,6 +3,9 @@ import type { Correction, CorrectionSet, CorrectionConfidence } from "./meta-val
 import { catalogService } from "../catalog/catalog-service";
 import { inferTypeFromPrefix, hasRecognizedPrefix } from "../shared/type-inference";
 import { findUndeclaredVariables } from "../xaml/vbnet-expression-linter";
+import { getFilteredSchema, registerStage } from "../catalog/filtered-schema-lookup";
+
+registerStage("deterministic-validators");
 
 function extractActivities(xaml: string): Array<{
   tag: string;
@@ -64,6 +67,7 @@ function extractVariableDeclarations(xaml: string): Set<string> {
 export function validateEnumViolations(
   xamlContent: string,
   workflowName: string,
+  targetFramework?: "Windows" | "Portable",
 ): Correction[] {
   const corrections: Correction[] = [];
 
@@ -72,8 +76,9 @@ export function validateEnumViolations(
   const activities = extractActivities(xamlContent);
 
   for (const activity of activities) {
-    const schema = catalogService.getActivitySchema(activity.className);
-    if (!schema) continue;
+    const filteredResult = getFilteredSchema(activity.className, "deterministic-validators", targetFramework);
+    if (filteredResult.status !== "approved") continue;
+    const schema = filteredResult.schema;
 
     for (const [attrName, attrValue] of Object.entries(activity.attributes)) {
       if (attrName === "DisplayName" || attrName.startsWith("xmlns") || attrName.includes(":")) continue;
@@ -120,6 +125,7 @@ function findClosestMatch(value: string, validValues: string[]): string | null {
 export function validateLiteralExpressions(
   xamlContent: string,
   workflowName: string,
+  targetFramework?: "Windows" | "Portable",
 ): Correction[] {
   const corrections: Correction[] = [];
 
@@ -138,15 +144,13 @@ export function validateLiteralExpressions(
       if (attrValue.includes(" ") || attrValue.includes("+") || attrValue.includes("&amp;")) continue;
 
       if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(attrValue)) {
-        if (catalogService.isLoaded()) {
-          const schema = catalogService.getActivitySchema(activity.className);
-          if (schema) {
-            const propDef = schema.activity.properties.find((p: any) => p.name === attrName);
-            if (propDef) {
-              const isStringLiteral = propDef.clrType === "System.String" || propDef.clrType === "String";
-              const isEnum = propDef.validValues && propDef.validValues.length > 0;
-              if (isStringLiteral || isEnum) continue;
-            }
+        const filteredLitResult = getFilteredSchema(activity.className, "deterministic-validators", targetFramework);
+        if (filteredLitResult.status === "approved") {
+          const propDef = filteredLitResult.schema.activity.properties.find((p: any) => p.name === attrName);
+          if (propDef) {
+            const isStringLiteral = propDef.clrType === "System.String" || propDef.clrType === "String";
+            const isEnum = propDef.validValues && propDef.validValues.length > 0;
+            if (isStringLiteral || isEnum) continue;
           }
         }
 
@@ -190,6 +194,7 @@ export function validateLiteralExpressions(
 export function validateNestedArguments(
   xamlContent: string,
   workflowName: string,
+  _targetFramework?: "Windows" | "Portable",
 ): Correction[] {
   const corrections: Correction[] = [];
 
@@ -224,6 +229,7 @@ export function validateNestedArguments(
 export function validateMissingProperties(
   xamlContent: string,
   workflowName: string,
+  targetFramework?: "Windows" | "Portable",
 ): Correction[] {
   const corrections: Correction[] = [];
 
@@ -232,8 +238,9 @@ export function validateMissingProperties(
   const activities = extractActivities(xamlContent);
 
   for (const activity of activities) {
-    const schema = catalogService.getActivitySchema(activity.className);
-    if (!schema) continue;
+    const filteredMissResult = getFilteredSchema(activity.className, "deterministic-validators", targetFramework);
+    if (filteredMissResult.status !== "approved") continue;
+    const schema = filteredMissResult.schema;
 
     const requiredProps = schema.activity.properties.filter(p => p.required);
     const presentAttrs = new Set(Object.keys(activity.attributes));
@@ -269,6 +276,7 @@ export function validateMissingProperties(
 export function validateUndeclaredVariables(
   xamlContent: string,
   workflowName: string,
+  _targetFramework?: "Windows" | "Portable",
 ): Correction[] {
   const corrections: Correction[] = [];
 
@@ -326,12 +334,13 @@ export function runDeterministicValidation(
   xamlEntries: { name: string; content: string }[],
   categories: ErrorCategory[],
   onProgress?: (message: string) => void,
+  targetFramework?: "Windows" | "Portable",
 ): CorrectionSet {
   const startTime = Date.now();
   const allCorrections: Correction[] = [];
   let totalReviewed = 0;
 
-  const categoryValidators: Record<string, (xaml: string, name: string) => Correction[]> = {
+  const categoryValidators: Record<string, (xaml: string, name: string, tf?: "Windows" | "Portable") => Correction[]> = {
     ENUM_VIOLATIONS: validateEnumViolations,
     LITERAL_EXPRESSIONS: validateLiteralExpressions,
     NESTED_ARGUMENTS: validateNestedArguments,
@@ -353,7 +362,7 @@ export function runDeterministicValidation(
       if (!validator) continue;
 
       try {
-        const corrections = validator(entry.content, workflowName);
+        const corrections = validator(entry.content, workflowName, targetFramework);
         allCorrections.push(...corrections);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);

@@ -5,6 +5,11 @@ import { XMLValidator } from "fast-xml-parser";
 import { QualityGateError } from "../uipath-shared";
 import { findUndeclaredVariables } from "./vbnet-expression-linter";
 import { inferTypeFromPrefix } from "../shared/type-inference";
+import { getFilteredSchema, registerStage } from "../catalog/filtered-schema-lookup";
+
+registerStage("xaml-compliance");
+
+let _complianceTargetFramework: "Windows" | "Portable" | undefined;
 
 export type TargetFramework = "Windows" | "Portable";
 
@@ -288,7 +293,10 @@ export function resolveActivityToPackage(activityName: string): string | null {
     if (SYSTEM_ACTIVITIES_NO_PREFIX.has(activityName)) return "System.Activities";
     if (catalogService.isLoaded()) {
       const schema = catalogService.getActivitySchema(activityName);
-      if (schema) return schema.packageId;
+      if (schema) {
+        getFilteredSchema(activityName, "xaml-compliance", _complianceTargetFramework);
+        return schema.packageId;
+      }
     }
     return null;
   }
@@ -305,7 +313,10 @@ export function resolveActivityToPackage(activityName: string): string | null {
 
   if (catalogService.isLoaded()) {
     const schema = catalogService.getActivitySchema(activityName);
-    if (schema) return schema.packageId;
+    if (schema) {
+      getFilteredSchema(activityName, "xaml-compliance", _complianceTargetFramework);
+      return schema.packageId;
+    }
   }
 
   const registryPackage = getActivityPackageFromRegistry(activityName);
@@ -320,6 +331,8 @@ export function getActivityPrefixStrict(templateName: string): string | null {
   if (SYSTEM_ACTIVITIES_NO_PREFIX.has(templateName)) return "";
 
   if (catalogService.isLoaded()) {
+    getFilteredSchema(templateName, "xaml-compliance", _complianceTargetFramework);
+
     const catalogPrefix = catalogService.getPrefixForActivity(templateName);
     if (catalogPrefix !== null) return catalogPrefix;
 
@@ -1685,6 +1698,7 @@ let _lastComplianceFindings: ComplianceFinding[] = [];
 export function getLastComplianceFindings(): ComplianceFinding[] { return _lastComplianceFindings; }
 
 export function normalizeXaml(rawXaml: string, targetFramework: TargetFramework = "Windows"): string {
+  _complianceTargetFramework = targetFramework;
   const findings: ComplianceFinding[] = [];
   _lastComplianceFindings = findings;
   let idCounter = 0;
