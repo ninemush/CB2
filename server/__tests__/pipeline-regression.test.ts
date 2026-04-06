@@ -1172,6 +1172,115 @@ describe("Compiler-invariant regression tests", () => {
       const propViolations = result.violations.filter(v => v.check === "MISSING_REQUIRED_ACTIVITY_PROPERTY");
       expect(propViolations).toHaveLength(0);
     });
+
+    it("does not flag GmailSendMessage.Body when Body is a child element (catalog-dependent)", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="Main"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=mscorlib"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:ugs="clr-namespace:UiPath.GSuite.Activities;assembly=UiPath.GSuite.Activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="Main">
+    <ugs:GmailSendMessage DisplayName="Send Gmail"
+      To="recipient@example.com"
+      Subject="Test Subject">
+      <ugs:GmailSendMessage.Body>
+        <InArgument x:TypeArguments="x:String">[str_EmailBody]</InArgument>
+      </ugs:GmailSendMessage.Body>
+    </ugs:GmailSendMessage>
+  </Sequence>
+</Activity>`;
+      const result = runQG([{ name: "Main.xaml", content: xaml }], { "UiPath.GSuite.Activities": "25.10.0" });
+      const propViolations = result.violations.filter(v => v.check === "MISSING_REQUIRED_ACTIVITY_PROPERTY");
+      const bodyMissing = propViolations.some(v => v.detail.includes("Body"));
+      expect(bodyMissing).toBe(false);
+    });
+
+    it("does not flag UpdateEntity.EntityObject when EntityObject is a child element (catalog-dependent)", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="Main"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=mscorlib"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:uds="clr-namespace:UiPath.DataService.Activities;assembly=UiPath.DataService.Activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="Main">
+    <uds:UpdateEntity DisplayName="Update Customer Record"
+      EntityType="Customer">
+      <uds:UpdateEntity.EntityObject>
+        <InArgument x:TypeArguments="x:Object">[customerRecord]</InArgument>
+      </uds:UpdateEntity.EntityObject>
+    </uds:UpdateEntity>
+  </Sequence>
+</Activity>`;
+      const result = runQG([{ name: "Main.xaml", content: xaml }], { "UiPath.DataService.Activities": "25.10.0" });
+      const propViolations = result.violations.filter(v => v.check === "MISSING_REQUIRED_ACTIVITY_PROPERTY");
+      const entityObjMissing = propViolations.some(v => v.detail.includes("EntityObject"));
+      expect(entityObjMissing).toBe(false);
+    });
+
+    it("still detects truly missing required properties (registry-based)", () => {
+      const xaml = makeValidXaml("Main", `<ui:LogMessage DisplayName="Log Missing Message" Level="Info" />`);
+      const result = runQG([{ name: "Main.xaml", content: xaml }], { "UiPath.System.Activities": "25.10.0" });
+      const propViolations = result.violations.filter(v => v.check === "MISSING_REQUIRED_ACTIVITY_PROPERTY");
+      const messageMissing = propViolations.some(v => v.detail.includes("Message"));
+      expect(messageMissing).toBe(true);
+    });
+
+    it("recognizes child-element property beyond 4000 chars from opening tag", () => {
+      const paddingAttrs = Array.from({ length: 40 }, (_, i) => `CustomAttr${i}="${"a".repeat(90)}"`).join("\n      ");
+      const xaml = makeValidXaml("Main", `
+        <ui:LogMessage DisplayName="Log with far child"
+          Level="Info"
+          ${paddingAttrs}>
+          <ui:LogMessage.Message>
+            <InArgument x:TypeArguments="x:String">[str_Msg]</InArgument>
+          </ui:LogMessage.Message>
+        </ui:LogMessage>
+      `);
+      const openIdx = xaml.indexOf("<ui:LogMessage ");
+      const childIdx = xaml.indexOf("ui:LogMessage.Message");
+      expect(childIdx - openIdx).toBeGreaterThan(4000);
+      const result = runQG([{ name: "Main.xaml", content: xaml }], { "UiPath.System.Activities": "25.10.0" });
+      const propViolations = result.violations.filter(v => v.check === "MISSING_REQUIRED_ACTIVITY_PROPERTY");
+      const msgMissing = propViolations.some(v => v.detail.includes("Message"));
+      expect(msgMissing).toBe(false);
+    });
+
+    it("QG child-element detection agrees with post-assembly check for registry-backed activity", () => {
+      const childXaml = makeValidXaml("Main", `
+        <ui:LogMessage DisplayName="Log with child prop">
+          <ui:LogMessage.Message>
+            <InArgument x:TypeArguments="x:String">[str_Msg]</InArgument>
+          </ui:LogMessage.Message>
+        </ui:LogMessage>
+      `);
+      const missingXaml = makeValidXaml("Main", `<ui:LogMessage DisplayName="Log Missing" Level="Info" />`);
+
+      const qgChild = runQG([{ name: "Main.xaml", content: childXaml }], { "UiPath.System.Activities": "25.10.0" });
+      const qgMissing = runQG([{ name: "Main.xaml", content: missingXaml }], { "UiPath.System.Activities": "25.10.0" });
+
+      const qgChildHasViolation = qgChild.violations.some(v =>
+        v.check === "MISSING_REQUIRED_ACTIVITY_PROPERTY" && v.detail.includes("Message")
+      );
+      const qgMissingHasViolation = qgMissing.violations.some(v =>
+        v.check === "MISSING_REQUIRED_ACTIVITY_PROPERTY" && v.detail.includes("Message")
+      );
+
+      expect(qgChildHasViolation).toBe(false);
+      expect(qgMissingHasViolation).toBe(true);
+    });
   });
 
   describe("TextExpression Block Coverage", () => {

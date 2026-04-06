@@ -2455,10 +2455,20 @@ export function validatePackage(input: QualityGateInput): QualityGateResult {
         }
       }
       if (requiredProps.length === 0) continue;
-      const searchWindow = entry.content.substring(
-        atMatch.index,
-        Math.min(atMatch.index + 4000, entry.content.length)
-      );
+      const isSelfClosing = atMatch[3].trim() === "/>";
+      let searchWindow: string;
+      if (isSelfClosing) {
+        searchWindow = atMatch[0];
+      } else {
+        const closingTag = `</${activityName}>`;
+        const closingIdx = entry.content.indexOf(closingTag, atMatch.index);
+        if (closingIdx >= 0) {
+          searchWindow = entry.content.substring(atMatch.index, closingIdx + closingTag.length);
+        } else {
+          searchWindow = entry.content.substring(atMatch.index);
+        }
+      }
+      const bareActivityName = activityName.includes(":") ? activityName.split(":").slice(1).join(":") : activityName;
       for (const reqProp of requiredProps) {
         const propName = String(reqProp);
         if (propName === "DisplayName") continue;
@@ -2468,10 +2478,14 @@ export function validatePackage(input: QualityGateInput): QualityGateResult {
         const hasAsChild = new RegExp(
           `<${escapedActivity}\\.${escapedProp}[\\s>]`
         ).test(searchWindow);
+        const escapedBareActivity = bareActivityName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const hasAsChildBarePrefix = !hasAsChild && new RegExp(
+          `<(?:[A-Za-z][A-Za-z0-9]*:)?${escapedBareActivity}\\.${escapedProp}[\\s>]`
+        ).test(searchWindow);
         const hasAsNestedChild = new RegExp(
           `<${escapedProp}[\\s>]`
         ).test(searchWindow);
-        if (!hasAsAttr && !hasAsChild && !hasAsNestedChild) {
+        if (!hasAsAttr && !hasAsChild && !hasAsChildBarePrefix && !hasAsNestedChild) {
           const lineNum = entry.content.substring(0, atMatch.index).split("\n").length;
           missingRequiredPropertyViolations.push({
             category: "accuracy",
