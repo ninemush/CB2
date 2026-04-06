@@ -19,12 +19,22 @@ import {
   checkCrossFamilyDriftInDependencies,
   mailFamilyLockToPackageViolations,
   crossFamilyDriftToPackageViolations,
+  detectConnectorIntent,
+  collapseCompetingRepresentations,
+  applyCanonicalRewrite,
+  buildRewriteDirective,
+  type RewriteDirective,
   type CriticalActivityFamilyContract,
   type CriticalStepLoweringResult,
   type CriticalActivityLoweringDiagnostics,
   type MailSendCluster,
+  type MailSendClusterNode,
   type MailFamilyLockResult,
   type MailFamilyLockDiagnostics,
+  type ConnectorIntent,
+  type PropertyProvenance,
+  type RepresentationType,
+  type CollapseResult,
 } from "../critical-activity-lowering";
 import type { StudioProfile } from "../catalog/metadata-service";
 import type { ActivityNode, WorkflowNode } from "../workflow-spec-types";
@@ -1996,5 +2006,1544 @@ describe("Mail family lock — XAML-level analysis", () => {
     expect(violations.length).toBeGreaterThan(0);
     expect(violations[0].violationType).toBe("wrong-family-activity-tag");
     expect(violations[0].packageFatal).toBe(true);
+  });
+});
+
+describe("Connector intent detection", () => {
+  it("detects Gmail connector from integrationServiceConnectors array", () => {
+    const intent = detectConnectorIntent(
+      { To: "a@b.com", Subject: "S", Body: "B" },
+      "Send Email",
+      [{ connectorName: "Gmail", connectionName: "MyGmailConn", connectionId: "conn-123" }],
+    );
+    expect(intent).not.toBeNull();
+    expect(intent!.connectorName).toBe("Gmail");
+    expect(intent!.resolvedFamily).toBe("gmail-send");
+    expect(intent!.connectionName).toBe("MyGmailConn");
+    expect(intent!.connectionId).toBe("conn-123");
+  });
+
+  it("detects Outlook connector from integrationServiceConnectors", () => {
+    const intent = detectConnectorIntent(
+      {},
+      "Send Email",
+      [{ connectorName: "Outlook365" }],
+    );
+    expect(intent).not.toBeNull();
+    expect(intent!.resolvedFamily).toBe("outlook-send");
+  });
+
+  it("detects Gmail connector from narrative text in displayName", () => {
+    const intent = detectConnectorIntent(
+      { Note: "use the Gmail connector" },
+      "Send via Gmail Connector",
+    );
+    expect(intent).not.toBeNull();
+    expect(intent!.resolvedFamily).toBe("gmail-send");
+  });
+
+  it("returns null when no connector signals present", () => {
+    const intent = detectConnectorIntent(
+      { To: "a@b.com", Subject: "S", Body: "B" },
+      "Send Email",
+    );
+    expect(intent).toBeNull();
+  });
+});
+
+describe("Connector-driven cluster resolves to one concrete target", () => {
+  it("ambiguous SendMail with Gmail connector locks to gmail-send", () => {
+    const cluster: MailSendCluster = {
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      nodes: [{
+        nodeIndex: 0,
+        displayName: "Send Mail",
+        template: "SendMail",
+        detectedFamily: "ambiguous-mail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+      }],
+      concreteSendNode: {
+        nodeIndex: 0,
+        displayName: "Send Mail",
+        template: "SendMail",
+        detectedFamily: "ambiguous-mail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+      },
+      detectedFamilies: new Set(["ambiguous-mail-send"]),
+      hasNarrativeContainer: false,
+      narrativeRepresentationsFound: [],
+      connectorIntent: { connectorName: "Gmail", connectionName: "MyGmail", connectionId: "conn-1", resolvedFamily: "gmail-send" },
+    };
+
+    const result = lockClusterToFamily(cluster, WINDOWS_PROFILE, ALL_PACKAGES);
+    expect(result.locked).toBe(true);
+    expect(result.selectedFamily).toBe("gmail-send");
+    expect(result.concreteActivityType).toBe("UiPath.GSuite.Activities.GmailSendMessage");
+    expect(result.concretePackage).toBe("UiPath.GSuite.Activities");
+    expect(result.connectorIntentDetected).toBeDefined();
+    expect(result.connectorIntentDetected!.connectorName).toBe("Gmail");
+    expect(result.collapseApplied).toBe(true);
+  });
+
+  it("ambiguous SendMail with Outlook connector locks to outlook-send on Windows", () => {
+    const cluster: MailSendCluster = {
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      nodes: [{
+        nodeIndex: 0,
+        displayName: "Send Mail",
+        template: "SendMail",
+        detectedFamily: "ambiguous-mail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+      }],
+      concreteSendNode: {
+        nodeIndex: 0,
+        displayName: "Send Mail",
+        template: "SendMail",
+        detectedFamily: "ambiguous-mail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+      },
+      detectedFamilies: new Set(["ambiguous-mail-send"]),
+      hasNarrativeContainer: false,
+      narrativeRepresentationsFound: [],
+      connectorIntent: { connectorName: "Outlook365", connectionName: null, connectionId: null, resolvedFamily: "outlook-send" },
+    };
+
+    const result = lockClusterToFamily(cluster, WINDOWS_PROFILE, ALL_PACKAGES);
+    expect(result.locked).toBe(true);
+    expect(result.selectedFamily).toBe("outlook-send");
+  });
+
+  it("connector intent plumbed via integrationServiceConnectors param resolves ambiguous cluster", () => {
+    const cluster: MailSendCluster = {
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      nodes: [{
+        nodeIndex: 0,
+        displayName: "Send Mail",
+        template: "SendMail",
+        detectedFamily: "ambiguous-mail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+      }],
+      concreteSendNode: {
+        nodeIndex: 0,
+        displayName: "Send Mail",
+        template: "SendMail",
+        detectedFamily: "ambiguous-mail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+      },
+      detectedFamilies: new Set(["ambiguous-mail-send"]),
+      hasNarrativeContainer: false,
+      narrativeRepresentationsFound: [],
+    };
+
+    const result = lockClusterToFamily(
+      cluster, WINDOWS_PROFILE, ALL_PACKAGES,
+      [{ connectorName: "Gmail", connectionName: "Prod Gmail", connectionId: "c-99" }],
+    );
+    expect(result.locked).toBe(true);
+    expect(result.selectedFamily).toBe("gmail-send");
+    expect(result.connectorIntentDetected).toBeDefined();
+    expect(result.selectedCanonicalSource).toContain("connector-intent");
+  });
+});
+
+describe("Cluster with narrative TryCatch plus Gmail concrete does not emit both", () => {
+  it("collapses narrative + concrete into single canonical node", () => {
+    const cluster: MailSendCluster = {
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      nodes: [
+        {
+          nodeIndex: 0,
+          displayName: "TryCatch Wrapper",
+          template: "TryCatch",
+          detectedFamily: null,
+          role: "trycatch-wrapper",
+          properties: {},
+        },
+        {
+          nodeIndex: 1,
+          displayName: "Send Gmail",
+          template: "GmailSendMessage",
+          detectedFamily: "gmail-send",
+          role: "concrete-send",
+          properties: { To: "a@b.com", Subject: "S", Body: "B" },
+        },
+        {
+          nodeIndex: 2,
+          displayName: "Narrative Send",
+          template: "SendMail",
+          detectedFamily: "ambiguous-mail-send",
+          role: "concrete-send",
+          properties: { To: "a@b.com", Subject: "S", Body: "B" },
+          representationType: "ambiguous-template" as RepresentationType,
+        },
+      ],
+      concreteSendNode: {
+        nodeIndex: 1,
+        displayName: "Send Gmail",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+      },
+      detectedFamilies: new Set(["gmail-send", "ambiguous-mail-send"]),
+      hasNarrativeContainer: true,
+      narrativeRepresentationsFound: ["narrative-trycatch-container"],
+    };
+
+    const result = lockClusterToFamily(cluster, WINDOWS_PROFILE, ALL_PACKAGES);
+    expect(result.locked).toBe(true);
+    expect(result.selectedFamily).toBe("gmail-send");
+    expect(result.collapseApplied).toBe(true);
+    expect(result.rejectedCompetingRepresentations).toBeDefined();
+    expect(result.rejectedCompetingRepresentations!.length).toBeGreaterThan(0);
+    expect(result.selectedCanonicalSource).toBe("GmailSendMessage");
+  });
+});
+
+describe("Body preservation through rewriting", () => {
+  it("Body preserved after collapse when both representations have it", () => {
+    const nodes: MailSendClusterNode[] = [
+      {
+        nodeIndex: 0,
+        displayName: "Send Gmail",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "Real body content" },
+      },
+      {
+        nodeIndex: 1,
+        displayName: "Send Mail",
+        template: "SendMail",
+        detectedFamily: "ambiguous-mail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "Real body content" },
+        representationType: "ambiguous-template" as RepresentationType,
+      },
+    ];
+
+    const result = collapseCompetingRepresentations(nodes, ["To", "Subject", "Body"]);
+    expect(result.collapsed).toBe(true);
+    expect(result.bodyPreserved).toBe(true);
+    expect(result.canonicalProperties.Body).toBe("Real body content");
+  });
+
+  it("Body loss during rewriting causes collapse failure", () => {
+    const nodes: MailSendClusterNode[] = [
+      {
+        nodeIndex: 0,
+        displayName: "Send Gmail",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "Real body" },
+      },
+      {
+        nodeIndex: 1,
+        displayName: "Send Mail",
+        template: "SendMail",
+        detectedFamily: "ambiguous-mail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "" },
+        representationType: "ambiguous-template" as RepresentationType,
+      },
+    ];
+
+    const result = collapseCompetingRepresentations(nodes, ["To", "Subject", "Body"]);
+    expect(result.collapsed).toBe(true);
+    expect(result.bodyPreserved).toBe(true);
+    expect(result.canonicalProperties.Body).toBe("Real body");
+  });
+
+  it("rejects when all representations lose Body during rewriting", () => {
+    const nodes: MailSendClusterNode[] = [
+      {
+        nodeIndex: 0,
+        displayName: "Send Gmail",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S" },
+      },
+    ];
+
+    const result = collapseCompetingRepresentations(nodes, ["To", "Subject", "Body"]);
+    expect(result.collapsed).toBe(true);
+    expect(result.bodyPreserved).toBe(false);
+  });
+});
+
+describe("Wrong-family drift after lock is package-fatal", () => {
+  it("Gmail-locked cluster with wrong-family SMTP tag in XAML is fatal", () => {
+    const lockResults: MailFamilyLockResult[] = [{
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      selectedFamily: "gmail-send",
+      concreteActivityType: "UiPath.GSuite.Activities.GmailSendMessage",
+      concretePackage: "UiPath.GSuite.Activities",
+      locked: true,
+      lockRejectionReason: null,
+      narrativeRepresentationsRejected: [],
+      missingRequiredProperties: [],
+      packageFatal: false,
+      crossFamilyDriftViolation: false,
+      detectedRepresentations: ["concrete-send"],
+      selectedCanonicalSource: "GmailSendMessage",
+      collapseApplied: false,
+    }];
+
+    const xaml = `<Activity><Sequence><ui:GmailSendMessage DisplayName="Send" To="a@b.com" /><ui:SendSmtpMailMessage DisplayName="SMTP" /></Sequence></Activity>`;
+    const violations = checkCrossFamilyDriftInXaml(xaml, lockResults, "Main.xaml");
+    expect(violations.length).toBeGreaterThan(0);
+    expect(violations[0].packageFatal).toBe(true);
+    expect(violations[0].violationType).toBe("wrong-family-activity-tag");
+  });
+
+  it("wrong-family package in dependencies after lock is fatal", () => {
+    const lockResults: MailFamilyLockResult[] = [{
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      selectedFamily: "gmail-send",
+      concreteActivityType: "UiPath.GSuite.Activities.GmailSendMessage",
+      concretePackage: "UiPath.GSuite.Activities",
+      locked: true,
+      lockRejectionReason: null,
+      narrativeRepresentationsRejected: [],
+      missingRequiredProperties: [],
+      packageFatal: false,
+      crossFamilyDriftViolation: false,
+      collapseApplied: true,
+      connectorIntentDetected: { connectorName: "Gmail", connectionName: null, connectionId: null, resolvedFamily: "gmail-send" },
+    }];
+
+    const violations = checkCrossFamilyDriftInDependencies(
+      ["UiPath.GSuite.Activities", "UiPath.Mail.Activities"],
+      lockResults,
+    );
+    expect(violations.length).toBeGreaterThan(0);
+    expect(violations[0].packageFatal).toBe(true);
+    expect(violations[0].violationType).toBe("wrong-family-package");
+  });
+});
+
+describe("No placeholder injection for rejected clusters (mail lock)", () => {
+  it("rejected ambiguous cluster does not produce concreteActivityType", () => {
+    const cluster: MailSendCluster = {
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      nodes: [{
+        nodeIndex: 0,
+        displayName: "Send Mail",
+        template: "SendMail",
+        detectedFamily: "ambiguous-mail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+      }],
+      concreteSendNode: {
+        nodeIndex: 0,
+        displayName: "Send Mail",
+        template: "SendMail",
+        detectedFamily: "ambiguous-mail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+      },
+      detectedFamilies: new Set(["ambiguous-mail-send"]),
+      hasNarrativeContainer: false,
+      narrativeRepresentationsFound: [],
+    };
+
+    const result = lockClusterToFamily(cluster, WINDOWS_PROFILE, ALL_PACKAGES);
+    expect(result.locked).toBe(false);
+    expect(result.concreteActivityType).toBeNull();
+    expect(result.concretePackage).toBeNull();
+  });
+
+  it("rejected narrative cluster does not produce concreteActivityType", () => {
+    const cluster: MailSendCluster = {
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      nodes: [{
+        nodeIndex: 0,
+        displayName: "Send Gmail",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: 'TryCatch { Try: GmailSendMessage(To="a@b.com") }' },
+      }],
+      concreteSendNode: null,
+      detectedFamilies: new Set(["gmail-send"]),
+      hasNarrativeContainer: true,
+      narrativeRepresentationsFound: ["narrative-trycatch-container"],
+    };
+
+    const result = lockClusterToFamily(cluster, WINDOWS_PROFILE, ALL_PACKAGES);
+    expect(result.locked).toBe(false);
+    expect(result.concreteActivityType).toBeNull();
+    expect(result.concretePackage).toBeNull();
+    expect(result.packageFatal).toBe(true);
+  });
+});
+
+describe("Provenance is recorded for each preserved property after collapse", () => {
+  it("single-node cluster records provenance for all required properties", () => {
+    const cluster: MailSendCluster = {
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      nodes: [{
+        nodeIndex: 0,
+        displayName: "Send Gmail",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "Test Sub", Body: "Test Body" },
+      }],
+      concreteSendNode: {
+        nodeIndex: 0,
+        displayName: "Send Gmail",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "Test Sub", Body: "Test Body" },
+      },
+      detectedFamilies: new Set(["gmail-send"]),
+      hasNarrativeContainer: false,
+      narrativeRepresentationsFound: [],
+    };
+
+    const result = lockClusterToFamily(cluster, WINDOWS_PROFILE, ALL_PACKAGES);
+    expect(result.locked).toBe(true);
+    expect(result.propertyProvenance).toBeDefined();
+    expect(result.propertyProvenance!.length).toBeGreaterThanOrEqual(3);
+
+    const toProv = result.propertyProvenance!.find(p => p.propertyName === "To");
+    expect(toProv).toBeDefined();
+    expect(toProv!.value).toBe("a@b.com");
+    expect(toProv!.sourceTemplate).toBe("GmailSendMessage");
+    expect(toProv!.sourceRepresentationType).toBe("concrete-send");
+
+    const subjectProv = result.propertyProvenance!.find(p => p.propertyName === "Subject");
+    expect(subjectProv).toBeDefined();
+    expect(subjectProv!.value).toBe("Test Sub");
+
+    const bodyProv = result.propertyProvenance!.find(p => p.propertyName === "Body");
+    expect(bodyProv).toBeDefined();
+    expect(bodyProv!.value).toBe("Test Body");
+  });
+
+  it("multi-node collapse records provenance with correct source attribution", () => {
+    const nodes: MailSendClusterNode[] = [
+      {
+        nodeIndex: 0,
+        displayName: "Send Gmail",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "From Gmail", Body: "Gmail Body" },
+      },
+      {
+        nodeIndex: 1,
+        displayName: "Send Generic",
+        template: "SendMail",
+        detectedFamily: "ambiguous-mail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "From Generic", Body: "Generic Body" },
+        representationType: "ambiguous-template" as RepresentationType,
+      },
+    ];
+
+    const result = collapseCompetingRepresentations(nodes, ["To", "Subject", "Body"]);
+    expect(result.collapsed).toBe(true);
+    expect(result.provenance.length).toBeGreaterThanOrEqual(3);
+
+    const subjectProv = result.provenance.find(p => p.propertyName === "Subject");
+    expect(subjectProv).toBeDefined();
+    expect(subjectProv!.sourceTemplate).toBe("GmailSendMessage");
+    expect(subjectProv!.value).toBe("From Gmail");
+    expect(subjectProv!.sourceRepresentationType).toBe("concrete-send");
+
+    const bodyProv = result.provenance.find(p => p.propertyName === "Body");
+    expect(bodyProv).toBeDefined();
+    expect(bodyProv!.sourceTemplate).toBe("GmailSendMessage");
+    expect(bodyProv!.value).toBe("Gmail Body");
+  });
+});
+
+describe("Conflicting non-empty values with no precedence rule causes rejection", () => {
+  it("rejects when two concrete-send nodes have different values at same precedence", () => {
+    const nodes: MailSendClusterNode[] = [
+      {
+        nodeIndex: 0,
+        displayName: "Send Gmail 1",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "alice@a.com", Subject: "Subject A", Body: "Body A" },
+      },
+      {
+        nodeIndex: 1,
+        displayName: "Send Gmail 2",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "bob@b.com", Subject: "Subject B", Body: "Body B" },
+      },
+    ];
+
+    const result = collapseCompetingRepresentations(nodes, ["To", "Subject", "Body"]);
+    expect(result.collapsed).toBe(false);
+    expect(result.rejectionReason).toBeDefined();
+    expect(result.rejectionReason).toContain("Conflicting values");
+    expect(result.rejectionReason).toContain("same precedence");
+  });
+
+  it("allows when concrete-send and ambiguous-template have different values (concrete wins)", () => {
+    const nodes: MailSendClusterNode[] = [
+      {
+        nodeIndex: 0,
+        displayName: "Send Gmail",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "alice@a.com", Subject: "Concrete Subject", Body: "Concrete Body" },
+      },
+      {
+        nodeIndex: 1,
+        displayName: "Send Mail",
+        template: "SendMail",
+        detectedFamily: "ambiguous-mail-send",
+        role: "concrete-send",
+        properties: { To: "bob@b.com", Subject: "Ambiguous Subject", Body: "Ambiguous Body" },
+        representationType: "ambiguous-template" as RepresentationType,
+      },
+    ];
+
+    const result = collapseCompetingRepresentations(nodes, ["To", "Subject", "Body"]);
+    expect(result.collapsed).toBe(true);
+    expect(result.canonicalProperties.To).toBe("alice@a.com");
+    expect(result.canonicalProperties.Subject).toBe("Concrete Subject");
+    expect(result.canonicalProperties.Body).toBe("Concrete Body");
+  });
+});
+
+describe("Diagnostics extension with connector-intent and provenance fields", () => {
+  it("buildMailFamilyLockDiagnostics includes connector intent and collapse counts", () => {
+    const lockResults: MailFamilyLockResult[] = [
+      {
+        clusterId: "c1", file: "Main.xaml", workflow: "Main",
+        selectedFamily: "gmail-send", concreteActivityType: "GmailSendMessage",
+        concretePackage: "UiPath.GSuite.Activities", locked: true,
+        lockRejectionReason: null, narrativeRepresentationsRejected: [],
+        missingRequiredProperties: [], packageFatal: false, crossFamilyDriftViolation: false,
+        connectorIntentDetected: { connectorName: "Gmail", connectionName: null, connectionId: null, resolvedFamily: "gmail-send" },
+        collapseApplied: true,
+        detectedRepresentations: ["concrete-send", "ambiguous-template"],
+        selectedCanonicalSource: "GmailSendMessage",
+        rejectedCompetingRepresentations: ["SendMail"],
+        propertyProvenance: [
+          { propertyName: "To", value: "a@b.com", sourceNodeIndex: 0, sourceTemplate: "GmailSendMessage", sourceRepresentationType: "concrete-send" },
+        ],
+      },
+      {
+        clusterId: "c2", file: "Main.xaml", workflow: "Main",
+        selectedFamily: "smtp-send", concreteActivityType: "SendSmtpMailMessage",
+        concretePackage: "UiPath.Mail.Activities", locked: true,
+        lockRejectionReason: null, narrativeRepresentationsRejected: [],
+        missingRequiredProperties: [], packageFatal: false, crossFamilyDriftViolation: false,
+        collapseApplied: false,
+      },
+    ];
+
+    const diag = buildMailFamilyLockDiagnostics(lockResults);
+    expect(diag.summary.totalClusters).toBe(2);
+    expect(diag.summary.totalLocked).toBe(2);
+    expect(diag.summary.totalConnectorIntentResolved).toBe(1);
+    expect(diag.summary.totalCollapseApplied).toBe(1);
+  });
+
+  it("lock result includes all extended diagnostics fields", () => {
+    const cluster: MailSendCluster = {
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      nodes: [{
+        nodeIndex: 0,
+        displayName: "Send Gmail",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+      }],
+      concreteSendNode: {
+        nodeIndex: 0,
+        displayName: "Send Gmail",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+      },
+      detectedFamilies: new Set(["gmail-send"]),
+      hasNarrativeContainer: false,
+      narrativeRepresentationsFound: [],
+      connectorIntent: { connectorName: "Gmail", connectionName: "MyConn", connectionId: "c-1", resolvedFamily: "gmail-send" },
+    };
+
+    const result = lockClusterToFamily(cluster, WINDOWS_PROFILE, ALL_PACKAGES);
+    expect(result.locked).toBe(true);
+    expect(result.detectedRepresentations).toBeDefined();
+    expect(result.detectedRepresentations).toContain("concrete-send");
+    expect(result.selectedCanonicalSource).toBe("GmailSendMessage");
+    expect(result.rejectedCompetingRepresentations).toBeDefined();
+    expect(result.rejectedCompetingRepresentations).toHaveLength(0);
+    expect(result.propertyProvenance).toBeDefined();
+    expect(result.propertyProvenance!.length).toBeGreaterThanOrEqual(3);
+    expect(result.connectorIntentDetected).toBeDefined();
+    expect(result.connectorIntentDetected!.connectorName).toBe("Gmail");
+    expect(result.collapseApplied).toBe(false);
+  });
+});
+
+describe("End-to-end connector plumbing via detectMailSendClusters", () => {
+  it("populates connectorIntent on clusters when integrationServiceConnectors are passed", () => {
+    const nodes: WorkflowNode[] = [
+      {
+        kind: "activity" as const,
+        template: "GmailSendMessage",
+        displayName: "Send Gmail",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+        errorHandling: "none" as const,
+      },
+    ];
+
+    const connectors = [{ connectorName: "Gmail", connectionName: "MyGmailConn", connectionId: "conn-1" }];
+    const clusters = detectMailSendClusters(nodes, "Main.xaml", "Main", connectors);
+    expect(clusters.length).toBe(1);
+    expect(clusters[0].connectorIntent).toBeDefined();
+    expect(clusters[0].connectorIntent!.connectorName).toBe("Gmail");
+    expect(clusters[0].connectorIntent!.resolvedFamily).toBe("gmail-send");
+  });
+
+  it("scopes connector intent to cluster context when multiple mail connectors exist", () => {
+    const connectors = [
+      { connectorName: "Gmail", connectionName: "GmailConn", connectionId: "g-1" },
+      { connectorName: "Outlook365", connectionName: "OutlookConn", connectionId: "o-1" },
+    ];
+    const gmailResult = detectConnectorIntent(
+      { To: "a@b.com" },
+      "Send via Gmail",
+      connectors,
+    );
+    expect(gmailResult).toBeDefined();
+    expect(gmailResult!.connectorName).toBe("Gmail");
+    expect(gmailResult!.resolvedFamily).toBe("gmail-send");
+
+    const outlookResult = detectConnectorIntent(
+      { To: "a@b.com" },
+      "Send via Outlook365",
+      connectors,
+    );
+    expect(outlookResult).toBeDefined();
+    expect(outlookResult!.connectorName).toBe("Outlook365");
+    expect(outlookResult!.resolvedFamily).toBe("outlook-send");
+
+    const ambiguousResult = detectConnectorIntent(
+      { To: "a@b.com" },
+      "Send Email",
+      connectors,
+    );
+    expect(ambiguousResult).toBeNull();
+  });
+
+  it("does not populate connectorIntent when no matching connectors exist", () => {
+    const nodes: WorkflowNode[] = [
+      {
+        kind: "activity" as const,
+        template: "GmailSendMessage",
+        displayName: "Send Gmail",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+        errorHandling: "none" as const,
+      },
+    ];
+
+    const connectors = [{ connectorName: "Salesforce", connectionName: "SFConn", connectionId: "conn-2" }];
+    const clusters = detectMailSendClusters(nodes, "Main.xaml", "Main", connectors);
+    expect(clusters.length).toBe(1);
+    expect(clusters[0].connectorIntent).toBeFalsy();
+  });
+
+  it("passes connectors through runMailFamilyLockAnalysis end-to-end", () => {
+    const specs = [{
+      file: "Main.xaml",
+      workflow: "Main",
+      rootSequence: {
+        kind: "sequence" as const,
+        displayName: "Main",
+        children: [
+          {
+            kind: "activity" as const,
+            template: "GmailSendMessage",
+            displayName: "Send Gmail",
+            properties: { To: "a@b.com", Subject: "Test", Body: "Hello" },
+            errorHandling: "none" as const,
+          },
+        ] as WorkflowNode[],
+      },
+    }];
+
+    const connectors = [{ connectorName: "Gmail", connectionName: "MyGmailConn", connectionId: "conn-1" }];
+    const result = runMailFamilyLockAnalysis(specs, WINDOWS_PROFILE, ALL_PACKAGES, connectors);
+    expect(result.summary.totalClusters).toBe(1);
+    expect(result.summary.totalLocked).toBe(1);
+    const lockedResult = result.perClusterResults[0];
+    expect(lockedResult.connectorIntentDetected).toBeDefined();
+    expect(lockedResult.connectorIntentDetected!.connectorName).toBe("Gmail");
+  });
+});
+
+describe("applyCanonicalRewrite", () => {
+  it("rewrites ambiguous mail nodes to canonical template when collapse is applied", () => {
+    const nodes: WorkflowNode[] = [
+      {
+        kind: "activity" as const,
+        template: "SendMail",
+        displayName: "Send Email",
+        properties: { To: "a@b.com", Subject: "S" },
+        errorHandling: "none" as const,
+      },
+    ];
+
+    const lockResults: MailFamilyLockResult[] = [{
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      selectedFamily: "gmail-send",
+      concreteActivityType: "GmailSendMessage",
+      concretePackage: "UiPath.GSuite.Activities",
+      locked: true,
+      lockRejectionReason: null,
+      narrativeRepresentationsRejected: [],
+      missingRequiredProperties: [],
+      packageFatal: false,
+      crossFamilyDriftViolation: false,
+      collapseApplied: true,
+      connectorIntentDetected: { connectorName: "Gmail", connectionName: "c", connectionId: "1", resolvedFamily: "gmail-send" },
+      rewriteDirective: {
+        canonicalTopLevelIndex: 0,
+        competingTopLevelIndices: [],
+        canonicalTemplate: "GmailSendMessage",
+        canonicalProperties: { To: "a@b.com", Subject: "S", Body: "Hello" },
+        nestedInWrapper: false,
+      },
+      propertyProvenance: [
+        { propertyName: "To", source: "concrete-send", value: "a@b.com" },
+        { propertyName: "Subject", source: "concrete-send", value: "S" },
+        { propertyName: "Body", source: "concrete-send", value: "Hello" },
+      ],
+      detectedRepresentations: ["concrete-send"],
+      selectedCanonicalSource: "GmailSendMessage",
+      rejectedCompetingRepresentations: [],
+    }];
+
+    const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(nodes, lockResults);
+    expect(rewriteCount).toBe(1);
+    expect(rewrittenNodes[0].kind).toBe("activity");
+    const rewritten = rewrittenNodes[0] as ActivityNode;
+    expect(rewritten.template).toBe("GmailSendMessage");
+    expect(rewritten.properties?.Body).toBe("Hello");
+  });
+
+  it("does not rewrite nodes when no collapse was applied", () => {
+    const nodes: WorkflowNode[] = [
+      {
+        kind: "activity" as const,
+        template: "GmailSendMessage",
+        displayName: "Send Gmail",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+        errorHandling: "none" as const,
+      },
+    ];
+
+    const lockResults: MailFamilyLockResult[] = [{
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      selectedFamily: "gmail-send",
+      concreteActivityType: "GmailSendMessage",
+      concretePackage: "UiPath.GSuite.Activities",
+      locked: true,
+      lockRejectionReason: null,
+      narrativeRepresentationsRejected: [],
+      missingRequiredProperties: [],
+      packageFatal: false,
+      crossFamilyDriftViolation: false,
+      collapseApplied: false,
+    }];
+
+    const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(nodes, lockResults);
+    expect(rewriteCount).toBe(0);
+    expect(rewrittenNodes[0]).toEqual(nodes[0]);
+  });
+
+  it("does not cross-contaminate properties between clusters of the same family", () => {
+    const nodes: WorkflowNode[] = [
+      {
+        kind: "activity" as const,
+        template: "SendMail",
+        displayName: "Send Email 1",
+        properties: { To: "user1@a.com" },
+        errorHandling: "none" as const,
+      },
+      {
+        kind: "activity" as const,
+        template: "SendMail",
+        displayName: "Send Email 2",
+        properties: { To: "user2@b.com" },
+        errorHandling: "none" as const,
+      },
+    ];
+
+    const lockResultCluster1: MailFamilyLockResult = {
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      selectedFamily: "gmail-send",
+      concreteActivityType: "GmailSendMessage",
+      concretePackage: "UiPath.GSuite.Activities",
+      locked: true,
+      lockRejectionReason: null,
+      narrativeRepresentationsRejected: [],
+      missingRequiredProperties: [],
+      packageFatal: false,
+      crossFamilyDriftViolation: false,
+      collapseApplied: true,
+      connectorIntentDetected: { connectorName: "Gmail", resolvedFamily: "gmail-send" },
+      rewriteDirective: {
+        canonicalTopLevelIndex: 0,
+        competingTopLevelIndices: [],
+        canonicalTemplate: "GmailSendMessage",
+        canonicalProperties: { To: "correct1@a.com", Subject: "Subject1", Body: "Body1" },
+        nestedInWrapper: false,
+      },
+      propertyProvenance: [
+        { propertyName: "To", source: "concrete-send", value: "correct1@a.com" },
+        { propertyName: "Subject", source: "concrete-send", value: "Subject1" },
+        { propertyName: "Body", source: "concrete-send", value: "Body1" },
+      ],
+      detectedRepresentations: ["concrete-send"],
+      selectedCanonicalSource: "GmailSendMessage",
+      rejectedCompetingRepresentations: [],
+    };
+
+    const lockResultCluster2: MailFamilyLockResult = {
+      clusterId: "Main.xaml:Main:mail-cluster-1",
+      file: "Main.xaml",
+      workflow: "Main",
+      selectedFamily: "gmail-send",
+      concreteActivityType: "GmailSendMessage",
+      concretePackage: "UiPath.GSuite.Activities",
+      locked: true,
+      lockRejectionReason: null,
+      narrativeRepresentationsRejected: [],
+      missingRequiredProperties: [],
+      packageFatal: false,
+      crossFamilyDriftViolation: false,
+      collapseApplied: true,
+      connectorIntentDetected: { connectorName: "Gmail", resolvedFamily: "gmail-send" },
+      rewriteDirective: {
+        canonicalTopLevelIndex: 1,
+        competingTopLevelIndices: [],
+        canonicalTemplate: "GmailSendMessage",
+        canonicalProperties: { To: "correct2@b.com", Subject: "Subject2", Body: "Body2" },
+        nestedInWrapper: false,
+      },
+      propertyProvenance: [
+        { propertyName: "To", source: "concrete-send", value: "correct2@b.com" },
+        { propertyName: "Subject", source: "concrete-send", value: "Subject2" },
+        { propertyName: "Body", source: "concrete-send", value: "Body2" },
+      ],
+      detectedRepresentations: ["concrete-send"],
+      selectedCanonicalSource: "GmailSendMessage",
+      rejectedCompetingRepresentations: [],
+    };
+
+    const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(nodes, [lockResultCluster1, lockResultCluster2]);
+    expect(rewriteCount).toBe(2);
+    const node0 = rewrittenNodes[0] as ActivityNode;
+    const node1 = rewrittenNodes[1] as ActivityNode;
+    expect(node0.properties?.To).toBe("correct1@a.com");
+    expect(node0.properties?.Subject).toBe("Subject1");
+    expect(node1.properties?.To).toBe("correct2@b.com");
+    expect(node1.properties?.Subject).toBe("Subject2");
+  });
+
+  it("removes competing non-canonical mail nodes from output", () => {
+    const nodes: WorkflowNode[] = [
+      {
+        kind: "activity" as const,
+        template: "GmailSendMessage",
+        displayName: "Send Gmail",
+        properties: { To: "a@b.com", Subject: "S", Body: "B" },
+        errorHandling: "none" as const,
+      },
+      {
+        kind: "activity" as const,
+        template: "SendMail",
+        displayName: "Send Email Duplicate",
+        properties: { To: "a@b.com", Subject: "S" },
+        errorHandling: "none" as const,
+      },
+    ];
+
+    const lockResults: MailFamilyLockResult[] = [{
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      selectedFamily: "gmail-send",
+      concreteActivityType: "GmailSendMessage",
+      concretePackage: "UiPath.GSuite.Activities",
+      locked: true,
+      lockRejectionReason: null,
+      narrativeRepresentationsRejected: [],
+      missingRequiredProperties: [],
+      packageFatal: false,
+      crossFamilyDriftViolation: false,
+      collapseApplied: true,
+      connectorIntentDetected: { connectorName: "Gmail", resolvedFamily: "gmail-send" },
+      rewriteDirective: {
+        canonicalTopLevelIndex: 0,
+        competingTopLevelIndices: [1],
+        canonicalTemplate: "GmailSendMessage",
+        canonicalProperties: { To: "a@b.com", Subject: "S", Body: "B" },
+        nestedInWrapper: false,
+      },
+      propertyProvenance: [
+        { propertyName: "To", source: "concrete-send", value: "a@b.com" },
+        { propertyName: "Subject", source: "concrete-send", value: "S" },
+        { propertyName: "Body", source: "concrete-send", value: "B" },
+      ],
+      detectedRepresentations: ["concrete-send", "ambiguous-template"],
+      selectedCanonicalSource: "GmailSendMessage",
+      rejectedCompetingRepresentations: ["SendMail"],
+    }];
+
+    const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(nodes, lockResults);
+    expect(rewriteCount).toBe(1);
+    expect(rewrittenNodes.length).toBe(1);
+    const canonical = rewrittenNodes[0] as ActivityNode;
+    expect(canonical.template).toBe("GmailSendMessage");
+  });
+
+  it("preserves To/Subject/Body through provenance-based rewrite", () => {
+    const nodes: WorkflowNode[] = [
+      {
+        kind: "activity" as const,
+        template: "SendMail",
+        displayName: "Send Email",
+        properties: { To: "old@x.com" },
+        errorHandling: "none" as const,
+      },
+    ];
+
+    const lockResults: MailFamilyLockResult[] = [{
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      selectedFamily: "smtp-send",
+      concreteActivityType: "SendSmtpMailMessage",
+      concretePackage: "UiPath.Mail.Activities",
+      locked: true,
+      lockRejectionReason: null,
+      narrativeRepresentationsRejected: [],
+      missingRequiredProperties: [],
+      packageFatal: false,
+      crossFamilyDriftViolation: false,
+      collapseApplied: true,
+      connectorIntentDetected: { connectorName: "SMTP", resolvedFamily: "smtp-send" },
+      rewriteDirective: {
+        canonicalTopLevelIndex: 0,
+        competingTopLevelIndices: [],
+        canonicalTemplate: "SendSmtpMailMessage",
+        canonicalProperties: { To: "correct@y.com", Subject: "Correct Subject", Body: "Correct Body" },
+        nestedInWrapper: false,
+      },
+      propertyProvenance: [
+        { propertyName: "To", source: "concrete-send", value: "correct@y.com" },
+        { propertyName: "Subject", source: "narrative-container", value: "Correct Subject" },
+        { propertyName: "Body", source: "concrete-send", value: "Correct Body" },
+      ],
+      detectedRepresentations: ["concrete-send", "narrative-container"],
+      selectedCanonicalSource: "SendSmtpMailMessage",
+      rejectedCompetingRepresentations: ["narrative-container"],
+    }];
+
+    const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(nodes, lockResults);
+    expect(rewriteCount).toBe(1);
+    const rewritten = rewrittenNodes[0] as ActivityNode;
+    expect(rewritten.template).toBe("SendSmtpMailMessage");
+    expect(rewritten.properties?.To).toBe("correct@y.com");
+    expect(rewritten.properties?.Subject).toBe("Correct Subject");
+    expect(rewritten.properties?.Body).toBe("Correct Body");
+  });
+
+  it("rewrites mail send inside tryCatch wrapper via nestedInWrapper directive", () => {
+    const nodes: WorkflowNode[] = [
+      {
+        kind: "tryCatch" as const,
+        displayName: "Try Send Email",
+        tryChildren: [
+          {
+            kind: "activity" as const,
+            template: "SendMail",
+            displayName: "Send Email",
+            properties: { To: "old@x.com", Subject: "Old" },
+            errorHandling: "none" as const,
+          },
+        ],
+        catchChildren: [],
+        finallyChildren: [],
+      } as any,
+    ];
+
+    const lockResults: MailFamilyLockResult[] = [{
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      selectedFamily: "gmail-send",
+      concreteActivityType: "GmailSendMessage",
+      concretePackage: "UiPath.GSuite.Activities",
+      locked: true,
+      lockRejectionReason: null,
+      narrativeRepresentationsRejected: [],
+      missingRequiredProperties: [],
+      packageFatal: false,
+      crossFamilyDriftViolation: false,
+      collapseApplied: true,
+      connectorIntentDetected: { connectorName: "Gmail", resolvedFamily: "gmail-send" },
+      rewriteDirective: {
+        canonicalTopLevelIndex: 0,
+        competingTopLevelIndices: [],
+        canonicalTemplate: "GmailSendMessage",
+        canonicalProperties: { To: "correct@y.com", Subject: "Correct", Body: "Body" },
+        nestedInWrapper: true,
+      },
+      propertyProvenance: [
+        { propertyName: "To", source: "concrete-send", value: "correct@y.com" },
+        { propertyName: "Subject", source: "concrete-send", value: "Correct" },
+        { propertyName: "Body", source: "concrete-send", value: "Body" },
+      ],
+      detectedRepresentations: ["concrete-send"],
+      selectedCanonicalSource: "GmailSendMessage",
+      rejectedCompetingRepresentations: [],
+    }];
+
+    const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(nodes, lockResults);
+    expect(rewriteCount).toBe(1);
+    expect(rewrittenNodes.length).toBe(1);
+    const wrapper = rewrittenNodes[0] as any;
+    expect(wrapper.kind).toBe("tryCatch");
+    const innerSend = wrapper.tryChildren[0] as ActivityNode;
+    expect(innerSend.template).toBe("GmailSendMessage");
+    expect(innerSend.properties?.To).toBe("correct@y.com");
+    expect(innerSend.properties?.Subject).toBe("Correct");
+    expect(innerSend.properties?.Body).toBe("Body");
+  });
+
+  it("collapses multiple competing mail sends inside tryCatch to exactly one canonical", () => {
+    const nodes: WorkflowNode[] = [
+      {
+        kind: "tryCatch" as const,
+        displayName: "Try Send Email",
+        tryChildren: [
+          {
+            kind: "activity" as const,
+            template: "GmailSendMessage",
+            displayName: "Send Gmail",
+            properties: { To: "a@b.com", Subject: "S", Body: "B" },
+            errorHandling: "none" as const,
+          },
+          {
+            kind: "activity" as const,
+            template: "SendMail",
+            displayName: "Send Email Duplicate",
+            properties: { To: "a@b.com" },
+            errorHandling: "none" as const,
+          },
+        ],
+        catchChildren: [],
+        finallyChildren: [],
+      } as any,
+    ];
+
+    const lockResults: MailFamilyLockResult[] = [{
+      clusterId: "Main.xaml:Main:mail-cluster-0",
+      file: "Main.xaml",
+      workflow: "Main",
+      selectedFamily: "gmail-send",
+      concreteActivityType: "GmailSendMessage",
+      concretePackage: "UiPath.GSuite.Activities",
+      locked: true,
+      lockRejectionReason: null,
+      narrativeRepresentationsRejected: [],
+      missingRequiredProperties: [],
+      packageFatal: false,
+      crossFamilyDriftViolation: false,
+      collapseApplied: true,
+      connectorIntentDetected: { connectorName: "Gmail", resolvedFamily: "gmail-send" },
+      rewriteDirective: {
+        canonicalTopLevelIndex: 0,
+        competingTopLevelIndices: [],
+        canonicalTemplate: "GmailSendMessage",
+        canonicalProperties: { To: "a@b.com", Subject: "S", Body: "B" },
+        nestedInWrapper: true,
+      },
+      propertyProvenance: [
+        { propertyName: "To", source: "concrete-send", value: "a@b.com" },
+        { propertyName: "Subject", source: "concrete-send", value: "S" },
+        { propertyName: "Body", source: "concrete-send", value: "B" },
+      ],
+      detectedRepresentations: ["concrete-send", "ambiguous-template"],
+      selectedCanonicalSource: "GmailSendMessage",
+      rejectedCompetingRepresentations: ["SendMail"],
+    }];
+
+    const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(nodes, lockResults);
+    expect(rewriteCount).toBe(1);
+    expect(rewrittenNodes.length).toBe(1);
+    const wrapper = rewrittenNodes[0] as any;
+    expect(wrapper.kind).toBe("tryCatch");
+    expect(wrapper.tryChildren.length).toBe(1);
+    const canonical = wrapper.tryChildren[0] as ActivityNode;
+    expect(canonical.template).toBe("GmailSendMessage");
+    expect(canonical.properties?.To).toBe("a@b.com");
+    expect(canonical.properties?.Body).toBe("B");
+  });
+
+  it("collapseCompetingRepresentations includes narrative node properties in provenance", () => {
+    const nodes: MailSendClusterNode[] = [
+      {
+        nodeIndex: 0,
+        displayName: "Send Gmail",
+        template: "GmailSendMessage",
+        detectedFamily: "gmail-send",
+        role: "concrete-send",
+        properties: { To: "a@b.com", Subject: "S" },
+      },
+      {
+        nodeIndex: 1,
+        displayName: "Email Container",
+        template: "SendEmailContainer",
+        detectedFamily: null,
+        role: "trycatch-wrapper",
+        properties: { Body: "Narrative Body Value" },
+      },
+    ];
+
+    const result = collapseCompetingRepresentations(nodes, ["To", "Subject", "Body"]);
+    expect(result.collapsed).toBe(true);
+    const bodyProv = result.provenance.find(p => p.propertyName === "Body");
+    expect(bodyProv).toBeDefined();
+    expect(bodyProv!.value).toBe("Narrative Body Value");
+    expect(bodyProv!.sourceRepresentationType).toBe("narrative-container");
+  });
+});
+
+describe("nested container rewrite stability", () => {
+  const MAIL_TEMPLATES = ["GmailSendMessage", "SendOutlookMailMessage", "SendSmtpMailMessage", "SendExchangeMailMessage"];
+  const isMailTemplate = (t: string) => MAIL_TEMPLATES.includes(t);
+
+  function makeLockResultWithDirective(directive: RewriteDirective): MailFamilyLockResult {
+    return {
+      clusterId: "test-cluster",
+      file: "test.xaml",
+      workflow: "Main",
+      selectedFamily: "gmail-send",
+      concreteActivityType: "GmailSendMessage",
+      concretePackage: "UiPath.GSuite.Activities",
+      locked: true,
+      lockRejectionReason: null,
+      narrativeRepresentationsRejected: [],
+      missingRequiredProperties: [],
+      packageFatal: false,
+      crossFamilyDriftViolation: false,
+      detectedRepresentations: ["concrete-send"],
+      collapseApplied: true,
+      rewriteDirective: directive,
+    };
+  }
+
+  it("canonicalizes mail sends inside a sequence container, preserving adjacent non-mail nodes", () => {
+    const children: WorkflowNode[] = [
+      { kind: "activity" as const, template: "LogMessage", displayName: "Log Start", properties: { Message: "Starting" } },
+      {
+        kind: "sequence" as const,
+        displayName: "Mail Sequence",
+        children: [
+          { kind: "activity" as const, template: "GmailSendMessage", displayName: "Send Gmail", properties: { To: "a@b.com", Subject: "S", Body: "B" } },
+          { kind: "activity" as const, template: "LogMessage", displayName: "Log Between", properties: { Message: "Between mails" } },
+          { kind: "activity" as const, template: "SendOutlookMailMessage", displayName: "Send Outlook", properties: { To: "b@c.com", Subject: "S2", Body: "B2" } },
+        ],
+      } as any,
+      { kind: "activity" as const, template: "Assign", displayName: "Set Result", properties: { Variable: "result", Value: "done" } },
+    ] as WorkflowNode[];
+
+    const directive: RewriteDirective = {
+      canonicalTopLevelIndex: 1,
+      competingTopLevelIndices: [],
+      canonicalTemplate: "GmailSendMessage",
+      canonicalProperties: { To: "a@b.com", Subject: "S", Body: "B" },
+      nestedInWrapper: false,
+    };
+
+    const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(children, [makeLockResultWithDirective(directive)]);
+    expect(rewriteCount).toBe(1);
+    expect(rewrittenNodes.length).toBe(3);
+    expect(rewrittenNodes[0].template).toBe("LogMessage");
+    expect(rewrittenNodes[2].template).toBe("Assign");
+
+    const seqNode = rewrittenNodes[1] as any;
+    expect(seqNode.kind).toBe("sequence");
+    const mailSends = seqNode.children.filter((c: any) => isMailTemplate(c.template));
+    expect(mailSends.length).toBe(1);
+    const logNodes = seqNode.children.filter((c: any) => c.template === "LogMessage");
+    expect(logNodes.length).toBe(1);
+  });
+
+  it("canonicalizes mail sends inside an if-then-else, preserving non-mail neighbors", () => {
+    const children: WorkflowNode[] = [
+      {
+        kind: "if" as const,
+        displayName: "Check Condition",
+        condition: "x > 0",
+        thenChildren: [
+          { kind: "activity" as const, template: "GmailSendMessage", displayName: "Gmail Then", properties: { To: "then@x.com", Subject: "Then", Body: "Then Body" } },
+          { kind: "activity" as const, template: "LogMessage", displayName: "Log Then", properties: { Message: "then done" } },
+        ],
+        elseChildren: [
+          { kind: "activity" as const, template: "SendOutlookMailMessage", displayName: "Outlook Else", properties: { To: "else@x.com", Subject: "Else", Body: "Else Body" } },
+        ],
+      } as any,
+    ] as WorkflowNode[];
+
+    const directive: RewriteDirective = {
+      canonicalTopLevelIndex: 0,
+      competingTopLevelIndices: [],
+      canonicalTemplate: "GmailSendMessage",
+      canonicalProperties: { To: "then@x.com", Subject: "Then", Body: "Then Body" },
+      nestedInWrapper: false,
+    };
+
+    const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(children, [makeLockResultWithDirective(directive)]);
+    expect(rewriteCount).toBe(1);
+    expect(rewrittenNodes.length).toBe(1);
+
+    const ifNode = rewrittenNodes[0] as any;
+    expect(ifNode.kind).toBe("if");
+
+    const thenMailSends = ifNode.thenChildren.filter((c: any) => isMailTemplate(c.template));
+    const elseMailSends = ifNode.elseChildren.filter((c: any) => isMailTemplate(c.template));
+    expect(thenMailSends.length + elseMailSends.length).toBe(1);
+
+    const thenLogs = ifNode.thenChildren.filter((c: any) => c.template === "LogMessage");
+    expect(thenLogs.length).toBe(1);
+  });
+
+  it("canonicalizes mail sends inside a while loop, keeping exactly one canonical", () => {
+    const children: WorkflowNode[] = [
+      {
+        kind: "while" as const,
+        displayName: "Retry Loop",
+        condition: "retryCount < 3",
+        bodyChildren: [
+          { kind: "activity" as const, template: "GmailSendMessage", displayName: "Send Gmail", properties: { To: "a@b.com", Subject: "S", Body: "B" } },
+          { kind: "activity" as const, template: "SendOutlookMailMessage", displayName: "Send Outlook", properties: { To: "c@d.com", Subject: "S2", Body: "B2" } },
+          { kind: "activity" as const, template: "Assign", displayName: "Increment", properties: { Variable: "retryCount", Value: "retryCount + 1" } },
+        ],
+      } as any,
+    ] as WorkflowNode[];
+
+    const directive: RewriteDirective = {
+      canonicalTopLevelIndex: 0,
+      competingTopLevelIndices: [],
+      canonicalTemplate: "GmailSendMessage",
+      canonicalProperties: { To: "a@b.com", Subject: "S", Body: "B" },
+      nestedInWrapper: false,
+    };
+
+    const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(children, [makeLockResultWithDirective(directive)]);
+    expect(rewriteCount).toBe(1);
+
+    const whileNode = rewrittenNodes[0] as any;
+    expect(whileNode.kind).toBe("while");
+    const mailSends = whileNode.bodyChildren.filter((c: any) => isMailTemplate(c.template));
+    expect(mailSends.length).toBe(1);
+    const assigns = whileNode.bodyChildren.filter((c: any) => c.template === "Assign");
+    expect(assigns.length).toBe(1);
+  });
+
+  it("canonicalizes mail sends inside forEach, preserving non-mail nodes", () => {
+    const children: WorkflowNode[] = [
+      {
+        kind: "forEach" as const,
+        displayName: "For Each Item",
+        bodyChildren: [
+          { kind: "activity" as const, template: "GmailSendMessage", displayName: "Send Gmail", properties: { To: "x@y.com", Subject: "FE", Body: "FEB" } },
+          { kind: "activity" as const, template: "SendOutlookMailMessage", displayName: "Send Outlook", properties: { To: "y@z.com", Subject: "FE2", Body: "FEB2" } },
+          { kind: "activity" as const, template: "LogMessage", displayName: "Log Sent", properties: { Message: "sent" } },
+        ],
+      } as any,
+    ] as WorkflowNode[];
+
+    const directive: RewriteDirective = {
+      canonicalTopLevelIndex: 0,
+      competingTopLevelIndices: [],
+      canonicalTemplate: "GmailSendMessage",
+      canonicalProperties: { To: "x@y.com", Subject: "FE", Body: "FEB" },
+      nestedInWrapper: false,
+    };
+
+    const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(children, [makeLockResultWithDirective(directive)]);
+    expect(rewriteCount).toBe(1);
+
+    const forEachNode = rewrittenNodes[0] as any;
+    expect(forEachNode.kind).toBe("forEach");
+    const mailSends = forEachNode.bodyChildren.filter((c: any) => isMailTemplate(c.template));
+    expect(mailSends.length).toBe(1);
+    const logs = forEachNode.bodyChildren.filter((c: any) => c.template === "LogMessage");
+    expect(logs.length).toBe(1);
+  });
+
+  it("does not remove non-mail sibling top-level nodes when competing indices are mail-only", () => {
+    const children: WorkflowNode[] = [
+      { kind: "activity" as const, template: "LogMessage", displayName: "Log Before", properties: { Message: "before" } },
+      { kind: "activity" as const, template: "GmailSendMessage", displayName: "Send Gmail", properties: { To: "a@b.com", Subject: "S", Body: "B" } },
+      { kind: "activity" as const, template: "LogMessage", displayName: "Log Middle", properties: { Message: "middle" } },
+      { kind: "activity" as const, template: "SendOutlookMailMessage", displayName: "Send Outlook", properties: { To: "c@d.com", Subject: "S2", Body: "B2" } },
+      { kind: "activity" as const, template: "Assign", displayName: "Set Done", properties: { Variable: "done", Value: "true" } },
+    ] as WorkflowNode[];
+
+    const directive: RewriteDirective = {
+      canonicalTopLevelIndex: 1,
+      competingTopLevelIndices: [3],
+      canonicalTemplate: "GmailSendMessage",
+      canonicalProperties: { To: "a@b.com", Subject: "S", Body: "B" },
+      nestedInWrapper: false,
+    };
+
+    const { rewrittenNodes } = applyCanonicalRewrite(children, [makeLockResultWithDirective(directive)]);
+    const logs = rewrittenNodes.filter(n => n.template === "LogMessage");
+    expect(logs.length).toBe(2);
+    const assigns = rewrittenNodes.filter(n => n.template === "Assign");
+    expect(assigns.length).toBe(1);
+    const mails = rewrittenNodes.filter(n => isMailTemplate(n.template));
+    expect(mails.length).toBe(1);
+  });
+
+  it("handles deeply nested sequence-in-tryCatch with stable top-level indices", () => {
+    const children: WorkflowNode[] = [
+      { kind: "activity" as const, template: "Assign", displayName: "Init", properties: { Variable: "x", Value: "1" } },
+      {
+        kind: "tryCatch" as const,
+        displayName: "TryCatch",
+        tryChildren: [
+          {
+            kind: "sequence" as const,
+            displayName: "Inner Seq",
+            children: [
+              { kind: "activity" as const, template: "GmailSendMessage", displayName: "Gmail Deep", properties: { To: "deep@a.com", Subject: "Deep", Body: "Deep Body" } },
+              { kind: "activity" as const, template: "SendOutlookMailMessage", displayName: "Outlook Deep", properties: { To: "deep@b.com", Subject: "Deep2", Body: "Deep2 Body" } },
+            ],
+          },
+        ],
+        catchChildren: [],
+        finallyChildren: [],
+      } as any,
+      { kind: "activity" as const, template: "LogMessage", displayName: "Log End", properties: { Message: "end" } },
+    ] as WorkflowNode[];
+
+    const directive: RewriteDirective = {
+      canonicalTopLevelIndex: 1,
+      competingTopLevelIndices: [],
+      canonicalTemplate: "GmailSendMessage",
+      canonicalProperties: { To: "deep@a.com", Subject: "Deep", Body: "Deep Body" },
+      nestedInWrapper: true,
+    };
+
+    const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(children, [makeLockResultWithDirective(directive)]);
+    expect(rewriteCount).toBe(1);
+    expect(rewrittenNodes.length).toBe(3);
+    expect(rewrittenNodes[0].template).toBe("Assign");
+    expect(rewrittenNodes[2].template).toBe("LogMessage");
+
+    const tcNode = rewrittenNodes[1] as any;
+    expect(tcNode.kind).toBe("tryCatch");
+    const innerSeq = tcNode.tryChildren[0] as any;
+    expect(innerSeq.kind).toBe("sequence");
+    const mails = innerSeq.children.filter((c: any) => isMailTemplate(c.template));
+    expect(mails.length).toBe(1);
+  });
+
+  it("topLevelAncestorIndex correctly maps nested cluster nodes to top-level containers", () => {
+    const children: WorkflowNode[] = [
+      { kind: "activity" as const, template: "LogMessage", displayName: "Log", properties: {} },
+      {
+        kind: "sequence" as const,
+        displayName: "Inner Seq",
+        children: [
+          { kind: "activity" as const, template: "GmailSendMessage", displayName: "Gmail", properties: { To: "a@b.com", Subject: "S", Body: "B" } },
+        ],
+      } as any,
+      { kind: "activity" as const, template: "Assign", displayName: "Done", properties: {} },
+    ] as WorkflowNode[];
+
+    const clusters = detectMailSendClusters(children, "test.xaml", "Main");
+    expect(clusters.length).toBe(1);
+
+    const gmailNode = clusters[0].nodes.find(n => n.role === "concrete-send");
+    expect(gmailNode).toBeDefined();
+    expect(gmailNode!.nodeIndex).toBe(1);
+  });
+
+  it("applies ordinal-targeted rewrite when multiple directives share the same top-level index (no cross-cluster contamination)", () => {
+    const children: WorkflowNode[] = [
+      {
+        kind: "sequence" as const,
+        displayName: "Outer",
+        children: [
+          { kind: "activity" as const, template: "SendMail", displayName: "Send 1", properties: { To: "a@x.com", Subject: "S1", Body: "B1" } },
+          { kind: "activity" as const, template: "LogMessage", displayName: "Log", properties: { Message: "between" } },
+          { kind: "activity" as const, template: "SendMail", displayName: "Send 2", properties: { To: "b@y.com", Subject: "S2", Body: "B2" } },
+        ],
+      } as any,
+    ] as WorkflowNode[];
+
+    const directive1: RewriteDirective = {
+      canonicalTopLevelIndex: 0,
+      competingTopLevelIndices: [],
+      canonicalTemplate: "GmailSendMessage",
+      canonicalProperties: { To: "a@x.com", Subject: "S1", Body: "B1" },
+      nestedInWrapper: false,
+      localMailSendOrdinal: 0,
+    };
+    const directive2: RewriteDirective = {
+      canonicalTopLevelIndex: 0,
+      competingTopLevelIndices: [],
+      canonicalTemplate: "SendOutlookMailMessage",
+      canonicalProperties: { To: "b@y.com", Subject: "S2", Body: "B2" },
+      nestedInWrapper: false,
+      localMailSendOrdinal: 1,
+    };
+
+    const lockResults: MailFamilyLockResult[] = [
+      makeLockResultWithDirective(directive1),
+      makeLockResultWithDirective(directive2),
+    ];
+
+    const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(children, lockResults);
+    expect(rewriteCount).toBe(2);
+    expect(rewrittenNodes.length).toBe(1);
+    const seqNode = rewrittenNodes[0] as any;
+    expect(seqNode.children.length).toBe(3);
+    expect(seqNode.children[0].template).toBe("GmailSendMessage");
+    expect(seqNode.children[0].properties.To).toBe("a@x.com");
+    expect(seqNode.children[1].template).toBe("LogMessage");
+    expect(seqNode.children[2].template).toBe("SendOutlookMailMessage");
+    expect(seqNode.children[2].properties.To).toBe("b@y.com");
+  });
+
+  it("falls back to passthrough when multiple directives collide without ordinals", () => {
+    const children: WorkflowNode[] = [
+      {
+        kind: "sequence" as const,
+        displayName: "Outer",
+        children: [
+          { kind: "activity" as const, template: "SendMail", displayName: "Send 1", properties: { To: "a@x.com" } },
+          { kind: "activity" as const, template: "SendMail", displayName: "Send 2", properties: { To: "b@y.com" } },
+        ],
+      } as any,
+    ] as WorkflowNode[];
+
+    const directive1: RewriteDirective = {
+      canonicalTopLevelIndex: 0,
+      competingTopLevelIndices: [],
+      canonicalTemplate: "GmailSendMessage",
+      canonicalProperties: { To: "a@x.com" },
+      nestedInWrapper: false,
+    };
+    const directive2: RewriteDirective = {
+      canonicalTopLevelIndex: 0,
+      competingTopLevelIndices: [],
+      canonicalTemplate: "SendOutlookMailMessage",
+      canonicalProperties: { To: "b@y.com" },
+      nestedInWrapper: false,
+    };
+
+    const lockResults: MailFamilyLockResult[] = [
+      makeLockResultWithDirective(directive1),
+      makeLockResultWithDirective(directive2),
+    ];
+
+    const { rewrittenNodes } = applyCanonicalRewrite(children, lockResults);
+    expect(rewrittenNodes.length).toBe(1);
+    const seqNode = rewrittenNodes[0] as any;
+    expect(seqNode.children.length).toBe(2);
+    expect(seqNode.children[0].properties.To).toBe("a@x.com");
+    expect(seqNode.children[1].properties.To).toBe("b@y.com");
+  });
+
+  it("preserves finallyChildren in tryCatch during canonical rewrite", () => {
+    const children: WorkflowNode[] = [
+      {
+        kind: "tryCatch",
+        tryChildren: [
+          { kind: "activity", template: "SendMail", displayName: "Send Email", properties: { To: "a@x.com", Subject: "Sub1", Body: "Body1" } } as WorkflowNode,
+        ],
+        catchChildren: [
+          { kind: "activity", template: "LogMessage", displayName: "Log", properties: { Message: "error" } } as WorkflowNode,
+        ],
+        finallyChildren: [
+          { kind: "activity", template: "LogMessage", displayName: "Cleanup Log", properties: { Message: "cleanup" } } as WorkflowNode,
+        ],
+      } as WorkflowNode,
+    ];
+
+    const directive: RewriteDirective = {
+      canonicalTopLevelIndex: 0,
+      competingTopLevelIndices: [],
+      canonicalTemplate: "SendSmtpMailMessage",
+      canonicalProperties: { To: "a@x.com", Subject: "Sub1", Body: "Body1" },
+      nestedInWrapper: true,
+    };
+
+    const lockResults: MailFamilyLockResult[] = [makeLockResultWithDirective(directive)];
+    const { rewrittenNodes } = applyCanonicalRewrite(children, lockResults);
+    expect(rewrittenNodes.length).toBe(1);
+    const tryCatchNode = rewrittenNodes[0] as any;
+    expect(tryCatchNode.kind).toBe("tryCatch");
+    expect(tryCatchNode.tryChildren.length).toBe(1);
+    expect(tryCatchNode.tryChildren[0].template).toBe("SendSmtpMailMessage");
+    expect(tryCatchNode.catchChildren.length).toBe(1);
+    expect(tryCatchNode.catchChildren[0].template).toBe("LogMessage");
+    expect(tryCatchNode.finallyChildren).toBeDefined();
+    expect(tryCatchNode.finallyChildren.length).toBe(1);
+    expect(tryCatchNode.finallyChildren[0].template).toBe("LogMessage");
+    expect(tryCatchNode.finallyChildren[0].displayName).toBe("Cleanup Log");
   });
 });

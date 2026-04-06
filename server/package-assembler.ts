@@ -2840,6 +2840,17 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
   const processNodes = pkg.internal?.processNodes || [];
   const processEdges = pkg.internal?.processEdges || [];
 
+  let integrationServiceConnectors: Array<{ connectorName: string; connectionName?: string; connectionId?: string }> = pkg.internal?.integrationServiceConnectors || [];
+  if (integrationServiceConnectors.length === 0 && sddContent) {
+    try {
+      const parsed = JSON.parse(sddContent);
+      if (Array.isArray(parsed?.integrationServiceConnectors)) {
+        integrationServiceConnectors = parsed.integrationServiceConnectors;
+      }
+    } catch {
+    }
+  }
+
   let fingerprint: string | undefined;
   const buildCacheKey = ideaId ? `${ideaId}:${generationMode}` : undefined;
   const forceRebuild = !!pkg.internal?.forceRebuild;
@@ -3658,6 +3669,7 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
           [{ file: `${wfName}.xaml`, workflow: wfName, rootSequence: spec.rootSequence }],
           { studioLine: "StudioX", studioVersion: "2024.10", targetFramework: loweringTargetFw as "Windows" | "Portable", projectType: "Process", expressionLanguage: "VisualBasic", minimumRequiredPackages: [] },
           loweringVerifiedPackages,
+          integrationServiceConnectors,
         );
         let mailFamilyLockBlocksEmission = false;
         if (mailFamilyLock.perClusterResults.length > 0) {

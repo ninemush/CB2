@@ -1051,6 +1051,31 @@ const CROSS_FAMILY_PACKAGE_MAP: Record<MailFamily, Set<string>> = {
   "outlook-send": new Set(["UiPath.GSuite.Activities"]),
 };
 
+export type RepresentationType = "concrete-send" | "narrative-container" | "ambiguous-template" | "connector-intent";
+
+export interface ConnectorIntent {
+  connectorName: string;
+  connectionName: string | null;
+  connectionId: string | null;
+  resolvedFamily: MailFamily | null;
+}
+
+export interface PropertyProvenance {
+  propertyName: string;
+  value: any;
+  sourceNodeIndex: number;
+  sourceTemplate: string;
+  sourceRepresentationType: RepresentationType;
+}
+
+export interface CollapseResult {
+  collapsed: boolean;
+  canonicalProperties: Record<string, any>;
+  provenance: PropertyProvenance[];
+  rejectionReason: string | null;
+  bodyPreserved: boolean;
+}
+
 export interface MailSendClusterNode {
   nodeIndex: number;
   displayName: string;
@@ -1058,6 +1083,8 @@ export interface MailSendClusterNode {
   detectedFamily: string | null;
   role: "concrete-send" | "trycatch-wrapper" | "retryscope-wrapper" | "catch-step" | "logging-step";
   properties: Record<string, any>;
+  representationType?: RepresentationType;
+  localMailSendOrdinal?: number;
 }
 
 export interface MailSendCluster {
@@ -1069,6 +1096,7 @@ export interface MailSendCluster {
   detectedFamilies: Set<string>;
   hasNarrativeContainer: boolean;
   narrativeRepresentationsFound: string[];
+  connectorIntent?: ConnectorIntent | null;
 }
 
 export interface MailFamilyLockResult {
@@ -1084,6 +1112,22 @@ export interface MailFamilyLockResult {
   missingRequiredProperties: string[];
   packageFatal: boolean;
   crossFamilyDriftViolation: boolean;
+  detectedRepresentations?: RepresentationType[];
+  selectedCanonicalSource?: string | null;
+  rejectedCompetingRepresentations?: string[];
+  propertyProvenance?: PropertyProvenance[];
+  connectorIntentDetected?: ConnectorIntent | null;
+  collapseApplied?: boolean;
+  rewriteDirective?: RewriteDirective | null;
+}
+
+export interface RewriteDirective {
+  canonicalTopLevelIndex: number;
+  competingTopLevelIndices: number[];
+  canonicalTemplate: string;
+  canonicalProperties: Record<string, any>;
+  nestedInWrapper: boolean;
+  localMailSendOrdinal?: number;
 }
 
 export interface MailFamilyLockDiagnostics {
@@ -1095,6 +1139,8 @@ export interface MailFamilyLockDiagnostics {
     totalRejectedNarrative: number;
     totalRejectedMissingProperties: number;
     totalCrossFamilyDriftViolations: number;
+    totalConnectorIntentResolved: number;
+    totalCollapseApplied: number;
   };
 }
 
@@ -1141,9 +1187,13 @@ function collectMailSendClustersRecursive(
   clusters: MailSendCluster[],
   clusterCounter: { value: number },
   parentWrapper: { kind: string; displayName: string } | null,
+  topLevelAncestorIndex?: number,
+  mailSendOrdinalCounter?: { value: number },
 ): void {
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
+    const effectiveTopLevelIndex = topLevelAncestorIndex ?? i;
+    const ordinalCounter = topLevelAncestorIndex !== undefined ? mailSendOrdinalCounter : undefined;
 
     if (node.kind === "activity" && isMailSendTemplate(node.template)) {
       const clusterId = `${file}:${workflow}:mail-cluster-${clusterCounter.value++}`;
@@ -1155,7 +1205,7 @@ function collectMailSendClustersRecursive(
 
       if (parentWrapper) {
         clusterNodes.push({
-          nodeIndex: i,
+          nodeIndex: effectiveTopLevelIndex,
           displayName: parentWrapper.displayName,
           template: parentWrapper.kind === "tryCatch" ? "TryCatch" : parentWrapper.kind === "retryScope" ? "RetryScope" : parentWrapper.kind,
           detectedFamily: null,
@@ -1164,20 +1214,22 @@ function collectMailSendClustersRecursive(
         });
       }
 
+      const currentOrdinal = ordinalCounter ? ordinalCounter.value++ : undefined;
       clusterNodes.push({
-        nodeIndex: i,
+        nodeIndex: effectiveTopLevelIndex,
         displayName: node.displayName,
         template: node.template,
         detectedFamily: family,
         role: "concrete-send",
         properties: node.properties || {},
+        localMailSendOrdinal: currentOrdinal,
       });
 
       if (i > 0) {
         const prev = nodes[i - 1];
         if (prev.kind === "activity" && isLoggingOrCatchStep(prev)) {
           clusterNodes.unshift({
-            nodeIndex: i - 1,
+            nodeIndex: topLevelAncestorIndex ?? (i - 1),
             displayName: prev.displayName,
             template: prev.template,
             detectedFamily: null,
@@ -1191,7 +1243,7 @@ function collectMailSendClustersRecursive(
         const next = nodes[i + 1];
         if (next.kind === "activity" && isLoggingOrCatchStep(next)) {
           clusterNodes.push({
-            nodeIndex: i + 1,
+            nodeIndex: topLevelAncestorIndex ?? (i + 1),
             displayName: next.displayName,
             template: next.template,
             detectedFamily: null,
@@ -1232,7 +1284,7 @@ function collectMailSendClustersRecursive(
         let concreteSendClusterNode: MailSendClusterNode | null = null;
 
         const clusterNodes: MailSendClusterNode[] = [{
-          nodeIndex: i,
+          nodeIndex: effectiveTopLevelIndex,
           displayName: node.displayName,
           template: "TryCatch",
           detectedFamily: null,
@@ -1246,13 +1298,15 @@ function collectMailSendClustersRecursive(
           const narr = detectNarrativeContainerRepresentations(mailAct.properties || {});
           allNarrativeReps.push(...narr);
 
+          const sendOrdinal = ordinalCounter ? ordinalCounter.value++ : undefined;
           const sendNode: MailSendClusterNode = {
-            nodeIndex: i,
+            nodeIndex: effectiveTopLevelIndex,
             displayName: mailAct.displayName,
             template: mailAct.template,
             detectedFamily: actFamily,
             role: "concrete-send",
             properties: mailAct.properties || {},
+            localMailSendOrdinal: sendOrdinal,
           };
           clusterNodes.push(sendNode);
           if (!concreteSendClusterNode) concreteSendClusterNode = sendNode;
@@ -1262,7 +1316,7 @@ function collectMailSendClustersRecursive(
         for (const nonMail of nonMailActivities) {
           if (isLoggingOrCatchStep(nonMail)) {
             clusterNodes.push({
-              nodeIndex: i,
+              nodeIndex: effectiveTopLevelIndex,
               displayName: nonMail.displayName,
               template: nonMail.template,
               detectedFamily: null,
@@ -1283,9 +1337,10 @@ function collectMailSendClustersRecursive(
           narrativeRepresentationsFound: allNarrativeReps,
         });
       } else {
-        collectMailSendClustersRecursive(node.tryChildren, file, workflow, clusters, clusterCounter, { kind: "tryCatch", displayName: node.displayName });
-        collectMailSendClustersRecursive(node.catchChildren, file, workflow, clusters, clusterCounter, null);
-        collectMailSendClustersRecursive(node.finallyChildren, file, workflow, clusters, clusterCounter, null);
+        const nestedOrdinal = ordinalCounter || { value: 0 };
+        collectMailSendClustersRecursive(node.tryChildren, file, workflow, clusters, clusterCounter, { kind: "tryCatch", displayName: node.displayName }, effectiveTopLevelIndex, nestedOrdinal);
+        collectMailSendClustersRecursive(node.catchChildren, file, workflow, clusters, clusterCounter, null, effectiveTopLevelIndex, nestedOrdinal);
+        collectMailSendClustersRecursive(node.finallyChildren, file, workflow, clusters, clusterCounter, null, effectiveTopLevelIndex, nestedOrdinal);
       }
       continue;
     }
@@ -1301,7 +1356,7 @@ function collectMailSendClustersRecursive(
         let concreteSendClusterNode: MailSendClusterNode | null = null;
 
         const clusterNodes: MailSendClusterNode[] = [{
-          nodeIndex: i,
+          nodeIndex: effectiveTopLevelIndex,
           displayName: node.displayName,
           template: "RetryScope",
           detectedFamily: null,
@@ -1315,13 +1370,15 @@ function collectMailSendClustersRecursive(
           const narr = detectNarrativeContainerRepresentations(mailAct.properties || {});
           allNarrativeReps.push(...narr);
 
+          const retrySendOrdinal = ordinalCounter ? ordinalCounter.value++ : undefined;
           const sendNode: MailSendClusterNode = {
-            nodeIndex: i,
+            nodeIndex: effectiveTopLevelIndex,
             displayName: mailAct.displayName,
             template: mailAct.template,
             detectedFamily: actFamily,
             role: "concrete-send",
             properties: mailAct.properties || {},
+            localMailSendOrdinal: retrySendOrdinal,
           };
           clusterNodes.push(sendNode);
           if (!concreteSendClusterNode) concreteSendClusterNode = sendNode;
@@ -1338,20 +1395,24 @@ function collectMailSendClustersRecursive(
           narrativeRepresentationsFound: allNarrativeReps,
         });
       } else {
-        collectMailSendClustersRecursive(node.bodyChildren, file, workflow, clusters, clusterCounter, { kind: "retryScope", displayName: node.displayName });
+        const nestedRetryOrdinal = ordinalCounter || { value: 0 };
+        collectMailSendClustersRecursive(node.bodyChildren, file, workflow, clusters, clusterCounter, { kind: "retryScope", displayName: node.displayName }, effectiveTopLevelIndex, nestedRetryOrdinal);
       }
       continue;
     }
 
-    if (node.kind === "sequence") {
-      collectMailSendClustersRecursive(node.children, file, workflow, clusters, clusterCounter, parentWrapper);
-    } else if (node.kind === "if") {
-      collectMailSendClustersRecursive(node.thenChildren, file, workflow, clusters, clusterCounter, parentWrapper);
-      collectMailSendClustersRecursive(node.elseChildren, file, workflow, clusters, clusterCounter, parentWrapper);
-    } else if (node.kind === "while") {
-      collectMailSendClustersRecursive(node.bodyChildren, file, workflow, clusters, clusterCounter, parentWrapper);
-    } else if (node.kind === "forEach") {
-      collectMailSendClustersRecursive(node.bodyChildren, file, workflow, clusters, clusterCounter, parentWrapper);
+    if (node.kind === "sequence" || node.kind === "if" || node.kind === "while" || node.kind === "forEach") {
+      const nestedOrdinal = ordinalCounter || { value: 0 };
+      if (node.kind === "sequence") {
+        collectMailSendClustersRecursive(node.children, file, workflow, clusters, clusterCounter, parentWrapper, effectiveTopLevelIndex, nestedOrdinal);
+      } else if (node.kind === "if") {
+        collectMailSendClustersRecursive(node.thenChildren, file, workflow, clusters, clusterCounter, parentWrapper, effectiveTopLevelIndex, nestedOrdinal);
+        collectMailSendClustersRecursive(node.elseChildren, file, workflow, clusters, clusterCounter, parentWrapper, effectiveTopLevelIndex, nestedOrdinal);
+      } else if (node.kind === "while") {
+        collectMailSendClustersRecursive(node.bodyChildren, file, workflow, clusters, clusterCounter, parentWrapper, effectiveTopLevelIndex, nestedOrdinal);
+      } else if (node.kind === "forEach") {
+        collectMailSendClustersRecursive(node.bodyChildren, file, workflow, clusters, clusterCounter, parentWrapper, effectiveTopLevelIndex, nestedOrdinal);
+      }
     }
   }
 }
@@ -1360,21 +1421,272 @@ export function detectMailSendClusters(
   nodes: WorkflowNode[],
   file: string,
   workflow: string,
+  integrationServiceConnectors?: Array<{ connectorName: string; connectionName?: string; connectionId?: string }>,
 ): MailSendCluster[] {
   const clusters: MailSendCluster[] = [];
   const clusterCounter = { value: 0 };
   collectMailSendClustersRecursive(nodes, file, workflow, clusters, clusterCounter, null);
+  if (integrationServiceConnectors && integrationServiceConnectors.length > 0) {
+    for (const cluster of clusters) {
+      if (!cluster.connectorIntent && cluster.concreteSendNode) {
+        cluster.connectorIntent = detectConnectorIntent(
+          cluster.concreteSendNode.properties,
+          cluster.concreteSendNode.displayName,
+          integrationServiceConnectors,
+        );
+      }
+    }
+  }
   return clusters;
+}
+
+const CONNECTOR_INTENT_PATTERNS: Array<{ pattern: RegExp; connectorName: string; family: MailFamily }> = [
+  { pattern: /\bgmail\s*connector\b/i, connectorName: "Gmail", family: "gmail-send" },
+  { pattern: /\bGoogle\s*Mail\s*connector\b/i, connectorName: "Gmail", family: "gmail-send" },
+  { pattern: /\bGSuite\s*connector\b/i, connectorName: "Gmail", family: "gmail-send" },
+  { pattern: /\boutlook\s*connector\b/i, connectorName: "Outlook365", family: "outlook-send" },
+  { pattern: /\bOffice\s*365\s*connector\b/i, connectorName: "Outlook365", family: "outlook-send" },
+  { pattern: /\bSMTP\s*connector\b/i, connectorName: "SMTP", family: "smtp-send" },
+];
+
+const CONNECTOR_FAMILY_MAP: Record<string, MailFamily> = {
+  "gmail": "gmail-send",
+  "google mail": "gmail-send",
+  "gsuite": "gmail-send",
+  "outlook": "outlook-send",
+  "outlook365": "outlook-send",
+  "office 365": "outlook-send",
+  "office365": "outlook-send",
+  "smtp": "smtp-send",
+};
+
+function resolveConnectorFamily(connectorName: string): MailFamily | null {
+  return CONNECTOR_FAMILY_MAP[connectorName.toLowerCase()] || null;
+}
+
+export function detectConnectorIntent(
+  properties: Record<string, any>,
+  displayName: string,
+  integrationServiceConnectors?: Array<{ connectorName: string; connectionName?: string; connectionId?: string }>,
+): ConnectorIntent | null {
+  if (integrationServiceConnectors && integrationServiceConnectors.length > 0) {
+    const combined = `${displayName} ${JSON.stringify(properties)}`.toLowerCase();
+
+    for (const conn of integrationServiceConnectors) {
+      const family = resolveConnectorFamily(conn.connectorName);
+      if (!family) continue;
+
+      const connNameLower = conn.connectorName.toLowerCase();
+      const connectionNameLower = conn.connectionName?.toLowerCase() || "";
+      const connectionIdLower = conn.connectionId?.toLowerCase() || "";
+
+      if (combined.includes(connNameLower) ||
+          (connectionNameLower && combined.includes(connectionNameLower)) ||
+          (connectionIdLower && combined.includes(connectionIdLower))) {
+        return { connectorName: conn.connectorName, connectionName: conn.connectionName || null, connectionId: conn.connectionId || null, resolvedFamily: family };
+      }
+    }
+
+    const mailConnectors = integrationServiceConnectors.filter(c => resolveConnectorFamily(c.connectorName) !== null);
+    if (mailConnectors.length === 1) {
+      const conn = mailConnectors[0];
+      const family = resolveConnectorFamily(conn.connectorName)!;
+      return { connectorName: conn.connectorName, connectionName: conn.connectionName || null, connectionId: conn.connectionId || null, resolvedFamily: family };
+    }
+  }
+
+  const combined = `${displayName} ${JSON.stringify(properties)}`;
+  for (const { pattern, connectorName, family } of CONNECTOR_INTENT_PATTERNS) {
+    if (pattern.test(combined)) {
+      return { connectorName, connectionName: null, connectionId: null, resolvedFamily: family };
+    }
+  }
+
+  return null;
+}
+
+function getRepresentationType(node: MailSendClusterNode): RepresentationType {
+  if (node.representationType) return node.representationType;
+  if (node.role !== "concrete-send") return "narrative-container";
+  const tLower = node.template.toLowerCase().replace(/^ui:/, "");
+  if (tLower === "sendmail" || tLower === "sendmail365") return "ambiguous-template";
+  if (tLower === "gmailsendmessage" || tLower === "sendsmtpmailmessage" || tLower === "sendoutlookmailmessage") return "concrete-send";
+  return "ambiguous-template";
+}
+
+const REPRESENTATION_PRECEDENCE: Record<RepresentationType, number> = {
+  "concrete-send": 3,
+  "connector-intent": 2,
+  "ambiguous-template": 1,
+  "narrative-container": 0,
+};
+
+function getPropertyValue(props: Record<string, any>, key: string): string | null {
+  const val = props[key];
+  if (val === undefined || val === null) return null;
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (trimmed === "" || /^(PLACEHOLDER|STUB|TODO|TBD)/i.test(trimmed)) return null;
+    return trimmed;
+  }
+  if (typeof val === "object" && "value" in val) {
+    const inner = String(val.value).trim();
+    if (inner === "" || /^(PLACEHOLDER|STUB|TODO|TBD)/i.test(inner)) return null;
+    return inner;
+  }
+  return null;
+}
+
+export function collapseCompetingRepresentations(
+  nodes: MailSendClusterNode[],
+  requiredProperties: string[],
+): CollapseResult {
+  const sendNodes = nodes.filter(n => n.role === "concrete-send");
+  const narrativeNodes = nodes.filter(n => n.role !== "concrete-send" && Object.keys(n.properties).length > 0);
+
+  if (sendNodes.length <= 1 && narrativeNodes.length === 0) {
+    const singleNode = sendNodes[0];
+    if (!singleNode) return { collapsed: true, canonicalProperties: {}, provenance: [], rejectionReason: null, bodyPreserved: true };
+    const provenance: PropertyProvenance[] = [];
+    for (const prop of requiredProperties) {
+      const val = getPropertyValue(singleNode.properties, prop);
+      if (val !== null) {
+        provenance.push({ propertyName: prop, value: val, sourceNodeIndex: singleNode.nodeIndex, sourceTemplate: singleNode.template, sourceRepresentationType: getRepresentationType(singleNode) });
+      }
+    }
+    return { collapsed: true, canonicalProperties: { ...singleNode.properties }, provenance, rejectionReason: null, bodyPreserved: getPropertyValue(singleNode.properties, "Body") !== null || !requiredProperties.includes("Body") };
+  }
+
+  const allPropertySources: MailSendClusterNode[] = [...sendNodes, ...narrativeNodes];
+  const sorted = [...allPropertySources].sort((a, b) => {
+    const aPrec = REPRESENTATION_PRECEDENCE[getRepresentationType(a)];
+    const bPrec = REPRESENTATION_PRECEDENCE[getRepresentationType(b)];
+    return bPrec - aPrec;
+  });
+
+  const canonicalProperties: Record<string, any> = {};
+  const provenance: PropertyProvenance[] = [];
+  const propertySourceMap = new Map<string, { value: string; nodeIndex: number; template: string; repType: RepresentationType; precedence: number }>();
+
+  for (const node of sorted) {
+    const repType = getRepresentationType(node);
+    const precedence = REPRESENTATION_PRECEDENCE[repType];
+    for (const prop of requiredProperties) {
+      const val = getPropertyValue(node.properties, prop);
+      if (val === null) continue;
+
+      const existing = propertySourceMap.get(prop);
+      if (!existing) {
+        propertySourceMap.set(prop, { value: val, nodeIndex: node.nodeIndex, template: node.template, repType, precedence });
+      } else if (existing.value !== val) {
+        if (precedence > existing.precedence) {
+          propertySourceMap.set(prop, { value: val, nodeIndex: node.nodeIndex, template: node.template, repType, precedence });
+        } else if (precedence === existing.precedence) {
+          return {
+            collapsed: false,
+            canonicalProperties: {},
+            provenance: [],
+            rejectionReason: `Conflicting values for property "${prop}" from representations at same precedence level: "${existing.template}" vs "${node.template}" — cannot deterministically resolve`,
+            bodyPreserved: false,
+          };
+        }
+      }
+    }
+  }
+
+  let anyBodyUpstream = false;
+  for (const node of allPropertySources) {
+    if (getPropertyValue(node.properties, "Body") !== null) { anyBodyUpstream = true; break; }
+  }
+
+  for (const [prop, source] of propertySourceMap) {
+    canonicalProperties[prop] = source.value;
+    provenance.push({ propertyName: prop, value: source.value, sourceNodeIndex: source.nodeIndex, sourceTemplate: source.template, sourceRepresentationType: source.repType });
+  }
+
+  const bodyPreserved = !requiredProperties.includes("Body") || getPropertyValue(canonicalProperties, "Body") !== null;
+  if (anyBodyUpstream && !bodyPreserved) {
+    return {
+      collapsed: false,
+      canonicalProperties,
+      provenance,
+      rejectionReason: "Body property existed upstream but was lost during representation collapse — refusing to emit without Body",
+      bodyPreserved: false,
+    };
+  }
+
+  return { collapsed: true, canonicalProperties, provenance, rejectionReason: null, bodyPreserved };
 }
 
 export function lockClusterToFamily(
   cluster: MailSendCluster,
   profile: StudioProfile | null,
   verifiedPackages: Set<string>,
+  integrationServiceConnectors?: Array<{ connectorName: string; connectionName?: string; connectionId?: string }>,
 ): MailFamilyLockResult {
   const { clusterId, file, workflow } = cluster;
 
+  const sendNodes = cluster.nodes.filter(n => n.role === "concrete-send");
+  const detectedRepresentations: RepresentationType[] = sendNodes.map(n => getRepresentationType(n));
+
+  const connectorIntent: ConnectorIntent | null = cluster.connectorIntent ||
+    (integrationServiceConnectors ? detectConnectorIntent(
+      cluster.concreteSendNode?.properties || {},
+      cluster.concreteSendNode?.displayName || "",
+      integrationServiceConnectors,
+    ) : null);
+
+  if (connectorIntent && !detectedRepresentations.includes("connector-intent")) {
+    detectedRepresentations.push("connector-intent");
+  }
+
   if (cluster.hasNarrativeContainer && cluster.narrativeRepresentationsFound.length > 0) {
+    const hasConcreteAlongside = sendNodes.some(n => getRepresentationType(n) === "concrete-send");
+
+    if (hasConcreteAlongside && sendNodes.length > 1) {
+      const concreteNodes = sendNodes.filter(n => getRepresentationType(n) === "concrete-send");
+      const narrativeNodes = sendNodes.filter(n => getRepresentationType(n) !== "concrete-send");
+      const rejectedTemplates = narrativeNodes.map(n => n.template);
+
+      if (concreteNodes.length === 1) {
+        const canonicalNode = concreteNodes[0];
+        const canonicalFamily = canonicalNode.detectedFamily;
+        if (canonicalFamily && MAIL_FAMILY_SET.has(canonicalFamily)) {
+          const contract = lookupContractByFamilyId(canonicalFamily);
+          if (contract) {
+            const collapseResult = collapseCompetingRepresentations(cluster.nodes, contract.requiredProperties);
+            if (collapseResult.collapsed) {
+              const propsToCheck = collapseResult.canonicalProperties;
+              const missingProps = checkRequiredPropertyCompleteness(contract, propsToCheck);
+              if (missingProps.length === 0) {
+                const targetFramework = profile?.targetFramework || "Windows";
+                if (isFrameworkCompatible(contract, targetFramework) && isPackageInVerifiedSet(contract.packageId, verifiedPackages)) {
+                  return {
+                    clusterId, file, workflow,
+                    selectedFamily: canonicalFamily as MailFamily,
+                    concreteActivityType: contract.concreteType,
+                    concretePackage: contract.packageId,
+                    locked: true,
+                    lockRejectionReason: null,
+                    narrativeRepresentationsRejected: cluster.narrativeRepresentationsFound,
+                    missingRequiredProperties: [],
+                    packageFatal: false,
+                    crossFamilyDriftViolation: false,
+                    detectedRepresentations,
+                    selectedCanonicalSource: canonicalNode.template,
+                    rejectedCompetingRepresentations: rejectedTemplates,
+                    propertyProvenance: collapseResult.provenance,
+                    connectorIntentDetected: connectorIntent,
+                    collapseApplied: true,
+                  };
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
     return {
       clusterId,
       file,
@@ -1388,6 +1700,8 @@ export function lockClusterToFamily(
       missingRequiredProperties: [],
       packageFatal: true,
       crossFamilyDriftViolation: false,
+      detectedRepresentations,
+      connectorIntentDetected: connectorIntent,
     };
   }
 
@@ -1395,6 +1709,57 @@ export function lockClusterToFamily(
   const ambiguousFamilies = Array.from(cluster.detectedFamilies).filter(f => f === AMBIGUOUS_MAIL_FAMILY);
 
   if (concreteFamilies.length === 0 && ambiguousFamilies.length > 0) {
+    if (connectorIntent && connectorIntent.resolvedFamily) {
+      const resolvedFamily = connectorIntent.resolvedFamily;
+      const contract = lookupContractByFamilyId(resolvedFamily);
+      if (contract) {
+        const targetFramework = profile?.targetFramework || "Windows";
+        if (isFrameworkCompatible(contract, targetFramework) && isPackageInVerifiedSet(contract.packageId, verifiedPackages)) {
+          const collapseResult = collapseCompetingRepresentations(cluster.nodes, contract.requiredProperties);
+          if (collapseResult.collapsed) {
+            const propsToCheck = collapseResult.canonicalProperties;
+            const missingProps = checkRequiredPropertyCompleteness(contract, propsToCheck);
+            if (missingProps.length === 0) {
+              return {
+                clusterId, file, workflow,
+                selectedFamily: resolvedFamily,
+                concreteActivityType: contract.concreteType,
+                concretePackage: contract.packageId,
+                locked: true,
+                lockRejectionReason: null,
+                narrativeRepresentationsRejected: [],
+                missingRequiredProperties: [],
+                packageFatal: false,
+                crossFamilyDriftViolation: false,
+                detectedRepresentations,
+                selectedCanonicalSource: `connector-intent:${connectorIntent.connectorName}`,
+                rejectedCompetingRepresentations: [],
+                propertyProvenance: collapseResult.provenance,
+                connectorIntentDetected: connectorIntent,
+                collapseApplied: true,
+              };
+            } else {
+              return {
+                clusterId, file, workflow,
+                selectedFamily: resolvedFamily,
+                concreteActivityType: contract.concreteType,
+                concretePackage: contract.packageId,
+                locked: false,
+                lockRejectionReason: `Connector intent resolved family "${resolvedFamily}" but missing required properties: ${missingProps.join(", ")}`,
+                narrativeRepresentationsRejected: [],
+                missingRequiredProperties: missingProps,
+                packageFatal: true,
+                crossFamilyDriftViolation: false,
+                detectedRepresentations,
+                connectorIntentDetected: connectorIntent,
+                collapseApplied: false,
+              };
+            }
+          }
+        }
+      }
+    }
+
     return {
       clusterId,
       file,
@@ -1408,10 +1773,63 @@ export function lockClusterToFamily(
       missingRequiredProperties: [],
       packageFatal: true,
       crossFamilyDriftViolation: false,
+      detectedRepresentations,
+      connectorIntentDetected: connectorIntent,
     };
   }
 
   if (concreteFamilies.length > 1) {
+    if (connectorIntent && connectorIntent.resolvedFamily && concreteFamilies.includes(connectorIntent.resolvedFamily)) {
+      const resolvedFamily = connectorIntent.resolvedFamily;
+      const contract = lookupContractByFamilyId(resolvedFamily);
+      if (contract) {
+        const collapseResult = collapseCompetingRepresentations(cluster.nodes, contract.requiredProperties);
+        if (collapseResult.collapsed) {
+          const targetFramework = profile?.targetFramework || "Windows";
+          if (isFrameworkCompatible(contract, targetFramework) && isPackageInVerifiedSet(contract.packageId, verifiedPackages)) {
+            const missingProps = checkRequiredPropertyCompleteness(contract, collapseResult.canonicalProperties);
+            if (missingProps.length === 0) {
+              const rejectedFamilies = concreteFamilies.filter(f => f !== resolvedFamily);
+              return {
+                clusterId, file, workflow,
+                selectedFamily: resolvedFamily,
+                concreteActivityType: contract.concreteType,
+                concretePackage: contract.packageId,
+                locked: true,
+                lockRejectionReason: null,
+                narrativeRepresentationsRejected: [],
+                missingRequiredProperties: [],
+                packageFatal: false,
+                crossFamilyDriftViolation: false,
+                detectedRepresentations,
+                selectedCanonicalSource: `connector-intent:${connectorIntent.connectorName}`,
+                rejectedCompetingRepresentations: rejectedFamilies,
+                propertyProvenance: collapseResult.provenance,
+                connectorIntentDetected: connectorIntent,
+                collapseApplied: true,
+              };
+            }
+          }
+        } else if (collapseResult.rejectionReason) {
+          return {
+            clusterId, file, workflow,
+            selectedFamily: null,
+            concreteActivityType: null,
+            concretePackage: null,
+            locked: false,
+            lockRejectionReason: collapseResult.rejectionReason,
+            narrativeRepresentationsRejected: [],
+            missingRequiredProperties: [],
+            packageFatal: true,
+            crossFamilyDriftViolation: true,
+            detectedRepresentations,
+            connectorIntentDetected: connectorIntent,
+            collapseApplied: false,
+          };
+        }
+      }
+    }
+
     return {
       clusterId,
       file,
@@ -1425,6 +1843,8 @@ export function lockClusterToFamily(
       missingRequiredProperties: [],
       packageFatal: true,
       crossFamilyDriftViolation: true,
+      detectedRepresentations,
+      connectorIntentDetected: connectorIntent,
     };
   }
 
@@ -1442,6 +1862,8 @@ export function lockClusterToFamily(
       missingRequiredProperties: [],
       packageFatal: true,
       crossFamilyDriftViolation: false,
+      detectedRepresentations,
+      connectorIntentDetected: connectorIntent,
     };
   }
 
@@ -1461,6 +1883,8 @@ export function lockClusterToFamily(
       missingRequiredProperties: [],
       packageFatal: true,
       crossFamilyDriftViolation: false,
+      detectedRepresentations,
+      connectorIntentDetected: connectorIntent,
     };
   }
 
@@ -1479,6 +1903,8 @@ export function lockClusterToFamily(
       missingRequiredProperties: [],
       packageFatal: true,
       crossFamilyDriftViolation: false,
+      detectedRepresentations,
+      connectorIntentDetected: connectorIntent,
     };
   }
 
@@ -1496,27 +1922,57 @@ export function lockClusterToFamily(
       missingRequiredProperties: [],
       packageFatal: true,
       crossFamilyDriftViolation: false,
+      detectedRepresentations,
+      connectorIntentDetected: connectorIntent,
     };
   }
 
-  if (cluster.concreteSendNode) {
-    const missingProps = checkRequiredPropertyCompleteness(contract, cluster.concreteSendNode.properties);
-    if (missingProps.length > 0) {
+  const multipleRepresentations = sendNodes.length > 1;
+  let collapseResult: CollapseResult | null = null;
+  let propsToCheck = cluster.concreteSendNode?.properties || {};
+
+  if (multipleRepresentations) {
+    collapseResult = collapseCompetingRepresentations(cluster.nodes, contract.requiredProperties);
+    if (!collapseResult.collapsed) {
       return {
-        clusterId,
-        file,
-        workflow,
+        clusterId, file, workflow,
         selectedFamily,
         concreteActivityType: contract.concreteType,
         concretePackage: contract.packageId,
         locked: false,
-        lockRejectionReason: `Missing required properties: ${missingProps.join(", ")}`,
+        lockRejectionReason: collapseResult.rejectionReason || "Failed to collapse competing representations",
         narrativeRepresentationsRejected: [],
-        missingRequiredProperties: missingProps,
+        missingRequiredProperties: [],
         packageFatal: true,
         crossFamilyDriftViolation: false,
+        detectedRepresentations,
+        connectorIntentDetected: connectorIntent,
+        collapseApplied: false,
       };
     }
+    propsToCheck = collapseResult.canonicalProperties;
+  }
+
+  const missingProps = checkRequiredPropertyCompleteness(contract, propsToCheck);
+  if (missingProps.length > 0) {
+    return {
+      clusterId,
+      file,
+      workflow,
+      selectedFamily,
+      concreteActivityType: contract.concreteType,
+      concretePackage: contract.packageId,
+      locked: false,
+      lockRejectionReason: `Missing required properties: ${missingProps.join(", ")}`,
+      narrativeRepresentationsRejected: [],
+      missingRequiredProperties: missingProps,
+      packageFatal: true,
+      crossFamilyDriftViolation: false,
+      detectedRepresentations,
+      connectorIntentDetected: connectorIntent,
+      collapseApplied: multipleRepresentations,
+      propertyProvenance: collapseResult?.provenance,
+    };
   }
 
   return {
@@ -1532,6 +1988,22 @@ export function lockClusterToFamily(
     missingRequiredProperties: [],
     packageFatal: false,
     crossFamilyDriftViolation: false,
+    detectedRepresentations,
+    selectedCanonicalSource: cluster.concreteSendNode?.template || null,
+    rejectedCompetingRepresentations: multipleRepresentations
+      ? sendNodes.filter(n => n !== cluster.concreteSendNode).map(n => n.template)
+      : [],
+    propertyProvenance: collapseResult?.provenance || (cluster.concreteSendNode ? contract.requiredProperties
+      .filter(p => getPropertyValue(cluster.concreteSendNode!.properties, p) !== null)
+      .map(p => ({
+        propertyName: p,
+        value: getPropertyValue(cluster.concreteSendNode!.properties, p),
+        sourceNodeIndex: cluster.concreteSendNode!.nodeIndex,
+        sourceTemplate: cluster.concreteSendNode!.template,
+        sourceRepresentationType: getRepresentationType(cluster.concreteSendNode!) as RepresentationType,
+      })) : []),
+    connectorIntentDetected: connectorIntent,
+    collapseApplied: multipleRepresentations && collapseResult !== null,
   };
 }
 
@@ -1544,9 +2016,11 @@ export function buildMailFamilyLockDiagnostics(
       totalClusters: lockResults.length,
       totalLocked: lockResults.filter(r => r.locked).length,
       totalRejectedAmbiguous: lockResults.filter(r => !r.locked && r.lockRejectionReason?.includes("ambiguous")).length,
-      totalRejectedNarrative: lockResults.filter(r => r.narrativeRepresentationsRejected.length > 0).length,
+      totalRejectedNarrative: lockResults.filter(r => r.narrativeRepresentationsRejected.length > 0 && !r.locked).length,
       totalRejectedMissingProperties: lockResults.filter(r => r.missingRequiredProperties.length > 0).length,
       totalCrossFamilyDriftViolations: lockResults.filter(r => r.crossFamilyDriftViolation).length,
+      totalConnectorIntentResolved: lockResults.filter(r => r.connectorIntentDetected && r.locked).length,
+      totalCollapseApplied: lockResults.filter(r => r.collapseApplied).length,
     },
   };
 }
@@ -1716,18 +2190,394 @@ export function crossFamilyDriftToPackageViolations(
   }));
 }
 
+function canonicalizeMailSendsInSubtreeArray(
+  nodes: WorkflowNode[],
+  canonicalTemplate: string,
+  canonicalProps: Record<string, any>,
+  state: { canonicalEmitted: boolean },
+): { result: WorkflowNode[]; rewroteAny: boolean } {
+  const result: WorkflowNode[] = [];
+  let rewroteAny = false;
+
+  for (const node of nodes) {
+    if (node.kind === "activity" && isMailSendTemplate(node.template)) {
+      if (!state.canonicalEmitted) {
+        state.canonicalEmitted = true;
+        result.push({
+          ...node,
+          template: canonicalTemplate,
+          properties: { ...node.properties, ...canonicalProps },
+        } as WorkflowNode);
+        rewroteAny = true;
+      }
+      continue;
+    }
+
+    if (node.kind === "tryCatch") {
+      const { result: tryR, rewroteAny: r1 } = canonicalizeMailSendsInSubtreeArray(node.tryChildren, canonicalTemplate, canonicalProps, state);
+      const { result: catchR, rewroteAny: r2 } = canonicalizeMailSendsInSubtreeArray(node.catchChildren || [], canonicalTemplate, canonicalProps, state);
+      const { result: finallyR, rewroteAny: r3 } = canonicalizeMailSendsInSubtreeArray(node.finallyChildren || [], canonicalTemplate, canonicalProps, state);
+      if (r1 || r2 || r3) rewroteAny = true;
+      result.push({ ...node, tryChildren: tryR, catchChildren: catchR, finallyChildren: finallyR } as WorkflowNode);
+      continue;
+    }
+
+    if (node.kind === "retryScope") {
+      const { result: bodyR, rewroteAny: r } = canonicalizeMailSendsInSubtreeArray(node.bodyChildren, canonicalTemplate, canonicalProps, state);
+      if (r) rewroteAny = true;
+      result.push({ ...node, bodyChildren: bodyR } as WorkflowNode);
+      continue;
+    }
+
+    if (node.kind === "sequence") {
+      const { result: childR, rewroteAny: r } = canonicalizeMailSendsInSubtreeArray(node.children, canonicalTemplate, canonicalProps, state);
+      if (r) rewroteAny = true;
+      result.push({ ...node, children: childR } as WorkflowNode);
+      continue;
+    }
+
+    if (node.kind === "if") {
+      const { result: thenR, rewroteAny: r1 } = canonicalizeMailSendsInSubtreeArray(node.thenChildren, canonicalTemplate, canonicalProps, state);
+      const { result: elseR, rewroteAny: r2 } = canonicalizeMailSendsInSubtreeArray(node.elseChildren, canonicalTemplate, canonicalProps, state);
+      if (r1 || r2) rewroteAny = true;
+      result.push({ ...node, thenChildren: thenR, elseChildren: elseR } as WorkflowNode);
+      continue;
+    }
+
+    if (node.kind === "while" || node.kind === "forEach") {
+      const { result: bodyR, rewroteAny: r } = canonicalizeMailSendsInSubtreeArray(node.bodyChildren, canonicalTemplate, canonicalProps, state);
+      if (r) rewroteAny = true;
+      result.push({ ...node, bodyChildren: bodyR } as WorkflowNode);
+      continue;
+    }
+
+    result.push(node);
+  }
+
+  return { result, rewroteAny };
+}
+
+export function buildRewriteDirective(
+  cluster: MailSendCluster,
+  lockResult: MailFamilyLockResult,
+): RewriteDirective | null {
+  if (!lockResult.locked || !lockResult.collapseApplied || !lockResult.concreteActivityType || !lockResult.selectedFamily) {
+    return null;
+  }
+
+  const contract = lookupContractByFamilyId(lockResult.selectedFamily);
+  if (!contract) return null;
+
+  const wrapperRoles = new Set(["trycatch-wrapper", "retryscope-wrapper"]);
+  const mailSendRoles = new Set(["concrete-send"]);
+  let hasWrapper = false;
+  let canonicalIndex = -1;
+
+  const mailSendIndices = new Set<number>();
+  for (const node of cluster.nodes) {
+    if (wrapperRoles.has(node.role)) {
+      hasWrapper = true;
+    }
+    if (mailSendRoles.has(node.role)) {
+      mailSendIndices.add(node.nodeIndex);
+    }
+  }
+
+  const concreteSend = cluster.concreteSendNode;
+  if (concreteSend) {
+    canonicalIndex = concreteSend.nodeIndex;
+  } else if (mailSendIndices.size > 0) {
+    canonicalIndex = Math.min(...mailSendIndices);
+  }
+
+  if (canonicalIndex < 0) return null;
+
+  const canonicalProps: Record<string, any> = {};
+  if (lockResult.propertyProvenance) {
+    for (const prov of lockResult.propertyProvenance) {
+      if (prov.value !== undefined && prov.value !== null) {
+        canonicalProps[prov.propertyName] = prov.value;
+      }
+    }
+  }
+
+  const competingIndices = [...mailSendIndices].filter(idx => idx !== canonicalIndex);
+
+  const canonicalOrdinal = concreteSend?.localMailSendOrdinal;
+
+  return {
+    canonicalTopLevelIndex: canonicalIndex,
+    competingTopLevelIndices: competingIndices,
+    canonicalTemplate: contract.className,
+    canonicalProperties: canonicalProps,
+    nestedInWrapper: hasWrapper,
+    localMailSendOrdinal: canonicalOrdinal,
+  };
+}
+
+function applyOrdinalTargetedRewrite(
+  nodes: WorkflowNode[],
+  ordinalDirectives: Map<number, RewriteDirective>,
+  removedOrdinals: Set<number>,
+  ordinalCounter: { value: number },
+): { result: WorkflowNode[]; rewroteAny: boolean } {
+  const result: WorkflowNode[] = [];
+  let rewroteAny = false;
+
+  for (const node of nodes) {
+    if (node.kind === "activity" && isMailSendTemplate(node.template)) {
+      const currentOrdinal = ordinalCounter.value++;
+      if (removedOrdinals.has(currentOrdinal)) {
+        rewroteAny = true;
+        continue;
+      }
+      const directive = ordinalDirectives.get(currentOrdinal);
+      if (directive) {
+        result.push({
+          ...node,
+          template: directive.canonicalTemplate,
+          properties: { ...node.properties, ...directive.canonicalProperties },
+        } as WorkflowNode);
+        rewroteAny = true;
+      } else {
+        result.push(node);
+      }
+    } else if (node.kind === "sequence") {
+      const { result: rChildren, rewroteAny: rA } = applyOrdinalTargetedRewrite(node.children, ordinalDirectives, removedOrdinals, ordinalCounter);
+      if (rA) {
+        result.push({ ...node, children: rChildren } as WorkflowNode);
+        rewroteAny = true;
+      } else {
+        result.push(node);
+      }
+    } else if (node.kind === "tryCatch") {
+      const { result: rTry, rewroteAny: rA1 } = applyOrdinalTargetedRewrite(node.tryChildren, ordinalDirectives, removedOrdinals, ordinalCounter);
+      const { result: rCatch, rewroteAny: rA2 } = applyOrdinalTargetedRewrite(node.catchChildren, ordinalDirectives, removedOrdinals, ordinalCounter);
+      const { result: rFinally, rewroteAny: rA3 } = applyOrdinalTargetedRewrite(node.finallyChildren, ordinalDirectives, removedOrdinals, ordinalCounter);
+      if (rA1 || rA2 || rA3) {
+        result.push({ ...node, tryChildren: rTry, catchChildren: rCatch, finallyChildren: rFinally } as WorkflowNode);
+        rewroteAny = true;
+      } else {
+        result.push(node);
+      }
+    } else if (node.kind === "retryScope") {
+      const { result: rBody, rewroteAny: rA } = applyOrdinalTargetedRewrite(node.bodyChildren, ordinalDirectives, removedOrdinals, ordinalCounter);
+      if (rA) {
+        result.push({ ...node, bodyChildren: rBody } as WorkflowNode);
+        rewroteAny = true;
+      } else {
+        result.push(node);
+      }
+    } else if (node.kind === "if") {
+      const { result: rThen, rewroteAny: rA1 } = applyOrdinalTargetedRewrite(node.thenChildren, ordinalDirectives, removedOrdinals, ordinalCounter);
+      const { result: rElse, rewroteAny: rA2 } = applyOrdinalTargetedRewrite(node.elseChildren, ordinalDirectives, removedOrdinals, ordinalCounter);
+      if (rA1 || rA2) {
+        result.push({ ...node, thenChildren: rThen, elseChildren: rElse } as WorkflowNode);
+        rewroteAny = true;
+      } else {
+        result.push(node);
+      }
+    } else if (node.kind === "while") {
+      const { result: rBody, rewroteAny: rA } = applyOrdinalTargetedRewrite(node.bodyChildren, ordinalDirectives, removedOrdinals, ordinalCounter);
+      if (rA) {
+        result.push({ ...node, bodyChildren: rBody } as WorkflowNode);
+        rewroteAny = true;
+      } else {
+        result.push(node);
+      }
+    } else if (node.kind === "forEach") {
+      const { result: rBody, rewroteAny: rA } = applyOrdinalTargetedRewrite(node.bodyChildren, ordinalDirectives, removedOrdinals, ordinalCounter);
+      if (rA) {
+        result.push({ ...node, bodyChildren: rBody } as WorkflowNode);
+        rewroteAny = true;
+      } else {
+        result.push(node);
+      }
+    } else {
+      result.push(node);
+    }
+  }
+
+  return { result, rewroteAny };
+}
+
+export function applyCanonicalRewrite(
+  nodes: WorkflowNode[],
+  lockResults: MailFamilyLockResult[],
+): { rewrittenNodes: WorkflowNode[]; rewriteCount: number } {
+  const directives = lockResults
+    .filter(r => r.rewriteDirective)
+    .map(r => r.rewriteDirective!);
+
+  if (directives.length === 0) return { rewrittenNodes: nodes, rewriteCount: 0 };
+
+  const directivesByIndex = new Map<number, RewriteDirective[]>();
+  for (const d of directives) {
+    const existing = directivesByIndex.get(d.canonicalTopLevelIndex) || [];
+    existing.push(d);
+    directivesByIndex.set(d.canonicalTopLevelIndex, existing);
+  }
+
+  const removeSet = new Set<number>();
+  for (const d of directives) {
+    for (const idx of d.competingTopLevelIndices) {
+      removeSet.add(idx);
+    }
+  }
+
+  let rewriteCount = 0;
+  const result: WorkflowNode[] = [];
+
+  for (let i = 0; i < nodes.length; i++) {
+    if (removeSet.has(i)) {
+      continue;
+    }
+
+    const indexDirectives = directivesByIndex.get(i);
+    if (!indexDirectives || indexDirectives.length === 0) {
+      result.push(nodes[i]);
+      continue;
+    }
+
+    const node = nodes[i];
+    const isContainerNode = node.kind === "tryCatch" || node.kind === "retryScope" ||
+      node.kind === "sequence" || node.kind === "if" || node.kind === "while" || node.kind === "forEach";
+
+    const hasOrdinals = indexDirectives.some(d => d.localMailSendOrdinal !== undefined);
+    const hasMultiple = indexDirectives.length > 1;
+
+    if (hasMultiple && hasOrdinals && isContainerNode) {
+      const ordinalMap = new Map<number, RewriteDirective>();
+      const removedOrdinals = new Set<number>();
+      for (const d of indexDirectives) {
+        if (d.localMailSendOrdinal !== undefined) {
+          ordinalMap.set(d.localMailSendOrdinal, d);
+        }
+      }
+      const ordinalCounter = { value: 0 };
+      let rewrittenNode: WorkflowNode = node;
+      let rewroteAny = false;
+
+      if (node.kind === "tryCatch") {
+        const { result: rTry, rewroteAny: rA1 } = applyOrdinalTargetedRewrite(node.tryChildren, ordinalMap, removedOrdinals, ordinalCounter);
+        const { result: rCatch, rewroteAny: rA2 } = applyOrdinalTargetedRewrite(node.catchChildren, ordinalMap, removedOrdinals, ordinalCounter);
+        const { result: rFinally, rewroteAny: rA3 } = applyOrdinalTargetedRewrite(node.finallyChildren, ordinalMap, removedOrdinals, ordinalCounter);
+        rewroteAny = rA1 || rA2 || rA3;
+        if (rewroteAny) rewrittenNode = { ...node, tryChildren: rTry, catchChildren: rCatch, finallyChildren: rFinally } as WorkflowNode;
+      } else if (node.kind === "retryScope") {
+        const { result: rBody, rewroteAny: rA } = applyOrdinalTargetedRewrite(node.bodyChildren, ordinalMap, removedOrdinals, ordinalCounter);
+        rewroteAny = rA;
+        if (rewroteAny) rewrittenNode = { ...node, bodyChildren: rBody } as WorkflowNode;
+      } else if (node.kind === "sequence") {
+        const { result: rChildren, rewroteAny: rA } = applyOrdinalTargetedRewrite(node.children, ordinalMap, removedOrdinals, ordinalCounter);
+        rewroteAny = rA;
+        if (rewroteAny) rewrittenNode = { ...node, children: rChildren } as WorkflowNode;
+      } else if (node.kind === "if") {
+        const { result: rThen, rewroteAny: rA1 } = applyOrdinalTargetedRewrite(node.thenChildren, ordinalMap, removedOrdinals, ordinalCounter);
+        const { result: rElse, rewroteAny: rA2 } = applyOrdinalTargetedRewrite(node.elseChildren, ordinalMap, removedOrdinals, ordinalCounter);
+        rewroteAny = rA1 || rA2;
+        if (rewroteAny) rewrittenNode = { ...node, thenChildren: rThen, elseChildren: rElse } as WorkflowNode;
+      } else if (node.kind === "while") {
+        const { result: rBody, rewroteAny: rA } = applyOrdinalTargetedRewrite(node.bodyChildren, ordinalMap, removedOrdinals, ordinalCounter);
+        rewroteAny = rA;
+        if (rewroteAny) rewrittenNode = { ...node, bodyChildren: rBody } as WorkflowNode;
+      } else if (node.kind === "forEach") {
+        const { result: rBody, rewroteAny: rA } = applyOrdinalTargetedRewrite(node.bodyChildren, ordinalMap, removedOrdinals, ordinalCounter);
+        rewroteAny = rA;
+        if (rewroteAny) rewrittenNode = { ...node, bodyChildren: rBody } as WorkflowNode;
+      }
+
+      if (rewroteAny) {
+        rewriteCount += indexDirectives.length;
+        result.push(rewrittenNode);
+      } else {
+        result.push(node);
+      }
+    } else if (indexDirectives.length === 1) {
+      const directive = indexDirectives[0];
+
+      if (directive.nestedInWrapper || isContainerNode) {
+        const state = { canonicalEmitted: false };
+        let rewrittenNode = node;
+        let rewroteAny = false;
+
+        if (node.kind === "tryCatch") {
+          const { result: rTry, rewroteAny: rA1 } = canonicalizeMailSendsInSubtreeArray(node.tryChildren, directive.canonicalTemplate, directive.canonicalProperties, state);
+          const { result: rCatch, rewroteAny: rA2 } = canonicalizeMailSendsInSubtreeArray(node.catchChildren, directive.canonicalTemplate, directive.canonicalProperties, state);
+          const { result: rFinally, rewroteAny: rA3 } = canonicalizeMailSendsInSubtreeArray(node.finallyChildren, directive.canonicalTemplate, directive.canonicalProperties, state);
+          rewroteAny = rA1 || rA2 || rA3;
+          if (rewroteAny) rewrittenNode = { ...node, tryChildren: rTry, catchChildren: rCatch, finallyChildren: rFinally } as WorkflowNode;
+        } else if (node.kind === "retryScope") {
+          const { result: rBody, rewroteAny: rA } = canonicalizeMailSendsInSubtreeArray(node.bodyChildren, directive.canonicalTemplate, directive.canonicalProperties, state);
+          rewroteAny = rA;
+          if (rewroteAny) rewrittenNode = { ...node, bodyChildren: rBody } as WorkflowNode;
+        } else if (node.kind === "sequence") {
+          const { result: rChildren, rewroteAny: rA } = canonicalizeMailSendsInSubtreeArray(node.children, directive.canonicalTemplate, directive.canonicalProperties, state);
+          rewroteAny = rA;
+          if (rewroteAny) rewrittenNode = { ...node, children: rChildren } as WorkflowNode;
+        } else if (node.kind === "if") {
+          const { result: rThen, rewroteAny: rA1 } = canonicalizeMailSendsInSubtreeArray(node.thenChildren, directive.canonicalTemplate, directive.canonicalProperties, state);
+          const { result: rElse, rewroteAny: rA2 } = canonicalizeMailSendsInSubtreeArray(node.elseChildren, directive.canonicalTemplate, directive.canonicalProperties, state);
+          rewroteAny = rA1 || rA2;
+          if (rewroteAny) rewrittenNode = { ...node, thenChildren: rThen, elseChildren: rElse } as WorkflowNode;
+        } else if (node.kind === "while") {
+          const { result: rBody, rewroteAny: rA } = canonicalizeMailSendsInSubtreeArray(node.bodyChildren, directive.canonicalTemplate, directive.canonicalProperties, state);
+          rewroteAny = rA;
+          if (rewroteAny) rewrittenNode = { ...node, bodyChildren: rBody } as WorkflowNode;
+        } else if (node.kind === "forEach") {
+          const { result: rBody, rewroteAny: rA } = canonicalizeMailSendsInSubtreeArray(node.bodyChildren, directive.canonicalTemplate, directive.canonicalProperties, state);
+          rewroteAny = rA;
+          if (rewroteAny) rewrittenNode = { ...node, bodyChildren: rBody } as WorkflowNode;
+        }
+
+        if (rewroteAny) {
+          rewriteCount++;
+          result.push(rewrittenNode);
+        } else {
+          result.push(node);
+        }
+      } else if (node.kind === "activity" && isMailSendTemplate(node.template)) {
+        result.push({
+          ...node,
+          template: directive.canonicalTemplate,
+          properties: { ...node.properties, ...directive.canonicalProperties },
+        } as WorkflowNode);
+        rewriteCount++;
+      } else {
+        result.push(node);
+      }
+    } else {
+      result.push(node);
+    }
+  }
+
+  return { rewrittenNodes: result, rewriteCount };
+}
+
 export function runMailFamilyLockAnalysis(
   specs: Array<{ file: string; workflow: string; rootSequence: { kind: "sequence"; displayName: string; children: WorkflowNode[] } }>,
   profile: StudioProfile | null,
   verifiedPackages: Set<string>,
+  integrationServiceConnectors?: Array<{ connectorName: string; connectionName?: string; connectionId?: string }>,
 ): MailFamilyLockDiagnostics {
   const lockResults: MailFamilyLockResult[] = [];
 
   for (const spec of specs) {
-    const clusters = detectMailSendClusters(spec.rootSequence.children, spec.file, spec.workflow);
+    const specLockResults: MailFamilyLockResult[] = [];
+    const clusters = detectMailSendClusters(spec.rootSequence.children, spec.file, spec.workflow, integrationServiceConnectors);
     for (const cluster of clusters) {
-      const result = lockClusterToFamily(cluster, profile, verifiedPackages);
+      const result = lockClusterToFamily(cluster, profile, verifiedPackages, integrationServiceConnectors);
+      result.rewriteDirective = buildRewriteDirective(cluster, result);
+      specLockResults.push(result);
       lockResults.push(result);
+    }
+
+    const withDirectives = specLockResults.filter(r => r.rewriteDirective);
+    if (withDirectives.length > 0) {
+      const { rewrittenNodes, rewriteCount } = applyCanonicalRewrite(spec.rootSequence.children, withDirectives);
+      if (rewriteCount > 0) {
+        spec.rootSequence.children = rewrittenNodes;
+      }
     }
   }
 

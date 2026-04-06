@@ -75,6 +75,7 @@ export interface UiPathPackageInternal {
   forceRebuild?: boolean;
   complexityTier?: string;
   priorCompliantWorkflows?: Array<{ name: string; content: string }>;
+  integrationServiceConnectors?: Array<{ connectorName: string; connectionName?: string; connectionId?: string }>;
 }
 
 export interface AgentSpec {
