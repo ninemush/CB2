@@ -78,6 +78,12 @@ export function tryParseJsonValueIntent(s: string): { intent: ValueIntent; fallb
       if (parsed.type === "variable" && typeof parsed.name === "string") {
         return { intent: { type: "variable", name: parsed.name } as ValueIntent, fallbackUsed: true };
       }
+      if (parsed.type === "expression" && typeof parsed.left === "string" && typeof parsed.operator === "string" && typeof parsed.right === "string") {
+        return { intent: { type: "expression", left: parsed.left, operator: parsed.operator, right: parsed.right } as ValueIntent, fallbackUsed: true };
+      }
+      if (parsed.type === "url_with_params" && typeof parsed.baseUrl === "string") {
+        return { intent: { type: "url_with_params", baseUrl: parsed.baseUrl, params: parsed.params || {} } as ValueIntent, fallbackUsed: true };
+      }
     }
   } catch {
   }
@@ -543,6 +549,40 @@ function looksLikeVbCode(value: string): boolean {
     if (pattern.test(value)) return true;
   }
   return false;
+}
+
+export const VALUE_INTENT_JSON_PATTERN = /\{"(?:type|value|name)"[^}]*"(?:type|value|name)"[^}]*\}/g;
+
+export function containsValueIntentJson(s: string): boolean {
+  if (typeof s !== "string") return false;
+  const trimmed = s.trim();
+  if (trimmed.startsWith('{') && /"type"\s*:/.test(trimmed)) return true;
+  if (/\{(?:&quot;|")(?:type|value|name)(?:&quot;|")/.test(s)) return true;
+  return false;
+}
+
+export function resolveValueIntentJsonString(s: string, options?: { clrType?: string; propertyName?: string }): string {
+  if (typeof s !== "string") return s;
+  const trimmed = s.trim();
+
+  const jsonResult = tryParseJsonValueIntent(trimmed);
+  if (jsonResult) {
+    const resolved = buildExpression(jsonResult.intent, options);
+    emitJsonResolutionDiagnostic(trimmed, jsonResult.intent, resolved, jsonResult.fallbackUsed);
+    return resolved;
+  }
+
+  return s;
+}
+
+export function sweepAttributeValueForJsonIntents(s: string): string {
+  if (typeof s !== "string") return s;
+  if (!containsValueIntentJson(s)) return s;
+
+  const result = resolveValueIntentJsonString(s);
+  if (result !== s) return result;
+
+  return s;
 }
 
 export function sanitizeValueIntentExpressions(obj: any): void {

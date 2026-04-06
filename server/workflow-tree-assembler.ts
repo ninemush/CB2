@@ -21,7 +21,7 @@ import { buildTemplateBlock } from "./catalog/xaml-template-builder";
 import type { ProcessType } from "./catalog/catalog-service";
 import { escapeXml, escapeXmlExpression, normalizeXmlExpression, escapeXmlTextContent } from "./lib/xml-utils";
 import { XMLValidator } from "fast-xml-parser";
-import { buildExpression, isValueIntent, normalizeStringToExpression, normalizePropertyToValueIntent, tryParseJsonValueIntent, emitJsonResolutionDiagnostic, type ValueIntent } from "./xaml/expression-builder";
+import { buildExpression, isValueIntent, normalizeStringToExpression, normalizePropertyToValueIntent, tryParseJsonValueIntent, emitJsonResolutionDiagnostic, resolveValueIntentJsonString, containsValueIntentJson, sweepAttributeValueForJsonIntents, type ValueIntent } from "./xaml/expression-builder";
 import { emitPropertySerializationTrace, computeContentHash } from "./pipeline-trace-collector";
 import { validateMapClrTypeOutput, reportCriticalTypeDiagnostic } from "./emission-gate";
 import { getActivityTag, getActivityPrefixStrict, injectMissingNamespaceDeclarations, ensureBracketWrapped, smartBracketWrap, looksLikePlainText, BARE_WORD_LITERALS_SET, CLR_NAMESPACE_TO_XAML_PREFIX } from "./xaml/xaml-compliance";
@@ -1657,9 +1657,60 @@ function resolveAssignTemplate(node: ActivityNode, allVariables: VariableDeclara
   const displayName = escapeXml(node.displayName);
   const toRaw = props.To || props.to || node.outputVar || "obj_Result";
   const valRaw = props.Value || props.value || '""';
-  const toVarName = isValueIntent(toRaw) && (toRaw as ValueIntent).type === "variable"
-    ? (toRaw as ValueIntent & { type: "variable" }).name
-    : isValueIntent(toRaw) ? buildExpression(toRaw as ValueIntent) : String(toRaw);
+  let toVarName: string;
+  if (isValueIntent(toRaw) && (toRaw as ValueIntent).type === "variable") {
+    toVarName = (toRaw as ValueIntent & { type: "variable" }).name;
+  } else if (isValueIntent(toRaw)) {
+    toVarName = buildExpression(toRaw as ValueIntent);
+  } else {
+    const toStr = String(toRaw);
+    if (containsValueIntentJson(toStr)) {
+      const jsonResult = tryParseJsonValueIntent(toStr);
+      if (jsonResult) {
+        if (jsonResult.intent.type === "variable") {
+          toVarName = jsonResult.intent.name;
+        } else {
+          toVarName = buildExpression(jsonResult.intent);
+        }
+        emitJsonResolutionDiagnostic(toStr, jsonResult.intent, toVarName, jsonResult.fallbackUsed);
+      } else {
+        toVarName = toStr;
+      }
+    } else {
+      toVarName = toStr;
+    }
+  }
+
+  const INVALID_TO_VALUES = new Set(["Nothing", "null", "", "undefined", '""', "''", "Nothing "]);
+  const cleanedTo = toVarName.replace(/^\[+|\]+$/g, "").trim();
+  if (INVALID_TO_VALUES.has(cleanedTo) || !cleanedTo) {
+    _sweepFallbackCounter++;
+    const safeName = `obj_REVIEW_${node.displayName.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "").substring(0, 40)}_UnresolvedTarget_${_sweepFallbackCounter}`;
+    console.warn(`[Assign Guard] Assign "${node.displayName}" has invalid To target "${toVarName}" — generating fallback variable "${safeName}"`);
+
+    _lateDiscoveredVariables.push({
+      name: safeName,
+      type: "x:Object",
+    });
+
+    if (_activeRemediationContext) {
+      _activeRemediationContext.propertyRemediations.push({
+        level: "property",
+        file: _activeRemediationContext.fileName,
+        remediationCode: "ASSIGN_TO_FALLBACK_VARIABLE",
+        originalTag: "Assign",
+        originalDisplayName: node.displayName,
+        propertyName: "To",
+        reason: `Assign.To resolved to invalid value "${toVarName}" — generated fallback variable "${safeName}". Manual review required to assign the correct target variable.`,
+        classifiedCheck: "UNRESOLVED_ASSIGN_TARGET",
+        developerAction: `Replace fallback variable "${safeName}" with the correct target variable in Assign "${node.displayName}"`,
+        estimatedEffortMinutes: 10,
+      });
+    }
+
+    toVarName = safeName;
+  }
+
   const typeArg = inferAssignType(toVarName, allVariables);
   const wrappedTo = ensureBracketWrapped(toVarName, _activeDeclarationLookup || undefined);
   const wrappedVal = resolvePropertyValue(valRaw as PropertyValue);
@@ -2415,6 +2466,58 @@ export function assembleNode(
   }
 }
 
+let _sweepFallbackCounter = 0;
+
+function sweepXmlForResidualJsonIntents(xml: string): string {
+  const JSON_IN_ATTR_PATTERN = /([\w:.]+)="(\{(?:&quot;|")(?:type|value|name)(?:&quot;|")[^"]*\})"/g;
+  let result = xml;
+  let match;
+  const replacements: Array<{ original: string; resolved: string }> = [];
+
+  while ((match = JSON_IN_ATTR_PATTERN.exec(xml)) !== null) {
+    const attrName = match[1];
+    const rawValue = match[2];
+    const decoded = rawValue.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    const jsonResult = tryParseJsonValueIntent(decoded);
+    if (jsonResult) {
+      const resolved = buildExpression(jsonResult.intent);
+      const escaped = escapeXml(resolved);
+      emitJsonResolutionDiagnostic(decoded, jsonResult.intent, resolved, jsonResult.fallbackUsed);
+      replacements.push({ original: `${attrName}="${rawValue}"`, resolved: `${attrName}="${escaped}"` });
+      console.log(`[Pre-Emission Sweep] Resolved residual JSON in attribute "${attrName}": ${decoded.substring(0, 80)} → ${resolved}`);
+    }
+  }
+
+  for (const rep of replacements) {
+    result = result.replace(rep.original, rep.resolved);
+  }
+
+  const JSON_IN_ELEMENT_PATTERN = /(<[A-Za-z][\w:.]*(?:\s[^>]*)?>)\s*(\{(?:&quot;|")(?:type|value|name)(?:&quot;|")[^<]*\})\s*(<\/[A-Za-z][\w:.]*>)/g;
+  let elemMatch;
+  const elemReplacements: Array<{ original: string; resolved: string }> = [];
+
+  while ((elemMatch = JSON_IN_ELEMENT_PATTERN.exec(result)) !== null) {
+    const openTag = elemMatch[1];
+    const rawValue = elemMatch[2];
+    const closeTag = elemMatch[3];
+    const decoded = rawValue.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    const jsonResult = tryParseJsonValueIntent(decoded);
+    if (jsonResult) {
+      const resolved = buildExpression(jsonResult.intent);
+      const escaped = escapeXmlTextContent(resolved);
+      emitJsonResolutionDiagnostic(decoded, jsonResult.intent, resolved, jsonResult.fallbackUsed);
+      elemReplacements.push({ original: elemMatch[0], resolved: `${openTag}${escaped}${closeTag}` });
+      console.log(`[Pre-Emission Sweep] Resolved residual JSON in element content: ${decoded.substring(0, 80)} → ${resolved}`);
+    }
+  }
+
+  for (const rep of elemReplacements) {
+    result = result.replace(rep.original, rep.resolved);
+  }
+
+  return result;
+}
+
 function assembleActivityNode(
   node: ActivityNode,
   allVariables: VariableDeclaration[],
@@ -2422,6 +2525,8 @@ function assembleActivityNode(
   emissionContext: EmissionContext = "normal",
 ): string {
   let xml = resolveActivityTemplate(node, allVariables, processType, emissionContext);
+
+  xml = sweepXmlForResidualJsonIntents(xml);
 
   if (node.errorHandling === "catch" || node.errorHandling === "escalate") {
     xml = wrapInTryCatch(xml, node.displayName);
@@ -2694,6 +2799,22 @@ function resolveConditionValue(condition: string | ValueIntent): string {
   }
   const trimmed = (condition as string).trim();
   if (!trimmed) return trimmed;
+
+  if (containsValueIntentJson(trimmed)) {
+    const jsonResult = tryParseJsonValueIntent(trimmed);
+    if (jsonResult) {
+      const resolved = buildExpression(jsonResult.intent);
+      emitJsonResolutionDiagnostic(trimmed, jsonResult.intent, resolved, jsonResult.fallbackUsed);
+      const linted = lintAndFixVbExpression(resolved);
+      if (linted.startsWith("[") && linted.endsWith("]")) {
+        const inner = linted.slice(1, -1);
+        return `[${escapeXmlExpression(inner)}]`;
+      }
+      if (linted === "True" || linted === "False") return linted;
+      return `[${escapeXmlExpression(linted)}]`;
+    }
+  }
+
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
     const inner = trimmed.slice(1, -1);
     const linted = lintAndFixVbExpression(inner);
@@ -3632,6 +3753,7 @@ export function assembleWorkflowFromSpec(
 
   _activeDeclarationLookup = (name: string) => registry.hasName(name);
   _lateDiscoveredVariables = [];
+  _sweepFallbackCounter = 0;
 
   let activitiesXml: string;
   try {
