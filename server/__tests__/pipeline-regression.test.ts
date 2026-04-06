@@ -2836,4 +2836,160 @@ describe("Compiler-invariant regression tests", () => {
       });
     });
   });
+
+  describe("Task-446: Mail activity Body child element enforcement", () => {
+    it("repairMailBodyAttributes converts Body attribute to child element on SendSmtpMailMessage", async () => {
+      const { repairMailBodyAttributes } = await import("../../server/required-property-enforcer");
+      const input = `<umail:SendSmtpMailMessage DisplayName="Send Email" To="[str_To]" Subject="[str_Subject]" Body="[str_EmailBody]" Server="smtp.test.com" Port="587" />`;
+      const result = repairMailBodyAttributes(input);
+      expect(result.repaired).toBe(true);
+      expect(result.content).not.toContain('Body="');
+      expect(result.content).toContain("<umail:SendSmtpMailMessage.Body>");
+      expect(result.content).toContain("<InArgument x:TypeArguments=\"x:String\">[str_EmailBody]</InArgument>");
+      expect(result.content).toContain("</umail:SendSmtpMailMessage.Body>");
+    });
+
+    it("repairMailBodyAttributes converts Body attribute to child element on GmailSendMessage", async () => {
+      const { repairMailBodyAttributes } = await import("../../server/required-property-enforcer");
+      const input = `<ugs:GmailSendMessage DisplayName="Send Gmail" Body="[str_Body]" />`;
+      const result = repairMailBodyAttributes(input);
+      expect(result.repaired).toBe(true);
+      expect(result.content).not.toContain('Body="');
+      expect(result.content).toContain("<ugs:GmailSendMessage.Body>");
+      expect(result.content).toContain("<InArgument x:TypeArguments=\"x:String\">[str_Body]</InArgument>");
+      expect(result.content).toContain("</ugs:GmailSendMessage.Body>");
+    });
+
+    it("repairMailBodyAttributes converts Body attribute on SendOutlookMailMessage", async () => {
+      const { repairMailBodyAttributes } = await import("../../server/required-property-enforcer");
+      const input = `<umail:SendOutlookMailMessage DisplayName="Send Outlook" To="[str_To]" Subject="[str_Subject]" Body="[str_Body]" />`;
+      const result = repairMailBodyAttributes(input);
+      expect(result.repaired).toBe(true);
+      expect(result.content).not.toContain('Body="');
+      expect(result.content).toContain("<umail:SendOutlookMailMessage.Body>");
+    });
+
+    it("repairMailBodyAttributes wraps bare variable in brackets", async () => {
+      const { repairMailBodyAttributes } = await import("../../server/required-property-enforcer");
+      const input = `<umail:SendSmtpMailMessage DisplayName="Send" To="[t]" Subject="[s]" Body="str_EmailBody" Server="smtp" Port="587" />`;
+      const result = repairMailBodyAttributes(input);
+      expect(result.repaired).toBe(true);
+      expect(result.content).toContain("[str_EmailBody]");
+    });
+
+    it("repairMailBodyAttributes handles ui: prefix variant", async () => {
+      const { repairMailBodyAttributes } = await import("../../server/required-property-enforcer");
+      const input = `<ui:SendSmtpMailMessage DisplayName="Send" To="[t]" Subject="[s]" Body="[b]" Server="smtp" Port="587" />`;
+      const result = repairMailBodyAttributes(input);
+      expect(result.repaired).toBe(true);
+      expect(result.content).not.toContain('Body="');
+      expect(result.content).toContain("SendSmtpMailMessage.Body>");
+    });
+
+    it("repairMailBodyAttributes is a no-op when Body is already a child element", async () => {
+      const { repairMailBodyAttributes } = await import("../../server/required-property-enforcer");
+      const input = `<umail:SendSmtpMailMessage DisplayName="Send" To="[t]" Subject="[s]" Server="smtp" Port="587">
+  <umail:SendSmtpMailMessage.Body>
+    <InArgument x:TypeArguments="x:String">[str_EmailBody]</InArgument>
+  </umail:SendSmtpMailMessage.Body>
+</umail:SendSmtpMailMessage>`;
+      const result = repairMailBodyAttributes(input);
+      expect(result.repaired).toBe(false);
+      expect(result.content).toBe(input);
+    });
+
+    it("gap-analyzer does not flag Body inside mail activity child elements", async () => {
+      const { validateXamlContent } = await import("../../server/xaml/gap-analyzer");
+      const xmlContent = `<Activity>
+  <Sequence DisplayName="Main">
+    <umail:SendSmtpMailMessage DisplayName="Send Email" To="[str_To]" Subject="[str_Subject]" Server="smtp.test.com" Port="587">
+      <umail:SendSmtpMailMessage.Body>
+        <InArgument x:TypeArguments="x:String">[str_EmailBody]</InArgument>
+      </umail:SendSmtpMailMessage.Body>
+    </umail:SendSmtpMailMessage>
+  </Sequence>
+</Activity>`;
+      const violations = validateXamlContent([{ name: "Process.xaml", content: xmlContent }]);
+      const pseudoXamlViolations = violations.filter(v => v.check === "pseudo-xaml" && v.detail.includes("Body"));
+      expect(pseudoXamlViolations).toHaveLength(0);
+    });
+
+    it("repairMailBodyAttributes preserves literal text body as quoted string", async () => {
+      const { repairMailBodyAttributes } = await import("../../server/required-property-enforcer");
+      const input = `<umail:SendSmtpMailMessage DisplayName="Send" To="[t]" Subject="[s]" Body="Hello World" Server="smtp" Port="587" />`;
+      const result = repairMailBodyAttributes(input);
+      expect(result.repaired).toBe(true);
+      expect(result.content).not.toContain('Body="');
+      expect(result.content).toContain('"Hello World"');
+      expect(result.content).not.toContain('[Hello World]');
+    });
+
+    it("repairMailBodyAttributes handles multiple mail activities in same file", async () => {
+      const { repairMailBodyAttributes } = await import("../../server/required-property-enforcer");
+      const input = `<Activity>
+  <Sequence>
+    <umail:SendSmtpMailMessage DisplayName="Email 1" To="[t1]" Subject="[s1]" Body="[body1]" Server="smtp" Port="587" />
+    <ugs:GmailSendMessage DisplayName="Gmail 1" Body="[body2]" />
+  </Sequence>
+</Activity>`;
+      const result = repairMailBodyAttributes(input);
+      expect(result.repaired).toBe(true);
+      expect(result.content).not.toContain('Body="');
+      expect(result.content).toContain("<umail:SendSmtpMailMessage.Body>");
+      expect(result.content).toContain("[body1]");
+      expect(result.content).toContain("<ugs:GmailSendMessage.Body>");
+      expect(result.content).toContain("[body2]");
+    });
+
+    it("repairMailBodyAttributes does not remove Body attribute when child already exists on same node", async () => {
+      const { repairMailBodyAttributes } = await import("../../server/required-property-enforcer");
+      const input = `<umail:SendSmtpMailMessage DisplayName="Send" To="[t]" Subject="[s]" Body="[duplicate]" Server="smtp" Port="587">
+  <umail:SendSmtpMailMessage.Body>
+    <InArgument x:TypeArguments="x:String">[str_EmailBody]</InArgument>
+  </umail:SendSmtpMailMessage.Body>
+</umail:SendSmtpMailMessage>`;
+      const result = repairMailBodyAttributes(input);
+      expect(result.repaired).toBe(true);
+      expect(result.content).not.toContain('Body="[duplicate]"');
+      expect(result.content).toContain("<umail:SendSmtpMailMessage.Body>");
+      expect(result.content).toContain("[str_EmailBody]");
+      expect(result.repairs.some(r => r.includes("duplicate"))).toBe(true);
+    });
+
+    it("SMTP template emits Body as child element with placeholder when Body is missing", async () => {
+      const { resolveActivityTemplate } = await import("../../server/workflow-tree-assembler");
+      const xml = resolveActivityTemplate(
+        { kind: "activity" as const, template: "SendSmtpMailMessage", displayName: "Send Email", properties: { To: "test@example.com", Subject: "Test Subject", Server: "smtp.test.com", Port: "587" }, children: [] },
+        [],
+      );
+      expect(xml).toContain("SendSmtpMailMessage.Body>");
+      expect(xml).toContain("str_EmailBody");
+      expect(xml).toContain("HANDOFF: Body binding was not provided");
+      expect(xml).not.toMatch(/\bBody="[^"]*"/);
+    });
+
+    it("Gmail template emits Body as child element with placeholder when Body is missing", async () => {
+      const { resolveActivityTemplate } = await import("../../server/workflow-tree-assembler");
+      const xml = resolveActivityTemplate(
+        { kind: "activity" as const, template: "GmailSendMessage", displayName: "Send Gmail", properties: { To: "test@example.com", Subject: "Test Subject" }, children: [] },
+        [],
+      );
+      expect(xml).toContain("GmailSendMessage.Body>");
+      expect(xml).toContain("str_EmailBody");
+      expect(xml).toContain("HANDOFF: Body binding was not provided");
+      expect(xml).not.toMatch(/\bBody="[^"]*"/);
+    });
+
+    it("parseEmittedXmlForValidation detects prefixed child elements", async () => {
+      const { parseEmittedXmlForValidation } = await import("../../server/workflow-tree-assembler");
+      const xml = `<umail:SendSmtpMailMessage DisplayName="Send" To="[t]" Subject="[s]" Server="smtp" Port="587">
+  <umail:SendSmtpMailMessage.Body>
+    <InArgument x:TypeArguments="x:String">[str_EmailBody]</InArgument>
+  </umail:SendSmtpMailMessage.Body>
+</umail:SendSmtpMailMessage>`;
+      const parsed = parseEmittedXmlForValidation(xml);
+      expect(parsed.childNames).toContain("Body");
+      expect(parsed.childNames).toContain("SendSmtpMailMessage.Body");
+    });
+  });
 });

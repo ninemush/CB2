@@ -263,7 +263,10 @@ function scanBlockedPatterns(input: QualityGateInput): QualityGateViolation[] {
         contextBefore.includes(`<TryCatch.${attrName}`) ||
         contextBefore.includes(`<ForEach.${attrName}`) ||
         contextBefore.includes(`<Sequence.${attrName}`) ||
-        contextBefore.includes(`<ParallelForEach.${attrName}`);
+        contextBefore.includes(`<ParallelForEach.${attrName}`) ||
+        contextBefore.includes(`SendSmtpMailMessage.${attrName}`) ||
+        contextBefore.includes(`GmailSendMessage.${attrName}`) ||
+        contextBefore.includes(`SendOutlookMailMessage.${attrName}`);
       if (isInChildElement) continue;
       const isPartOfDisplayName = /DisplayName="[^"]*$/.test(contextBefore);
       if (isPartOfDisplayName) continue;

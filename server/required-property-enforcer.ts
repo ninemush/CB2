@@ -1258,3 +1258,62 @@ function lowerStructuredExpressionsInContent(
 
   return result;
 }
+
+const MAIL_ACTIVITY_BODY_TAGS: Record<string, string> = {
+  "SendSmtpMailMessage": "umail",
+  "GmailSendMessage": "ugs",
+  "SendOutlookMailMessage": "umail",
+};
+
+function wrapBodyValueForXaml(val: string): string {
+  if (/^\[.*\]$/.test(val.trim())) return val;
+  if (/^[a-zA-Z_]\w*$/.test(val.trim())) return `[${val}]`;
+  if (/^".*"$/.test(val.trim())) return val;
+  return `"${val}"`;
+}
+
+export function repairMailBodyAttributes(content: string): { content: string; repaired: boolean; repairs: string[] } {
+  const repairs: string[] = [];
+  let result = content;
+
+  for (const [activityName, prefix] of Object.entries(MAIL_ACTIVITY_BODY_TAGS)) {
+    const prefixedTag = `${prefix}:${activityName}`;
+    const escapedPrefixedTag = prefixedTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedActivityName = activityName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const tagPatterns = [escapedPrefixedTag, `ui:${escapedActivityName}`];
+
+    for (const tagPat of tagPatterns) {
+      const selfClosingRegex = new RegExp(
+        `(<${tagPat}\\s[^>]*?)\\bBody="([^"]*)"([^>]*?)\\s*\\/>`,
+        "g"
+      );
+      result = result.replace(selfClosingRegex, (_match, before, bodyVal, after) => {
+        const wrappedBody = wrapBodyValueForXaml(bodyVal);
+        const fullTag = before.includes(`${prefix}:`) ? prefixedTag : `ui:${activityName}`;
+        const childElement = `<${fullTag}.Body>\n            <InArgument x:TypeArguments="x:String">${wrappedBody}</InArgument>\n          </${fullTag}.Body>`;
+        repairs.push(`Converted Body attribute to child element on ${fullTag}`);
+        return `${before}${after}>\n          ${childElement}\n        </${fullTag}>`;
+      });
+
+      const openTagRegex = new RegExp(
+        `(<${tagPat}\\s[^>]*?)\\bBody="([^"]*)"([^>]*?>)([\\s\\S]*?<\\/${tagPat}>)`,
+        "g"
+      );
+      result = result.replace(openTagRegex, (_match, before, bodyVal, after, innerAndClose) => {
+        const nodeLocalChildBody = new RegExp(`<(?:[\\w]+:)?${escapedActivityName}\\.Body[\\s>]`).test(innerAndClose);
+        if (nodeLocalChildBody) {
+          repairs.push(`Removed duplicate Body attribute on ${activityName} (child element already exists)`);
+          return `${before}${after}${innerAndClose}`;
+        }
+        const wrappedBody = wrapBodyValueForXaml(bodyVal);
+        const fullTag = before.includes(`${prefix}:`) ? prefixedTag : `ui:${activityName}`;
+        const childElement = `<${fullTag}.Body>\n            <InArgument x:TypeArguments="x:String">${wrappedBody}</InArgument>\n          </${fullTag}.Body>`;
+        repairs.push(`Converted Body attribute to child element on ${fullTag}`);
+        return `${before}${after}\n          ${childElement}${innerAndClose}`;
+      });
+    }
+  }
+
+  return { content: result, repaired: repairs.length > 0, repairs };
+}

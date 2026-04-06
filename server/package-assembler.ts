@@ -7443,6 +7443,22 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
         console.log(`[Pre-Archive Canonicalization] ${preArchiveTargetValueCanonicalization.summary}`);
       }
 
+      {
+        const { repairMailBodyAttributes } = await import("./required-property-enforcer");
+        for (let ei = 0; ei < postGateXamlEntries.length; ei++) {
+          const entry = postGateXamlEntries[ei];
+          const bodyRepairResult = repairMailBodyAttributes(entry.content);
+          if (bodyRepairResult.repaired) {
+            entry.content = bodyRepairResult.content;
+            console.log(`[Pre-Archive Mail Body Repair] ${entry.name}: ${bodyRepairResult.repairs.join("; ")}`);
+            const archiveKey = Array.from(deferredWrites.keys()).find(k => (k.split("/").pop() || k) === (entry.name.split("/").pop() || entry.name));
+            if (archiveKey) {
+              deferredWrites.set(archiveKey, entry.content);
+            }
+          }
+        }
+      }
+
       console.log(`[Pre-Archive Enforcement] Running required property enforcement on ${postGateXamlEntries.length} XAML entries BEFORE archive write...`);
       preArchiveEnforcement = applyRequiredPropertyEnforcement(postGateXamlEntries, true);
       if (preArchiveEnforcement.enforcementResult.totalEnforced > 0 || preArchiveEnforcement.enforcementResult.totalDefects > 0) {

@@ -1274,7 +1274,7 @@ export function resolvePropertyValueRaw(value: PropertyValue): string {
   return String(value);
 }
 
-function parseEmittedXmlForValidation(xml: string): {
+export function parseEmittedXmlForValidation(xml: string): {
   tag: string;
   className: string;
   attributes: Record<string, string>;
@@ -1301,6 +1301,13 @@ function parseEmittedXmlForValidation(xml: string): {
   while ((cm = childPropRegex.exec(trimmed)) !== null) {
     childNames.push(cm[1]);
     childNames.push(`${className}.${cm[1]}`);
+  }
+  const prefixedChildPropRegex = new RegExp(`<[\\w]+:${className.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.(\\w+)[\\s>]`, "g");
+  while ((cm = prefixedChildPropRegex.exec(trimmed)) !== null) {
+    if (!childNames.includes(cm[1])) {
+      childNames.push(cm[1]);
+      childNames.push(`${className}.${cm[1]}`);
+    }
   }
 
   return { tag, className, attributes, childNames };
@@ -1525,6 +1532,14 @@ export function resolveActivityTemplate(
 
   if (templateName === "SendSmtpMailMessage") {
     return applyCatalogConformance(resolveSendSmtpMailMessageTemplate(node));
+  }
+
+  if (templateName === "GmailSendMessage") {
+    return applyCatalogConformance(resolveGmailSendMessageTemplate(node));
+  }
+
+  if (templateName === "SendOutlookMailMessage") {
+    return applyCatalogConformance(resolveSendOutlookMailMessageTemplate(node));
   }
 
   if (templateName === "GetImapMailMessage") {
@@ -1842,7 +1857,7 @@ function resolveSendSmtpMailMessageTemplate(node: ActivityNode): string {
   const to = getPropString(props, "To", "to") || "PLACEHOLDER_To";
   const from = getPropString(props, "From", "from");
   const subject = getPropString(props, "Subject", "subject") || "PLACEHOLDER_Subject";
-  const body = getPropString(props, "Body", "body") || "PLACEHOLDER_Body";
+  const body = getPropString(props, "Body", "body") || "";
   const server = getPropString(props, "Server", "server") || "PLACEHOLDER_SmtpServer";
   const port = getPropString(props, "Port", "port") || "587";
   const email = getPropString(props, "Email", "email");
@@ -1852,7 +1867,6 @@ function resolveSendSmtpMailMessageTemplate(node: ActivityNode): string {
 
   const wrappedTo = wrapSmtpPropValue(to);
   const wrappedSubject = wrapSmtpPropValue(subject);
-  const wrappedBody = wrapSmtpPropValue(body);
 
   let attrs = `DisplayName="${displayName}" To="${escapeXml(wrappedTo)}" Subject="${escapeXml(wrappedSubject)}"`;
   attrs += ` IsBodyHtml="${escapeXml(isBodyHtml)}"`;
@@ -1862,12 +1876,84 @@ function resolveSendSmtpMailMessageTemplate(node: ActivityNode): string {
   if (username) attrs += ` Username="${escapeXml(wrapSmtpPropValue(username))}"`;
   if (password) attrs += ` Password="${escapeXml(wrapSmtpPropValue(password))}"`;
 
-  const safeBody = escapeXmlTextContent(ensureBracketWrapped(wrappedBody, _activeDeclarationLookup || undefined));
-  return `<ui:SendSmtpMailMessage ${attrs}>\n` +
-    `  <ui:SendSmtpMailMessage.Body>\n` +
+  const bodyBinding = body || "str_EmailBody";
+  const safeBody = escapeXmlTextContent(ensureBracketWrapped(wrapSmtpPropValue(bodyBinding), _activeDeclarationLookup || undefined));
+  let bodyChildParts = "";
+  if (!body) {
+    bodyChildParts += `  <!-- HANDOFF: Body binding was not provided — using placeholder variable str_EmailBody. Replace with actual email body content. -->\n`;
+  }
+  bodyChildParts += `  <ui:SendSmtpMailMessage.Body>\n` +
     `    <InArgument x:TypeArguments="x:String">${safeBody}</InArgument>\n` +
-    `  </ui:SendSmtpMailMessage.Body>\n` +
+    `  </ui:SendSmtpMailMessage.Body>\n`;
+  return `<ui:SendSmtpMailMessage ${attrs}>\n` +
+    bodyChildParts +
     `</ui:SendSmtpMailMessage>`;
+}
+
+function resolveGmailSendMessageTemplate(node: ActivityNode): string {
+  const props = node.properties || {};
+  const displayName = escapeXml(node.displayName);
+  const to = getPropString(props, "To", "to") || "PLACEHOLDER_To";
+  const subject = getPropString(props, "Subject", "subject") || "PLACEHOLDER_Subject";
+  const body = getPropString(props, "Body", "body") || "";
+  const cc = getPropString(props, "Cc", "cc");
+  const bcc = getPropString(props, "Bcc", "bcc");
+  const isBodyHtml = getPropString(props, "IsBodyHtml", "isBodyHtml") || "False";
+
+  const tag = getActivityTag("GmailSendMessage");
+  let attrs = `DisplayName="${displayName}"`;
+  attrs += ` IsBodyHtml="${escapeXml(isBodyHtml)}"`;
+
+  const safeBody = body
+    ? escapeXmlTextContent(ensureBracketWrapped(wrapSmtpPropValue(body), _activeDeclarationLookup || undefined))
+    : escapeXmlTextContent(ensureBracketWrapped("str_EmailBody", _activeDeclarationLookup || undefined));
+
+  let childParts = "";
+  childParts += `  <${tag}.To>\n    <InArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(wrapSmtpPropValue(to), _activeDeclarationLookup || undefined))}</InArgument>\n  </${tag}.To>\n`;
+  childParts += `  <${tag}.Subject>\n    <InArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(wrapSmtpPropValue(subject), _activeDeclarationLookup || undefined))}</InArgument>\n  </${tag}.Subject>\n`;
+  if (!body) {
+    childParts += `  <!-- HANDOFF: Body binding was not provided — using placeholder variable str_EmailBody. Replace with actual email body content. -->\n`;
+  }
+  childParts += `  <${tag}.Body>\n    <InArgument x:TypeArguments="x:String">${safeBody}</InArgument>\n  </${tag}.Body>\n`;
+  if (cc) childParts += `  <${tag}.Cc>\n    <InArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(wrapSmtpPropValue(cc), _activeDeclarationLookup || undefined))}</InArgument>\n  </${tag}.Cc>\n`;
+  if (bcc) childParts += `  <${tag}.Bcc>\n    <InArgument x:TypeArguments="x:String">${escapeXmlTextContent(ensureBracketWrapped(wrapSmtpPropValue(bcc), _activeDeclarationLookup || undefined))}</InArgument>\n  </${tag}.Bcc>\n`;
+
+  return `<${tag} ${attrs}>\n${childParts}</${tag}>`;
+}
+
+function resolveSendOutlookMailMessageTemplate(node: ActivityNode): string {
+  const props = node.properties || {};
+  const displayName = escapeXml(node.displayName);
+  const to = getPropString(props, "To", "to") || "PLACEHOLDER_To";
+  const subject = getPropString(props, "Subject", "subject") || "PLACEHOLDER_Subject";
+  const body = getPropString(props, "Body", "body") || "";
+  const cc = getPropString(props, "Cc", "cc");
+  const bcc = getPropString(props, "Bcc", "bcc");
+  const isBodyHtml = getPropString(props, "IsBodyHtml", "isBodyHtml") || "True";
+  const account = getPropString(props, "Account", "account");
+
+  const tag = getActivityTag("SendOutlookMailMessage");
+  let attrs = `DisplayName="${displayName}" To="${escapeXml(wrapSmtpPropValue(to))}" Subject="${escapeXml(wrapSmtpPropValue(subject))}"`;
+  attrs += ` IsBodyHtml="${escapeXml(isBodyHtml)}"`;
+  if (account) attrs += ` Account="${escapeXml(wrapSmtpPropValue(account))}"`;
+
+  const safeBody = body
+    ? escapeXmlTextContent(ensureBracketWrapped(wrapSmtpPropValue(body), _activeDeclarationLookup || undefined))
+    : escapeXmlTextContent(ensureBracketWrapped("str_EmailBody", _activeDeclarationLookup || undefined));
+
+  let childParts = "";
+  if (!body) {
+    childParts += `  <!-- HANDOFF: Body binding was not provided — using placeholder variable str_EmailBody. Replace with actual email body content. -->\n`;
+  }
+  childParts += `  <${tag}.Body>\n    <InArgument x:TypeArguments="x:String">${safeBody}</InArgument>\n  </${tag}.Body>\n`;
+  if (cc) {
+    attrs += ` Cc="${escapeXml(wrapSmtpPropValue(cc))}"`;
+  }
+  if (bcc) {
+    attrs += ` Bcc="${escapeXml(wrapSmtpPropValue(bcc))}"`;
+  }
+
+  return `<${tag} ${attrs}>\n${childParts}</${tag}>`;
 }
 
 function resolveGetImapMailMessageTemplate(node: ActivityNode): string {

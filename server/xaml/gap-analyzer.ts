@@ -81,7 +81,10 @@ export function validateXamlContent(xamlEntries: { name: string; content: string
         contextBefore.includes(`<Switch.${attrName}`) ||
         contextBefore.includes(`<TryCatch.${attrName}`) ||
         contextBefore.includes(`<ForEach.${attrName}`) ||
-        contextBefore.includes(`<Sequence.${attrName}`);
+        contextBefore.includes(`<Sequence.${attrName}`) ||
+        contextBefore.includes(`SendSmtpMailMessage.${attrName}`) ||
+        contextBefore.includes(`GmailSendMessage.${attrName}`) ||
+        contextBefore.includes(`SendOutlookMailMessage.${attrName}`);
       if (isInChildElement) continue;
       const isPartOfDisplayName = new RegExp(`DisplayName="[^"]*$`).test(contextBefore);
       if (isPartOfDisplayName) continue;
