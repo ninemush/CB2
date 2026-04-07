@@ -89,7 +89,7 @@ import archiver from "archiver";
   import { runPostEmissionDependencyAnalysis, checkDependencyDriftAgainstMailFamilyLocks, type DependencyDiagnosticsArtifact, type ResolutionSource } from "./post-emission-dependency-analyzer";
   import { getAndClearPropertySerializationTrace, getAndClearInvokeContractTrace, getAndClearStageHashParity, updateStageHash, hasStageHash, emitInvokeContractTrace, runWithTraceContext } from "./pipeline-trace-collector";
   import { validateContractIntegrity, buildWorkflowContracts, extractInvocations, resolveTargetContract, type WorkflowContract, type ContractIntegrityDefect } from "./xaml/workflow-contract-integrity";
-  import { canonicalizeInvokeBindings, canonicalizeTargetValueExpressions, type InvokeCanonicalizationResult, type TargetValueCanonicalizationResult } from "./xaml/invoke-binding-canonicalizer";
+  import { canonicalizeInvokeBindings, canonicalizeTargetValueExpressions, runPreGateResidualJsonCanonicalization, type InvokeCanonicalizationResult, type TargetValueCanonicalizationResult } from "./xaml/invoke-binding-canonicalizer";
   import { classifyFromArchiveBuffer, buildWorkflowStatusParity, normalizeClassifierFileName, AUTHORITATIVE_STUB_PATTERNS, verifyAndReclassifyFromArchive, assertClassificationFreshness, freezeArchiveWorkflows, isArchiveFrozen, getArchiveFreezePoint, resetArchiveFreeze, checkPostFreezeDeferredWriteMutation, getMutationTrace, recordMutationAttempt, assertNoPostFreezeStatusMutation, createGuardedDeferredWrites, createGuardedPostGateEntries, verifyFrozenArchiveBuffer, sealAuthoritativeXamlSource, getAuthoritativeXamlForArchive, recordAuthoritativeAppendHash, isAuthoritativeXamlSealed, getArchiveAuthorityDiagnostics, resetAuthoritativeSeal, type WorkflowStatusClassifierResult, type WorkflowStatusParityEntry, type WorkflowStatusParityResult, type PostClassifierMutationTrace, type ArchiveAuthorityDiagnostics } from "./workflow-status-classifier";
 
 interface DomCorrectionResult {
@@ -351,16 +351,33 @@ const VALUE_INTENT_PATTERNS = [
   /\{"type":"[^"]*","value":"([^"]*)"\}/g,
   /\{&quot;type&quot;:&quot;[^&]*&quot;,&quot;value&quot;:&quot;([^&]*)&quot;\}/g,
   /\{type:[^,]*,value:([^}]*)\}/g,
+  /\{"type":"variable","name":"([^"]*)"\}/g,
+  /\{&quot;type&quot;:&quot;variable&quot;,&quot;name&quot;:&quot;([^&]*)&quot;\}/g,
+  /\{"name":"([^"]*)","type":"variable"\}/g,
+  /\{&quot;name&quot;:&quot;([^&]*)&quot;,&quot;type&quot;:&quot;variable&quot;\}/g,
 ];
+
+function resolveVariablePatternMatch(innerValue: string): string {
+  return `[${innerValue}]`;
+}
+
+
+const VARIABLE_INTENT_PATTERNS = new Set([
+  VALUE_INTENT_PATTERNS[3].source,
+  VALUE_INTENT_PATTERNS[4].source,
+  VALUE_INTENT_PATTERNS[5].source,
+  VALUE_INTENT_PATTERNS[6].source,
+]);
 
 function sweepValueIntentFromXaml(xamlContent: string): { content: string; repairCount: number } {
   let content = xamlContent;
   let repairCount = 0;
   for (const pattern of VALUE_INTENT_PATTERNS) {
+    const isVariablePattern = VARIABLE_INTENT_PATTERNS.has(pattern.source);
     const regex = new RegExp(pattern.source, "g");
     content = content.replace(regex, (_match, innerValue: string) => {
       repairCount++;
-      return innerValue;
+      return isVariablePattern ? resolveVariablePatternMatch(innerValue) : innerValue;
     });
   }
   return { content, repairCount };
@@ -6461,6 +6478,21 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
           const archivePath = Array.from(deferredWrites.keys()).find(k => (k.split("/").pop() || k) === (entry.name.split("/").pop() || entry.name));
           if (archivePath) deferredWrites.set(archivePath, repair.content);
         }
+      }
+    }
+
+    for (const entry of xamlEntries) {
+      const viSweep = sweepValueIntentFromXaml(entry.content);
+      if (viSweep.repairCount > 0) {
+        entry.content = viSweep.content;
+        console.log(`[Pre-Gate Safety Net] Swept ${viSweep.repairCount} residual ValueIntent JSON fragment(s) from "${entry.name}"`);
+      }
+    }
+
+    {
+      const preGateCanon = runPreGateResidualJsonCanonicalization(xamlEntries);
+      if (preGateCanon.totalFixes > 0 || preGateCanon.totalDefects > 0) {
+        console.log(`[Pre-Gate Safety Net] Residual JSON canonicalization: ${preGateCanon.totalFixes} fix(es), ${preGateCanon.totalDefects} residual defect(s)`);
       }
     }
 

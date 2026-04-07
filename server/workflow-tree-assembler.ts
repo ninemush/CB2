@@ -4350,7 +4350,9 @@ function normalizeSpecProperties(node: WorkflowNode, workflowFile?: string): voi
   if (node.kind === "activity") {
     const templateName = node.template || "";
     for (const [key, value] of Object.entries(node.properties || {})) {
-      if (!isValueIntent(value) && typeof value === "string") {
+      if (isValueIntent(value)) {
+        resolveNestedJsonInValueIntent(value as ValueIntent, key, node.properties as Record<string, any>);
+      } else if (!isValueIntent(value) && typeof value === "string") {
         const clrType = catalogService.getPropertyClrType(templateName.replace(/^[a-z]+:/, ""), key) || undefined;
         const normalized = normalizePropertyToValueIntent(
           value,
@@ -4449,6 +4451,110 @@ function demoteUndeclaredBracketReferences(xml: string, registry: DeclarationReg
   });
 }
 
+function recursivelyResolveJsonField(fieldVal: string): { resolved: string; success: boolean } {
+  const MAX_DEPTH = 5;
+  let current = fieldVal;
+  for (let depth = 0; depth < MAX_DEPTH; depth++) {
+    if (!containsValueIntentJson(current)) break;
+    const parsed = tryParseJsonValueIntent(current);
+    if (!parsed) return { resolved: current, success: false };
+    try {
+      current = buildExpression(parsed.intent);
+    } catch {
+      return { resolved: current, success: false };
+    }
+  }
+  if (containsValueIntentJson(current)) {
+    return { resolved: current, success: false };
+  }
+  return { resolved: current, success: true };
+}
+
+function resolveNestedJsonInValueIntent(intent: ValueIntent, key: string, properties: Record<string, any>): void {
+  switch (intent.type) {
+    case "literal": {
+      if (intent.value === undefined) {
+        console.warn(`[normalizeSpecProperties] ValueIntent "literal" has undefined "value" — resolving to empty literal`);
+        properties[key] = { type: "literal", value: "" };
+        return;
+      }
+      if (containsValueIntentJson(intent.value)) {
+        const result = recursivelyResolveJsonField(intent.value);
+        if (!result.success) {
+          console.warn(`[normalizeSpecProperties] Unresolvable nested JSON in literal.value of "${key}" — replacing with empty literal`);
+          properties[key] = { type: "literal", value: "" };
+          return;
+        }
+        if (result.resolved !== intent.value) {
+          console.log(`[normalizeSpecProperties] Resolved nested JSON in literal.value of "${key}": ${intent.value.substring(0, 80)} → ${result.resolved.substring(0, 80)}`);
+          properties[key] = { type: "literal", value: result.resolved };
+        }
+      }
+      break;
+    }
+    case "vb_expression": {
+      if (intent.value === undefined) {
+        console.warn(`[normalizeSpecProperties] ValueIntent "vb_expression" has undefined "value" — resolving to empty literal`);
+        properties[key] = { type: "literal", value: "" };
+        return;
+      }
+      if (containsValueIntentJson(intent.value)) {
+        const result = recursivelyResolveJsonField(intent.value);
+        if (!result.success) {
+          console.warn(`[normalizeSpecProperties] Unresolvable nested JSON in vb_expression.value of "${key}" — replacing with empty literal`);
+          properties[key] = { type: "literal", value: "" };
+          return;
+        }
+        if (result.resolved !== intent.value) {
+          console.log(`[normalizeSpecProperties] Resolved nested JSON in vb_expression.value of "${key}": ${intent.value.substring(0, 80)} → ${result.resolved.substring(0, 80)}`);
+          properties[key] = { type: "vb_expression", value: result.resolved };
+        }
+      }
+      break;
+    }
+    case "variable": {
+      if (intent.name === undefined || intent.name === "") {
+        console.warn(`[normalizeSpecProperties] ValueIntent "variable" has empty/undefined "name" — resolving to empty literal`);
+        properties[key] = { type: "literal", value: "" };
+        return;
+      }
+      if (containsValueIntentJson(intent.name)) {
+        const result = recursivelyResolveJsonField(intent.name);
+        if (!result.success) {
+          console.warn(`[normalizeSpecProperties] Unresolvable nested JSON in variable.name of "${key}" — replacing with empty literal`);
+          properties[key] = { type: "literal", value: "" };
+          return;
+        }
+        if (result.resolved !== intent.name) {
+          console.log(`[normalizeSpecProperties] Resolved nested JSON in variable.name of "${key}": ${intent.name.substring(0, 80)} → ${result.resolved.substring(0, 80)}`);
+          properties[key] = { type: "vb_expression", value: result.resolved };
+        }
+      }
+      break;
+    }
+    case "url_with_params": {
+      if (intent.baseUrl === undefined || intent.baseUrl === "") {
+        console.warn(`[normalizeSpecProperties] ValueIntent "url_with_params" has empty/undefined "baseUrl" — resolving to empty literal`);
+        properties[key] = { type: "literal", value: "" };
+        return;
+      }
+      if (containsValueIntentJson(intent.baseUrl)) {
+        const result = recursivelyResolveJsonField(intent.baseUrl);
+        if (!result.success) {
+          console.warn(`[normalizeSpecProperties] Unresolvable nested JSON in url_with_params.baseUrl of "${key}" — replacing with empty literal`);
+          properties[key] = { type: "literal", value: "" };
+          return;
+        }
+        if (result.resolved !== intent.baseUrl) {
+          console.log(`[normalizeSpecProperties] Resolved nested JSON in url_with_params.baseUrl of "${key}": ${intent.baseUrl.substring(0, 80)} → ${result.resolved.substring(0, 80)}`);
+          properties[key] = { type: "url_with_params", baseUrl: result.resolved, params: intent.params || {} };
+        }
+      }
+      break;
+    }
+  }
+}
+
 function lowerPropertyValueInPlace(obj: Record<string, any>, key: string): void {
   const val = obj[key];
   if (typeof val === "string" && containsValueIntentJson(val)) {
@@ -4463,6 +4569,8 @@ function lowerPropertyValueInPlace(obj: Record<string, any>, key: string): void 
         console.warn(`[Pre-Assembly Lowering] Failed to lower property "${key}": ${(e as Error).message}`);
       }
     }
+  } else if (val !== null && val !== undefined && typeof val === "object" && isValueIntent(val)) {
+    resolveNestedJsonInValueIntent(val as ValueIntent, key, obj);
   } else if (val !== null && val !== undefined && typeof val === "object" && !isValueIntent(val)) {
     if (isTypedPropertyObject(val)) {
       const classification = classifyPropertyValue(val, key);

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { EnrichmentResult } from "../ai-xaml-enricher";
-import { ValueIntentSchema } from "../xaml/expression-builder";
+import { ValueIntentSchema, containsValueIntentJson, tryParseJsonValueIntent, buildExpression } from "../xaml/expression-builder";
 
 const VALID_ERROR_HANDLING = new Set(["retry", "catch", "escalate", "none"]);
 
@@ -20,6 +20,51 @@ function isIncompleteTypedPropertyObject(obj: Record<string, unknown>): boolean 
       return obj.left === undefined || obj.right === undefined || typeof obj.left !== "string" || typeof obj.right !== "string" || obj.left === "" || obj.right === "";
     default:
       return false;
+  }
+}
+
+function resolveNestedJsonField(obj: Record<string, unknown>, field: string): boolean {
+  const fieldVal = obj[field];
+  if (typeof fieldVal !== "string" || !containsValueIntentJson(fieldVal)) return true;
+
+  const MAX_DEPTH = 5;
+  let current = fieldVal;
+  for (let depth = 0; depth < MAX_DEPTH; depth++) {
+    if (!containsValueIntentJson(current)) break;
+    const parsed = tryParseJsonValueIntent(current);
+    if (!parsed) {
+      console.warn(`[PropertyValueInput] Nested JSON detected in field "${field}" but unparseable — blocking`);
+      return false;
+    }
+    try {
+      current = buildExpression(parsed.intent);
+    } catch (e) {
+      console.warn(`[PropertyValueInput] Failed to resolve nested JSON in field "${field}": ${(e as Error).message} — blocking`);
+      return false;
+    }
+  }
+  if (containsValueIntentJson(current)) {
+    console.warn(`[PropertyValueInput] Nested JSON in field "${field}" still present after max depth — blocking`);
+    return false;
+  }
+  if (current !== fieldVal) {
+    obj[field] = current;
+    console.log(`[PropertyValueInput] Resolved nested JSON in typed property field "${field}": ${fieldVal.substring(0, 80)} → ${current.substring(0, 80)}`);
+  }
+  return true;
+}
+
+function resolveNestedJsonInTypedPropertyObject(obj: Record<string, unknown>): boolean {
+  switch (obj.type) {
+    case "literal":
+    case "vb_expression":
+      return resolveNestedJsonField(obj, "value");
+    case "variable":
+      return resolveNestedJsonField(obj, "name");
+    case "url_with_params":
+      return resolveNestedJsonField(obj, "baseUrl");
+    default:
+      return true;
   }
 }
 
@@ -44,6 +89,10 @@ const PropertyValueInputSchema = z.preprocess(
       if (RECOGNIZED_TYPED_PROPERTY_TYPES.has(obj.type as string)) {
         if (isIncompleteTypedPropertyObject(obj)) {
           console.warn(`[PropertyValueInput] Incomplete typed property object (type="${obj.type}") — blocked (marked with sentinel)`);
+          return { type: "literal", value: BLOCKED_PROPERTY_SENTINEL };
+        }
+        if (!resolveNestedJsonInTypedPropertyObject(obj)) {
+          console.warn(`[PropertyValueInput] Typed property object (type="${obj.type}") contains unresolvable nested JSON — blocked (marked with sentinel)`);
           return { type: "literal", value: BLOCKED_PROPERTY_SENTINEL };
         }
         return val;

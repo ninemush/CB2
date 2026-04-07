@@ -1,4 +1,4 @@
-import { escapeXml } from "../lib/xml-utils";
+import { escapeXml, escapeXmlTextContent } from "../lib/xml-utils";
 import { ACTIVITY_NAME_ALIAS_MAP, getActivityPackageFromRegistry } from "../uipath-activity-registry";
 import { catalogService } from "../catalog/catalog-service";
 import { XMLValidator } from "fast-xml-parser";
@@ -895,7 +895,7 @@ export function parseInvokeArgs(rawValue: string, direction: "In" | "Out" | "InO
     let val = m[2].trim().replace(/^["']|["']$/g, "");
     if (!key) continue;
     if (!val.startsWith("[")) val = `[${val}]`;
-    result += `                <${argType} x:TypeArguments="x:String" x:Key="${escapeXml(key)}">${escapeXml(val)}</${argType}>\n`;
+    result += `                <${argType} x:TypeArguments="x:String" x:Key="${escapeXml(key)}">${escapeXmlTextContent(val)}</${argType}>\n`;
   }
 
   if (!result) {
@@ -907,7 +907,7 @@ export function parseInvokeArgs(rawValue: string, direction: "In" | "Out" | "InO
       let val = pair.substring(colonIdx + 1).trim().replace(/^["']|["']$/g, "");
       if (!key) continue;
       if (!val.startsWith("[")) val = `[${val}]`;
-      result += `                <${argType} x:TypeArguments="x:String" x:Key="${escapeXml(key)}">${escapeXml(val)}</${argType}>\n`;
+      result += `                <${argType} x:TypeArguments="x:String" x:Key="${escapeXml(key)}">${escapeXmlTextContent(val)}</${argType}>\n`;
     }
   }
 

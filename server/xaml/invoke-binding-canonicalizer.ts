@@ -1,4 +1,4 @@
-import { escapeXml } from "../lib/xml-utils";
+import { escapeXml, escapeXmlTextContent } from "../lib/xml-utils";
 import { tryParseJsonValueIntent, buildExpression } from "./expression-builder";
 import { extractDeclaredVariables, findUndeclaredVariables } from "./vbnet-expression-linter";
 
@@ -169,7 +169,7 @@ function buildCanonicalArgElement(key: string, value: string, direction?: "InArg
   if (!val.startsWith("[") && !val.startsWith('"') && !/^(True|False|Nothing|\d+)$/i.test(val)) {
     val = `[${val}]`;
   }
-  return `                <${dir} x:TypeArguments="x:Object" x:Key="${escapeXml(key)}">${escapeXml(val)}</${dir}>`;
+  return `                <${dir} x:TypeArguments="x:Object" x:Key="${escapeXml(key)}">${escapeXmlTextContent(val)}</${dir}>`;
 }
 
 function findInvokeNodes(content: string, invokeType: string): Array<{ fullMatch: string; startIndex: number; endIndex: number }> {
@@ -490,6 +490,19 @@ function canonicalizeResidualJsonExpressions(
   if (changed) {
     entry.content = content;
   }
+}
+
+export function runPreGateResidualJsonCanonicalization(
+  xamlEntries: Array<{ name: string; content: string }>,
+): { totalFixes: number; totalDefects: number } {
+  const fixes: InvokeSerializationFix[] = [];
+  const residualDefects: ResidualExpressionSerializationDefect[] = [];
+  for (const entry of xamlEntries) {
+    const normalizedName = entry.name.split("/").pop() || entry.name;
+    const workflowName = normalizedName.replace(/\.xaml$/i, "");
+    canonicalizeResidualJsonExpressions(entry, normalizedName, workflowName, fixes, residualDefects);
+  }
+  return { totalFixes: fixes.length, totalDefects: residualDefects.length };
 }
 
 function detectEnclosingActivity(content: string, position: number): string {
