@@ -1,7 +1,7 @@
 {
   "catalogVersion": "2.0.0",
-  "generatedAt": "2026-04-03T06:14:09.102Z",
-  "lastVerifiedAt": "2026-04-03T06:14:09.102Z",
+  "generatedAt": "2026-04-07T11:47:02.895Z",
+  "lastVerifiedAt": "2026-04-07T11:47:02.895Z",
   "studioVersion": "25.10.7",
   "packages": [
     {
@@ -9,6 +9,7 @@
       "version": "1.0.0",
       "feedStatus": "unverified",
       "preferredVersion": "1.0.0",
+      "generationApproved": true,
       "prefix": "",
       "clrNamespace": "System.Activities",
       "assembly": "System.Activities",
@@ -89,8 +90,8 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "System.Activities.Statements",
-          "xamlExample": "<Assign DisplayName=\"Set variable\">\n  <Assign.To><OutArgument x:TypeArguments=\"x:String\">[myVar]</OutArgument></Assign.To>\n  <Assign.Value><InArgument x:TypeArguments=\"x:String\">Hello</InArgument></Assign.Value>\n</Assign>"
+          "xamlExample": "<Assign DisplayName=\"Set variable\">\n  <Assign.To><OutArgument x:TypeArguments=\"x:String\">[myVar]</OutArgument></Assign.To>\n  <Assign.Value><InArgument x:TypeArguments=\"x:String\">Hello</InArgument></Assign.Value>\n</Assign>",
+          "namespace": "System.Activities.Statements"
         },
         {
           "className": "If",
@@ -117,8 +118,8 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "System.Activities.Statements",
-          "xamlExample": "<If Condition=\"[myVar = &quot;Hello&quot;]\" DisplayName=\"Check value\">\n  <If.Then><Sequence><ui:LogMessage Message=\"Match\" Level=\"Info\" /></Sequence></If.Then>\n  <If.Else><Sequence><ui:LogMessage Message=\"No match\" Level=\"Warn\" /></Sequence></If.Else>\n</If>"
+          "xamlExample": "<If Condition=\"[myVar = &quot;Hello&quot;]\" DisplayName=\"Check value\">\n  <If.Then><Sequence><ui:LogMessage Message=\"Match\" Level=\"Info\" /></Sequence></If.Then>\n  <If.Else><Sequence><ui:LogMessage Message=\"No match\" Level=\"Warn\" /></Sequence></If.Else>\n</If>",
+          "namespace": "System.Activities.Statements"
         },
         {
           "className": "Sequence",
@@ -135,8 +136,8 @@
           "properties": [],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "System.Activities.Statements",
-          "xamlExample": "<Sequence DisplayName=\"Main Sequence\">\n  <Sequence.Variables><Variable x:TypeArguments=\"x:String\" Name=\"result\" /></Sequence.Variables>\n  <!-- child activities here -->\n</Sequence>"
+          "xamlExample": "<Sequence DisplayName=\"Main Sequence\">\n  <Sequence.Variables><Variable x:TypeArguments=\"x:String\" Name=\"result\" /></Sequence.Variables>\n  <!-- child activities here -->\n</Sequence>",
+          "namespace": "System.Activities.Statements"
         },
         {
           "className": "TryCatch",
@@ -153,14 +154,14 @@
           "properties": [],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "System.Activities.Statements",
           "compositionRules": [
             {
               "rule": "Body goes in <TryCatch.Try>. Catches require typed <Catch> children with x:TypeArguments. Finally goes in <TryCatch.Finally>.",
               "provenance": "curated"
             }
           ],
-          "xamlExample": "<TryCatch DisplayName=\"Error handler\">\n  <TryCatch.Try><Sequence><!-- protected activities --></Sequence></TryCatch.Try>\n  <TryCatch.Catches>\n    <Catch x:TypeArguments=\"s:Exception\">\n      <ActivityAction x:TypeArguments=\"s:Exception\">\n        <ActivityAction.Argument><DelegateInArgument x:TypeArguments=\"s:Exception\" Name=\"exception\" /></ActivityAction.Argument>\n        <Sequence><ui:LogMessage Message=\"[exception.Message]\" Level=\"Error\" /></Sequence>\n      </ActivityAction>\n    </Catch>\n  </TryCatch.Catches>\n</TryCatch>"
+          "xamlExample": "<TryCatch DisplayName=\"Error handler\">\n  <TryCatch.Try><Sequence><!-- protected activities --></Sequence></TryCatch.Try>\n  <TryCatch.Catches>\n    <Catch x:TypeArguments=\"s:Exception\">\n      <ActivityAction x:TypeArguments=\"s:Exception\">\n        <ActivityAction.Argument><DelegateInArgument x:TypeArguments=\"s:Exception\" Name=\"exception\" /></ActivityAction.Argument>\n        <Sequence><ui:LogMessage Message=\"[exception.Message]\" Level=\"Error\" /></Sequence>\n      </ActivityAction>\n    </Catch>\n  </TryCatch.Catches>\n</TryCatch>",
+          "namespace": "System.Activities.Statements"
         },
         {
           "className": "Flowchart",
@@ -177,14 +178,14 @@
           "properties": [],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "System.Activities.Statements",
           "compositionRules": [
             {
               "rule": "Contains FlowStep and FlowDecision nodes. StartNode attribute points to the first node. Nodes connect via FlowStep.Next or FlowDecision.True/False.",
               "provenance": "curated"
             }
           ],
-          "xamlExample": "<Flowchart DisplayName=\"Decision flow\">\n  <Flowchart.StartNode>\n    <FlowStep x:Name=\"step1\">\n      <ui:LogMessage Message=\"Step 1\" Level=\"Info\" />\n      <FlowStep.Next><FlowStep x:Name=\"step2\"><!-- next step --></FlowStep></FlowStep.Next>\n    </FlowStep>\n  </Flowchart.StartNode>\n</Flowchart>"
+          "xamlExample": "<Flowchart DisplayName=\"Decision flow\">\n  <Flowchart.StartNode>\n    <FlowStep x:Name=\"step1\">\n      <ui:LogMessage Message=\"Step 1\" Level=\"Info\" />\n      <FlowStep.Next><FlowStep x:Name=\"step2\"><!-- next step --></FlowStep></FlowStep.Next>\n    </FlowStep>\n  </Flowchart.StartNode>\n</Flowchart>",
+          "namespace": "System.Activities.Statements"
         },
         {
           "className": "ForEach",
@@ -211,14 +212,14 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "System.Activities.Statements",
           "compositionRules": [
             {
               "rule": "Requires TypeArgument attribute (e.g., x:TypeArguments=\"x:String\"). Body goes in <ForEach.Body><ActivityAction x:TypeArguments=\"x:String\"><Sequence>...</Sequence></ActivityAction></ForEach.Body>.",
               "provenance": "curated"
             }
           ],
-          "xamlExample": "<ForEach x:TypeArguments=\"x:String\" Values=\"[itemList]\" DisplayName=\"Process each item\">\n  <ForEach.Body><ActivityAction x:TypeArguments=\"x:String\">\n    <ActivityAction.Argument><DelegateInArgument x:TypeArguments=\"x:String\" Name=\"item\" /></ActivityAction.Argument>\n    <Sequence><ui:LogMessage Message=\"[item]\" Level=\"Info\" /></Sequence>\n  </ActivityAction></ForEach.Body>\n</ForEach>"
+          "xamlExample": "<ForEach x:TypeArguments=\"x:String\" Values=\"[itemList]\" DisplayName=\"Process each item\">\n  <ForEach.Body><ActivityAction x:TypeArguments=\"x:String\">\n    <ActivityAction.Argument><DelegateInArgument x:TypeArguments=\"x:String\" Name=\"item\" /></ActivityAction.Argument>\n    <Sequence><ui:LogMessage Message=\"[item]\" Level=\"Info\" /></Sequence>\n  </ActivityAction></ForEach.Body>\n</ForEach>",
+          "namespace": "System.Activities.Statements"
         },
         {
           "className": "While",
@@ -245,8 +246,8 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "System.Activities.Statements",
-          "xamlExample": "<While Condition=\"[counter &lt; 10]\" DisplayName=\"Loop while counter less than 10\">\n  <Sequence><!-- loop body --></Sequence>\n</While>"
+          "xamlExample": "<While Condition=\"[counter &lt; 10]\" DisplayName=\"Loop while counter less than 10\">\n  <Sequence><!-- loop body --></Sequence>\n</While>",
+          "namespace": "System.Activities.Statements"
         },
         {
           "className": "DoWhile",
@@ -290,14 +291,14 @@
           "properties": [],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "System.Activities.Statements",
           "compositionRules": [
             {
               "rule": "Requires x:TypeArguments on the Switch element. Cases are <Switch.Cases> containing typed key-value pairs. Default case goes in <Switch.Default>.",
               "provenance": "curated"
             }
           ],
-          "xamlExample": "<Switch x:TypeArguments=\"x:String\" Expression=\"[status]\" DisplayName=\"Route by status\">\n  <Switch.Default><Sequence><ui:LogMessage Message=\"Unknown status\" Level=\"Warn\" /></Sequence></Switch.Default>\n</Switch>"
+          "xamlExample": "<Switch x:TypeArguments=\"x:String\" Expression=\"[status]\" DisplayName=\"Route by status\">\n  <Switch.Default><Sequence><ui:LogMessage Message=\"Unknown status\" Level=\"Warn\" /></Sequence></Switch.Default>\n</Switch>",
+          "namespace": "System.Activities.Statements"
         },
         {
           "className": "Throw",
@@ -324,8 +325,8 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "System.Activities.Statements",
-          "xamlExample": "<Throw DisplayName=\"Throw error\">\n  <Throw.Exception><InArgument x:TypeArguments=\"s:Exception\">[New System.Exception(\"Error message\")]</InArgument></Throw.Exception>\n</Throw>"
+          "xamlExample": "<Throw DisplayName=\"Throw error\">\n  <Throw.Exception><InArgument x:TypeArguments=\"s:Exception\">[New System.Exception(\"Error message\")]</InArgument></Throw.Exception>\n</Throw>",
+          "namespace": "System.Activities.Statements"
         },
         {
           "className": "Rethrow",
@@ -342,7 +343,6 @@
           "properties": [],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "System.Activities.Statements",
           "canonicalIdentity": {
             "canonicalPackageId": "System.Activities",
             "canonicalPrefix": "",
@@ -354,7 +354,8 @@
                 "namespace": "UiPath.Core.Activities"
               }
             ]
-          }
+          },
+          "namespace": "System.Activities.Statements"
         },
         {
           "className": "Delay",
@@ -381,7 +382,6 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "System.Activities.Statements",
           "canonicalIdentity": {
             "canonicalPackageId": "System.Activities",
             "canonicalPrefix": "",
@@ -394,7 +394,8 @@
               }
             ]
           },
-          "xamlExample": "<Delay Duration=\"[TimeSpan.FromSeconds(5)]\" DisplayName=\"Wait 5 seconds\" />"
+          "xamlExample": "<Delay Duration=\"[TimeSpan.FromSeconds(5)]\" DisplayName=\"Wait 5 seconds\" />",
+          "namespace": "System.Activities.Statements"
         },
         {
           "className": "ParallelForEach",
@@ -432,14 +433,14 @@
           "propertiesComplete": true,
           "namespace": "System.Activities.Statements"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.System.Activities",
       "version": "26.2.4",
       "feedStatus": "verified",
       "preferredVersion": "26.2.4",
+      "generationApproved": true,
       "prefix": "ui",
       "clrNamespace": "UiPath.Core.Activities",
       "assembly": "UiPath.System.Activities",
@@ -726,529 +727,6 @@
           "xamlExample": "<Delay Duration=\"[TimeSpan.FromSeconds(5)]\" DisplayName=\"Wait 5 seconds\" />"
         },
         {
-          "className": "GetTransactionItem",
-          "displayName": "Get Transaction Item",
-          "browsable": true,
-          "processTypes": [
-            "orchestration"
-          ],
-          "properties": [
-            {
-              "name": "QueueName",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "typeArguments": "x:String",
-              "required": false,
-              "default": ""
-            },
-            {
-              "name": "FilterContent",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false
-            },
-            {
-              "name": "Reference",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false
-            },
-            {
-              "name": "TransactionItem",
-              "direction": "Out",
-              "clrType": "UiPath.Core.QueueItem",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "ui:QueueItem",
-              "required": false
-            },
-            {
-              "name": "ContinueOnError",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "False"
-            }
-          ],
-          "emissionApproved": true,
-          "propertiesComplete": true,
-          "namespace": "UiPath.Core.Activities",
-          "xamlExample": "<ui:GetTransactionItem QueueName=\"MyQueue\" DisplayName=\"Get transaction\">\n  <ui:GetTransactionItem.TransactionItem><OutArgument x:TypeArguments=\"x:Object\">[transactionItem]</OutArgument></ui:GetTransactionItem.TransactionItem>\n</ui:GetTransactionItem>"
-        },
-        {
-          "className": "SetTransactionStatus",
-          "displayName": "Set Transaction Status",
-          "browsable": true,
-          "processTypes": [
-            "orchestration"
-          ],
-          "properties": [
-            {
-              "name": "TransactionItem",
-              "direction": "In",
-              "clrType": "UiPath.Core.QueueItem",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false
-            },
-            {
-              "name": "Status",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "validValues": [
-                "Successful",
-                "Failed"
-              ]
-            },
-            {
-              "name": "ErrorType",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "validValues": [
-                "Application",
-                "Business"
-              ]
-            },
-            {
-              "name": "Reason",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false
-            },
-            {
-              "name": "ContinueOnError",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "False"
-            }
-          ],
-          "emissionApproved": true,
-          "propertiesComplete": true,
-          "namespace": "UiPath.Core.Activities",
-          "xamlExample": "<ui:SetTransactionStatus Status=\"Successful\" DisplayName=\"Mark success\" />"
-        },
-        {
-          "className": "LogMessage",
-          "displayName": "Log Message",
-          "browsable": true,
-          "processTypes": [
-            "general",
-            "api-integration",
-            "document-processing",
-            "attended-ui",
-            "unattended-ui",
-            "orchestration"
-          ],
-          "properties": [
-            {
-              "name": "Level",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "validValues": [
-                "Trace",
-                "Info",
-                "Warn",
-                "Error",
-                "Fatal"
-              ],
-              "default": "Info"
-            },
-            {
-              "name": "Message",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": true
-            },
-            {
-              "name": "ContinueOnError",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "False"
-            }
-          ],
-          "emissionApproved": true,
-          "propertiesComplete": true,
-          "namespace": "UiPath.Core.Activities",
-          "xamlExample": "<ui:LogMessage Message=\"Processing started\" Level=\"Info\" DisplayName=\"Log start\" />"
-        },
-        {
-          "className": "InvokeWorkflowFile",
-          "displayName": "Invoke Workflow File",
-          "browsable": true,
-          "processTypes": [
-            "general",
-            "api-integration",
-            "document-processing",
-            "attended-ui",
-            "unattended-ui",
-            "orchestration"
-          ],
-          "properties": [
-            {
-              "name": "WorkflowFileName",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": true
-            },
-            {
-              "name": "Isolated",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "False"
-            },
-            {
-              "name": "UnSafe",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "False"
-            },
-            {
-              "name": "ContinueOnError",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "False"
-            }
-          ],
-          "emissionApproved": true,
-          "propertiesComplete": true,
-          "namespace": "UiPath.Core.Activities",
-          "xamlExample": "<ui:InvokeWorkflowFile WorkflowFileName=\"SubProcess.xaml\" DisplayName=\"Run sub-process\" />"
-        },
-        {
-          "className": "AddQueueItem",
-          "displayName": "Add Queue Item",
-          "browsable": true,
-          "processTypes": [
-            "orchestration",
-            "general"
-          ],
-          "properties": [
-            {
-              "name": "QueueName",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false
-            },
-            {
-              "name": "Reference",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false
-            },
-            {
-              "name": "Priority",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "validValues": [
-                "Low",
-                "Normal",
-                "High"
-              ]
-            },
-            {
-              "name": "DeferDate",
-              "direction": "In",
-              "clrType": "System.DateTime",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false
-            },
-            {
-              "name": "DueDate",
-              "direction": "In",
-              "clrType": "System.DateTime",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false
-            },
-            {
-              "name": "ItemInformation",
-              "direction": "In",
-              "clrType": "System.Collections.Generic.Dictionary`2[System.String,System.Object]",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false
-            },
-            {
-              "name": "ContinueOnError",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "False"
-            }
-          ],
-          "emissionApproved": true,
-          "propertiesComplete": true,
-          "namespace": "UiPath.Core.Activities",
-          "xamlExample": "<ui:AddQueueItem QueueName=\"MyQueue\" DisplayName=\"Add to queue\" />"
-        },
-        {
-          "className": "GetCredential",
-          "displayName": "Get Credential",
-          "browsable": true,
-          "processTypes": [
-            "general",
-            "orchestration"
-          ],
-          "properties": [
-            {
-              "name": "AssetName",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": true
-            },
-            {
-              "name": "Username",
-              "direction": "Out",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "x:String",
-              "required": false
-            },
-            {
-              "name": "Password",
-              "direction": "Out",
-              "clrType": "System.Security.SecureString",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "s:SecureString",
-              "required": false
-            },
-            {
-              "name": "ContinueOnError",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "False"
-            }
-          ],
-          "emissionApproved": true,
-          "propertiesComplete": true,
-          "namespace": "UiPath.Core.Activities"
-        },
-        {
-          "className": "GetAsset",
-          "displayName": "Get Asset",
-          "browsable": true,
-          "processTypes": [
-            "general",
-            "orchestration"
-          ],
-          "properties": [
-            {
-              "name": "AssetName",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false
-            },
-            {
-              "name": "AssetValue",
-              "direction": "Out",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "x:String",
-              "required": false
-            },
-            {
-              "name": "Value",
-              "direction": "Out",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "typeArguments": "x:String",
-              "required": false
-            },
-            {
-              "name": "ContinueOnError",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "False"
-            }
-          ],
-          "emissionApproved": true,
-          "propertiesComplete": true,
-          "namespace": "UiPath.Core.Activities"
-        },
-        {
-          "className": "AddLogFields",
-          "displayName": "Add Log Fields",
-          "browsable": true,
-          "processTypes": [
-            "general",
-            "orchestration"
-          ],
-          "properties": [
-            {
-              "name": "Fields",
-              "direction": "In",
-              "clrType": "System.Collections.Generic.Dictionary`2[System.String,System.Object]",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "typeArguments": "scg:Dictionary(x:String, x:Object)",
-              "required": false
-            },
-            {
-              "name": "ContinueOnError",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "False"
-            }
-          ],
-          "emissionApproved": true,
-          "propertiesComplete": true,
-          "namespace": "UiPath.Core.Activities"
-        },
-        {
-          "className": "RetryScope",
-          "displayName": "Retry Scope",
-          "browsable": true,
-          "processTypes": [
-            "general",
-            "api-integration",
-            "orchestration",
-            "attended-ui",
-            "unattended-ui"
-          ],
-          "properties": [
-            {
-              "name": "NumberOfRetries",
-              "direction": "In",
-              "clrType": "System.Int32",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "3"
-            },
-            {
-              "name": "RetryInterval",
-              "direction": "In",
-              "clrType": "System.TimeSpan",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "00:00:05"
-            },
-            {
-              "name": "ContinueOnError",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "typeArguments": null,
-              "required": false,
-              "default": "False"
-            }
-          ],
-          "emissionApproved": true,
-          "namespace": "UiPath.Core.Activities",
-          "xamlExample": "<ui:RetryScope NumberOfRetries=\"3\" DisplayName=\"Retry on failure\">\n  <ui:RetryScope.Body><ActivityAction>\n    <Sequence><!-- retryable activities --></Sequence>\n  </ActivityAction></ui:RetryScope.Body>\n</ui:RetryScope>"
-        },
-        {
-          "className": "ShouldRetry",
-          "displayName": "Should Retry",
-          "browsable": true,
-          "processTypes": [
-            "general",
-            "api-integration",
-            "orchestration",
-            "attended-ui",
-            "unattended-ui"
-          ],
-          "properties": [],
-          "emissionApproved": true,
-          "namespace": "UiPath.Core.Activities"
-        },
-        {
           "className": "ExcelApplicationScope",
           "displayName": "Excel Application Scope",
           "browsable": true,
@@ -1510,15 +988,537 @@
               }
             ]
           }
+        },
+        {
+          "className": "GetTransactionItem",
+          "displayName": "Get Transaction Item",
+          "browsable": true,
+          "processTypes": [
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "QueueName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "x:String",
+              "required": false
+            },
+            {
+              "name": "FilterContent",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "Reference",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "TransactionItem",
+              "direction": "Out",
+              "clrType": "UiPath.Core.QueueItem",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "ui:QueueItem",
+              "required": false
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true,
+          "xamlExample": "<ui:GetTransactionItem QueueName=\"MyQueue\" DisplayName=\"Get transaction\">\n  <ui:GetTransactionItem.TransactionItem><OutArgument x:TypeArguments=\"x:Object\">[transactionItem]</OutArgument></ui:GetTransactionItem.TransactionItem>\n</ui:GetTransactionItem>",
+          "namespace": "UiPath.Core.Activities"
+        },
+        {
+          "className": "SetTransactionStatus",
+          "displayName": "Set Transaction Status",
+          "browsable": true,
+          "processTypes": [
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "TransactionItem",
+              "direction": "In",
+              "clrType": "UiPath.Core.QueueItem",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "Status",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "validValues": [
+                "Successful",
+                "Failed"
+              ]
+            },
+            {
+              "name": "ErrorType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "validValues": [
+                "Application",
+                "Business"
+              ]
+            },
+            {
+              "name": "Reason",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true,
+          "xamlExample": "<ui:SetTransactionStatus Status=\"Successful\" DisplayName=\"Mark success\" />",
+          "namespace": "UiPath.Core.Activities"
+        },
+        {
+          "className": "LogMessage",
+          "displayName": "Log Message",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "document-processing",
+            "attended-ui",
+            "unattended-ui",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "Level",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "validValues": [
+                "Trace",
+                "Info",
+                "Warn",
+                "Error",
+                "Fatal"
+              ],
+              "default": "Info"
+            },
+            {
+              "name": "Message",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true,
+          "xamlExample": "<ui:LogMessage Message=\"Processing started\" Level=\"Info\" DisplayName=\"Log start\" />",
+          "namespace": "UiPath.Core.Activities"
+        },
+        {
+          "className": "InvokeWorkflowFile",
+          "displayName": "Invoke Workflow File",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "document-processing",
+            "attended-ui",
+            "unattended-ui",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "WorkflowFileName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "Isolated",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            },
+            {
+              "name": "UnSafe",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true,
+          "xamlExample": "<ui:InvokeWorkflowFile WorkflowFileName=\"SubProcess.xaml\" DisplayName=\"Run sub-process\" />",
+          "namespace": "UiPath.Core.Activities"
+        },
+        {
+          "className": "AddQueueItem",
+          "displayName": "Add Queue Item",
+          "browsable": true,
+          "processTypes": [
+            "orchestration",
+            "general"
+          ],
+          "properties": [
+            {
+              "name": "QueueName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "Reference",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "Priority",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "validValues": [
+                "Low",
+                "Normal",
+                "High"
+              ]
+            },
+            {
+              "name": "DeferDate",
+              "direction": "In",
+              "clrType": "System.DateTime",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "DueDate",
+              "direction": "In",
+              "clrType": "System.DateTime",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "ItemInformation",
+              "direction": "In",
+              "clrType": "System.Collections.Generic.Dictionary`2[System.String,System.Object]",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true,
+          "xamlExample": "<ui:AddQueueItem QueueName=\"MyQueue\" DisplayName=\"Add to queue\" />",
+          "namespace": "UiPath.Core.Activities"
+        },
+        {
+          "className": "GetCredential",
+          "displayName": "Get Credential",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "AssetName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "Username",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:String",
+              "required": false
+            },
+            {
+              "name": "Password",
+              "direction": "Out",
+              "clrType": "System.Security.SecureString",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "s:SecureString",
+              "required": false
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true,
+          "namespace": "UiPath.Core.Activities"
+        },
+        {
+          "className": "GetAsset",
+          "displayName": "Get Asset",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "AssetName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "AssetValue",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:String",
+              "required": false
+            },
+            {
+              "name": "Value",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:String",
+              "required": false
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true,
+          "namespace": "UiPath.Core.Activities"
+        },
+        {
+          "className": "AddLogFields",
+          "displayName": "Add Log Fields",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [
+            {
+              "name": "Fields",
+              "direction": "In",
+              "clrType": "System.Collections.Generic.Dictionary`2[System.String,System.Object]",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "InArgument",
+              "typeArguments": "scg:Dictionary(x:String, x:Object)",
+              "required": false
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true,
+          "namespace": "UiPath.Core.Activities"
+        },
+        {
+          "className": "RetryScope",
+          "displayName": "Retry Scope",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "orchestration",
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "NumberOfRetries",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "3"
+            },
+            {
+              "name": "RetryInterval",
+              "direction": "In",
+              "clrType": "System.TimeSpan",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "00:00:05"
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "xamlExample": "<ui:RetryScope NumberOfRetries=\"3\" DisplayName=\"Retry on failure\">\n  <ui:RetryScope.Body><ActivityAction>\n    <Sequence><!-- retryable activities --></Sequence>\n  </ActivityAction></ui:RetryScope.Body>\n</ui:RetryScope>",
+          "namespace": "UiPath.Core.Activities"
+        },
+        {
+          "className": "ShouldRetry",
+          "displayName": "Should Retry",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "orchestration",
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [],
+          "emissionApproved": true,
+          "namespace": "UiPath.Core.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.UIAutomation.Activities",
       "version": "25.10.29",
       "feedStatus": "verified",
       "preferredVersion": "25.10.29",
+      "generationApproved": true,
       "prefix": "ui",
       "clrNamespace": "UiPath.Core.Activities",
       "assembly": "UiPath.UIAutomation.Activities",
@@ -1851,7 +1851,6 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "UiPath.UIAutomation.Activities",
           "propertyConflicts": [
             {
               "property": "Selector",
@@ -1861,7 +1860,8 @@
               "reason": "Modern Target-based identification replaces classic Selector strings. Use one or the other.",
               "provenance": "curated"
             }
-          ]
+          ],
+          "namespace": "UiPath.UIAutomation.Activities"
         },
         {
           "className": "Click",
@@ -1960,7 +1960,6 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "UiPath.UIAutomation.Activities",
           "propertyConflicts": [
             {
               "property": "Selector",
@@ -1971,7 +1970,8 @@
               "provenance": "curated"
             }
           ],
-          "xamlExample": "<ui:Click DisplayName=\"Click button\">\n  <ui:Click.Target><ui:Target /><ui:Click.Selector>&lt;html /&gt;&lt;webctrl tag='BUTTON' /&gt;</ui:Click.Selector></ui:Click.Target>\n</ui:Click>"
+          "xamlExample": "<ui:Click DisplayName=\"Click button\">\n  <ui:Click.Target><ui:Target /><ui:Click.Selector>&lt;html /&gt;&lt;webctrl tag='BUTTON' /&gt;</ui:Click.Selector></ui:Click.Target>\n</ui:Click>",
+          "namespace": "UiPath.UIAutomation.Activities"
         },
         {
           "className": "TypeInto",
@@ -2019,11 +2019,7 @@
               "argumentWrapper": null,
               "typeArguments": null,
               "required": false,
-              "default": "False",
-              "validValues": [
-                "True",
-                "False"
-              ]
+              "default": "False"
             },
             {
               "name": "ClickBeforeTyping",
@@ -2033,11 +2029,7 @@
               "argumentWrapper": null,
               "typeArguments": null,
               "required": false,
-              "default": "True",
-              "validValues": [
-                "True",
-                "False"
-              ]
+              "default": "True"
             },
             {
               "name": "TimeoutMS",
@@ -2062,7 +2054,6 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "UiPath.UIAutomation.Activities",
           "propertyConflicts": [
             {
               "property": "Selector",
@@ -2073,7 +2064,8 @@
               "provenance": "curated"
             }
           ],
-          "xamlExample": "<ui:TypeInto Text=\"[inputText]\" DisplayName=\"Type into field\">\n  <ui:TypeInto.Target><ui:Target /><ui:TypeInto.Selector>&lt;html /&gt;&lt;webctrl tag='INPUT' /&gt;</ui:TypeInto.Selector></ui:TypeInto.Target>\n</ui:TypeInto>"
+          "xamlExample": "<ui:TypeInto Text=\"[inputText]\" DisplayName=\"Type into field\">\n  <ui:TypeInto.Target><ui:Target /><ui:TypeInto.Selector>&lt;html /&gt;&lt;webctrl tag='INPUT' /&gt;</ui:TypeInto.Selector></ui:TypeInto.Target>\n</ui:TypeInto>",
+          "namespace": "UiPath.UIAutomation.Activities"
         },
         {
           "className": "GetText",
@@ -2116,7 +2108,6 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "UiPath.UIAutomation.Activities",
           "propertyConflicts": [
             {
               "property": "Selector",
@@ -2127,7 +2118,8 @@
               "provenance": "curated"
             }
           ],
-          "xamlExample": "<ui:GetText DisplayName=\"Get element text\">\n  <ui:GetText.Value><OutArgument x:TypeArguments=\"x:String\">[extractedText]</OutArgument></ui:GetText.Value>\n</ui:GetText>"
+          "xamlExample": "<ui:GetText DisplayName=\"Get element text\">\n  <ui:GetText.Value><OutArgument x:TypeArguments=\"x:String\">[extractedText]</OutArgument></ui:GetText.Value>\n</ui:GetText>",
+          "namespace": "UiPath.UIAutomation.Activities"
         },
         {
           "className": "OpenBrowser",
@@ -2254,7 +2246,6 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "UiPath.UIAutomation.Activities",
           "canonicalIdentity": {
             "canonicalPackageId": "UiPath.UIAutomation.Activities",
             "canonicalPrefix": "ui",
@@ -2266,7 +2257,8 @@
                 "namespace": "UiPath.Core.Activities"
               }
             ]
-          }
+          },
+          "namespace": "UiPath.UIAutomation.Activities"
         },
         {
           "className": "SendOutlookMailMessage",
@@ -2365,7 +2357,6 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "UiPath.UIAutomation.Activities",
           "canonicalIdentity": {
             "canonicalPackageId": "UiPath.Mail.Activities",
             "canonicalPrefix": "umail",
@@ -2378,16 +2369,17 @@
               }
             ]
           },
-          "xamlExample": "<umail:SendOutlookMailMessage To=\"[recipient]\" Subject=\"[subject]\" Body=\"[body]\" DisplayName=\"Send email\" />"
+          "xamlExample": "<umail:SendOutlookMailMessage To=\"[recipient]\" Subject=\"[subject]\" Body=\"[body]\" DisplayName=\"Send email\" />",
+          "namespace": "UiPath.UIAutomation.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Amazon.Comprehend.Activities",
       "version": "1.1.1",
       "feedStatus": "verified",
       "preferredVersion": "1.1.1",
+      "generationApproved": true,
       "prefix": "ucmp",
       "clrNamespace": "UiPath.Amazon.Comprehend.Activities",
       "assembly": "UiPath.Amazon.Comprehend.Activities",
@@ -2565,14 +2557,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.Amazon.Comprehend.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Amazon.Rekognition.Activities",
       "version": "2.0.1",
       "feedStatus": "verified",
       "preferredVersion": "2.0.1",
+      "generationApproved": true,
       "prefix": "urek",
       "clrNamespace": "UiPath.Amazon.Rekognition.Activities",
       "assembly": "UiPath.Amazon.Rekognition.Activities",
@@ -2687,14 +2679,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.Amazon.Rekognition.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Amazon.Textract.Activities",
       "version": "4.0.1",
       "feedStatus": "verified",
       "preferredVersion": "4.0.1",
+      "generationApproved": true,
       "prefix": "utxt",
       "clrNamespace": "UiPath.Amazon.Textract.Activities",
       "assembly": "UiPath.Amazon.Textract.Activities",
@@ -2796,14 +2788,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.Amazon.Textract.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.AmazonWebServices.Activities",
       "version": "2.9.1",
       "feedStatus": "verified",
       "preferredVersion": "2.9.1",
+      "generationApproved": true,
       "prefix": "uaws",
       "clrNamespace": "UiPath.AmazonWebServices.Activities",
       "assembly": "UiPath.AmazonWebServices.Activities",
@@ -3032,14 +3024,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.AmazonWebServices.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Azure.Activities",
       "version": "1.7.2",
       "feedStatus": "verified",
       "preferredVersion": "1.7.2",
+      "generationApproved": true,
       "prefix": "uaz",
       "clrNamespace": "UiPath.Azure.Activities",
       "assembly": "UiPath.Azure.Activities",
@@ -3258,14 +3250,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.Azure.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.AzureFormRecognizerV3.Activities",
       "version": "1.0.1",
       "feedStatus": "verified",
       "preferredVersion": "1.0.1",
+      "generationApproved": true,
       "prefix": "uafr",
       "clrNamespace": "UiPath.AzureFormRecognizerV3.Activities",
       "assembly": "UiPath.AzureFormRecognizerV3.Activities",
@@ -3397,14 +3389,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.AzureFormRecognizerV3.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Box.Activities",
       "version": "2.0.1",
       "feedStatus": "verified",
       "preferredVersion": "2.0.1",
+      "generationApproved": true,
       "prefix": "ubox",
       "clrNamespace": "UiPath.Box.Activities",
       "assembly": "UiPath.Box.Activities",
@@ -3602,14 +3594,14 @@
           "emissionApproved": false,
           "namespace": "UiPath.Box.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.CommunicationsMining.Activities",
       "version": "1.6.0",
       "feedStatus": "verified",
       "preferredVersion": "1.6.0",
+      "generationApproved": true,
       "prefix": "ucm",
       "clrNamespace": "UiPath.CommunicationsMining.Activities",
       "assembly": "UiPath.CommunicationsMining.Activities",
@@ -3723,14 +3715,14 @@
           "emissionApproved": false,
           "namespace": "UiPath.CommunicationsMining.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.ComplexScenarios.Activities",
       "version": "1.5.1",
       "feedStatus": "verified",
       "preferredVersion": "1.5.1",
+      "generationApproved": true,
       "prefix": "ucs",
       "clrNamespace": "UiPath.ComplexScenarios.Activities",
       "assembly": "UiPath.ComplexScenarios.Activities",
@@ -3865,8 +3857,8 @@
             }
           ],
           "emissionApproved": true,
-          "namespace": "UiPath.ComplexScenarios.Activities",
-          "xamlExample": "<ucs:BuildDataTable DisplayName=\"Build DataTable\">\n  <ucs:BuildDataTable.DataTable><OutArgument x:TypeArguments=\"scg:DataTable\">[dt]</OutArgument></ucs:BuildDataTable.DataTable>\n</ucs:BuildDataTable>"
+          "xamlExample": "<ucs:BuildDataTable DisplayName=\"Build DataTable\">\n  <ucs:BuildDataTable.DataTable><OutArgument x:TypeArguments=\"scg:DataTable\">[dt]</OutArgument></ucs:BuildDataTable.DataTable>\n</ucs:BuildDataTable>",
+          "namespace": "UiPath.ComplexScenarios.Activities"
         },
         {
           "className": "FilterDataTable",
@@ -3910,8 +3902,8 @@
             }
           ],
           "emissionApproved": true,
-          "namespace": "UiPath.ComplexScenarios.Activities",
-          "xamlExample": "<ucs:FilterDataTable DisplayName=\"Filter rows\" FilterRowsMode=\"Keep\">\n  <ucs:FilterDataTable.DataTable><InArgument x:TypeArguments=\"scg:DataTable\">[dt]</InArgument></ucs:FilterDataTable.DataTable>\n</ucs:FilterDataTable>"
+          "xamlExample": "<ucs:FilterDataTable DisplayName=\"Filter rows\" FilterRowsMode=\"Keep\">\n  <ucs:FilterDataTable.DataTable><InArgument x:TypeArguments=\"scg:DataTable\">[dt]</InArgument></ucs:FilterDataTable.DataTable>\n</ucs:FilterDataTable>",
+          "namespace": "UiPath.ComplexScenarios.Activities"
         },
         {
           "className": "SortDataTable",
@@ -4078,8 +4070,8 @@
             }
           ],
           "emissionApproved": true,
-          "namespace": "UiPath.ComplexScenarios.Activities",
-          "xamlExample": "<ucs:OutputDataTable InputDataTable=\"[dt]\" DisplayName=\"DataTable to string\">\n  <ucs:OutputDataTable.Text><OutArgument x:TypeArguments=\"x:String\">[dtText]</OutArgument></ucs:OutputDataTable.Text>\n</ucs:OutputDataTable>"
+          "xamlExample": "<ucs:OutputDataTable InputDataTable=\"[dt]\" DisplayName=\"DataTable to string\">\n  <ucs:OutputDataTable.Text><OutArgument x:TypeArguments=\"x:String\">[dtText]</OutArgument></ucs:OutputDataTable.Text>\n</ucs:OutputDataTable>",
+          "namespace": "UiPath.ComplexScenarios.Activities"
         },
         {
           "className": "AddDataRow",
@@ -4207,14 +4199,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.ComplexScenarios.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Coupa.IntegrationService.Activities",
       "version": "4.0.6",
       "feedStatus": "verified",
       "preferredVersion": "4.0.6",
+      "generationApproved": true,
       "prefix": "ucoupa",
       "clrNamespace": "UiPath.Coupa.IntegrationService.Activities",
       "assembly": "UiPath.Coupa.IntegrationService.Activities",
@@ -4374,14 +4366,14 @@
           "emissionApproved": false,
           "namespace": "UiPath.Coupa.IntegrationService.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Credentials.Activities",
       "version": "3.0.0",
       "feedStatus": "verified",
       "preferredVersion": "3.0.0",
+      "generationApproved": true,
       "prefix": "ucred",
       "clrNamespace": "UiPath.Credentials.Activities",
       "assembly": "UiPath.Credentials.Activities",
@@ -4581,14 +4573,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.Credentials.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Cryptography.Activities",
       "version": "2.0.0",
       "feedStatus": "verified",
       "preferredVersion": "2.0.0",
+      "generationApproved": true,
       "prefix": "ucrypt",
       "clrNamespace": "UiPath.Cryptography.Activities",
       "assembly": "UiPath.Cryptography.Activities",
@@ -5033,8 +5025,7 @@
           "emissionApproved": true,
           "namespace": "UiPath.Cryptography.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Database.Activities",
@@ -5217,6 +5208,7 @@
       "version": "25.9.3",
       "feedStatus": "verified",
       "preferredVersion": "25.9.3",
+      "generationApproved": true,
       "prefix": "uds",
       "clrNamespace": "UiPath.DataService.Activities",
       "assembly": "UiPath.DataService.Activities",
@@ -5536,14 +5528,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.DataService.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.DocumentUnderstanding.Activities",
       "version": "2.17.4",
       "feedStatus": "verified",
       "preferredVersion": "2.17.4",
+      "generationApproved": true,
       "prefix": "udu",
       "clrNamespace": "UiPath.DocumentUnderstanding.Activities",
       "assembly": "UiPath.DocumentUnderstanding.Activities",
@@ -5780,103 +5772,18 @@
           "emissionApproved": false,
           "namespace": "UiPath.DocumentUnderstanding.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Excel.Activities",
+      "version": "3.4.1",
+      "feedStatus": "verified",
+      "preferredVersion": "3.4.1",
+      "generationApproved": true,
+      "prefix": "uexcel",
+      "clrNamespace": "UiPath.Excel.Activities",
+      "assembly": "UiPath.Excel.Activities",
       "activities": [
-        {
-          "className": "ExcelApplicationScope",
-          "displayName": "Excel Application Scope",
-          "browsable": true,
-          "processTypes": [
-            "attended-ui",
-            "unattended-ui",
-            "general"
-          ],
-          "properties": [
-            {
-              "name": "WorkbookPath",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "InArgument",
-              "required": true,
-              "typeArguments": "x:String"
-            },
-            {
-              "name": "AutoSave",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            },
-            {
-              "name": "Visible",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            },
-            {
-              "name": "CreateNewFile",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            },
-            {
-              "name": "ReadOnly",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            },
-            {
-              "name": "Password",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": "x:String"
-            },
-            {
-              "name": "EditPassword",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": "x:String",
-              "addedInVersion": "2.0.0"
-            }
-          ],
-          "emissionApproved": true,
-          "namespace": "UiPath.Excel.Activities",
-          "canonicalIdentity": {
-            "canonicalPackageId": "UiPath.Excel.Activities",
-            "canonicalPrefix": "uexcel",
-            "canonicalNamespace": "UiPath.Excel.Activities",
-            "alternates": [
-              {
-                "packageId": "UiPath.System.Activities",
-                "prefix": "ui",
-                "namespace": "UiPath.Core.Activities"
-              }
-            ]
-          },
-          "preferModern": "UseExcel"
-        },
         {
           "className": "UseExcel",
           "displayName": "Use Excel File",
@@ -5932,139 +5839,6 @@
               "provenance": "curated"
             }
           ]
-        },
-        {
-          "className": "ExcelReadRange",
-          "displayName": "Read Range",
-          "browsable": true,
-          "processTypes": [
-            "attended-ui",
-            "unattended-ui",
-            "general"
-          ],
-          "properties": [
-            {
-              "name": "SheetName",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            },
-            {
-              "name": "Range",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            },
-            {
-              "name": "DataTable",
-              "direction": "Out",
-              "clrType": "System.Data.DataTable",
-              "xamlSyntax": "child-element",
-              "argumentWrapper": "OutArgument",
-              "required": true,
-              "typeArguments": "scg:DataTable"
-            },
-            {
-              "name": "AddHeaders",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            },
-            {
-              "name": "UseFilter",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            }
-          ],
-          "emissionApproved": true,
-          "namespace": "UiPath.Excel.Activities",
-          "canonicalIdentity": {
-            "canonicalPackageId": "UiPath.Excel.Activities",
-            "canonicalPrefix": "uexcel",
-            "canonicalNamespace": "UiPath.Excel.Activities",
-            "alternates": [
-              {
-                "packageId": "UiPath.System.Activities",
-                "prefix": "ui",
-                "namespace": "UiPath.Core.Activities"
-              }
-            ]
-          }
-        },
-        {
-          "className": "ExcelWriteRange",
-          "displayName": "Write Range",
-          "browsable": true,
-          "processTypes": [
-            "attended-ui",
-            "unattended-ui",
-            "general"
-          ],
-          "properties": [
-            {
-              "name": "SheetName",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            },
-            {
-              "name": "StartingCell",
-              "direction": "In",
-              "clrType": "System.String",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            },
-            {
-              "name": "DataTable",
-              "direction": "In",
-              "clrType": "System.Data.DataTable",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": "scg:DataTable"
-            },
-            {
-              "name": "AddHeaders",
-              "direction": "In",
-              "clrType": "System.Boolean",
-              "xamlSyntax": "attribute",
-              "argumentWrapper": null,
-              "required": false,
-              "typeArguments": null
-            }
-          ],
-          "emissionApproved": true,
-          "namespace": "UiPath.Excel.Activities",
-          "canonicalIdentity": {
-            "canonicalPackageId": "UiPath.Excel.Activities",
-            "canonicalPrefix": "uexcel",
-            "canonicalNamespace": "UiPath.Excel.Activities",
-            "alternates": [
-              {
-                "packageId": "UiPath.System.Activities",
-                "prefix": "ui",
-                "namespace": "UiPath.Core.Activities"
-              }
-            ]
-          }
         },
         {
           "className": "ExcelWriteCell",
@@ -6206,18 +5980,278 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.Excel.Activities"
+        },
+        {
+          "className": "ExcelApplicationScope",
+          "displayName": "Excel Application Scope",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [
+            {
+              "name": "WorkbookPath",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "Visible",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "True"
+            },
+            {
+              "name": "CreateNewFile",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            },
+            {
+              "name": "AutoSave",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            },
+            {
+              "name": "ReadOnly",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            },
+            {
+              "name": "Password",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "EditPassword",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true,
+          "canonicalIdentity": {
+            "canonicalPackageId": "UiPath.Excel.Activities",
+            "canonicalPrefix": "uexcel",
+            "canonicalNamespace": "UiPath.Excel.Activities",
+            "alternates": [
+              {
+                "packageId": "UiPath.System.Activities",
+                "prefix": "ui",
+                "namespace": "UiPath.Core.Activities"
+              }
+            ]
+          },
+          "namespace": "UiPath.Excel.Activities",
+          "preferModern": "UseExcel"
+        },
+        {
+          "className": "ExcelReadRange",
+          "displayName": "Read Range (Excel)",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [
+            {
+              "name": "SheetName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "Sheet1"
+            },
+            {
+              "name": "Range",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "DataTable",
+              "direction": "In",
+              "clrType": "System.Data.DataTable",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "AddHeaders",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "True"
+            },
+            {
+              "name": "PreserveFormat",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true,
+          "canonicalIdentity": {
+            "canonicalPackageId": "UiPath.Excel.Activities",
+            "canonicalPrefix": "uexcel",
+            "canonicalNamespace": "UiPath.Excel.Activities",
+            "alternates": [
+              {
+                "packageId": "UiPath.System.Activities",
+                "prefix": "ui",
+                "namespace": "UiPath.Core.Activities"
+              }
+            ]
+          },
+          "namespace": "UiPath.Excel.Activities"
+        },
+        {
+          "className": "ExcelWriteRange",
+          "displayName": "Write Range (Excel)",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [
+            {
+              "name": "SheetName",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "Sheet1"
+            },
+            {
+              "name": "StartingCell",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "A1"
+            },
+            {
+              "name": "DataTable",
+              "direction": "In",
+              "clrType": "System.Data.DataTable",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "AddHeaders",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "True"
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true,
+          "canonicalIdentity": {
+            "canonicalPackageId": "UiPath.Excel.Activities",
+            "canonicalPrefix": "uexcel",
+            "canonicalNamespace": "UiPath.Excel.Activities",
+            "alternates": [
+              {
+                "packageId": "UiPath.System.Activities",
+                "prefix": "ui",
+                "namespace": "UiPath.Core.Activities"
+              }
+            ]
+          },
+          "namespace": "UiPath.Excel.Activities"
         }
-      ],
-      "version": "3.4.1",
-      "feedStatus": "verified",
-      "preferredVersion": "3.4.1",
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Form.Activities",
       "version": "25.10.1",
       "feedStatus": "verified",
       "preferredVersion": "25.10.1",
+      "generationApproved": true,
       "prefix": "uform",
       "clrNamespace": "UiPath.Form.Activities",
       "assembly": "UiPath.Form.Activities",
@@ -6368,14 +6402,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.Form.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.FTP.Activities",
       "version": "3.0.0",
       "feedStatus": "verified",
       "preferredVersion": "3.0.0",
+      "generationApproved": true,
       "prefix": "uftp",
       "clrNamespace": "UiPath.FTP.Activities",
       "assembly": "UiPath.FTP.Activities",
@@ -6636,8 +6670,7 @@
           "emissionApproved": true,
           "namespace": "UiPath.FTP.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.GenAI.Activities",
@@ -6853,6 +6886,7 @@
       "version": "2.5.0",
       "feedStatus": "verified",
       "preferredVersion": "2.5.0",
+      "generationApproved": true,
       "prefix": "ugc",
       "clrNamespace": "UiPath.GoogleCloud.Activities",
       "assembly": "UiPath.GoogleCloud.Activities",
@@ -7061,14 +7095,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.GoogleCloud.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.GoogleVision.Activities",
       "version": "1.4.2",
       "feedStatus": "verified",
       "preferredVersion": "1.4.2",
+      "generationApproved": true,
       "prefix": "ugv",
       "clrNamespace": "UiPath.GoogleVision.Activities",
       "assembly": "UiPath.GoogleVision.Activities",
@@ -7162,14 +7196,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.GoogleVision.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.GSuite.Activities",
       "version": "3.7.11",
       "feedStatus": "verified",
       "preferredVersion": "3.7.11",
+      "generationApproved": true,
       "prefix": "ugs",
       "clrNamespace": "UiPath.GSuite.Activities",
       "assembly": "UiPath.GSuite.Activities",
@@ -7808,14 +7842,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.GSuite.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.IntegrationService.Activities",
       "version": "1.24.0",
       "feedStatus": "verified",
       "preferredVersion": "1.24.0",
+      "generationApproved": true,
       "prefix": "uis",
       "clrNamespace": "UiPath.IntegrationService.Activities",
       "assembly": "UiPath.IntegrationService.Activities",
@@ -7983,8 +8017,7 @@
           "emissionApproved": false,
           "namespace": "UiPath.IntegrationService.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.IntelligentOCR.Activities",
@@ -8156,6 +8189,7 @@
       "version": "2.4.7",
       "feedStatus": "verified",
       "preferredVersion": "2.4.7",
+      "generationApproved": true,
       "prefix": "ujira",
       "clrNamespace": "UiPath.Jira.Activities",
       "assembly": "UiPath.Jira.Activities",
@@ -8461,14 +8495,14 @@
           "emissionApproved": false,
           "namespace": "UiPath.Jira.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Mail.Activities",
       "version": "2.7.12",
       "feedStatus": "verified",
       "preferredVersion": "2.7.12",
+      "generationApproved": true,
       "prefix": "umail",
       "clrNamespace": "UiPath.Mail.Activities",
       "assembly": "UiPath.Mail.Activities",
@@ -8709,7 +8743,6 @@
             }
           ],
           "emissionApproved": true,
-          "namespace": "UiPath.Mail.Activities",
           "canonicalIdentity": {
             "canonicalPackageId": "UiPath.Mail.Activities",
             "canonicalPrefix": "umail",
@@ -8722,7 +8755,8 @@
               }
             ]
           },
-          "xamlExample": "<umail:SendOutlookMailMessage To=\"[recipient]\" Subject=\"[subject]\" Body=\"[body]\" DisplayName=\"Send email\" />"
+          "xamlExample": "<umail:SendOutlookMailMessage To=\"[recipient]\" Subject=\"[subject]\" Body=\"[body]\" DisplayName=\"Send email\" />",
+          "namespace": "UiPath.Mail.Activities"
         },
         {
           "className": "GetImapMailMessage",
@@ -9075,14 +9109,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.Mail.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.MicrosoftDynamics.Activities",
       "version": "1.0.5",
       "feedStatus": "verified",
       "preferredVersion": "1.0.5",
+      "generationApproved": true,
       "prefix": "udyn",
       "clrNamespace": "UiPath.MicrosoftDynamics.Activities",
       "assembly": "UiPath.MicrosoftDynamics.Activities",
@@ -9277,14 +9311,14 @@
           "emissionApproved": false,
           "namespace": "UiPath.MicrosoftDynamics.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.MicrosoftOffice365.Activities",
       "version": "3.7.10",
       "feedStatus": "verified",
       "preferredVersion": "3.7.10",
+      "generationApproved": true,
       "prefix": "uo365",
       "clrNamespace": "UiPath.MicrosoftOffice365.Activities",
       "assembly": "UiPath.MicrosoftOffice365.Activities",
@@ -9815,14 +9849,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.MicrosoftOffice365.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.MicrosoftTeams.Activities",
       "version": "1.0.3",
       "feedStatus": "verified",
       "preferredVersion": "1.0.3",
+      "generationApproved": true,
       "prefix": "uteams",
       "clrNamespace": "UiPath.MicrosoftTeams.Activities",
       "assembly": "UiPath.MicrosoftTeams.Activities",
@@ -10008,8 +10042,7 @@
           "emissionApproved": true,
           "namespace": "UiPath.MicrosoftTeams.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.MLActivities",
@@ -10114,6 +10147,7 @@
       "version": "3.25.2",
       "feedStatus": "verified",
       "preferredVersion": "3.25.2",
+      "generationApproved": true,
       "prefix": "updf",
       "clrNamespace": "UiPath.PDF.Activities",
       "assembly": "UiPath.PDF.Activities",
@@ -10464,14 +10498,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.PDF.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Persistence.Activities",
       "version": "1.8.1",
       "feedStatus": "verified",
       "preferredVersion": "1.8.1",
+      "generationApproved": true,
       "prefix": "upers",
       "clrNamespace": "UiPath.Persistence.Activities",
       "assembly": "UiPath.Persistence.Activities",
@@ -10710,14 +10744,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.Persistence.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Presentations.Activities",
       "version": "2.4.1",
       "feedStatus": "verified",
       "preferredVersion": "2.4.1",
+      "generationApproved": true,
       "prefix": "upres",
       "clrNamespace": "UiPath.Presentations.Activities",
       "assembly": "UiPath.Presentations.Activities",
@@ -10908,14 +10942,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.Presentations.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Salesforce.Activities",
       "version": "1.9.8",
       "feedStatus": "verified",
       "preferredVersion": "1.9.8",
+      "generationApproved": true,
       "prefix": "usf",
       "clrNamespace": "UiPath.Salesforce.Activities",
       "assembly": "UiPath.Salesforce.Activities",
@@ -11193,14 +11227,14 @@
           "emissionApproved": false,
           "namespace": "UiPath.Salesforce.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.ServiceNow.Activities",
       "version": "2.0.5",
       "feedStatus": "verified",
       "preferredVersion": "2.0.5",
+      "generationApproved": true,
       "prefix": "usnow",
       "clrNamespace": "UiPath.ServiceNow.Activities",
       "assembly": "UiPath.ServiceNow.Activities",
@@ -11430,14 +11464,14 @@
           "emissionApproved": false,
           "namespace": "UiPath.ServiceNow.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Slack.Activities",
       "version": "2.0.4",
       "feedStatus": "verified",
       "preferredVersion": "2.0.4",
+      "generationApproved": true,
       "prefix": "uslack",
       "clrNamespace": "UiPath.Slack.Activities",
       "assembly": "UiPath.Slack.Activities",
@@ -11610,14 +11644,14 @@
           "emissionApproved": false,
           "namespace": "UiPath.Slack.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Testing.Activities",
       "version": "25.10.2",
       "feedStatus": "verified",
       "preferredVersion": "25.10.2",
+      "generationApproved": true,
       "prefix": "utest",
       "clrNamespace": "UiPath.Testing.Activities",
       "assembly": "UiPath.Testing.Activities",
@@ -11884,14 +11918,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.Testing.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.WebAPI.Activities",
       "version": "2.4.0",
       "feedStatus": "verified",
       "preferredVersion": "2.4.0",
+      "generationApproved": true,
       "prefix": "uweb",
       "clrNamespace": "UiPath.WebAPI.Activities",
       "assembly": "UiPath.WebAPI.Activities",
@@ -12209,8 +12243,8 @@
             }
           ],
           "emissionApproved": true,
-          "namespace": "UiPath.WebAPI.Activities",
-          "xamlExample": "<uweb:HttpClient EndPoint=\"[apiUrl]\" Method=\"GET\" AcceptFormat=\"JSON\" DisplayName=\"API call\">\n  <uweb:HttpClient.Result><OutArgument x:TypeArguments=\"x:String\">[response]</OutArgument></uweb:HttpClient.Result>\n</uweb:HttpClient>"
+          "xamlExample": "<uweb:HttpClient EndPoint=\"[apiUrl]\" Method=\"GET\" AcceptFormat=\"JSON\" DisplayName=\"API call\">\n  <uweb:HttpClient.Result><OutArgument x:TypeArguments=\"x:String\">[response]</OutArgument></uweb:HttpClient.Result>\n</uweb:HttpClient>",
+          "namespace": "UiPath.WebAPI.Activities"
         },
         {
           "className": "DeserializeJSON",
@@ -12295,8 +12329,8 @@
             }
           ],
           "emissionApproved": true,
-          "namespace": "UiPath.WebAPI.Activities",
-          "xamlExample": "<uweb:SerializeJson JsonObject=\"[dataObj]\" DisplayName=\"Convert to JSON\">\n  <uweb:SerializeJson.JsonString><OutArgument x:TypeArguments=\"x:String\">[jsonOutput]</OutArgument></uweb:SerializeJson.JsonString>\n</uweb:SerializeJson>"
+          "xamlExample": "<uweb:SerializeJson JsonObject=\"[dataObj]\" DisplayName=\"Convert to JSON\">\n  <uweb:SerializeJson.JsonString><OutArgument x:TypeArguments=\"x:String\">[jsonOutput]</OutArgument></uweb:SerializeJson.JsonString>\n</uweb:SerializeJson>",
+          "namespace": "UiPath.WebAPI.Activities"
         },
         {
           "className": "DeserializeJson",
@@ -12336,17 +12370,17 @@
             }
           ],
           "emissionApproved": true,
-          "namespace": "UiPath.WebAPI.Activities",
-          "xamlExample": "<uweb:DeserializeJson JsonString=\"[jsonText]\" DisplayName=\"Parse JSON\">\n  <uweb:DeserializeJson.JsonObject><OutArgument x:TypeArguments=\"x:Object\">[jsonObj]</OutArgument></uweb:DeserializeJson.JsonObject>\n</uweb:DeserializeJson>"
+          "xamlExample": "<uweb:DeserializeJson JsonString=\"[jsonText]\" DisplayName=\"Parse JSON\">\n  <uweb:DeserializeJson.JsonObject><OutArgument x:TypeArguments=\"x:Object\">[jsonObj]</OutArgument></uweb:DeserializeJson.JsonObject>\n</uweb:DeserializeJson>",
+          "namespace": "UiPath.WebAPI.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Word.Activities",
       "version": "2.4.1",
       "feedStatus": "verified",
       "preferredVersion": "2.4.1",
+      "generationApproved": true,
       "prefix": "uword",
       "clrNamespace": "UiPath.Word.Activities",
       "assembly": "UiPath.Word.Activities",
@@ -12626,14 +12660,14 @@
           "emissionApproved": true,
           "namespace": "UiPath.Word.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Workday.Activities",
       "version": "2.0.6",
       "feedStatus": "verified",
       "preferredVersion": "2.0.6",
+      "generationApproved": true,
       "prefix": "uwd",
       "clrNamespace": "UiPath.Workday.Activities",
       "assembly": "UiPath.Workday.Activities",
@@ -12772,14 +12806,14 @@
           "emissionApproved": false,
           "namespace": "UiPath.Workday.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.WorkflowEvents.Activities",
       "version": "3.35.1",
       "feedStatus": "verified",
       "preferredVersion": "3.35.1",
+      "generationApproved": true,
       "prefix": "uwfe",
       "clrNamespace": "UiPath.WorkflowEvents.Activities",
       "assembly": "UiPath.WorkflowEvents.Activities",
@@ -12896,8 +12930,7 @@
           "emissionApproved": false,
           "namespace": "UiPath.WorkflowEvents.Activities"
         }
-      ],
-      "generationApproved": true
+      ]
     }
   ]
 }
