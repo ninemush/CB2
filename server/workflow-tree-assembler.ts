@@ -11,6 +11,7 @@ import type {
   RetryScopeNode,
   PropertyValue,
 } from "./workflow-spec-types";
+import { BLOCKED_PROPERTY_SENTINEL, isBlockedPropertyValue } from "./types/uipath-package";
 import { catalogService } from "./catalog/catalog-service";
 import { getFilteredSchema, registerStage } from "./catalog/filtered-schema-lookup";
 import { inferTypeFromPrefix, PREFIXED_VAR_REF_REGEX, DEMOTION_WHITELIST_REGEX } from "./shared/type-inference";
@@ -1715,9 +1716,136 @@ function applyCatalogConformance(xml: string): string {
   return corrected;
 }
 
+const RECOGNIZED_TYPED_PROPERTY_TYPE_NAMES = new Set(["literal", "variable", "url_with_params", "expression", "vb_expression"]);
+
+export function isTypedPropertyObject(val: unknown): boolean {
+  if (typeof val !== "object" || val === null || Array.isArray(val)) return false;
+  const obj = val as Record<string, unknown>;
+  return typeof obj.type === "string" && RECOGNIZED_TYPED_PROPERTY_TYPE_NAMES.has(obj.type);
+}
+
+export type PropertyClassification =
+  | { kind: "scalar"; value: string }
+  | { kind: "child-element"; value: string; wrapper: string; typeArguments: string | null }
+  | { kind: "unsupported-structured"; reason: string; rawShape: string };
+
+export function classifyPropertyValue(
+  val: unknown,
+  propertyName?: string,
+  templateName?: string,
+): PropertyClassification {
+  if (val === null || val === undefined) {
+    return { kind: "scalar", value: "" };
+  }
+  if (typeof val === "string") {
+    if (val === BLOCKED_PROPERTY_SENTINEL) {
+      return {
+        kind: "unsupported-structured",
+        reason: "Blocked property sentinel detected — value was rejected by input preprocessing",
+        rawShape: BLOCKED_PROPERTY_SENTINEL,
+      };
+    }
+    return { kind: "scalar", value: val };
+  }
+  if (typeof val === "number" || typeof val === "boolean") {
+    return { kind: "scalar", value: String(val) };
+  }
+  if (isValueIntent(val)) {
+    const vi = val as ValueIntent;
+    if (vi.type === "literal" && vi.value === BLOCKED_PROPERTY_SENTINEL) {
+      return {
+        kind: "unsupported-structured",
+        reason: "Blocked property sentinel in ValueIntent — value was rejected by input preprocessing",
+        rawShape: BLOCKED_PROPERTY_SENTINEL,
+      };
+    }
+    if (vi.type === "literal" || vi.type === "vb_expression") {
+      return { kind: "scalar", value: vi.value };
+    }
+    if (vi.type === "variable") {
+      return { kind: "scalar", value: vi.name };
+    }
+    return { kind: "scalar", value: buildExpression(vi) };
+  }
+  if (typeof val === "object") {
+    const obj = val as Record<string, unknown>;
+    if (isTypedPropertyObject(val)) {
+      if (obj.type === "literal" && typeof obj.value === "string") return { kind: "scalar", value: obj.value };
+      if (obj.type === "vb_expression" && typeof obj.value === "string" && obj.value !== "") return { kind: "scalar", value: obj.value };
+      if (obj.type === "variable" && typeof obj.name === "string" && obj.name !== "") return { kind: "scalar", value: obj.name };
+      return {
+        kind: "unsupported-structured",
+        reason: `Incomplete typed property object (type="${obj.type}") with missing/invalid required field`,
+        rawShape: JSON.stringify(obj).substring(0, 200),
+      };
+    }
+    if (typeof obj.value === "string") return { kind: "scalar", value: obj.value };
+    if (typeof obj.name === "string") return { kind: "scalar", value: obj.name };
+    return {
+      kind: "unsupported-structured",
+      reason: `Unrecognized object shape cannot be serialized as XAML attribute`,
+      rawShape: JSON.stringify(obj).substring(0, 200),
+    };
+  }
+  return { kind: "scalar", value: String(val) };
+}
+
+export function classifyPropertyWithSchema(
+  val: unknown,
+  propertyName: string,
+  templateName: string,
+): PropertyClassification {
+  const schema = catalogService.getActivitySchema(templateName);
+  if (schema) {
+    const propDef = schema.activity.properties.find((p: any) => p.name === propertyName);
+    if (propDef && propDef.xamlSyntax === "child-element") {
+      const basicClassification = classifyPropertyValue(val, propertyName, templateName);
+      if (basicClassification.kind === "scalar") {
+        return {
+          kind: "child-element",
+          value: basicClassification.value,
+          wrapper: propDef.argumentWrapper || "InArgument",
+          typeArguments: propDef.typeArguments || null,
+        };
+      }
+      return basicClassification;
+    }
+  }
+  return classifyPropertyValue(val, propertyName, templateName);
+}
+
+export interface TypedPropertyNormalizationDiagnostic {
+  workflowFile: string;
+  templateName: string;
+  propertyName: string;
+  classification: string;
+  action: "blocked" | "scalar-extracted";
+  reason: string;
+  rawShape?: string;
+  stage: string;
+}
+
+const _typedPropertyDiagnostics: TypedPropertyNormalizationDiagnostic[] = [];
+
+export function emitTypedPropertyDiagnostic(diag: TypedPropertyNormalizationDiagnostic): void {
+  _typedPropertyDiagnostics.push(diag);
+}
+
+export function getAndClearTypedPropertyDiagnostics(): TypedPropertyNormalizationDiagnostic[] {
+  const diags = _typedPropertyDiagnostics.splice(0);
+  return diags;
+}
+
+export function getTypedPropertyDiagnostics(): ReadonlyArray<TypedPropertyNormalizationDiagnostic> {
+  return _typedPropertyDiagnostics;
+}
+
 export function coercePropToString(val: unknown): string {
   if (val == null) return "";
-  if (typeof val === "string") return val;
+  if (typeof val === "string") {
+    if (val === BLOCKED_PROPERTY_SENTINEL) return "";
+    return val;
+  }
   if (isValueIntent(val)) {
     const vi = val as ValueIntent;
     if (vi.type === "literal" || vi.type === "vb_expression") return vi.value;
@@ -1729,8 +1857,34 @@ export function coercePropToString(val: unknown): string {
     if (obj.type === "literal" && typeof obj.value === "string") return obj.value;
     if (obj.type === "vb_expression" && typeof obj.value === "string") return obj.value;
     if (obj.type === "variable" && typeof obj.name === "string") return obj.name;
+    if (isTypedPropertyObject(val)) {
+      console.warn(`[coercePropToString] Incomplete typed property object (type="${obj.type}") — blocked to prevent leaking`);
+      emitTypedPropertyDiagnostic({
+        workflowFile: _activeRemediationContext?.fileName || "unknown",
+        templateName: "(coercePropToString)",
+        propertyName: "(unknown)",
+        classification: "unsupported-structured",
+        action: "blocked",
+        reason: `Incomplete typed property object (type=${obj.type}, missing value)`,
+        rawShape: JSON.stringify(val).substring(0, 200),
+        stage: "coercePropToString",
+      });
+      return "";
+    }
     if (typeof obj.value === "string") return obj.value;
     if (typeof obj.name === "string") return obj.name;
+    console.warn(`[coercePropToString] Unrecognized object shape — blocked to prevent [object Object] leakage: ${JSON.stringify(obj).substring(0, 120)}`);
+    emitTypedPropertyDiagnostic({
+      workflowFile: _activeRemediationContext?.fileName || "unknown",
+      templateName: "(coercePropToString)",
+      propertyName: "(unknown)",
+      classification: "unsupported-structured",
+      action: "blocked",
+      reason: `Unrecognized object shape blocked at coercePropToString boundary`,
+      rawShape: JSON.stringify(val).substring(0, 200),
+      stage: "coercePropToString",
+    });
+    return "";
   }
   return String(val);
 }
@@ -1739,13 +1893,40 @@ export function getPropString(props: Record<string, PropertyValue>, ...keys: str
   for (const key of keys) {
     if (props[key] !== undefined) {
       const val = props[key];
+      if (isBlockedPropertyValue(val)) {
+        console.warn(`[getPropString] Property "${key}" is blocked — withholding from emission`);
+        emitTypedPropertyDiagnostic({
+          workflowFile: _activeRemediationContext?.fileName || "unknown",
+          templateName: "(getPropString)",
+          propertyName: key,
+          classification: "unsupported-structured",
+          action: "blocked",
+          reason: "Blocked property sentinel detected in getPropString — property withheld",
+          stage: "getPropString-sentinel-check",
+        });
+        continue;
+      }
       if (typeof val === "string") {
         const extracted = extractValueIntentFromString(val);
         if (extracted !== null) return extracted;
         return val;
       }
       if (isValueIntent(val)) {
-        return buildExpression(val as ValueIntent);
+        const vi = val as ValueIntent;
+        if (vi.type === "literal" && vi.value === BLOCKED_PROPERTY_SENTINEL) {
+          console.warn(`[getPropString] ValueIntent for "${key}" contains blocked sentinel — withholding`);
+          emitTypedPropertyDiagnostic({
+            workflowFile: _activeRemediationContext?.fileName || "unknown",
+            templateName: "(getPropString)",
+            propertyName: key,
+            classification: "unsupported-structured",
+            action: "blocked",
+            reason: "Blocked property sentinel in ValueIntent detected in getPropString",
+            stage: "getPropString-sentinel-check",
+          });
+          continue;
+        }
+        return buildExpression(vi);
       }
       return coercePropToString(val);
     }
@@ -2749,10 +2930,45 @@ function resolveDynamicTemplate(node: ActivityNode, processType: ProcessType, em
   for (const [key, rawValue] of Object.entries(props)) {
     if (key.startsWith("_") || key === "displayName" || key === "DisplayName") continue;
 
+    if (isBlockedPropertyValue(rawValue)) {
+      console.warn(`[Tree Assembler] Property "${key}" on "${templateName}" is marked as blocked — withholding from emission`);
+      emitTypedPropertyDiagnostic({
+        workflowFile: _activeRemediationContext?.fileName || "unknown",
+        templateName,
+        propertyName: key,
+        classification: "unsupported-structured",
+        action: "blocked",
+        reason: "Property marked as blocked by upstream input preprocessing (sentinel detected)",
+        stage: "pre-serialization-sentinel-check",
+      });
+      continue;
+    }
+
     const propClrType = schema ? (schema.activity.properties.find((p: any) => p.name === key)?.clrType) : undefined;
 
     let preprocessedRawValue = rawValue;
     let _dynamicFallbackUsed = false;
+
+    if (typeof rawValue !== "string" && !isValueIntent(rawValue) && typeof rawValue === "object" && rawValue !== null) {
+      const preClassification = classifyPropertyValue(rawValue, key, templateName);
+      if (preClassification.kind === "unsupported-structured") {
+        console.warn(`[Tree Assembler] Blocking unsupported structured property "${key}" on "${templateName}" — property withheld from emission: ${preClassification.reason}`);
+        emitTypedPropertyDiagnostic({
+          workflowFile: _activeRemediationContext?.fileName || "unknown",
+          templateName,
+          propertyName: key,
+          classification: "unsupported-structured",
+          action: "blocked",
+          reason: preClassification.reason,
+          rawShape: preClassification.rawShape,
+          stage: "pre-serialization-boundary",
+        });
+        continue;
+      } else if (preClassification.kind === "scalar") {
+        preprocessedRawValue = preClassification.value;
+      }
+    }
+
     if (typeof rawValue === "string" && !isValueIntent(rawValue)) {
       const jsonParsed = tryParseJsonValueIntent(rawValue);
       if (jsonParsed) {
@@ -4159,6 +4375,33 @@ function normalizeSpecProperties(node: WorkflowNode, workflowFile?: string): voi
           fallbackUsed: false,
           finalValueHash: computeContentHash(normalizedOutput),
         });
+      } else if (!isValueIntent(value) && typeof value === "object" && value !== null) {
+        const classification = classifyPropertyValue(value, key, templateName);
+        if (classification.kind === "unsupported-structured") {
+          console.warn(`[normalizeSpecProperties] Blocking unsupported structured property "${key}" on "${templateName}" — property removed from spec: ${classification.reason}`);
+          delete (node.properties as Record<string, any>)[key];
+          emitTypedPropertyDiagnostic({
+            workflowFile: workflowFile || "unknown",
+            templateName,
+            propertyName: key,
+            classification: "unsupported-structured",
+            action: "blocked",
+            reason: classification.reason,
+            rawShape: classification.rawShape,
+            stage: "pre-assembly-normalization",
+          });
+        } else if (classification.kind === "scalar") {
+          (node.properties as Record<string, any>)[key] = classification.value;
+          emitTypedPropertyDiagnostic({
+            workflowFile: workflowFile || "unknown",
+            templateName,
+            propertyName: key,
+            classification: "scalar-from-object",
+            action: "scalar-extracted",
+            reason: `Typed property object resolved to scalar value`,
+            stage: "pre-assembly-normalization",
+          });
+        }
       }
     }
   }
@@ -4221,7 +4464,16 @@ function lowerPropertyValueInPlace(obj: Record<string, any>, key: string): void 
       }
     }
   } else if (val !== null && val !== undefined && typeof val === "object" && !isValueIntent(val)) {
-    if (Array.isArray(val)) {
+    if (isTypedPropertyObject(val)) {
+      const classification = classifyPropertyValue(val, key);
+      if (classification.kind === "scalar") {
+        obj[key] = classification.value;
+        console.log(`[Pre-Assembly Lowering] Resolved incomplete typed property object in "${key}" to scalar: "${classification.value.substring(0, 80)}"`);
+      } else if (classification.kind === "unsupported-structured") {
+        delete obj[key];
+        console.warn(`[Pre-Assembly Lowering] Blocked unsupported typed property object in "${key}" — property removed: ${classification.reason}`);
+      }
+    } else if (Array.isArray(val)) {
       for (let i = 0; i < val.length; i++) {
         lowerPropertyValueInPlace(val, String(i));
       }

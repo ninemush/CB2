@@ -36,7 +36,7 @@ import archiver from "archiver";
   } from "./xaml-generator";
   import type { XamlGenerationContext, UiPathPackage } from "./types/uipath-package";
   import { enrichWithAITree, type EnrichmentResult, type TreeEnrichmentResult } from "./ai-xaml-enricher";
-  import { assembleWorkflowFromSpec, buildPreEmissionContractMap, setActiveWorkflowContractMap, clearActiveWorkflowContractMap, setActiveCallerWorkflowName, getAndClearContractDiagnostics } from "./workflow-tree-assembler";
+  import { assembleWorkflowFromSpec, buildPreEmissionContractMap, setActiveWorkflowContractMap, clearActiveWorkflowContractMap, setActiveCallerWorkflowName, getAndClearContractDiagnostics, getAndClearTypedPropertyDiagnostics } from "./workflow-tree-assembler";
   import { runPreEmissionLoweringGate, runMailFamilyLockAnalysis, buildMailFamilyLockDiagnostics, type PreEmissionLoweringGateResult, type CriticalActivityLoweringDiagnostics, type MailFamilyLockDiagnostics, type MailFamilyLockResult } from "./critical-activity-lowering";
   import { runPreLoweringSpecNormalization, validateAdoptionTrace, type SpecNormalizationDiagnostics, type ActivePathAdoptionTraceEntry } from "./pre-lowering-spec-normalization";
   import { traceRequiredPropertyThroughSpec, updateTraceAfterPreNormalization, updateTraceAfterLowering, updateTraceAfterEmission, updateTraceAfterCompliance, updateTraceAfterEnforcement, updateTraceAfterFinalXaml, buildDiagnosticsResult, resetInstanceCounter, type RequiredPropertyTraceEntry, type RequiredPropertyDiagnosticsResult } from "./required-property-diagnostics";
@@ -4279,6 +4279,18 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
                 code: cd.kind === "unsupported_binding" ? "INVOKE_UNSUPPORTED_BINDING" : "INVOKE_UNRESOLVED_CALLEE",
                 message: cd.reason,
                 stage: "pre-emission-contract-resolution",
+                recoverable: true,
+              });
+            }
+          }
+          const typedPropDiags = getAndClearTypedPropertyDiagnostics();
+          if (typedPropDiags.length > 0) {
+            for (const tpd of typedPropDiags) {
+              console.log(`[UiPath] Typed property normalized in "${wfName}": prop="${tpd.propertyName}" action=${tpd.action} stage=${tpd.stage} (${tpd.reason})`);
+              dependencyWarnings.push({
+                code: "TYPED_PROPERTY_NORMALIZED",
+                message: `Property "${tpd.propertyName}" had ${tpd.reason} — ${tpd.action} at ${tpd.stage}`,
+                stage: "typed-property-boundary",
                 recoverable: true,
               });
             }

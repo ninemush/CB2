@@ -8,7 +8,13 @@ import {
   mapClrFullyQualifiedToXamlPrefix,
   wrapVariableDefault,
   ensureBalancedParens,
+  isTypedPropertyObject,
+  classifyPropertyValue,
+  classifyPropertyWithSchema,
+  getAndClearTypedPropertyDiagnostics,
+  emitTypedPropertyDiagnostic,
 } from "../workflow-tree-assembler";
+import { BLOCKED_PROPERTY_SENTINEL, isBlockedPropertyValue } from "../types/uipath-package";
 import type { PropertyValue } from "../workflow-spec-types";
 import { checkStudioLoadability, resolveDependencies, assertDhgArchiveParity } from "../package-assembler";
 import { runFinalArtifactValidation, type PackageCompletenessViolation, type PackageCompletenessViolationsArtifact } from "../final-artifact-validation";
@@ -3781,6 +3787,427 @@ describe("Compiler-invariant regression tests", () => {
         const result = sanitizePropertyValue("EntityObject", { type: "Invoice", id: "INV-001" });
         expect(result.startsWith("__STRUCTURED_OBJECT__")).toBe(true);
       });
+    });
+  });
+});
+
+describe("Typed property object boundary enforcement (Task #460)", () => {
+  beforeEach(() => {
+    getAndClearTypedPropertyDiagnostics();
+  });
+
+  describe("isTypedPropertyObject detection", () => {
+    it("detects recognized typed property objects", () => {
+      expect(isTypedPropertyObject({ type: "literal", value: "hello" })).toBe(true);
+      expect(isTypedPropertyObject({ type: "variable", name: "myVar" })).toBe(true);
+      expect(isTypedPropertyObject({ type: "vb_expression", value: "DateTime.Now" })).toBe(true);
+      expect(isTypedPropertyObject({ type: "url_with_params", baseUrl: "http://example.com" })).toBe(true);
+      expect(isTypedPropertyObject({ type: "expression", left: "a", operator: "+", right: "b" })).toBe(true);
+    });
+
+    it("detects incomplete typed property objects", () => {
+      expect(isTypedPropertyObject({ type: "literal", value: undefined })).toBe(true);
+      expect(isTypedPropertyObject({ type: "literal" })).toBe(true);
+      expect(isTypedPropertyObject({ type: "variable" })).toBe(true);
+      expect(isTypedPropertyObject({ type: "vb_expression" })).toBe(true);
+    });
+
+    it("rejects non-typed-property objects", () => {
+      expect(isTypedPropertyObject({ foo: "bar" })).toBe(false);
+      expect(isTypedPropertyObject({ type: "unknown_type", value: "x" })).toBe(false);
+      expect(isTypedPropertyObject("string")).toBe(false);
+      expect(isTypedPropertyObject(42)).toBe(false);
+      expect(isTypedPropertyObject(null)).toBe(false);
+      expect(isTypedPropertyObject(undefined)).toBe(false);
+      expect(isTypedPropertyObject([1, 2, 3])).toBe(false);
+    });
+  });
+
+  describe("classifyPropertyValue", () => {
+    it("classifies scalar strings", () => {
+      const result = classifyPropertyValue("hello");
+      expect(result.kind).toBe("scalar");
+      if (result.kind === "scalar") expect(result.value).toBe("hello");
+    });
+
+    it("classifies valid typed property objects as scalar", () => {
+      const result = classifyPropertyValue({ type: "literal", value: "test" });
+      expect(result.kind).toBe("scalar");
+      if (result.kind === "scalar") expect(result.value).toBe("test");
+    });
+
+    it("classifies valid variable typed property objects as scalar", () => {
+      const result = classifyPropertyValue({ type: "variable", name: "myVar" });
+      expect(result.kind).toBe("scalar");
+      if (result.kind === "scalar") expect(result.value).toBe("myVar");
+    });
+
+    it("classifies incomplete typed property objects as unsupported-structured", () => {
+      const result = classifyPropertyValue({ type: "literal", value: undefined });
+      expect(result.kind).toBe("unsupported-structured");
+      if (result.kind === "unsupported-structured") {
+        expect(result.reason).toContain("Incomplete typed property object");
+      }
+    });
+
+    it("classifies incomplete variable typed property objects as unsupported-structured", () => {
+      const result = classifyPropertyValue({ type: "variable" });
+      expect(result.kind).toBe("unsupported-structured");
+    });
+
+    it("classifies unrecognized objects as unsupported-structured", () => {
+      const result = classifyPropertyValue({ foo: "bar", baz: 123 });
+      expect(result.kind).toBe("unsupported-structured");
+      if (result.kind === "unsupported-structured") {
+        expect(result.reason).toContain("Unrecognized object shape");
+      }
+    });
+
+    it("classifies blocked sentinel string as unsupported-structured", () => {
+      const result = classifyPropertyValue(BLOCKED_PROPERTY_SENTINEL);
+      expect(result.kind).toBe("unsupported-structured");
+      if (result.kind === "unsupported-structured") {
+        expect(result.reason).toContain("Blocked property sentinel");
+      }
+    });
+
+    it("classifies blocked sentinel ValueIntent as unsupported-structured", () => {
+      const result = classifyPropertyValue({ type: "literal", value: BLOCKED_PROPERTY_SENTINEL });
+      expect(result.kind).toBe("unsupported-structured");
+      if (result.kind === "unsupported-structured") {
+        expect(result.reason).toContain("Blocked property sentinel");
+      }
+    });
+
+    it("classifies null/undefined as scalar empty", () => {
+      expect(classifyPropertyValue(null).kind).toBe("scalar");
+      expect(classifyPropertyValue(undefined).kind).toBe("scalar");
+    });
+
+    it("classifies numbers and booleans as scalar", () => {
+      const numResult = classifyPropertyValue(42);
+      expect(numResult.kind).toBe("scalar");
+      if (numResult.kind === "scalar") expect(numResult.value).toBe("42");
+
+      const boolResult = classifyPropertyValue(true);
+      expect(boolResult.kind).toBe("scalar");
+      if (boolResult.kind === "scalar") expect(boolResult.value).toBe("true");
+    });
+  });
+
+  describe("coercePropToString prevents leakage", () => {
+    it("handles recognized typed property objects with value: undefined", () => {
+      const result = coercePropToString({ type: "literal", value: undefined });
+      expect(result).toBe("");
+      expect(result).not.toBe("[object Object]");
+    });
+
+    it("handles recognized typed property objects with missing value", () => {
+      const result = coercePropToString({ type: "literal" });
+      expect(result).toBe("");
+      expect(result).not.toBe("[object Object]");
+    });
+
+    it("handles incomplete variable typed property objects", () => {
+      const result = coercePropToString({ type: "variable" });
+      expect(result).toBe("");
+      expect(result).not.toBe("[object Object]");
+    });
+
+    it("handles complete typed property objects correctly", () => {
+      expect(coercePropToString({ type: "literal", value: "hello" })).toBe("hello");
+      expect(coercePropToString({ type: "variable", name: "myVar" })).toBe("myVar");
+      expect(coercePropToString({ type: "vb_expression", value: "DateTime.Now" })).toBe("DateTime.Now");
+    });
+
+    it("handles unrecognized objects without producing [object Object]", () => {
+      const result = coercePropToString({ someRandom: true, nested: { deep: true } });
+      expect(result).not.toBe("[object Object]");
+    });
+
+    it("preserves scalar values unchanged", () => {
+      expect(coercePropToString("plain string")).toBe("plain string");
+      expect(coercePropToString(42)).toBe("42");
+      expect(coercePropToString(true)).toBe("true");
+      expect(coercePropToString(null)).toBe("");
+      expect(coercePropToString(undefined)).toBe("");
+    });
+  });
+
+  describe("Emission Gate normalization invariants", () => {
+    it("detects typed property object leakage in XAML", () => {
+      const badXaml = '<InArgument x:TypeArguments="x:String"> {key: "value"}</InArgument>';
+      const violations = checkNormalizationInvariants(badXaml, "test.xaml");
+      const tpoViolations = violations.filter(v => v.pattern === "typed-property-object");
+      expect(tpoViolations.length).toBeGreaterThan(0);
+    });
+
+    it("detects [object Object] leakage in XAML", () => {
+      const badXaml = '<ui:LogMessage Message="[object Object]" />';
+      const violations = checkNormalizationInvariants(badXaml, "test.xaml");
+      const ooViolations = violations.filter(v => v.pattern === "object-object-leak");
+      expect(ooViolations.length).toBeGreaterThan(0);
+    });
+
+    it("detects OBJECT_SERIALIZED marker leakage in XAML", () => {
+      const badXaml = '<Assign.Value>OBJECT_SERIALIZED:{"key":"val"}</Assign.Value>';
+      const violations = checkNormalizationInvariants(badXaml, "test.xaml");
+      const osViolations = violations.filter(v => v.pattern === "raw-object-serialized");
+      expect(osViolations.length).toBeGreaterThan(0);
+    });
+
+    it("passes clean XAML without any object leakage", () => {
+      const goodXaml = '<InArgument x:TypeArguments="x:String">"hello"</InArgument>';
+      const violations = checkNormalizationInvariants(goodXaml, "test.xaml");
+      const leakViolations = violations.filter(
+        v => v.pattern === "typed-property-object" || v.pattern === "object-object-leak" || v.pattern === "raw-object-serialized"
+      );
+      expect(leakViolations.length).toBe(0);
+    });
+
+    it("skips declaration ranges for object leak detection", () => {
+      const xamlWithDecl = `<Sequence>
+        <TextExpression.ReferencesForImplementation>
+          <sco:Collection x:TypeArguments="AssemblyReference">OBJECT_SERIALIZED:test</sco:Collection>
+        </TextExpression.ReferencesForImplementation>
+        <ui:LogMessage Message="clean value" />
+      </Sequence>`;
+      const violations = checkNormalizationInvariants(xamlWithDecl, "test.xaml");
+      const osViolations = violations.filter(v => v.pattern === "raw-object-serialized");
+      expect(osViolations.length).toBe(0);
+    });
+  });
+
+  describe("Scalar values serialize unchanged", () => {
+    it("scalar strings pass through classifyPropertyValue unchanged", () => {
+      const testCases = [
+        "Hello World",
+        '[str_FileName]',
+        "True",
+        "42",
+        "",
+        '"quoted value"',
+      ];
+      for (const tc of testCases) {
+        const result = classifyPropertyValue(tc);
+        expect(result.kind).toBe("scalar");
+        if (result.kind === "scalar") expect(result.value).toBe(tc);
+      }
+    });
+
+    it("scalar values pass through coercePropToString unchanged", () => {
+      expect(coercePropToString("Hello World")).toBe("Hello World");
+      expect(coercePropToString("")).toBe("");
+      expect(coercePropToString('[str_FileName]')).toBe('[str_FileName]');
+    });
+  });
+
+  describe("Diagnostic surfacing and blocking semantics", () => {
+    it("emitTypedPropertyDiagnostic collects and clears diagnostics with canonical schema", () => {
+      getAndClearTypedPropertyDiagnostics();
+      emitTypedPropertyDiagnostic({
+        workflowFile: "Main.xaml",
+        templateName: "LogMessage",
+        propertyName: "TestProp",
+        classification: "unsupported-structured",
+        action: "blocked",
+        reason: "Incomplete typed property object (type=literal, missing value)",
+        rawShape: '{"type":"literal"}',
+        stage: "coercePropToString",
+      });
+      emitTypedPropertyDiagnostic({
+        workflowFile: "Main.xaml",
+        templateName: "Assign",
+        propertyName: "AnotherProp",
+        classification: "unsupported-structured",
+        action: "blocked",
+        reason: "Unrecognized object shape blocked at pre-serialization boundary",
+        stage: "pre-assembly-normalization",
+      });
+      const diags = getAndClearTypedPropertyDiagnostics();
+      expect(diags.length).toBe(2);
+      expect(diags[0].propertyName).toBe("TestProp");
+      expect(diags[0].action).toBe("blocked");
+      expect(diags[0].classification).toBe("unsupported-structured");
+      expect(diags[0].workflowFile).toBe("Main.xaml");
+      expect(diags[0].stage).toBe("coercePropToString");
+      expect(diags[1].propertyName).toBe("AnotherProp");
+      expect(diags[1].stage).toBe("pre-assembly-normalization");
+      const afterClear = getAndClearTypedPropertyDiagnostics();
+      expect(afterClear.length).toBe(0);
+    });
+
+    it("classifyPropertyValue returns unsupported-structured (blocking classification) for malformed objects", () => {
+      getAndClearTypedPropertyDiagnostics();
+      const result = classifyPropertyValue({ type: "literal", value: undefined });
+      expect(result.kind).toBe("unsupported-structured");
+      expect(result.reason).toBeDefined();
+      const result2 = classifyPropertyValue({ random: "object", no: "type" });
+      expect(result2.kind).toBe("unsupported-structured");
+      expect(result2.reason).toBeDefined();
+    });
+
+    it("coercePropToString blocks and emits diagnostic for incomplete typed objects", () => {
+      getAndClearTypedPropertyDiagnostics();
+      const r1 = coercePropToString({ type: "literal", value: undefined });
+      expect(r1).toBe("");
+      const r2 = coercePropToString({ type: "variable" });
+      expect(r2).toBe("");
+      const r3 = coercePropToString({ unrecognized: true, nested: { x: 1 } });
+      expect(r3).toBe("");
+      const diags = getAndClearTypedPropertyDiagnostics();
+      expect(diags.length).toBeGreaterThanOrEqual(2);
+      for (const d of diags) {
+        expect(d.action).toBe("blocked");
+        expect(d.classification).toBe("unsupported-structured");
+        expect(d.workflowFile).toBeDefined();
+        expect(d.stage).toBe("coercePropToString");
+      }
+      const hasTypedProp = diags.some(d => d.reason.includes("Incomplete typed property"));
+      expect(hasTypedProp).toBe(true);
+      const hasUnrecognized = diags.some(d => d.reason.includes("Unrecognized object shape"));
+      expect(hasUnrecognized).toBe(true);
+    });
+
+    it("diagnostics include actionable metadata for pipeline reporting", () => {
+      getAndClearTypedPropertyDiagnostics();
+      emitTypedPropertyDiagnostic({
+        workflowFile: "Process.xaml",
+        templateName: "TypeInto",
+        propertyName: "FilePath",
+        classification: "unsupported-structured",
+        action: "blocked",
+        reason: "Incomplete typed property object (type=literal, missing value)",
+        rawShape: '{"type":"literal"}',
+        stage: "typed-property-boundary",
+      });
+      const diags = getAndClearTypedPropertyDiagnostics();
+      expect(diags[0]).toMatchObject({
+        workflowFile: "Process.xaml",
+        templateName: "TypeInto",
+        propertyName: "FilePath",
+        classification: "unsupported-structured",
+        action: "blocked",
+        stage: "typed-property-boundary",
+      });
+      expect(typeof diags[0].reason).toBe("string");
+      expect(diags[0].reason.length).toBeGreaterThan(0);
+      expect(diags[0].rawShape).toBeDefined();
+    });
+
+    it("scalar extraction from valid typed objects emits scalar-extracted diagnostic", () => {
+      getAndClearTypedPropertyDiagnostics();
+      emitTypedPropertyDiagnostic({
+        workflowFile: "Main.xaml",
+        templateName: "LogMessage",
+        propertyName: "Message",
+        classification: "scalar-from-object",
+        action: "scalar-extracted",
+        reason: "Typed property object resolved to scalar value",
+        stage: "pre-assembly-normalization",
+      });
+      const diags = getAndClearTypedPropertyDiagnostics();
+      expect(diags.length).toBe(1);
+      expect(diags[0].action).toBe("scalar-extracted");
+      expect(diags[0].classification).toBe("scalar-from-object");
+    });
+  });
+
+  describe("Sentinel-based property blocking (input preprocessing)", () => {
+    it("BLOCKED_PROPERTY_SENTINEL is a recognizable marker string", () => {
+      expect(typeof BLOCKED_PROPERTY_SENTINEL).toBe("string");
+      expect(BLOCKED_PROPERTY_SENTINEL.length).toBeGreaterThan(0);
+      expect(BLOCKED_PROPERTY_SENTINEL).not.toBe("");
+    });
+
+    it("isBlockedPropertyValue detects sentinel in string form", () => {
+      expect(isBlockedPropertyValue(BLOCKED_PROPERTY_SENTINEL)).toBe(true);
+      expect(isBlockedPropertyValue("hello")).toBe(false);
+      expect(isBlockedPropertyValue("")).toBe(false);
+    });
+
+    it("isBlockedPropertyValue detects sentinel in ValueIntent form", () => {
+      expect(isBlockedPropertyValue({ type: "literal", value: BLOCKED_PROPERTY_SENTINEL })).toBe(true);
+      expect(isBlockedPropertyValue({ type: "literal", value: "hello" })).toBe(false);
+    });
+
+    it("coercePropToString returns empty for sentinel values", () => {
+      expect(coercePropToString(BLOCKED_PROPERTY_SENTINEL)).toBe("");
+    });
+
+    it("blocked properties are not emitted as [object Object] or raw shapes", () => {
+      const sentinel = coercePropToString(BLOCKED_PROPERTY_SENTINEL);
+      expect(sentinel).not.toBe("[object Object]");
+      expect(sentinel).not.toContain("BLOCKED");
+      expect(sentinel).toBe("");
+    });
+
+    it("getPropString blocks sentinel values and emits diagnostic", () => {
+      getAndClearTypedPropertyDiagnostics();
+      const props: Record<string, any> = {
+        blockedProp: BLOCKED_PROPERTY_SENTINEL,
+        normalProp: "hello",
+      };
+      const result = getPropString(props, "blockedProp", "normalProp");
+      expect(result).toBe("hello");
+      expect(result).not.toBe(BLOCKED_PROPERTY_SENTINEL);
+      const diags = getAndClearTypedPropertyDiagnostics();
+      expect(diags.length).toBeGreaterThanOrEqual(1);
+      expect(diags[0].action).toBe("blocked");
+      expect(diags[0].stage).toBe("getPropString-sentinel-check");
+    });
+
+    it("getPropString blocks sentinel in ValueIntent form", () => {
+      getAndClearTypedPropertyDiagnostics();
+      const props: Record<string, any> = {
+        blockedProp: { type: "literal", value: BLOCKED_PROPERTY_SENTINEL },
+        fallback: "safe value",
+      };
+      const result = getPropString(props, "blockedProp", "fallback");
+      expect(result).toBe("safe value");
+      expect(result).not.toContain("BLOCKED");
+      const diags = getAndClearTypedPropertyDiagnostics();
+      expect(diags.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("emission gate detects sentinel leakage in XAML", () => {
+      const badXaml = `<Assign Value="${BLOCKED_PROPERTY_SENTINEL}" />`;
+      const violations = checkNormalizationInvariants(badXaml, "test.xaml");
+      const sentinelViolations = violations.filter(v => v.pattern === "blocked-sentinel-leak");
+      expect(sentinelViolations.length).toBeGreaterThan(0);
+      expect(sentinelViolations[0].detail).toContain("Blocked property sentinel leaked");
+    });
+  });
+
+  describe("Schema-aware child-element classification", () => {
+    it("classifyPropertyWithSchema routes child-element properties correctly", () => {
+      const result = classifyPropertyWithSchema("test value", "Body", "SendSmtpMail");
+      if (result.kind === "child-element") {
+        expect(result.wrapper).toBeDefined();
+        expect(result.value).toBe("test value");
+      } else {
+        expect(result.kind).toBe("scalar");
+      }
+    });
+
+    it("classifyPropertyWithSchema blocks sentinel values even for child-element properties", () => {
+      const result = classifyPropertyWithSchema(BLOCKED_PROPERTY_SENTINEL, "Body", "SendSmtpMail");
+      expect(result.kind).toBe("unsupported-structured");
+      if (result.kind === "unsupported-structured") {
+        expect(result.reason).toContain("Blocked property sentinel");
+      }
+    });
+
+    it("classifyPropertyWithSchema falls back to classifyPropertyValue for unknown activities", () => {
+      const result = classifyPropertyWithSchema("hello", "SomeProp", "UnknownActivity123");
+      expect(result.kind).toBe("scalar");
+      if (result.kind === "scalar") expect(result.value).toBe("hello");
+    });
+
+    it("classifyPropertyWithSchema classifies attribute properties as scalar", () => {
+      const result = classifyPropertyWithSchema("Hello", "DisplayName", "LogMessage");
+      expect(result.kind).toBe("scalar");
+      if (result.kind === "scalar") expect(result.value).toBe("Hello");
     });
   });
 });

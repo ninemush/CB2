@@ -4,6 +4,36 @@ import { ValueIntentSchema } from "../xaml/expression-builder";
 
 const VALID_ERROR_HANDLING = new Set(["retry", "catch", "escalate", "none"]);
 
+const RECOGNIZED_TYPED_PROPERTY_TYPES = new Set(["literal", "variable", "url_with_params", "expression", "vb_expression"]);
+
+function isIncompleteTypedPropertyObject(obj: Record<string, unknown>): boolean {
+  if (!RECOGNIZED_TYPED_PROPERTY_TYPES.has(obj.type as string)) return false;
+  switch (obj.type) {
+    case "literal":
+    case "vb_expression":
+      return obj.value === undefined || obj.value === null || typeof obj.value !== "string";
+    case "variable":
+      return obj.name === undefined || obj.name === null || typeof obj.name !== "string" || obj.name === "";
+    case "url_with_params":
+      return obj.baseUrl === undefined || obj.baseUrl === null || typeof obj.baseUrl !== "string" || obj.baseUrl === "";
+    case "expression":
+      return obj.left === undefined || obj.right === undefined || typeof obj.left !== "string" || typeof obj.right !== "string" || obj.left === "" || obj.right === "";
+    default:
+      return false;
+  }
+}
+
+export const BLOCKED_PROPERTY_SENTINEL = "__BLOCKED_TYPED_PROPERTY__";
+
+export function isBlockedPropertyValue(val: unknown): boolean {
+  if (typeof val === "object" && val !== null) {
+    const obj = val as Record<string, unknown>;
+    return obj.type === "literal" && obj.value === BLOCKED_PROPERTY_SENTINEL;
+  }
+  if (typeof val === "string") return val === BLOCKED_PROPERTY_SENTINEL;
+  return false;
+}
+
 const PropertyValueInputSchema = z.preprocess(
   (val) => {
     if (val === null || val === undefined) return { type: "literal", value: "" };
@@ -11,10 +41,15 @@ const PropertyValueInputSchema = z.preprocess(
     if (typeof val === "string") return { type: "literal", value: val };
     if (typeof val === "object") {
       const obj = val as Record<string, unknown>;
-      if (obj.type === "literal" || obj.type === "variable" || obj.type === "url_with_params" || obj.type === "expression" || obj.type === "vb_expression") {
+      if (RECOGNIZED_TYPED_PROPERTY_TYPES.has(obj.type as string)) {
+        if (isIncompleteTypedPropertyObject(obj)) {
+          console.warn(`[PropertyValueInput] Incomplete typed property object (type="${obj.type}") — blocked (marked with sentinel)`);
+          return { type: "literal", value: BLOCKED_PROPERTY_SENTINEL };
+        }
         return val;
       }
-      return { type: "literal", value: JSON.stringify(val) };
+      console.warn(`[PropertyValueInput] Unrecognized object shape — blocked (marked with sentinel): ${JSON.stringify(val).substring(0, 120)}`);
+      return { type: "literal", value: BLOCKED_PROPERTY_SENTINEL };
     }
     return { type: "literal", value: String(val) };
   },

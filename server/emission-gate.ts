@@ -716,6 +716,39 @@ export function checkNormalizationInvariants(
     }
   }
 
+  const objectSerializedPattern = /OBJECT_SERIALIZED:/g;
+  let osMatch;
+  while ((osMatch = objectSerializedPattern.exec(content)) !== null) {
+    if (isInDeclarationRange(osMatch.index)) continue;
+    violations.push({
+      pattern: "raw-object-serialized",
+      detail: `Raw OBJECT_SERIALIZED marker leaked into XAML at ${fileName}:${findLineNumber(content, osMatch.index)}`,
+      line: findLineNumber(content, osMatch.index),
+    });
+  }
+
+  const objectObjectPattern = /\[object Object\]/g;
+  let ooMatch;
+  while ((ooMatch = objectObjectPattern.exec(content)) !== null) {
+    if (isInDeclarationRange(ooMatch.index)) continue;
+    violations.push({
+      pattern: "object-object-leak",
+      detail: `Raw [object Object] leaked into XAML at ${fileName}:${findLineNumber(content, ooMatch.index)}`,
+      line: findLineNumber(content, ooMatch.index),
+    });
+  }
+
+  const blockedSentinelPattern = /__BLOCKED_TYPED_PROPERTY__/g;
+  let bsMatch;
+  while ((bsMatch = blockedSentinelPattern.exec(content)) !== null) {
+    if (isInDeclarationRange(bsMatch.index)) continue;
+    violations.push({
+      pattern: "blocked-sentinel-leak",
+      detail: `Blocked property sentinel leaked into XAML at ${fileName}:${findLineNumber(content, bsMatch.index)}`,
+      line: findLineNumber(content, bsMatch.index),
+    });
+  }
+
   return violations;
 }
 
