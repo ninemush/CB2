@@ -13,6 +13,7 @@ import { catalogService } from "./catalog/catalog-service";
 import type { StudioProfile } from "./catalog/metadata-service";
 import { metadataService } from "./catalog/metadata-service";
 import { lintXamlExpressions } from "./xaml/vbnet-expression-linter";
+import { VB_EXPRESSION_KEYWORDS, CLR_TYPE_NAMESPACE_NAMES as QG_CLR_TYPE_NAMESPACE_NAMES, XML_ENTITY_NAMES as QG_XML_ENTITY_NAMES } from "./shared/symbol-exclusions";
 import { validateTypeCompatibility } from "./xaml/type-compatibility-validator";
 import { scoreSelectorQuality, generateSelectorWarnings, injectResilienceDefaults } from "./xaml/selector-quality-scorer";
 import { XAML_INFRASTRUCTURE_TYPE_ARGUMENTS } from "./xaml/xaml-compliance";
@@ -803,12 +804,7 @@ function checkVariableArgumentDeclarations(input: QualityGateInput, violations: 
     const allDeclared = new Set([...variables.keys(), ...args.keys()]);
     const isInitAllSettings = shortName.toLowerCase().includes("initallsettings");
 
-    const keywords = new Set([
-      "True", "False", "Nothing", "null", "New", "Not", "And", "Or", "If",
-      "String", "Integer", "Boolean", "DateTime", "Math", "Convert", "CType",
-      "CStr", "CInt", "CDbl", "Environment", "TimeSpan", "Now", "Today",
-      "System", "Console", "Exception", "Array", "Type",
-    ]);
+    const keywords = VB_EXPRESSION_KEYWORDS;
 
     const exprPattern = /\[([^\[\]]+)\]/g;
     let match;
@@ -837,20 +833,8 @@ function checkVariableArgumentDeclarations(input: QualityGateInput, violations: 
       const stringPattern = /"(?:[^"\\]|\\.)*"/g;
       const exprWithoutStrings = expr.replace(stringPattern, (m) => " ".repeat(m.length));
 
-      const XML_ENTITY_NAMES = new Set(["gt", "lt", "amp", "quot", "apos"]);
-      const CLR_TYPE_NAMESPACE_NAMES = new Set([
-        "HttpClient", "Newtonsoft", "JObject", "JArray", "JToken", "JValue",
-        "Regex", "Match", "StringBuilder", "StreamReader", "StreamWriter",
-        "File", "Path", "Directory", "Uri", "WebClient", "HttpWebRequest",
-        "DataTable", "DataRow", "DataColumn", "DataSet",
-        "List", "Dictionary", "HashSet", "Queue", "Stack",
-        "Task", "Thread", "Guid", "Decimal", "Double", "Single",
-        "Int16", "Int32", "Int64", "Byte", "Char", "Object",
-        "Information", "Trace", "Warning", "Error",
-        "Json", "Xml", "Linq", "Text", "IO", "Net", "Threading",
-        "Globalization", "Collections", "Generic", "Runtime",
-        "Serialization", "Configuration", "ComponentModel",
-      ]);
+      const XML_ENTITY_NAMES = QG_XML_ENTITY_NAMES;
+      const CLR_TYPE_NAMESPACE_NAMES = QG_CLR_TYPE_NAMESPACE_NAMES;
 
       const identPattern = /\b([a-zA-Z_]\w*)\b/g;
       let idMatch;

@@ -3650,6 +3650,7 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
     const complianceFallbacks: Array<{ file: string; reason: string; wasFullStub: boolean }> = [];
     const collectedPreEmissionDiagnostics: CriticalActivityLoweringDiagnostics[] = [];
     resetInstanceCounter();
+    const collectedSymbolDiscoveryDiagnostics: import("./declaration-registry").SymbolDiscoveryDiagnostic[] = [];
     const collectedRequiredPropertyTraces: RequiredPropertyTraceEntry[] = [];
     const collectedMailFamilyLockResults: MailFamilyLockResult[] = [];
     let specNormDiagnosticsResult: SpecNormalizationDiagnostics | undefined;
@@ -4238,7 +4239,10 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
           console.log(`[UiPath] Pre-emission lowering gate PASSED for "${wfName}" — ${preEmissionGate.diagnostics.summary.totalLoweredSuccessfully} critical step(s) validated`);
         }
         try {
-          const { xaml, variables } = assembleWorkflowFromSpec(spec, enrichEntry.processType);
+          const { xaml, variables, symbolDiscoveryDiagnostics: wfSymbolDiag } = assembleWorkflowFromSpec(spec, enrichEntry.processType);
+          if (wfSymbolDiag && wfSymbolDiag.length > 0) {
+            collectedSymbolDiscoveryDiagnostics.push(...wfSymbolDiag);
+          }
           {
             const wfTraces = collectedRequiredPropertyTraces.filter(t => t.workflowFile === `${wfName}.xaml`);
             for (const trace of wfTraces) {
@@ -9077,6 +9081,7 @@ ${depEntries}
     postClassifierMutationTrace: getMutationTrace(),
     postFreezeMutationTrace: getMutationTrace(),
     workflowAutoWiringDiagnostics: wiringDiagnostics,
+    symbolDiscoveryDiagnostics: collectedSymbolDiscoveryDiagnostics.length > 0 ? collectedSymbolDiscoveryDiagnostics : undefined,
   };
 
   if (buildCacheKey && fingerprint) {

@@ -546,6 +546,20 @@ export function generateDhgFromOutcomeReport(
     }
   }
 
+  if (report.symbolDiscoveryDiagnostics && report.symbolDiscoveryDiagnostics.length > 0) {
+    const emitted = report.symbolDiscoveryDiagnostics.filter(d => d.declarationEmitted);
+    const withheld = report.symbolDiscoveryDiagnostics.filter(d => !d.declarationEmitted);
+    md += `### Symbol Discovery Diagnostics\n\n`;
+    md += `**Auto-declared:** ${emitted.length} symbol(s) | **Withheld:** ${withheld.length} symbol(s)\n\n`;
+    if (withheld.length > 0) {
+      md += `| Symbol | Category | Reason |\n|--------|----------|--------|\n`;
+      for (const d of withheld) {
+        md += `| \`${d.symbol}\` | ${d.category} | ${d.ambiguityReason || d.conflictReason || "Insufficient evidence"} |\n`;
+      }
+      md += `\n`;
+    }
+  }
+
   sectionNum++;
   md += `## ${sectionNum}. Handoff Blocks (business logic preserved, implementation required)\n\n`;
   md += `Blocks where business logic is preserved as documentation but implementation requires manual Studio work. Each entry includes the workflow file, block type, business description from the SDD (when available), expected inputs/outputs, and the developer action required.\n\n`;

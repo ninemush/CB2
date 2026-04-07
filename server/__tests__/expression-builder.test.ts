@@ -1123,6 +1123,403 @@ describe("Expression and Value Passthrough Authority", () => {
     });
   });
 
+  describe("Unprefixed symbol discovery via assembleWorkflowFromSpec", () => {
+    it("discovers prefixed variable in activity property and declares it", () => {
+      const spec = {
+        name: "PrefixedVarTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "activity" as const,
+              template: "Assign",
+              displayName: "Set Value",
+              properties: { To: "str_Result", Value: '"hello"' },
+              errorHandling: "none" as const,
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.xaml).toContain("str_Result");
+      expect(result.xaml).toContain('Variable x:TypeArguments="x:String" Name="str_Result"');
+    });
+
+    it("discovers unprefixed standalone variable as assign target and declares as x:Object", () => {
+      const spec = {
+        name: "UnprefixedVarTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "activity" as const,
+              template: "Assign",
+              displayName: "Set Result",
+              properties: { To: "result", Value: '"done"' },
+              errorHandling: "none" as const,
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.xaml).toContain("result");
+    });
+
+    it("discovers prefixed variable in If condition", () => {
+      const spec = {
+        name: "IfCondPrefixedTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "if" as const,
+              displayName: "Check Flag",
+              condition: "bool_IsReady = True",
+              thenChildren: [
+                {
+                  kind: "activity" as const,
+                  template: "LogMessage",
+                  displayName: "Log Ready",
+                  properties: { Level: "Info", Message: '"Ready"' },
+                  errorHandling: "none" as const,
+                },
+              ],
+              elseChildren: [],
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.xaml).toContain("bool_IsReady");
+      expect(result.xaml).toContain('Variable x:TypeArguments="x:Boolean" Name="bool_IsReady"');
+    });
+
+    it("does not declare PascalCase identifiers followed by dot (property access)", () => {
+      const spec = {
+        name: "PropertyAccessTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "activity" as const,
+              template: "Assign",
+              displayName: "Get Length",
+              properties: { To: "int_Len", Value: "String.Empty.Length" },
+              errorHandling: "none" as const,
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.xaml).not.toContain('Name="Empty"');
+      expect(result.xaml).not.toContain('Name="Length"');
+    });
+
+    it("does not declare VB.NET keywords or CLR types as variables", () => {
+      const spec = {
+        name: "KeywordExclusionTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "activity" as const,
+              template: "Assign",
+              displayName: "Convert Value",
+              properties: { To: "str_Result", Value: "CStr(Nothing)" },
+              errorHandling: "none" as const,
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.xaml).not.toContain('Name="Nothing"');
+      expect(result.xaml).not.toContain('Name="CStr"');
+    });
+
+    it("does not declare case-insensitive VB keywords or CLR types", () => {
+      const spec = {
+        name: "CaseInsensitiveTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "activity" as const,
+              template: "Assign",
+              displayName: "Set Value",
+              properties: { To: "str_Val", Value: "nothing" },
+              errorHandling: "none" as const,
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.xaml).not.toContain('Name="nothing"');
+    });
+
+    it("declares unprefixed identifiers in complex expressions as x:Object", () => {
+      const spec = {
+        name: "ComplexExprTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "activity" as const,
+              template: "Assign",
+              displayName: "Compute",
+              properties: { To: "int_Total", Value: "count + offset * 2" },
+              errorHandling: "none" as const,
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.xaml).toContain('Name="count"');
+      expect(result.xaml).toContain('Name="offset"');
+      const countDiag = result.symbolDiscoveryDiagnostics?.find(d => d.symbol === "count");
+      expect(countDiag).toBeDefined();
+      expect(countDiag!.declarationEmitted).toBe(true);
+      expect(countDiag!.inferredType).toBe("x:Object");
+    });
+
+    it("does not declare function calls as variables", () => {
+      const spec = {
+        name: "FuncCallExclusionTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "activity" as const,
+              template: "Assign",
+              displayName: "Trim Value",
+              properties: { To: "str_Output", Value: 'Trim(str_Input)' },
+              errorHandling: "none" as const,
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.xaml).not.toContain('Name="Trim"');
+    });
+
+    it("records symbol diagnostics for discovered symbols", () => {
+      const spec = {
+        name: "DiagnosticsTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "activity" as const,
+              template: "Assign",
+              displayName: "Set Count",
+              properties: { To: "int_Count", Value: "0" },
+              errorHandling: "none" as const,
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.symbolDiscoveryDiagnostics).toBeDefined();
+      const diag = result.symbolDiscoveryDiagnostics!.find(d => d.symbol === "int_Count");
+      expect(diag).toBeDefined();
+      expect(diag!.category).toBe("variable");
+      expect(diag!.declarationEmitted).toBe(true);
+      expect(diag!.inferredType).toBe("x:Int32");
+    });
+
+    it("records argument diagnostics for discovered arguments", () => {
+      const spec = {
+        name: "ArgDiagTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "if" as const,
+              displayName: "Check Input",
+              condition: 'in_Name <> ""',
+              thenChildren: [
+                {
+                  kind: "activity" as const,
+                  template: "LogMessage",
+                  displayName: "Log Name",
+                  properties: { Level: "Info", Message: "in_Name" },
+                  errorHandling: "none" as const,
+                },
+              ],
+              elseChildren: [],
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.symbolDiscoveryDiagnostics).toBeDefined();
+      const argDiag = result.symbolDiscoveryDiagnostics!.find(d => d.symbol === "in_Name" && d.category === "argument");
+      expect(argDiag).toBeDefined();
+      expect(argDiag!.declarationEmitted).toBe(false);
+      expect(argDiag!.ambiguityReason).toContain("No type evidence");
+    });
+
+    it("does not declare identifiers from quoted string literals as variables", () => {
+      const spec = {
+        name: "QuotedLiteralTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "activity" as const,
+              template: "Assign",
+              displayName: "Set Status",
+              properties: { To: "str_Status", Value: '"done"' },
+              errorHandling: "none" as const,
+            },
+            {
+              kind: "activity" as const,
+              template: "Assign",
+              displayName: "Set Message",
+              properties: { To: "str_Msg", Value: '"Hello World"' },
+              errorHandling: "none" as const,
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.xaml).not.toContain('Name="done"');
+      expect(result.xaml).not.toContain('Name="Hello"');
+      expect(result.xaml).not.toContain('Name="World"');
+    });
+
+    it("discovers symbols in nested ForEach body children", () => {
+      const spec = {
+        name: "ForEachBodyTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "forEach" as const,
+              displayName: "Loop Items",
+              iteratorName: "item",
+              valuesExpression: "list_Items",
+              bodyChildren: [
+                {
+                  kind: "activity" as const,
+                  template: "Assign",
+                  displayName: "Set Value",
+                  properties: { To: "str_Current", Value: "item.ToString()" },
+                  errorHandling: "none" as const,
+                },
+              ],
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.xaml).toContain("str_Current");
+    });
+
+    it("does not declare unprefixed identifiers from never-expression properties", () => {
+      const spec = {
+        name: "NonExprPropTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "activity" as const,
+              template: "LogMessage",
+              displayName: "Log Info",
+              properties: { Message: '"Processing complete"', Level: "Info" },
+              errorHandling: "none" as const,
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.xaml).not.toContain('Name="Info"');
+      expect(result.xaml).not.toContain('Name="Processing"');
+      expect(result.xaml).not.toContain('Name="complete"');
+    });
+
+    it("discovers unprefixed symbols in expression-capable properties like Message", () => {
+      const spec = {
+        name: "ExprCapablePropTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "activity" as const,
+              template: "Assign",
+              displayName: "Compute",
+              properties: { To: "str_Result", Value: "total + bonus" },
+              errorHandling: "none" as const,
+            },
+            {
+              kind: "activity" as const,
+              template: "LogMessage",
+              displayName: "Log Status",
+              properties: { Message: "status & count", Level: "Info" },
+              errorHandling: "none" as const,
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      expect(result.xaml).toContain('Name="total"');
+      expect(result.xaml).toContain('Name="bonus"');
+      expect(result.xaml).not.toContain('Name="Info"');
+    });
+
+    it("records withheld diagnostics for rejected unprefixed candidates", () => {
+      const spec = {
+        name: "WithheldDiagTest",
+        variables: [],
+        rootSequence: {
+          kind: "sequence" as const,
+          displayName: "Main",
+          children: [
+            {
+              kind: "activity" as const,
+              template: "Assign",
+              displayName: "Call Func",
+              properties: { To: "str_Result", Value: "Trim(str_Input)" },
+              errorHandling: "none" as const,
+            },
+          ],
+        },
+      };
+      const result = assembleWorkflowFromSpec(spec as any);
+      const diagnostics = result.symbolDiscoveryDiagnostics || [];
+      const withheld = diagnostics.find(d => d.symbol === "Trim" && d.declarationEmitted === false);
+      expect(withheld).toBeDefined();
+      expect(withheld!.ambiguityReason).toContain("Withheld");
+    });
+  });
+
   describe("XML-encoded url_with_params lowering", () => {
     it("parses XML-entity-encoded url_with_params JSON", () => {
       const input = '{&quot;type&quot;:&quot;url_with_params&quot;,&quot;baseUrl&quot;:&quot;https://api.example.com&quot;,&quot;params&quot;:{}}';

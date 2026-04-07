@@ -381,6 +381,7 @@ export interface PipelineOutcomeReport {
   postClassifierMutationTrace?: import("./workflow-status-classifier").PostClassifierMutationTrace;
   postFreezeMutationTrace?: import("./workflow-status-classifier").PostClassifierMutationTrace;
   workflowAutoWiringDiagnostics?: import("./auto-wiring-diagnostics").WorkflowAutoWiringDiagnostics;
+  symbolDiscoveryDiagnostics?: import("./declaration-registry").SymbolDiscoveryDiagnostic[];
 }
 
 export interface PipelineResult {

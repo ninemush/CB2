@@ -28,7 +28,8 @@ import { getActivityTag, getActivityPrefixStrict, injectMissingNamespaceDeclarat
 import { lintExpression } from "./xaml/vbnet-expression-linter";
 import type { RemediationEntry, RemediationCode } from "./uipath-pipeline";
 import { PROPERTY_REMEDIATION_ESCALATION_THRESHOLD } from "./uipath-pipeline";
-import { DeclarationRegistry, scopeIdMatchesStackEntryExternal } from "./declaration-registry";
+import { DeclarationRegistry, scopeIdMatchesStackEntryExternal, type SymbolDiscoveryDiagnostic } from "./declaration-registry";
+import { isExcludedSymbolToken } from "./shared/symbol-exclusions";
 
 export interface PropertyRemediationRecord {
   propertyName: string;
@@ -448,6 +449,61 @@ function extractPrefixedVarRefsFromString(str: string): string[] {
   return refs;
 }
 
+function getUnprefixedCandidateRejectionReason(ident: string, expressionContext: string): string | null {
+  if (ident.length < 2) return "identifier too short";
+  if (isExcludedSymbolToken(ident)) return `excluded symbol token (keyword/CLR type/XML entity)`;
+  if (VBNET_RESERVED_WORDS.has(ident.toLowerCase())) return "VB.NET reserved word";
+  if (/^\d/.test(ident)) return "starts with digit";
+  if (/^[A-Z][a-z]/.test(ident)) {
+    const dotFollowPattern = new RegExp(`\\b${ident.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.`, "g");
+    if (dotFollowPattern.test(expressionContext)) return "PascalCase identifier followed by dot (member access)";
+  }
+  const funcCallPattern = new RegExp(`\\b${ident.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\(`);
+  if (funcCallPattern.test(expressionContext)) return "identifier used as function call";
+  const memberAccessPattern = new RegExp(`\\.${ident.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+  if (memberAccessPattern.test(expressionContext)) return "identifier accessed as member";
+  if (XAML_PROTECTED_STRUCTURAL_NAMES.has(ident)) return "XAML protected structural name";
+  return null;
+}
+
+interface UnprefixedExtractionResult {
+  accepted: string[];
+  rejected: Array<{ ident: string; reason: string; expressionContext: string }>;
+}
+
+function extractUnprefixedVarRefsFromExpression(str: string): UnprefixedExtractionResult {
+  const result: UnprefixedExtractionResult = { accepted: [], rejected: [] };
+  let stripped = str.replace(/^\[|\]$/g, "").trim();
+  if (/^"\[.*\]"$/s.test(stripped)) {
+    stripped = stripped.replace(/^"(.*)"$/s, "$1").trim();
+    stripped = stripped.replace(/^\[|\]$/g, "").trim();
+  }
+  if (!stripped) return result;
+
+  const stringPattern = /"(?:[^"]|"")*"/g;
+  const exprWithoutStrings = stripped.replace(stringPattern, (m) => " ".repeat(m.length));
+
+  const identPattern = /\b([a-zA-Z_]\w*)\b/g;
+  let match;
+  const seen = new Set<string>();
+  while ((match = identPattern.exec(exprWithoutStrings)) !== null) {
+    const ident = match[1];
+    if (seen.has(ident)) continue;
+    seen.add(ident);
+
+    if (/^(str_|int_|bool_|dbl_|dec_|obj_|dt_|ts_|drow_|qi_|sec_|arr_|dict_|list_|num_|is_|has_|date_|dtm_|dr_)/i.test(ident)) continue;
+    if (/^(in_|out_|io_)/i.test(ident)) continue;
+
+    const rejectionReason = getUnprefixedCandidateRejectionReason(ident, exprWithoutStrings);
+    if (rejectionReason) {
+      result.rejected.push({ ident, reason: rejectionReason, expressionContext: exprWithoutStrings });
+    } else {
+      result.accepted.push(ident);
+    }
+  }
+  return result;
+}
+
 function discoverAndRegisterVarRef(varName: string, registry: DeclarationRegistry, workflowName: string): void {
   if (registry.hasName(varName)) return;
   if (/^(in_|out_|io_)/i.test(varName)) return;
@@ -458,7 +514,45 @@ function discoverAndRegisterVarRef(varName: string, registry: DeclarationRegistr
     type: inferredType,
     source: "discovered-reference",
   });
+  registry.recordSymbolDiagnostic({
+    symbol: varName,
+    category: "variable",
+    inferredType,
+    declarationEmitted: true,
+    scope: "workflow",
+    source: "discovered-reference",
+  });
   console.log(`[Variable Declaration] Pre-emission walk: auto-declared variable "${varName}" (${inferredType}) in "${workflowName}"`);
+}
+
+function discoverAndRegisterUnprefixedVarRef(
+  varName: string,
+  registry: DeclarationRegistry,
+  workflowName: string,
+): void {
+  if (registry.hasName(varName)) return;
+  if (/^(in_|out_|io_)/i.test(varName)) return;
+
+  const prefixType = inferTypeFromPrefix(varName);
+  if (prefixType) {
+    discoverAndRegisterVarRef(varName, registry, workflowName);
+    return;
+  }
+
+  registry.registerVariable({
+    name: varName,
+    type: "x:Object",
+    source: "discovered-reference",
+  });
+  registry.recordSymbolDiagnostic({
+    symbol: varName,
+    category: "variable",
+    inferredType: "x:Object",
+    declarationEmitted: true,
+    scope: "workflow",
+    source: "discovered-reference",
+  });
+  console.log(`[Variable Declaration] Pre-emission walk: auto-declared unprefixed variable "${varName}" (x:Object) in "${workflowName}"`);
 }
 
 function discoverAndRegisterArgRef(argName: string, registry: DeclarationRegistry, workflowName: string): void {
@@ -470,6 +564,15 @@ function discoverAndRegisterArgRef(argName: string, registry: DeclarationRegistr
     : "InArgument" as const;
   const inferredType = inferTypeFromPrefix(argName);
   if (!inferredType) {
+    registry.recordSymbolDiagnostic({
+      symbol: argName,
+      category: "argument",
+      inferredType: "x:Object",
+      declarationEmitted: false,
+      scope: "workflow",
+      source: "discovered-reference",
+      ambiguityReason: `No type evidence from prefix for argument "${argName}"`,
+    });
     console.log(`[Argument Declaration] Skipping auto-declaration of "${argName}" in "${workflowName}" — no type evidence from prefix`);
     return;
   }
@@ -480,10 +583,18 @@ function discoverAndRegisterArgRef(argName: string, registry: DeclarationRegistr
     source: "discovered-reference",
   });
   if (!registry.hasArgumentName(argName)) return;
+  registry.recordSymbolDiagnostic({
+    symbol: argName,
+    category: "argument",
+    inferredType,
+    declarationEmitted: true,
+    scope: "workflow",
+    source: "discovered-reference",
+  });
   console.log(`[Argument Declaration] Pre-emission walk: auto-declared ${direction} "${argName}" (${inferredType}) in "${workflowName}"`);
 }
 
-function extractRefsFromStrings(strings: string[], registry: DeclarationRegistry, workflowName: string): void {
+function extractRefsFromStrings(strings: string[], registry: DeclarationRegistry, workflowName: string, isExpressionContext: boolean = false): void {
   for (const str of strings) {
     const refs = extractArgumentRefsFromString(str);
     for (const argName of refs) {
@@ -492,6 +603,25 @@ function extractRefsFromStrings(strings: string[], registry: DeclarationRegistry
     const varRefs = extractPrefixedVarRefsFromString(str);
     for (const varName of varRefs) {
       discoverAndRegisterVarRef(varName, registry, workflowName);
+    }
+    if (isExpressionContext) {
+      const unprefixedResult = extractUnprefixedVarRefsFromExpression(str);
+      for (const varName of unprefixedResult.accepted) {
+        discoverAndRegisterUnprefixedVarRef(varName, registry, workflowName);
+      }
+      for (const rejection of unprefixedResult.rejected) {
+        if (!registry.hasName(rejection.ident)) {
+          registry.recordSymbolDiagnostic({
+            symbol: rejection.ident,
+            category: "variable",
+            inferredType: "x:Object",
+            declarationEmitted: false,
+            scope: "workflow",
+            source: "discovered-reference",
+            ambiguityReason: `Withheld: ${rejection.reason}`,
+          });
+        }
+      }
     }
   }
 }
@@ -522,18 +652,36 @@ function collectStringsFromValue(val: unknown, out: string[]): void {
   }
 }
 
+const NEVER_EXPRESSION_PROPERTY_NAMES = new Set([
+  "DisplayName", "Level", "Annotation", "AnnotationText",
+]);
+
+function isNeverExpressionProperty(propName: string): boolean {
+  return NEVER_EXPRESSION_PROPERTY_NAMES.has(propName);
+}
+
 function walkNodeForArgumentRefs(node: WorkflowNode, registry: DeclarationRegistry, workflowName: string): void {
   if (node.kind === "activity") {
     const actNode = node as ActivityNode;
-    const allStrings: string[] = [];
+    const exprStrings: string[] = [];
+    const nonExprStrings: string[] = [];
 
-    if (actNode.outputVar) allStrings.push(actNode.outputVar);
+    if (actNode.outputVar) exprStrings.push(actNode.outputVar);
 
-    for (const [, val] of Object.entries(actNode.properties || {})) {
-      collectStringsFromValue(val, allStrings);
+    for (const [key, val] of Object.entries(actNode.properties || {})) {
+      if (isNeverExpressionProperty(key)) {
+        const target: string[] = [];
+        collectStringsFromValue(val, target);
+        nonExprStrings.push(...target);
+      } else {
+        const target: string[] = [];
+        collectStringsFromValue(val, target);
+        exprStrings.push(...target);
+      }
     }
 
-    extractRefsFromStrings(allStrings, registry, workflowName);
+    extractRefsFromStrings(exprStrings, registry, workflowName, true);
+    extractRefsFromStrings(nonExprStrings, registry, workflowName, false);
   }
 
   if (node.kind === "if") {
@@ -554,7 +702,7 @@ function walkNodeForArgumentRefs(node: WorkflowNode, registry: DeclarationRegist
         console.warn(`[Ref Discovery] Failed to build expression from If condition ValueIntent: ${(e as Error).message}`);
       }
     }
-    extractRefsFromStrings(condStrings, registry, workflowName);
+    extractRefsFromStrings(condStrings, registry, workflowName, true);
   }
 
   if (node.kind === "while") {
@@ -575,7 +723,7 @@ function walkNodeForArgumentRefs(node: WorkflowNode, registry: DeclarationRegist
         console.warn(`[Ref Discovery] Failed to build expression from While condition ValueIntent: ${(e as Error).message}`);
       }
     }
-    extractRefsFromStrings(condStrings, registry, workflowName);
+    extractRefsFromStrings(condStrings, registry, workflowName, true);
   }
 
   if (node.kind === "forEach") {
@@ -592,7 +740,7 @@ function walkNodeForArgumentRefs(node: WorkflowNode, registry: DeclarationRegist
         }
       }
     }
-    extractRefsFromStrings(forEachStrings, registry, workflowName);
+    extractRefsFromStrings(forEachStrings, registry, workflowName, true);
 
     if (forEachNode.bodyChildren) {
       for (const child of forEachNode.bodyChildren) {
@@ -4015,7 +4163,7 @@ function preAssemblyLowerValueIntents(node: WorkflowNode): void {
 export function assembleWorkflowFromSpec(
   spec: WorkflowSpec,
   processType: ProcessType = "general",
-): { xaml: string; variables: VariableDeclaration[] } {
+): { xaml: string; variables: VariableDeclaration[]; symbolDiscoveryDiagnostics?: SymbolDiscoveryDiagnostic[] } {
   const workflowName = (spec.name || "Workflow").replace(/"/g, "").replace(/&quot;/g, "").replace(/\s+/g, "_");
 
   const metrics: ValueIntentMetrics = { structuredCount: 0, flatStringCount: 0 };
@@ -4172,7 +4320,7 @@ export function assembleWorkflowFromSpec(
     <ui:Comment Text="[VB_EXPRESSION_BLOCKED] Workflow generation was blocked because an expression contained unconvertible C# syntax: ${escapeXml(e.message)}. The expression must be rewritten in VB.NET before this workflow can be generated." DisplayName="BLOCKED — C# Expression Not Convertible" />
   </Sequence>
 </Activity>`;
-      return { xaml: blockedFallbackXaml, variables: finalVariables };
+      return { xaml: blockedFallbackXaml, variables: finalVariables, symbolDiscoveryDiagnostics: registry.hasSymbolDiagnostics() ? registry.getSymbolDiagnostics() : undefined };
     }
     throw e;
   } finally {
@@ -4192,6 +4340,15 @@ export function assembleWorkflowFromSpec(
   if (registry.hasConflicts()) {
     for (const conflict of registry.getConflicts()) {
       console.warn(`[DeclarationRegistry] Conflict detected for "${conflict.name}": ${conflict.existingType} (${conflict.existingSource}) vs ${conflict.incomingType} (${conflict.incomingSource})`);
+      registry.recordSymbolDiagnostic({
+        symbol: conflict.name,
+        category: conflict.existingSource === "argument-discovery" || conflict.incomingSource === "argument-discovery" ? "argument" : "variable",
+        inferredType: conflict.existingType,
+        declarationEmitted: true,
+        scope: "workflow",
+        source: conflict.existingSource,
+        conflictReason: `Type conflict: existing ${conflict.existingType} (${conflict.existingSource}) vs incoming ${conflict.incomingType} (${conflict.incomingSource})`,
+      });
     }
   }
 
@@ -4284,7 +4441,7 @@ ${xMembersBlock}  <Sequence DisplayName="${escapeXml(workflowName)}">
     <ui:Comment Text="[CONTAINER_VALIDATION_FAILED] Irrecoverable container structure error(s): ${escapeXml(errorSummary)}. Manual implementation required." DisplayName="Container Validation Failed — ${escapeXml(workflowName)}" />
   </Sequence>
 </Activity>`;
-    return { xaml: fallbackXaml, variables: resolvedVariables };
+    return { xaml: fallbackXaml, variables: resolvedVariables, symbolDiscoveryDiagnostics: registry.hasSymbolDiagnostics() ? registry.getSymbolDiagnostics() : undefined };
   }
 
   xaml = sanitizeUnescapedAmpersands(xaml);
@@ -4319,10 +4476,10 @@ ${xMembersBlock}  <Sequence DisplayName="${escapeXml(workflowName)}">
     <ui:Comment Text="[ASSEMBLY_FAILED] Tree assembly produced malformed XML: ${escapeXml(err.msg)} at line ${err.line}, col ${err.col}. Manual implementation required." DisplayName="Assembly Failed — ${escapeXml(workflowName)}" />
   </Sequence>
 </Activity>`;
-    return { xaml: fallbackXaml, variables: resolvedVariables };
+    return { xaml: fallbackXaml, variables: resolvedVariables, symbolDiscoveryDiagnostics: registry.hasSymbolDiagnostics() ? registry.getSymbolDiagnostics() : undefined };
   }
 
-  return { xaml, variables: resolvedVariables };
+  return { xaml, variables: resolvedVariables, symbolDiscoveryDiagnostics: registry.hasSymbolDiagnostics() ? registry.getSymbolDiagnostics() : undefined };
 }
 
 export interface ContainerValidationResult {

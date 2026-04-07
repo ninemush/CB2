@@ -57,12 +57,24 @@ function scopeIdMatchesStackEntry(scopeId: string, stackEntry: string): boolean 
   return registeredName !== "" && registeredName === stackName;
 }
 
+export interface SymbolDiscoveryDiagnostic {
+  symbol: string;
+  category: "variable" | "argument";
+  inferredType: string;
+  declarationEmitted: boolean;
+  scope: string;
+  source: DeclarationSource;
+  conflictReason?: string;
+  ambiguityReason?: string;
+}
+
 export class DeclarationRegistry {
   private arguments: Map<string, ArgumentDeclaration> = new Map();
   private variables: Map<string, VariableRegistryEntry> = new Map();
   private scopedVariables: Map<string, VariableRegistryEntry> = new Map();
   private scopeStack: string[] = [];
   private conflicts: DeclarationConflict[] = [];
+  private symbolDiagnostics: SymbolDiscoveryDiagnostic[] = [];
 
   registerArgument(arg: ArgumentDeclaration): void {
     const existing = this.arguments.get(arg.name);
@@ -244,5 +256,17 @@ export class DeclarationRegistry {
 
   getArgumentNames(): Set<string> {
     return new Set(this.arguments.keys());
+  }
+
+  recordSymbolDiagnostic(diagnostic: SymbolDiscoveryDiagnostic): void {
+    this.symbolDiagnostics.push(diagnostic);
+  }
+
+  getSymbolDiagnostics(): SymbolDiscoveryDiagnostic[] {
+    return [...this.symbolDiagnostics];
+  }
+
+  hasSymbolDiagnostics(): boolean {
+    return this.symbolDiagnostics.length > 0;
   }
 }
