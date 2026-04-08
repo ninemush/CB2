@@ -1,0 +1,118 @@
+Spec-to-IR Normalization Layer for Deterministic Generator Inputs
+
+What & Why
+Recent runs show that the deterministic generator direction is correct, but the pipeline still lacks a proper normalization layer between flexible LLM/spec output and the strict input contracts expected by deterministic XAML generators.
+
+The latest package remains structurally invalid with:
+- execution-blocking contract integrity defects
+- unresolved required property defects
+- critical activity lowering failures
+- structured-object contamination in x:TypeArguments
+- repeated missing scalar-required properties such as LogMessage.Message and InvokeWorkflowFile.WorkflowFileName
+
+The upstream pattern is now clear:
+the spec can contain flexible property shapes such as:
+- scalar strings
+- ValueIntent wrappers
+- typed objects
+- VB-expression wrappers
+- dictionary-shaped invoke argument maps
+
+But the deterministic generator path expects already-normalized inputs:
+- plain scalar strings where scalar generator arguments are required
+- explicit named invoke bindings instead of dictionary blobs
+- valid type argument strings instead of structured object sentinels
+- schema-correct child-element structures where required
+
+Today there is no single authoritative normalization stage that converts the flexible spec format into this stricter deterministic-generator IR. As a result, the same logical values are still being lost, skipped, or emitted in the wrong shape.
+
+This task must introduce a spec-to-IR normalization layer before deterministic generator dispatch. The goal is to hand deterministic generators only normalized, generator-ready inputs.
+
+Done looks like
+- Deterministic generators receive generator-ready inputs instead of raw flexible spec objects.
+- Arguments dictionary expressions are normalized into explicit named invoke bindings before InvokeWorkflowFile emission.
+- Scalar-required properties are normalized to plain strings before deterministic generator dispatch.
+- Type argument contexts no longer receive __STRUCTURED_OBJECT__-style contamination.
+- Required-property failures caused by dropped or skipped structured inputs reduce materially.
+- Contract integrity defects caused by malformed or missing invoke bindings reduce materially.
+
+Out of scope
+- Replacing the deterministic engine
+- Broad graph redesign
+- Prompt engineering
+- Full REFramework redesign
+- Weakening the emission gate
+- Silent coercion of unsupported structures into guessed values
+
+Design rules
+Single normalization boundary
+Before deterministic generator dispatch, every property must be normalized into a generator-ready IR shape. Generators should not need to interpret raw spec flexibility.
+
+Explicit invoke binding normalization
+Dictionary-shaped or object-shaped invoke argument payloads must be converted into explicit named bindings or blocked diagnostically. They must not be silently dropped.
+
+Scalar-before-generator
+Scalar-required generator inputs must be plain strings before dispatch.
+
+No structured contamination in type contexts
+Type argument inputs must either be valid type strings or be blocked. Structured-object sentinels must never reach emitted type metadata.
+
+No silent invention
+If normalization cannot safely determine the intended value or shape, emit a diagnostic and block or preserve existing fallback behavior. Do not guess business content.
+
+Tasks
+1. Trace the current property-shape pipeline from spec-to-tree mapping through normalizeSpecProperties, deterministic generator dispatch, invoke binding handling, and type argument emission.
+
+2. Define a generator-ready IR shape for at least these classes:
+- scalar property
+- named invoke argument binding
+- typed child-element property
+- type argument string
+- blocked unsupported structured value
+
+3. Add a single normalization pass before deterministic generator dispatch that converts flexible spec properties into this IR.
+
+4. Normalize InvokeWorkflowFile argument dictionaries into explicit named bindings before emission.
+Do not allow dictionary-shaped Arguments payloads to reach the generator as raw objects or skipped structured sentinels.
+
+5. Normalize scalar-required benchmark properties into plain strings before generator dispatch, including:
+- WorkflowFileName
+- Message
+- AssetName
+- EntityType
+
+6. Normalize type argument inputs so generator/type-emission paths never receive structured-object sentinels in x:TypeArguments.
+
+7. Add diagnostics showing:
+- original property shape
+- normalized IR shape
+- blocked reason if normalization failed
+- workflow and activity context
+
+8. Add regression tests covering:
+- invoke argument dictionary normalization to named bindings
+- scalar ValueIntent normalization to plain strings
+- type argument normalization rejecting structured contamination
+- full-path mini spec -> normalization -> deterministic generator -> XAML integration test
+
+Primary files to modify
+- server/spec-to-tree-mapper.ts
+- server/workflow-tree-assembler.ts
+- server/xaml/deterministic-generators.ts
+- server/xaml-generator.ts
+- server/workflow-spec-types.ts
+- server/xaml/expression-builder.ts
+- server/__tests__/pipeline-regression.test.ts
+
+Reference files
+- server/package-assembler.ts
+- server/emission-gate.ts
+- server/final-artifact-validation.ts
+- server/uipath-quality-gate.ts
+
+Success measure
+Benchmark runs should show a material reduction in:
+- contract integrity defects caused by missing invoke bindings
+- unresolved required properties caused by dropped structured inputs
+- structured-object contamination in type arguments
+- generator inputs receiving flexible raw property objects instead of normalized IR values
