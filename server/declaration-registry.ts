@@ -57,6 +57,13 @@ function scopeIdMatchesStackEntry(scopeId: string, stackEntry: string): boolean 
   return registeredName !== "" && registeredName === stackName;
 }
 
+export interface ExpressionContextEvidence {
+  activityType: string;
+  propertyName: string;
+  expectedType: string;
+  evidenceStrength: "strong" | "moderate" | "weak";
+}
+
 export interface SymbolDiscoveryDiagnostic {
   symbol: string;
   category: "variable" | "argument";
@@ -66,6 +73,7 @@ export interface SymbolDiscoveryDiagnostic {
   source: DeclarationSource;
   conflictReason?: string;
   ambiguityReason?: string;
+  expressionContext?: ExpressionContextEvidence;
 }
 
 export class DeclarationRegistry {

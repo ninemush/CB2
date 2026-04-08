@@ -1,5 +1,5 @@
 import { catalogService, type CatalogProperty, type ActivitySchema } from "./catalog/catalog-service";
-import { tryParseJsonValueIntent, buildExpression, type ValueIntent } from "./xaml/expression-builder";
+import { tryParseJsonValueIntent, buildExpression, type ValueIntent, recordExpressionLoweringDiagnostic } from "./xaml/expression-builder";
 
 export type SourceKind =
   | "workflowArgument"
@@ -460,16 +460,67 @@ export function tryLowerStructuredExpression(value: string): { lowered: boolean;
     try {
       const built = buildExpression(jsonResult.intent);
       if (built && !isSentinelValue(built)) {
+        recordExpressionLoweringDiagnostic({
+          originalValue: trimmed,
+          loweredValue: built,
+          lowered: true,
+          evidenceSources: [`ValueIntent(type=${jsonResult.intent.type}, fallback=${jsonResult.fallbackUsed})`],
+        });
         return { lowered: true, result: built };
       }
+      recordExpressionLoweringDiagnostic({
+        originalValue: trimmed,
+        loweredValue: null,
+        lowered: false,
+        evidenceSources: [`ValueIntent(type=${jsonResult.intent.type})`],
+        blockReason: `ValueIntent lowered to sentinel or empty value: "${built}"`,
+      });
       return { lowered: false, result: trimmed, reason: `ValueIntent lowered to sentinel or empty value: "${built}"` };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
+      recordExpressionLoweringDiagnostic({
+        originalValue: trimmed,
+        loweredValue: null,
+        lowered: false,
+        evidenceSources: ["ValueIntent(build_exception)"],
+        blockReason: `ValueIntent build failed: ${message}`,
+      });
       return { lowered: false, result: trimmed, reason: `ValueIntent build failed: ${message}` };
     }
   }
 
+  const entityDecoded = trimmed
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+  if (entityDecoded !== trimmed) {
+    const decodedResult = tryParseJsonValueIntent(entityDecoded);
+    if (decodedResult) {
+      try {
+        const built = buildExpression(decodedResult.intent);
+        if (built && !isSentinelValue(built)) {
+          recordExpressionLoweringDiagnostic({
+            originalValue: trimmed,
+            loweredValue: built,
+            lowered: true,
+            evidenceSources: [`EntityDecoded-ValueIntent(type=${decodedResult.intent.type})`],
+          });
+          return { lowered: true, result: built };
+        }
+      } catch {
+      }
+    }
+  }
+
   if (VALUE_INTENT_PATTERN.test(trimmed) || VALUE_INTENT_ENTITY_PATTERN.test(trimmed)) {
+    recordExpressionLoweringDiagnostic({
+      originalValue: trimmed,
+      loweredValue: null,
+      lowered: false,
+      evidenceSources: ["residual_json_pattern"],
+      blockReason: "Unresolvable ValueIntent JSON pattern in property value",
+    });
     return { lowered: false, result: trimmed, reason: "Unresolvable ValueIntent JSON pattern in property value" };
   }
 

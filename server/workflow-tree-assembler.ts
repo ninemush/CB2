@@ -29,7 +29,7 @@ import { getActivityTag, getActivityPrefixStrict, injectMissingNamespaceDeclarat
 import { lintExpression } from "./xaml/vbnet-expression-linter";
 import type { RemediationEntry, RemediationCode } from "./uipath-pipeline";
 import { PROPERTY_REMEDIATION_ESCALATION_THRESHOLD } from "./uipath-pipeline";
-import { DeclarationRegistry, scopeIdMatchesStackEntryExternal, type SymbolDiscoveryDiagnostic } from "./declaration-registry";
+import { DeclarationRegistry, scopeIdMatchesStackEntryExternal, type SymbolDiscoveryDiagnostic, type ExpressionContextEvidence } from "./declaration-registry";
 import { isExcludedSymbolToken } from "./shared/symbol-exclusions";
 
 export interface PropertyRemediationRecord {
@@ -627,55 +627,207 @@ function extractUnprefixedVarRefsFromExpression(str: string): UnprefixedExtracti
   return result;
 }
 
-function discoverAndRegisterVarRef(varName: string, registry: DeclarationRegistry, workflowName: string): void {
+interface ExpressionContextHint {
+  activityType?: string;
+  propertyName?: string;
+  peerType?: string;
+}
+
+const ACTIVITY_PROPERTY_TYPE_MAP: Record<string, Record<string, string>> = {
+  "Assign": {
+    "To": "",
+    "Value": "",
+  },
+  "If": {
+    "Condition": "Boolean",
+  },
+  "While": {
+    "Condition": "Boolean",
+  },
+  "DoWhile": {
+    "Condition": "Boolean",
+  },
+  "LogMessage": {
+    "Message": "String",
+  },
+  "SendSmtpMailMessage": {
+    "To": "String",
+    "Subject": "String",
+    "Body": "String",
+    "From": "String",
+  },
+  "AddTransactionItem": {
+    "QueueName": "String",
+  },
+  "SetTransactionStatus": {
+    "Status": "String",
+  },
+};
+
+function normalizeTypeForComparison(t: string): string {
+  return t.replace(/^(x:|s:|System\.)/, "");
+}
+
+function typesAreEquivalent(a: string, b: string): boolean {
+  return normalizeTypeForComparison(a).toLowerCase() === normalizeTypeForComparison(b).toLowerCase();
+}
+
+function inferTypeFromExpressionContext(varName: string, hint?: ExpressionContextHint): { type: string; strength: "strong" | "moderate" | "weak" } | null {
+  if (!hint) return null;
+
+  if (hint.peerType && hint.peerType !== "x:Object" && hint.peerType !== "Object") {
+    return { type: hint.peerType, strength: "strong" };
+  }
+
+  if (hint.activityType && hint.propertyName) {
+    const actMap = ACTIVITY_PROPERTY_TYPE_MAP[hint.activityType];
+    if (actMap && hint.propertyName in actMap) {
+      const expectedType = actMap[hint.propertyName];
+      if (expectedType) {
+        return { type: expectedType, strength: "moderate" };
+      }
+    }
+  }
+
+  return null;
+}
+
+function discoverAndRegisterVarRef(varName: string, registry: DeclarationRegistry, workflowName: string, contextHint?: ExpressionContextHint): void {
   if (registry.hasName(varName)) return;
   if (/^(in_|out_|io_)/i.test(varName)) return;
   const inferredType = inferTypeFromPrefix(varName);
-  if (!inferredType) return;
-  registry.registerVariable({
-    name: varName,
-    type: inferredType,
-    source: "discovered-reference",
-  });
-  registry.recordSymbolDiagnostic({
-    symbol: varName,
-    category: "variable",
-    inferredType,
-    declarationEmitted: true,
-    scope: "workflow",
-    source: "discovered-reference",
-  });
-  console.log(`[Variable Declaration] Pre-emission walk: auto-declared variable "${varName}" (${inferredType}) in "${workflowName}"`);
+
+  if (inferredType) {
+    const contextInference = inferTypeFromExpressionContext(varName, contextHint);
+    if (contextInference && !typesAreEquivalent(contextInference.type, inferredType)) {
+      registry.recordSymbolDiagnostic({
+        symbol: varName,
+        category: "variable",
+        inferredType,
+        declarationEmitted: false,
+        scope: "workflow",
+        source: "discovered-reference",
+        ambiguityReason: `Prefix infers "${inferredType}" but expression context (${contextHint?.activityType}.${contextHint?.propertyName}) expects "${contextInference.type}" — conflicting evidence, declaration blocked`,
+        expressionContext: contextHint?.activityType ? {
+          activityType: contextHint.activityType,
+          propertyName: contextHint.propertyName || "",
+          expectedType: contextInference.type,
+          evidenceStrength: contextInference.strength,
+        } : undefined,
+      });
+      console.warn(`[Variable Declaration] BLOCKED: conflicting type evidence for "${varName}" in "${workflowName}" — prefix="${inferredType}", context="${contextInference.type}"`);
+      return;
+    }
+
+    registry.registerVariable({
+      name: varName,
+      type: inferredType,
+      source: "discovered-reference",
+      scope: "workflow",
+    });
+    registry.recordSymbolDiagnostic({
+      symbol: varName,
+      category: "variable",
+      inferredType,
+      declarationEmitted: true,
+      scope: "workflow",
+      source: "discovered-reference",
+      expressionContext: contextHint?.activityType ? {
+        activityType: contextHint.activityType,
+        propertyName: contextHint.propertyName || "",
+        expectedType: inferredType,
+        evidenceStrength: "strong",
+      } : undefined,
+    });
+    console.log(`[Variable Declaration] Pre-emission walk: auto-declared variable "${varName}" (${inferredType}) in "${workflowName}"`);
+    return;
+  }
+
+  const contextInference = inferTypeFromExpressionContext(varName, contextHint);
+  if (contextInference) {
+    registry.registerVariable({
+      name: varName,
+      type: contextInference.type,
+      source: "discovered-reference",
+      scope: "workflow",
+    });
+    registry.recordSymbolDiagnostic({
+      symbol: varName,
+      category: "variable",
+      inferredType: contextInference.type,
+      declarationEmitted: true,
+      scope: "workflow",
+      source: "discovered-reference",
+      expressionContext: contextHint?.activityType ? {
+        activityType: contextHint.activityType,
+        propertyName: contextHint.propertyName || "",
+        expectedType: contextInference.type,
+        evidenceStrength: contextInference.strength,
+      } : undefined,
+    });
+    console.log(`[Variable Declaration] Pre-emission walk: context-inferred variable "${varName}" (${contextInference.type}) from ${contextHint?.activityType}.${contextHint?.propertyName} in "${workflowName}"`);
+    return;
+  }
 }
 
 function discoverAndRegisterUnprefixedVarRef(
   varName: string,
   registry: DeclarationRegistry,
   workflowName: string,
+  contextHint?: ExpressionContextHint,
 ): void {
   if (registry.hasName(varName)) return;
   if (/^(in_|out_|io_)/i.test(varName)) return;
 
   const prefixType = inferTypeFromPrefix(varName);
   if (prefixType) {
-    discoverAndRegisterVarRef(varName, registry, workflowName);
+    discoverAndRegisterVarRef(varName, registry, workflowName, contextHint);
+    return;
+  }
+
+  const contextInference = inferTypeFromExpressionContext(varName, contextHint);
+
+  if (!contextInference) {
+    registry.recordSymbolDiagnostic({
+      symbol: varName,
+      category: "variable",
+      inferredType: "unknown",
+      declarationEmitted: false,
+      scope: "workflow",
+      source: "discovered-reference",
+      ambiguityReason: `No prefix and no expression context evidence — declaration blocked to avoid generic placeholder`,
+      expressionContext: contextHint?.activityType ? {
+        activityType: contextHint.activityType,
+        propertyName: contextHint.propertyName || "",
+        expectedType: "unknown",
+        evidenceStrength: "weak",
+      } : undefined,
+    });
+    console.warn(`[Variable Declaration] BLOCKED: no type evidence for unprefixed "${varName}" in "${workflowName}" — no prefix, no context hint`);
     return;
   }
 
   registry.registerVariable({
     name: varName,
-    type: "x:Object",
+    type: contextInference.type,
     source: "discovered-reference",
+    scope: "workflow",
   });
   registry.recordSymbolDiagnostic({
     symbol: varName,
     category: "variable",
-    inferredType: "x:Object",
+    inferredType: contextInference.type,
     declarationEmitted: true,
     scope: "workflow",
     source: "discovered-reference",
+    expressionContext: contextHint?.activityType ? {
+      activityType: contextHint.activityType,
+      propertyName: contextHint.propertyName || "",
+      expectedType: contextInference.type,
+      evidenceStrength: contextInference.strength,
+    } : undefined,
   });
-  console.log(`[Variable Declaration] Pre-emission walk: auto-declared unprefixed variable "${varName}" (x:Object) in "${workflowName}"`);
+  console.log(`[Variable Declaration] Pre-emission walk: context-inferred unprefixed variable "${varName}" (${contextInference.type}) from ${contextHint?.activityType}.${contextHint?.propertyName} in "${workflowName}"`);
 }
 
 function discoverAndRegisterArgRef(argName: string, registry: DeclarationRegistry, workflowName: string): void {
@@ -717,7 +869,7 @@ function discoverAndRegisterArgRef(argName: string, registry: DeclarationRegistr
   console.log(`[Argument Declaration] Pre-emission walk: auto-declared ${direction} "${argName}" (${inferredType}) in "${workflowName}"`);
 }
 
-function extractRefsFromStrings(strings: string[], registry: DeclarationRegistry, workflowName: string, isExpressionContext: boolean = false): void {
+function extractRefsFromStrings(strings: string[], registry: DeclarationRegistry, workflowName: string, isExpressionContext: boolean = false, contextHint?: ExpressionContextHint): void {
   for (const str of strings) {
     const refs = extractArgumentRefsFromString(str);
     for (const argName of refs) {
@@ -725,12 +877,12 @@ function extractRefsFromStrings(strings: string[], registry: DeclarationRegistry
     }
     const varRefs = extractPrefixedVarRefsFromString(str);
     for (const varName of varRefs) {
-      discoverAndRegisterVarRef(varName, registry, workflowName);
+      discoverAndRegisterVarRef(varName, registry, workflowName, contextHint);
     }
     if (isExpressionContext) {
       const unprefixedResult = extractUnprefixedVarRefsFromExpression(str);
       for (const varName of unprefixedResult.accepted) {
-        discoverAndRegisterUnprefixedVarRef(varName, registry, workflowName);
+        discoverAndRegisterUnprefixedVarRef(varName, registry, workflowName, contextHint);
       }
       for (const rejection of unprefixedResult.rejected) {
         if (!registry.hasName(rejection.ident)) {
@@ -786,25 +938,56 @@ function isNeverExpressionProperty(propName: string): boolean {
 function walkNodeForArgumentRefs(node: WorkflowNode, registry: DeclarationRegistry, workflowName: string): void {
   if (node.kind === "activity") {
     const actNode = node as ActivityNode;
-    const exprStrings: string[] = [];
-    const nonExprStrings: string[] = [];
+    const templateName = actNode.template || "";
+    const dispatchKey = templateName.replace(/^ui:/, "");
 
-    if (actNode.outputVar) exprStrings.push(actNode.outputVar);
+    if (actNode.outputVar) {
+      extractRefsFromStrings([actNode.outputVar], registry, workflowName, true);
+    }
+
+    let assignToType: string | undefined;
+    if (dispatchKey === "Assign") {
+      const toVal = coercePropToString(actNode.properties?.["To"] || actNode.properties?.["to"]);
+      if (toVal) {
+        const cleaned = toVal.replace(/^\[|\]$/g, "").trim();
+        if (/^[a-zA-Z_]\w*$/.test(cleaned)) {
+          const existing = registry.getVariable(cleaned) || registry.getArgument(cleaned);
+          if (existing) {
+            assignToType = existing.type;
+          } else {
+            const prefixType = inferTypeFromPrefix(cleaned);
+            if (prefixType) {
+              const PREFIX_TO_CLR_LOCAL: Record<string, string> = {
+                "x:String": "String", "x:Int32": "Int32", "x:Boolean": "Boolean",
+                "x:Double": "Double", "x:Decimal": "Decimal", "s:DateTime": "DateTime",
+                "scg2:DataTable": "System.Data.DataTable", "scg2:DataRow": "System.Data.DataRow",
+                "s:TimeSpan": "TimeSpan", "x:Object": "Object",
+              };
+              assignToType = PREFIX_TO_CLR_LOCAL[prefixType] || undefined;
+            }
+          }
+        }
+      }
+    }
 
     for (const [key, val] of Object.entries(actNode.properties || {})) {
       if (isNeverExpressionProperty(key)) {
         const target: string[] = [];
         collectStringsFromValue(val, target);
-        nonExprStrings.push(...target);
+        extractRefsFromStrings(target, registry, workflowName, false);
       } else {
         const target: string[] = [];
         collectStringsFromValue(val, target);
-        exprStrings.push(...target);
+        const hint: ExpressionContextHint = {
+          activityType: dispatchKey,
+          propertyName: key,
+        };
+        if (dispatchKey === "Assign" && (key === "Value" || key === "value") && assignToType) {
+          hint.peerType = assignToType;
+        }
+        extractRefsFromStrings(target, registry, workflowName, true, hint);
       }
     }
-
-    extractRefsFromStrings(exprStrings, registry, workflowName, true);
-    extractRefsFromStrings(nonExprStrings, registry, workflowName, false);
   }
 
   if (node.kind === "if") {

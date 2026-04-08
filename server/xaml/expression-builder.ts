@@ -24,6 +24,18 @@ export function tryParseJsonValueIntent(s: string): { intent: ValueIntent; fallb
   let trimmed = s.trim();
 
   if (trimmed.startsWith('[{') && trimmed.endsWith('}]')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object" && parsed[0] !== null && typeof parsed[0].type === "string") {
+        if (parsed.length > 1) {
+          const compoundResult = tryLowerCompoundIntent(parsed);
+          if (compoundResult) {
+            return { intent: compoundResult, fallbackUsed: true };
+          }
+        }
+      }
+    } catch {
+    }
     trimmed = trimmed.slice(1, -1).trim();
   }
 
@@ -98,6 +110,22 @@ export function tryParseJsonValueIntent(s: string): { intent: ValueIntent; fallb
       }
       if (parsed.type === "url_with_params" && typeof parsed.baseUrl === "string") {
         return { intent: { type: "url_with_params", baseUrl: parsed.baseUrl, params: parsed.params || {} } as ValueIntent, fallbackUsed: true };
+      }
+      if (parsed.type === "compound" && Array.isArray(parsed.parts)) {
+        const compoundResult = tryLowerCompoundIntent(parsed.parts);
+        if (compoundResult) {
+          return { intent: compoundResult, fallbackUsed: true };
+        }
+      }
+      if ((parsed.type === "literal" || parsed.type === "vb_expression") && typeof parsed.value === "object" && parsed.value !== null) {
+        const nestedStr = JSON.stringify(parsed.value);
+        return { intent: { type: "literal", value: nestedStr } as ValueIntent, fallbackUsed: true };
+      }
+    }
+    if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object" && parsed[0] !== null && typeof parsed[0].type === "string") {
+      const compoundResult = tryLowerCompoundIntent(parsed);
+      if (compoundResult) {
+        return { intent: compoundResult, fallbackUsed: true };
       }
     }
   } catch {
@@ -498,6 +526,60 @@ export function normalizePropertyToValueIntent(
   }
 
   return { type: "literal", value: trimmed };
+}
+
+function tryLowerCompoundIntent(parts: unknown[]): ValueIntent | null {
+  const resolvedParts: string[] = [];
+  for (const part of parts) {
+    if (typeof part !== "object" || part === null) return null;
+    const obj = part as Record<string, unknown>;
+    if (typeof obj.type !== "string") return null;
+    const partResult = tryParseJsonValueIntent(JSON.stringify(part));
+    if (!partResult) return null;
+    try {
+      const built = buildExpression(partResult.intent);
+      resolvedParts.push(built);
+    } catch {
+      return null;
+    }
+  }
+  if (resolvedParts.length === 0) return null;
+  if (resolvedParts.length === 1) {
+    const single = resolvedParts[0];
+    if (single.startsWith("[") && single.endsWith("]")) {
+      return { type: "vb_expression", value: single.slice(1, -1) };
+    }
+    if (single.startsWith('"') && single.endsWith('"')) {
+      return { type: "literal", value: single.slice(1, -1).replace(/""/g, '"') };
+    }
+    return { type: "literal", value: single };
+  }
+  const concatExpr = resolvedParts.map(p => {
+    if (p.startsWith("[") && p.endsWith("]")) return p.slice(1, -1);
+    if (p.startsWith('"') && p.endsWith('"')) return p;
+    return `"${p.replace(/"/g, '""')}"`;
+  }).join(" & ");
+  return { type: "vb_expression", value: concatExpr };
+}
+
+export interface ExpressionLoweringDiagnostic {
+  originalValue: string;
+  loweredValue: string | null;
+  lowered: boolean;
+  evidenceSources: string[];
+  blockReason?: string;
+}
+
+let _expressionLoweringDiagnostics: ExpressionLoweringDiagnostic[] = [];
+
+export function getAndClearExpressionLoweringDiagnostics(): ExpressionLoweringDiagnostic[] {
+  const diags = _expressionLoweringDiagnostics;
+  _expressionLoweringDiagnostics = [];
+  return diags;
+}
+
+export function recordExpressionLoweringDiagnostic(diag: ExpressionLoweringDiagnostic): void {
+  _expressionLoweringDiagnostics.push(diag);
 }
 
 export function isValueIntent(value: unknown): value is ValueIntent {

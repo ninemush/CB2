@@ -4306,4 +4306,449 @@ describe("Typed property object boundary enforcement (Task #460)", () => {
       expect(xml).toMatch(/(Comment|WARNING|BLOCKED|SomeCustomActivity)/);
     });
   });
+
+  describe("T466: Expression, symbol, and invoke intent recovery", () => {
+    describe("structured expression lowering", () => {
+      it("lowers simple JSON ValueIntent to VB expression", async () => {
+        const { tryLowerStructuredExpression } = await import("../../server/required-property-enforcer");
+        const result = tryLowerStructuredExpression('{"type":"literal","value":"hello"}');
+        expect(result.lowered).toBe(true);
+        expect(result.result).toContain("hello");
+        expect(result.result).not.toContain("{");
+      });
+
+      it("lowers variable JSON ValueIntent to bracket expression", async () => {
+        const { tryLowerStructuredExpression } = await import("../../server/required-property-enforcer");
+        const result = tryLowerStructuredExpression('{"type":"variable","name":"str_MyVar"}');
+        expect(result.lowered).toBe(true);
+        expect(result.result).toContain("str_MyVar");
+        expect(result.result).not.toContain("{");
+      });
+
+      it("lowers entity-encoded JSON ValueIntent", async () => {
+        const { tryLowerStructuredExpression } = await import("../../server/required-property-enforcer");
+        const result = tryLowerStructuredExpression('{&quot;type&quot;:&quot;literal&quot;,&quot;value&quot;:&quot;test&quot;}');
+        expect(result.lowered).toBe(true);
+        expect(result.result).toContain("test");
+      });
+
+      it("blocks diagnostically on unresolvable JSON pattern", async () => {
+        const { tryLowerStructuredExpression } = await import("../../server/required-property-enforcer");
+        const result = tryLowerStructuredExpression('{"type":"unknown_type","value":"broken"}');
+        expect(result.lowered).toBe(false);
+        expect(result.reason).toBeTruthy();
+      });
+
+      it("lowers compound JSON intent array to concatenation", async () => {
+        const { tryParseJsonValueIntent, buildExpression } = await import("../../server/xaml/expression-builder");
+        const input = '[{"type":"literal","value":"Hello "},{"type":"variable","name":"userName"}]';
+        const result = tryParseJsonValueIntent(input);
+        expect(result).not.toBeNull();
+        if (result) {
+          const built = buildExpression(result.intent);
+          expect(built).not.toContain("{");
+          expect(built).toContain("userName");
+        }
+      });
+
+      it("lowers array-wrapped single intent", async () => {
+        const { tryParseJsonValueIntent } = await import("../../server/xaml/expression-builder");
+        const input = '[{"type":"literal","value":"singleValue"}]';
+        const result = tryParseJsonValueIntent(input);
+        expect(result).not.toBeNull();
+      });
+
+      it("handles nested object value in literal intent", async () => {
+        const { tryParseJsonValueIntent, buildExpression } = await import("../../server/xaml/expression-builder");
+        const input = '{"type":"literal","value":{"key":"val"}}';
+        const result = tryParseJsonValueIntent(input);
+        expect(result).not.toBeNull();
+        if (result) {
+          const built = buildExpression(result.intent);
+          expect(built).toBeDefined();
+          expect(built).not.toContain("undefined");
+        }
+      });
+
+      it("blocks PLACEHOLDER sentinel from lowering", async () => {
+        const { tryLowerStructuredExpression } = await import("../../server/required-property-enforcer");
+        const result = tryLowerStructuredExpression('{"type":"literal","value":"PLACEHOLDER_something"}');
+        expect(result.lowered).toBe(false);
+      });
+    });
+
+    describe("variable declaration from expression context", () => {
+      it("declares variable with prefix type when evidence is strong", async () => {
+        const { DeclarationRegistry } = await import("../../server/declaration-registry");
+        const registry = new DeclarationRegistry();
+        const { inferTypeFromPrefix } = await import("../../server/shared/type-inference");
+        const prefixType = inferTypeFromPrefix("str_TestVar");
+        expect(prefixType).toBeTruthy();
+        registry.registerVariable({ name: "str_TestVar", type: "String", source: "discovered-reference", scope: "workflow" });
+        expect(registry.hasName("str_TestVar")).toBe(true);
+        const varEntry = registry.getVariable("str_TestVar");
+        expect(varEntry).toBeDefined();
+        expect(varEntry!.type).toBe("String");
+      });
+
+      it("records diagnostic with expression context evidence", async () => {
+        const { DeclarationRegistry } = await import("../../server/declaration-registry");
+        const registry = new DeclarationRegistry();
+        registry.recordSymbolDiagnostic({
+          symbol: "myVar",
+          category: "variable",
+          inferredType: "Boolean",
+          declarationEmitted: true,
+          scope: "workflow",
+          source: "discovered-reference",
+          expressionContext: {
+            activityType: "If",
+            propertyName: "Condition",
+            expectedType: "Boolean",
+            evidenceStrength: "moderate",
+          },
+        });
+        const diagnostics = registry.getSymbolDiagnostics();
+        expect(diagnostics.length).toBe(1);
+        expect(diagnostics[0].expressionContext).toBeDefined();
+        expect(diagnostics[0].expressionContext!.activityType).toBe("If");
+        expect(diagnostics[0].expressionContext!.evidenceStrength).toBe("moderate");
+      });
+
+      it("blocks declaration when prefix and context conflict", async () => {
+        const { DeclarationRegistry } = await import("../../server/declaration-registry");
+        const registry = new DeclarationRegistry();
+        registry.recordSymbolDiagnostic({
+          symbol: "int_Status",
+          category: "variable",
+          inferredType: "x:Int32",
+          declarationEmitted: false,
+          scope: "workflow",
+          source: "discovered-reference",
+          ambiguityReason: 'Prefix infers "x:Int32" but expression context expects "String" — conflicting evidence, declaration blocked',
+          expressionContext: {
+            activityType: "Assign",
+            propertyName: "Value",
+            expectedType: "String",
+            evidenceStrength: "strong",
+          },
+        });
+        const diagnostics = registry.getSymbolDiagnostics();
+        expect(diagnostics[0].declarationEmitted).toBe(false);
+        expect(diagnostics[0].ambiguityReason).toContain("conflicting evidence");
+      });
+
+      it("does not conflict-block when prefix type and context type are semantically equivalent", async () => {
+        const { DeclarationRegistry } = await import("../../server/declaration-registry");
+        const { inferTypeFromPrefix } = await import("../../server/shared/type-inference");
+        const registry = new DeclarationRegistry();
+        const prefixType = inferTypeFromPrefix("str_Name");
+        expect(prefixType).toBeTruthy();
+        registry.registerVariable({ name: "str_Name", type: prefixType!, source: "discovered-reference", scope: "workflow" });
+        expect(registry.hasName("str_Name")).toBe(true);
+      });
+
+      it("blocks unprefixed variable with no context evidence instead of defaulting to x:Object", async () => {
+        const { DeclarationRegistry } = await import("../../server/declaration-registry");
+        const registry = new DeclarationRegistry();
+        registry.recordSymbolDiagnostic({
+          symbol: "unknownVar",
+          category: "variable",
+          inferredType: "unknown",
+          declarationEmitted: false,
+          scope: "workflow",
+          source: "discovered-reference",
+          ambiguityReason: "No prefix and no expression context evidence — declaration blocked to avoid generic placeholder",
+        });
+        const diagnostics = registry.getSymbolDiagnostics();
+        expect(diagnostics[0].declarationEmitted).toBe(false);
+        expect(diagnostics[0].ambiguityReason).toContain("blocked");
+        expect(diagnostics[0].inferredType).toBe("unknown");
+      });
+    });
+
+    describe("invoke binding triple-evidence repair", () => {
+      it("reports repaired and mutates content when all three evidence sources align", async () => {
+        const { repairInvokeBindingsWithTripleEvidence } = await import("../../server/xaml/invoke-binding-canonicalizer");
+        const contractMap = new Map<string, { workflowName: string; arguments: Array<{ name: string; direction: string; type: string }> }>();
+        contractMap.set("child_workflow", {
+          workflowName: "Child_Workflow",
+          arguments: [
+            { name: "in_Data", direction: "InArgument", type: "x:String" },
+          ],
+        });
+        const entries = [{
+          name: "Main.xaml",
+          content: `<?xml version="1.0"?>
+<Activity>
+  <Sequence>
+    <Variable x:TypeArguments="x:String" Name="str_TestData" />
+    <x:Property Name="in_Data" Type="InArgument(x:String)" />
+    <ui:InvokeWorkflowFile WorkflowFileName="Child_Workflow.xaml" DisplayName="Call Child">
+      <ui:InvokeWorkflowFile.Arguments>
+        <InArgument x:TypeArguments="x:String" x:Key="in_Data">[str_TestData]</InArgument>
+      </ui:InvokeWorkflowFile.Arguments>
+    </ui:InvokeWorkflowFile>
+  </Sequence>
+</Activity>`,
+        }];
+        const result = repairInvokeBindingsWithTripleEvidence(entries, contractMap);
+        expect(result.repairs.length).toBeGreaterThan(0);
+        const firstRepair = result.repairs[0];
+        expect(firstRepair.callerSymbolEvidence).toBe(true);
+        expect(firstRepair.calleeContractEvidence).toBe(true);
+        expect(firstRepair.directionTypeCompatible).toBe(true);
+        expect(firstRepair.repairOutcome).toBe("repaired");
+        expect(entries[0].content).toContain('x:Key="in_Data"');
+        expect(entries[0].content).toContain("[str_TestData]");
+      });
+
+      it("mutates content to correct key name when callee contract name differs", async () => {
+        const { repairInvokeBindingsWithTripleEvidence } = await import("../../server/xaml/invoke-binding-canonicalizer");
+        const contractMap = new Map<string, { workflowName: string; arguments: Array<{ name: string; direction: string; type: string }> }>();
+        contractMap.set("child", {
+          workflowName: "Child",
+          arguments: [
+            { name: "in_InputData", direction: "InArgument", type: "x:String" },
+          ],
+        });
+        const entries = [{
+          name: "Main.xaml",
+          content: `<?xml version="1.0"?>
+<Activity>
+  <Sequence>
+    <Variable x:TypeArguments="x:String" Name="str_Value" />
+    <ui:InvokeWorkflowFile WorkflowFileName="Child.xaml" DisplayName="Call">
+      <ui:InvokeWorkflowFile.Arguments>
+        <InArgument x:TypeArguments="x:String" x:Key="InputData">[str_Value]</InArgument>
+      </ui:InvokeWorkflowFile.Arguments>
+    </ui:InvokeWorkflowFile>
+  </Sequence>
+</Activity>`,
+        }];
+        const result = repairInvokeBindingsWithTripleEvidence(entries, contractMap);
+        expect(result.totalRepaired).toBe(1);
+        expect(entries[0].content).toContain('x:Key="in_InputData"');
+        expect(entries[0].content).not.toContain('x:Key="InputData"');
+      });
+
+      it("blocks when callee contract is missing", async () => {
+        const { repairInvokeBindingsWithTripleEvidence } = await import("../../server/xaml/invoke-binding-canonicalizer");
+        const contractMap = new Map<string, { workflowName: string; arguments: Array<{ name: string; direction: string; type: string }> }>();
+        const entries = [{
+          name: "Main.xaml",
+          content: `<?xml version="1.0"?>
+<Activity>
+  <Sequence>
+    <Variable x:TypeArguments="x:String" Name="str_Data" />
+    <ui:InvokeWorkflowFile WorkflowFileName="Unknown_Workflow.xaml" DisplayName="Call Unknown">
+      <ui:InvokeWorkflowFile.Arguments>
+        <InArgument x:TypeArguments="x:String" x:Key="in_Data">[str_Data]</InArgument>
+      </ui:InvokeWorkflowFile.Arguments>
+    </ui:InvokeWorkflowFile>
+  </Sequence>
+</Activity>`,
+        }];
+        const result = repairInvokeBindingsWithTripleEvidence(entries, contractMap);
+        expect(result.repairs.length).toBeGreaterThan(0);
+        const blocked = result.repairs.find(r => r.repairOutcome === "blocked");
+        expect(blocked).toBeDefined();
+        expect(blocked!.calleeContractEvidence).toBe(false);
+        expect(blocked!.blockReason).toContain("no callee contract");
+      });
+
+      it("blocks when caller symbol is undeclared", async () => {
+        const { repairInvokeBindingsWithTripleEvidence } = await import("../../server/xaml/invoke-binding-canonicalizer");
+        const contractMap = new Map<string, { workflowName: string; arguments: Array<{ name: string; direction: string; type: string }> }>();
+        contractMap.set("child", {
+          workflowName: "Child",
+          arguments: [
+            { name: "in_Data", direction: "InArgument", type: "x:String" },
+          ],
+        });
+        const entries = [{
+          name: "Main.xaml",
+          content: `<?xml version="1.0"?>
+<Activity>
+  <Sequence>
+    <ui:InvokeWorkflowFile WorkflowFileName="Child.xaml" DisplayName="Call">
+      <ui:InvokeWorkflowFile.Arguments>
+        <InArgument x:TypeArguments="x:String" x:Key="in_Data">[undeclaredVariable]</InArgument>
+      </ui:InvokeWorkflowFile.Arguments>
+    </ui:InvokeWorkflowFile>
+  </Sequence>
+</Activity>`,
+        }];
+        const result = repairInvokeBindingsWithTripleEvidence(entries, contractMap);
+        expect(result.repairs.length).toBeGreaterThan(0);
+        const blocked = result.repairs.find(r => r.repairOutcome === "blocked");
+        expect(blocked).toBeDefined();
+        expect(blocked!.callerSymbolEvidence).toBe(false);
+        expect(blocked!.blockReason).toContain("undeclared");
+      });
+
+      it("blocks when direction is incompatible", async () => {
+        const { repairInvokeBindingsWithTripleEvidence } = await import("../../server/xaml/invoke-binding-canonicalizer");
+        const contractMap = new Map<string, { workflowName: string; arguments: Array<{ name: string; direction: string; type: string }> }>();
+        contractMap.set("child", {
+          workflowName: "Child",
+          arguments: [
+            { name: "out_Result", direction: "OutArgument", type: "x:String" },
+          ],
+        });
+        const entries = [{
+          name: "Main.xaml",
+          content: `<?xml version="1.0"?>
+<Activity>
+  <Sequence>
+    <Variable x:TypeArguments="x:String" Name="str_Result" />
+    <ui:InvokeWorkflowFile WorkflowFileName="Child.xaml" DisplayName="Call">
+      <ui:InvokeWorkflowFile.Arguments>
+        <InArgument x:TypeArguments="x:String" x:Key="out_Result">[str_Result]</InArgument>
+      </ui:InvokeWorkflowFile.Arguments>
+    </ui:InvokeWorkflowFile>
+  </Sequence>
+</Activity>`,
+        }];
+        const result = repairInvokeBindingsWithTripleEvidence(entries, contractMap);
+        expect(result.repairs.length).toBeGreaterThan(0);
+        const repair = result.repairs[0];
+        expect(repair.directionTypeCompatible).toBe(false);
+        expect(repair.repairOutcome).toBe("blocked");
+      });
+
+      it("includes evidence summary on all repair records", async () => {
+        const { repairInvokeBindingsWithTripleEvidence } = await import("../../server/xaml/invoke-binding-canonicalizer");
+        const contractMap = new Map<string, { workflowName: string; arguments: Array<{ name: string; direction: string; type: string }> }>();
+        contractMap.set("child", {
+          workflowName: "Child",
+          arguments: [
+            { name: "in_Input", direction: "InArgument", type: "x:String" },
+          ],
+        });
+        const entries = [{
+          name: "Main.xaml",
+          content: `<?xml version="1.0"?>
+<Activity>
+  <Sequence>
+    <Variable x:TypeArguments="x:String" Name="str_Input" />
+    <ui:InvokeWorkflowFile WorkflowFileName="Child.xaml" DisplayName="Call">
+      <ui:InvokeWorkflowFile.Arguments>
+        <InArgument x:TypeArguments="x:String" x:Key="in_Input">[str_Input]</InArgument>
+      </ui:InvokeWorkflowFile.Arguments>
+    </ui:InvokeWorkflowFile>
+  </Sequence>
+</Activity>`,
+        }];
+        const result = repairInvokeBindingsWithTripleEvidence(entries, contractMap);
+        for (const repair of result.repairs) {
+          expect(repair.evidenceSummary).toContain("caller_symbol=");
+          expect(repair.evidenceSummary).toContain("callee_contract=");
+          expect(repair.evidenceSummary).toContain("direction_type=");
+        }
+      });
+
+      it("resolves callee contract via basename when WorkflowFileName includes .xaml extension", async () => {
+        const { repairInvokeBindingsWithTripleEvidence } = await import("../../server/xaml/invoke-binding-canonicalizer");
+        const { buildWorkflowContracts } = await import("../../server/xaml/workflow-contract-integrity");
+        const callerEntry = {
+          name: "Main.xaml",
+          content: `<?xml version="1.0"?>
+<Activity>
+  <Sequence>
+    <Variable x:TypeArguments="x:String" Name="str_Payload" />
+    <ui:InvokeWorkflowFile WorkflowFileName="SubProcess.xaml" DisplayName="Call Sub">
+      <ui:InvokeWorkflowFile.Arguments>
+        <InArgument x:TypeArguments="x:String" x:Key="in_Payload">[str_Payload]</InArgument>
+      </ui:InvokeWorkflowFile.Arguments>
+    </ui:InvokeWorkflowFile>
+  </Sequence>
+</Activity>`,
+        };
+        const calleeEntry = {
+          name: "SubProcess.xaml",
+          content: `<?xml version="1.0"?>
+<Activity x:Class="SubProcess">
+  <x:Members>
+    <x:Property Name="in_Payload" Type="InArgument(x:String)" />
+  </x:Members>
+  <Sequence>
+  </Sequence>
+</Activity>`,
+        };
+        const allEntries = [callerEntry, calleeEntry];
+        const contracts = buildWorkflowContracts(allEntries);
+        const calleeContractMap = new Map<string, { workflowName: string; arguments: Array<{ name: string; direction: string; type: string }> }>();
+        for (const [key, contract] of Array.from(contracts.entries())) {
+          const args: Array<{ name: string; direction: string; type: string }> = [];
+          for (const [argName, argInfo] of Array.from(contract.declaredArguments.entries())) {
+            args.push({ name: argName, direction: argInfo.direction, type: argInfo.type });
+          }
+          calleeContractMap.set(key, { workflowName: contract.workflowName, arguments: args });
+        }
+        const result = repairInvokeBindingsWithTripleEvidence([callerEntry], calleeContractMap);
+        expect(result.totalRepaired).toBeGreaterThanOrEqual(1);
+        const repaired = result.repairs.find(r => r.repairOutcome === "repaired");
+        expect(repaired).toBeDefined();
+        expect(repaired!.calleeContractEvidence).toBe(true);
+      });
+
+      it("blocks when multiple callee contract arguments match ambiguously", async () => {
+        const { repairInvokeBindingsWithTripleEvidence } = await import("../../server/xaml/invoke-binding-canonicalizer");
+        const contractMap = new Map<string, { workflowName: string; arguments: Array<{ name: string; direction: string; type: string }> }>();
+        contractMap.set("child", {
+          workflowName: "Child",
+          arguments: [
+            { name: "in_Data", direction: "InArgument", type: "x:String" },
+            { name: "io_Data", direction: "InOutArgument", type: "x:String" },
+          ],
+        });
+        const entries = [{
+          name: "Main.xaml",
+          content: `<?xml version="1.0"?>
+<Activity>
+  <Sequence>
+    <Variable x:TypeArguments="x:String" Name="str_Test" />
+    <ui:InvokeWorkflowFile WorkflowFileName="Child.xaml" DisplayName="Call">
+      <ui:InvokeWorkflowFile.Arguments>
+        <InArgument x:TypeArguments="x:String" x:Key="Data">[str_Test]</InArgument>
+      </ui:InvokeWorkflowFile.Arguments>
+    </ui:InvokeWorkflowFile>
+  </Sequence>
+</Activity>`,
+        }];
+        const result = repairInvokeBindingsWithTripleEvidence(entries, contractMap);
+        const blocked = result.repairs.find(r => r.repairOutcome === "blocked");
+        expect(blocked).toBeDefined();
+        expect(blocked!.blockReason).toContain("ambiguous");
+      });
+    });
+
+    describe("expression lowering diagnostics", () => {
+      it("records diagnostic on successful expression lowering", async () => {
+        const { getAndClearExpressionLoweringDiagnostics, recordExpressionLoweringDiagnostic } = await import("../../server/xaml/expression-builder");
+        getAndClearExpressionLoweringDiagnostics();
+        const { tryLowerStructuredExpression } = await import("../../server/required-property-enforcer");
+        tryLowerStructuredExpression('{"type":"literal","value":"test_value"}');
+        const diagnostics = getAndClearExpressionLoweringDiagnostics();
+        expect(diagnostics.length).toBeGreaterThan(0);
+        const diag = diagnostics[0];
+        expect(diag.lowered).toBe(true);
+        expect(diag.loweredValue).toBeTruthy();
+        expect(diag.evidenceSources.length).toBeGreaterThan(0);
+      });
+
+      it("records diagnostic on failed expression lowering", async () => {
+        const { getAndClearExpressionLoweringDiagnostics } = await import("../../server/xaml/expression-builder");
+        getAndClearExpressionLoweringDiagnostics();
+        const { tryLowerStructuredExpression } = await import("../../server/required-property-enforcer");
+        tryLowerStructuredExpression('{"type":"literal","value":"PLACEHOLDER_missing"}');
+        const diagnostics = getAndClearExpressionLoweringDiagnostics();
+        expect(diagnostics.length).toBeGreaterThan(0);
+        const diag = diagnostics[0];
+        expect(diag.lowered).toBe(false);
+        expect(diag.blockReason).toBeTruthy();
+      });
+    });
+  });
 });

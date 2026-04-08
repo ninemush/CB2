@@ -1012,6 +1012,251 @@ function blockSentinelsInExecutableProperties(
   }
 }
 
+export interface InvokeBindingRepairRecord {
+  file: string;
+  workflow: string;
+  activityType: string;
+  bindingKey: string;
+  repairOutcome: "repaired" | "blocked";
+  callerSymbolEvidence: boolean;
+  calleeContractEvidence: boolean;
+  directionTypeCompatible: boolean;
+  originalValue: string;
+  repairedValue?: string;
+  blockReason?: string;
+  evidenceSummary: string;
+}
+
+export interface InvokeBindingRepairResult {
+  repairs: InvokeBindingRepairRecord[];
+  totalRepaired: number;
+  totalBlocked: number;
+  summary: string;
+}
+
+interface CalleeContractArg {
+  name: string;
+  direction: string;
+  type: string;
+}
+
+interface CalleeContract {
+  workflowName: string;
+  arguments: CalleeContractArg[];
+}
+
+function stripDirectionPrefixLocal(name: string): string {
+  return name.replace(/^(in_|out_|io_)/i, "");
+}
+
+function isDirectionCompatible(bindingDirection: string, contractDirection: string): boolean {
+  if (!bindingDirection || !contractDirection) return false;
+  const bd = bindingDirection.replace(/Argument$/i, "").toLowerCase();
+  const cd = contractDirection.replace(/Argument$/i, "").toLowerCase();
+  if (bd === cd) return true;
+  if (cd === "inout") return true;
+  return false;
+}
+
+function isTypeCompatibleForInvoke(bindingType: string, contractType: string): boolean {
+  if (!bindingType || !contractType) return false;
+  if (bindingType === contractType) return true;
+  if (contractType === "x:Object" || contractType === "Object" || contractType === "System.Object") return true;
+  if (bindingType === "x:Object" || bindingType === "Object" || bindingType === "System.Object") return true;
+  const normalize = (t: string) => t.replace(/^(x:|s:|scg2:)/, "").replace(/^System\./, "");
+  return normalize(bindingType) === normalize(contractType);
+}
+
+export function repairInvokeBindingsWithTripleEvidence(
+  entries: { name: string; content: string }[],
+  contractMap: Map<string, CalleeContract>,
+): InvokeBindingRepairResult {
+  const repairs: InvokeBindingRepairRecord[] = [];
+
+  for (const entry of entries) {
+    const normalizedName = normalizeFilePath(entry.name);
+    const workflowName = deriveWorkflowName(normalizedName);
+
+    const declaredVars = new Set(extractDeclaredVariables(entry.content));
+    const declaredArgs = extractArgumentsFromContent(entry.content);
+    const allDeclared = new Set(Array.from(declaredVars).concat(Array.from(declaredArgs.keys())));
+
+    for (const invokeType of INVOKE_ACTIVITY_TYPES) {
+      const nodes = findInvokeNodes(entry.content, invokeType);
+
+      for (const node of nodes) {
+        const fileNameMatch = node.fullMatch.match(/WorkflowFileName="([^"]+)"/);
+        if (!fileNameMatch) continue;
+        const calleeFile = fileNameMatch[1];
+        const calleeBasename = (calleeFile.split("/").pop() || calleeFile).replace(/\.xaml$/i, "").toLowerCase();
+        const calleeContract = contractMap.get(calleeBasename) || contractMap.get(calleeFile.toLowerCase()) || null;
+
+        const argBlockMatch = node.fullMatch.match(
+          new RegExp(`<(?:\\w+:)?${invokeType}\\.Arguments>([\\s\\S]*?)<\\/(?:\\w+:)?${invokeType}\\.Arguments>`)
+        );
+        if (!argBlockMatch) continue;
+
+        const bindingPattern = /<(InArgument|OutArgument|InOutArgument)\b[^>]*x:Key="([^"]+)"[^>]*>([^<]*)<\//g;
+        let bm;
+        while ((bm = bindingPattern.exec(argBlockMatch[1])) !== null) {
+          const bindingDirection = bm[1];
+          const bindingKey = bm[2];
+          const bindingValue = bm[3].trim();
+
+          const callerSymbolRefs = findBindingSymbolRefs(bindingValue);
+          const hasSymbolRefs = callerSymbolRefs.length > 0;
+          const callerSymbolEvidence = hasSymbolRefs
+            ? callerSymbolRefs.every(ref => allDeclared.has(ref))
+            : /^\[?"[^"]*"\]?$|^\[?(True|False|Nothing|\d+(\.\d+)?)\]?$/i.test(bindingValue.trim());
+
+          let calleeContractEvidence = false;
+          let matchedContractArg: CalleeContractArg | null = null;
+          let calleeAmbiguous = false;
+          if (calleeContract) {
+            const bindingKeyLower = bindingKey.toLowerCase();
+            const strippedKey = stripDirectionPrefixLocal(bindingKey).toLowerCase();
+            const matchedArgs: CalleeContractArg[] = [];
+            for (const cArg of calleeContract.arguments) {
+              const cNameLower = cArg.name.toLowerCase();
+              const cStripped = stripDirectionPrefixLocal(cArg.name).toLowerCase();
+              if (cNameLower === bindingKeyLower || cStripped === strippedKey || cNameLower === strippedKey || cStripped === bindingKeyLower) {
+                matchedArgs.push(cArg);
+              }
+            }
+            if (matchedArgs.length === 1) {
+              matchedContractArg = matchedArgs[0];
+              calleeContractEvidence = true;
+            } else if (matchedArgs.length > 1) {
+              calleeAmbiguous = true;
+            }
+          }
+
+          let directionTypeCompatible = false;
+          if (matchedContractArg) {
+            const dirOk = isDirectionCompatible(bindingDirection, matchedContractArg.direction);
+            const typeOk = isTypeCompatibleForInvoke(
+              bm[0].match(/x:TypeArguments="([^"]+)"/)?.[1] || "",
+              matchedContractArg.type
+            );
+            directionTypeCompatible = dirOk && typeOk;
+          }
+
+          const tripleOk = callerSymbolEvidence && calleeContractEvidence && directionTypeCompatible;
+          const evidenceParts: string[] = [];
+          evidenceParts.push(`caller_symbol=${callerSymbolEvidence ? (hasSymbolRefs ? "confirmed" : "literal_value") : "missing"}`);
+          evidenceParts.push(`callee_contract=${calleeContractEvidence ? "matched" : "no_match"}`);
+          evidenceParts.push(`direction_type=${directionTypeCompatible ? "compatible" : "incompatible"}`);
+
+          if (tripleOk && matchedContractArg) {
+            const contractDirection = matchedContractArg.direction.replace(/Argument$/i, "") + "Argument";
+            const contractType = matchedContractArg.type || "x:Object";
+            const contractName = matchedContractArg.name;
+            const originalFragment = bm[0];
+            let repairedFragment = originalFragment;
+
+            if (bindingKey !== contractName) {
+              repairedFragment = repairedFragment.replace(`x:Key="${bindingKey}"`, `x:Key="${contractName}"`);
+            }
+            if (bindingDirection !== contractDirection) {
+              repairedFragment = repairedFragment.replace(new RegExp(`<${bindingDirection}\\b`), `<${contractDirection}`);
+              repairedFragment = repairedFragment.replace(new RegExp(`</${bindingDirection}>`), `</${contractDirection}>`);
+            }
+            const currentTypeArgs = bm[0].match(/x:TypeArguments="([^"]+)"/)?.[1] || "";
+            if (currentTypeArgs && currentTypeArgs !== contractType) {
+              repairedFragment = repairedFragment.replace(`x:TypeArguments="${currentTypeArgs}"`, `x:TypeArguments="${contractType}"`);
+            }
+
+            if (repairedFragment !== originalFragment) {
+              entry.content = entry.content.replace(originalFragment, repairedFragment);
+            }
+
+            repairs.push({
+              file: normalizedName,
+              workflow: workflowName,
+              activityType: invokeType,
+              bindingKey,
+              repairOutcome: "repaired",
+              callerSymbolEvidence,
+              calleeContractEvidence,
+              directionTypeCompatible,
+              originalValue: bindingValue.substring(0, 200),
+              repairedValue: repairedFragment.substring(0, 200),
+              evidenceSummary: evidenceParts.join(", "),
+            });
+          } else {
+            const reasons: string[] = [];
+            if (!callerSymbolEvidence) {
+              const undeclared = callerSymbolRefs.filter(r => !allDeclared.has(r));
+              reasons.push(`caller symbol(s) undeclared: [${undeclared.join(", ")}]`);
+            }
+            if (!calleeContractEvidence) {
+              if (calleeAmbiguous) {
+                reasons.push(`binding key "${bindingKey}" matches multiple callee contract arguments — ambiguous, blocked`);
+              } else {
+                reasons.push(calleeContract
+                  ? `binding key "${bindingKey}" not found in callee contract (declares: [${calleeContract.arguments.map(a => a.name).join(", ")}])`
+                  : `no callee contract available for "${calleeFile}"`);
+              }
+            }
+            if (!directionTypeCompatible && matchedContractArg) {
+              reasons.push(`direction/type mismatch: binding=${bindingDirection}, contract=${matchedContractArg.direction}(${matchedContractArg.type})`);
+            }
+
+            repairs.push({
+              file: normalizedName,
+              workflow: workflowName,
+              activityType: invokeType,
+              bindingKey,
+              repairOutcome: "blocked",
+              callerSymbolEvidence,
+              calleeContractEvidence,
+              directionTypeCompatible,
+              originalValue: bindingValue.substring(0, 200),
+              blockReason: reasons.join("; "),
+              evidenceSummary: evidenceParts.join(", "),
+            });
+          }
+        }
+      }
+    }
+  }
+
+  const totalRepaired = repairs.filter(r => r.repairOutcome === "repaired").length;
+  const totalBlocked = repairs.filter(r => r.repairOutcome === "blocked").length;
+  const summary = repairs.length > 0
+    ? `Invoke binding triple-evidence repair: ${totalRepaired} repaired, ${totalBlocked} blocked`
+    : "Invoke binding triple-evidence repair: no bindings evaluated";
+
+  return { repairs, totalRepaired, totalBlocked, summary };
+}
+
+function findBindingSymbolRefs(value: string): string[] {
+  const refs: string[] = [];
+  let expr = value.replace(/^\[|\]$/g, "").trim();
+  if (!expr) return refs;
+  if (/^".*"$/.test(expr)) return refs;
+  if (/^(True|False|Nothing|\d+(\.\d+)?)$/.test(expr)) return refs;
+
+  const identPattern = /\b([a-zA-Z_]\w*)\b/g;
+  const vbKeywords = new Set([
+    "True", "False", "Nothing", "Not", "And", "Or", "AndAlso", "OrElse",
+    "Is", "IsNot", "New", "If", "CStr", "CInt", "CBool", "CDbl", "CType",
+    "String", "Integer", "Boolean", "Object", "Double", "Decimal",
+    "DateTime", "TimeSpan", "Math", "Convert", "Environment", "System",
+    "GetType", "TypeOf", "DirectCast", "TryCast", "Array",
+  ]);
+  let m;
+  while ((m = identPattern.exec(expr)) !== null) {
+    const name = m[1];
+    if (vbKeywords.has(name)) continue;
+    if (/^\d/.test(name)) continue;
+    const beforeIdx = m.index - 1;
+    if (beforeIdx >= 0 && expr[beforeIdx] === ".") continue;
+    refs.push(name);
+  }
+  return Array.from(new Set(refs));
+}
+
 export function postEmissionInvokeValidator(
   entries: { name: string; content: string }[]
 ): ResidualExpressionSerializationDefect[] {

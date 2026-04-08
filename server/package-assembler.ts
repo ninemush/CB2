@@ -89,7 +89,7 @@ import archiver from "archiver";
   import { runPostEmissionDependencyAnalysis, checkDependencyDriftAgainstMailFamilyLocks, type DependencyDiagnosticsArtifact, type ResolutionSource } from "./post-emission-dependency-analyzer";
   import { getAndClearPropertySerializationTrace, getAndClearInvokeContractTrace, getAndClearStageHashParity, updateStageHash, hasStageHash, emitInvokeContractTrace, runWithTraceContext } from "./pipeline-trace-collector";
   import { validateContractIntegrity, buildWorkflowContracts, extractInvocations, resolveTargetContract, type WorkflowContract, type ContractIntegrityDefect } from "./xaml/workflow-contract-integrity";
-  import { canonicalizeInvokeBindings, canonicalizeTargetValueExpressions, runPreGateResidualJsonCanonicalization, type InvokeCanonicalizationResult, type TargetValueCanonicalizationResult } from "./xaml/invoke-binding-canonicalizer";
+  import { canonicalizeInvokeBindings, canonicalizeTargetValueExpressions, runPreGateResidualJsonCanonicalization, repairInvokeBindingsWithTripleEvidence, type InvokeCanonicalizationResult, type TargetValueCanonicalizationResult, type InvokeBindingRepairResult } from "./xaml/invoke-binding-canonicalizer";
   import { classifyFromArchiveBuffer, buildWorkflowStatusParity, normalizeClassifierFileName, AUTHORITATIVE_STUB_PATTERNS, verifyAndReclassifyFromArchive, assertClassificationFreshness, freezeArchiveWorkflows, isArchiveFrozen, getArchiveFreezePoint, resetArchiveFreeze, checkPostFreezeDeferredWriteMutation, getMutationTrace, recordMutationAttempt, assertNoPostFreezeStatusMutation, createGuardedDeferredWrites, createGuardedPostGateEntries, verifyFrozenArchiveBuffer, sealAuthoritativeXamlSource, getAuthoritativeXamlForArchive, recordAuthoritativeAppendHash, isAuthoritativeXamlSealed, getArchiveAuthorityDiagnostics, resetAuthoritativeSeal, type WorkflowStatusClassifierResult, type WorkflowStatusParityEntry, type WorkflowStatusParityResult, type PostClassifierMutationTrace, type ArchiveAuthorityDiagnostics } from "./workflow-status-classifier";
 
 interface DomCorrectionResult {
@@ -8194,10 +8194,45 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
         }
       }
 
+      {
+        const { buildWorkflowContracts: buildPreArchiveContracts } = await import("./xaml/workflow-contract-integrity");
+        const preArchiveContracts = buildPreArchiveContracts(postGateXamlEntries);
+        const calleeContractMap = new Map<string, { workflowName: string; arguments: Array<{ name: string; direction: string; type: string }> }>();
+        for (const [key, contract] of Array.from(preArchiveContracts.entries())) {
+          const args: Array<{ name: string; direction: string; type: string }> = [];
+          for (const [argName, argInfo] of Array.from(contract.declaredArguments.entries())) {
+            args.push({ name: argName, direction: argInfo.direction, type: argInfo.type });
+          }
+          calleeContractMap.set(key, { workflowName: contract.workflowName, arguments: args });
+        }
+        const invokeRepairResult = repairInvokeBindingsWithTripleEvidence(postGateXamlEntries, calleeContractMap);
+        if (invokeRepairResult.totalRepaired > 0 || invokeRepairResult.totalBlocked > 0) {
+          console.log(`[Invoke Binding Recovery] ${invokeRepairResult.summary}`);
+          for (const repair of invokeRepairResult.repairs) {
+            if (repair.repairOutcome === "blocked") {
+              console.warn(`[Invoke Binding Recovery] BLOCKED: ${repair.bindingKey} in ${repair.file} — ${repair.blockReason}`);
+            }
+          }
+        }
+      }
+
       console.log(`[Pre-Archive Enforcement] Running required property enforcement on ${postGateXamlEntries.length} XAML entries BEFORE archive write...`);
       preArchiveEnforcement = applyRequiredPropertyEnforcement(postGateXamlEntries, true);
       if (preArchiveEnforcement.enforcementResult.totalEnforced > 0 || preArchiveEnforcement.enforcementResult.totalDefects > 0) {
         console.log(`[Pre-Archive Enforcement] ${preArchiveEnforcement.enforcementResult.summary}`);
+      }
+
+      {
+        const { getAndClearExpressionLoweringDiagnostics } = await import("./xaml/expression-builder");
+        const exprDiags = getAndClearExpressionLoweringDiagnostics();
+        if (exprDiags.length > 0) {
+          const lowered = exprDiags.filter(d => d.lowered).length;
+          const blocked = exprDiags.filter(d => !d.lowered).length;
+          console.log(`[Expression Lowering] ${exprDiags.length} expression(s) evaluated: ${lowered} lowered, ${blocked} blocked`);
+          for (const diag of exprDiags.filter(d => !d.lowered)) {
+            console.warn(`[Expression Lowering] BLOCKED: "${diag.originalValue?.substring(0, 100)}" — ${diag.blockReason}`);
+          }
+        }
       }
       if (collectedRequiredPropertyTraces.length > 0) {
         const extractDisplayNameFromXaml = (xamlEntries: Array<{ name: string; content: string }>, file: string, activityType: string, occurrenceIndex: number): string | undefined => {
