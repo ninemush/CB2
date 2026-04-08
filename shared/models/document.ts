@@ -12,6 +12,8 @@ export const documents = pgTable("documents", {
   status: text("status").notNull().default("draft"),
   content: text("content").notNull(),
   snapshotJson: text("snapshot_json").notNull().default("{}"),
+  artifactsValid: boolean("artifacts_valid"),
+  artifactWarnings: text("artifact_warnings"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
