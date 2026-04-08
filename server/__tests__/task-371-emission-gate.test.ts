@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { runEmissionGate, isWellFormedXamlType, validateMapClrTypeOutput, reportCriticalTypeDiagnostic, drainCriticalTypeDiagnostics } from "../emission-gate";
+import { runEmissionGate, isWellFormedXamlType, validateMapClrTypeOutput, reportCriticalTypeDiagnostic, drainCriticalTypeDiagnostics, RECOGNIZED_NAMESPACE_PREFIXES } from "../emission-gate";
+import { PACKAGE_NAMESPACE_MAP, GUARANTEED_ACTIVITY_PREFIX_MAP } from "../xaml/xaml-compliance";
 import { catalogService } from "../catalog/catalog-service";
 
 function makeXaml(bodyXml: string): string {
@@ -398,6 +399,58 @@ describe("Emission Gate — Critical mapClrType Blocking Propagation", () => {
     expect(isWellFormedXamlType("s:DateTime")).toBe(true);
     expect(isWellFormedXamlType("bogus:SomeType")).toBe(false);
     expect(isWellFormedXamlType("zz:Unknown")).toBe(false);
+  });
+
+  it("isWellFormedXamlType accepts catalog-derived namespace prefixes", () => {
+    expect(isWellFormedXamlType("upers:FormTaskData")).toBe(true);
+    expect(isWellFormedXamlType("uweb:HttpResponse")).toBe(true);
+    expect(isWellFormedXamlType("uds:EntityRecord")).toBe(true);
+    expect(isWellFormedXamlType("snetmail:MailMessage")).toBe(true);
+    expect(isWellFormedXamlType("ucs:DataTableInfo")).toBe(true);
+  });
+});
+
+describe("Emission Gate — OutArgument with catalog-derived prefix", () => {
+  it("produces zero blocked violations for upers:FormTaskData in CreateFormTask context", () => {
+    drainCriticalTypeDiagnostics();
+
+    const xaml = makeXaml(`
+      <upers:CreateFormTask DisplayName="Create Form Task" sap:VirtualizedContainerService.HintSize="250,80">
+        <upers:CreateFormTask.TaskObject>
+          <OutArgument x:TypeArguments="upers:FormTaskData">[obj_FormTask]</OutArgument>
+        </upers:CreateFormTask.TaskObject>
+      </upers:CreateFormTask>
+    `);
+
+    const entries = [{ name: "FormTask.xaml", content: xaml }];
+    const result = runEmissionGate(entries);
+
+    const blockedViolations = result.violations.filter(v => v.resolution === "blocked");
+    expect(blockedViolations.length).toBe(0);
+  });
+});
+
+describe("Emission Gate — RECOGNIZED_NAMESPACE_PREFIXES consistency", () => {
+  it("is a superset of all non-empty prefixes from PACKAGE_NAMESPACE_MAP", () => {
+    const packagePrefixes = Object.values(PACKAGE_NAMESPACE_MAP)
+      .map(info => info.prefix)
+      .filter(p => p !== "");
+    for (const prefix of packagePrefixes) {
+      expect(RECOGNIZED_NAMESPACE_PREFIXES.has(prefix)).toBe(true);
+    }
+  });
+
+  it("is a superset of all unique prefix values from GUARANTEED_ACTIVITY_PREFIX_MAP", () => {
+    const activityPrefixes = new Set(Object.values(GUARANTEED_ACTIVITY_PREFIX_MAP));
+    for (const prefix of activityPrefixes) {
+      expect(RECOGNIZED_NAMESPACE_PREFIXES.has(prefix)).toBe(true);
+    }
+  });
+
+  it("rejects truly unknown prefixes", () => {
+    expect(RECOGNIZED_NAMESPACE_PREFIXES.has("bogus")).toBe(false);
+    expect(RECOGNIZED_NAMESPACE_PREFIXES.has("zz")).toBe(false);
+    expect(RECOGNIZED_NAMESPACE_PREFIXES.has("fake")).toBe(false);
   });
 });
 
