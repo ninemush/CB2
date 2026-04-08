@@ -415,6 +415,18 @@ const GSUITE_ACTIVITIES: PackageActivityDefs = {
         childProp("Contact", { dir: "Out", type: "System.Object", wrapper: "OutArgument", typeArgs: "x:Object" }),
       ],
     },
+    { className: "GSuiteApplicationScope", displayName: "GSuite Application Scope", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "GoogleSheetReadRange", displayName: "Google Sheet Read Range", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "GoogleSheetWriteRange", displayName: "Google Sheet Write Range", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "GoogleSheetAppendRange", displayName: "Google Sheet Append Range", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "GoogleSheetDeleteRange", displayName: "Google Sheet Delete Range", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "GoogleDocsReadDocument", displayName: "Google Docs Read Document", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "GoogleDocsWriteDocument", displayName: "Google Docs Write Document", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "GoogleDriveDeleteFile", displayName: "Google Drive Delete File", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "GoogleDriveListFiles", displayName: "Google Drive List Files", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "GoogleDriveCreateFolder", displayName: "Google Drive Create Folder", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "GoogleCalendarDeleteEvent", displayName: "Google Calendar Delete Event", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "GoogleCalendarUpdateEvent", displayName: "Google Calendar Update Event", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
   ],
 };
 
@@ -546,6 +558,17 @@ const OFFICE365_ACTIVITIES: PackageActivityDefs = {
         prop("LocalFolderPath", { required: true }),
       ],
     },
+    { className: "Office365ApplicationScope", displayName: "Office 365 Application Scope", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "O365SendMail", displayName: "O365 Send Mail", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "O365GetMail", displayName: "O365 Get Mail", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "O365ReadRange", displayName: "O365 Read Range", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "O365WriteRange", displayName: "O365 Write Range", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "O365CreateFile", displayName: "O365 Create File", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "O365DownloadFile", displayName: "O365 Download File", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "O365DeleteFile", displayName: "O365 Delete File", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "O365ListFiles", displayName: "O365 List Files", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "O365CalendarCreateEvent", displayName: "O365 Calendar Create Event", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "O365CalendarGetEvents", displayName: "O365 Calendar Get Events", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
   ],
 };
 
@@ -686,6 +709,8 @@ const FORM_ACTIVITIES: PackageActivityDefs = {
         prop("Duration", { type: "System.Int32", default: "5000" }),
       ],
     },
+    { className: "ShowFormDialog", displayName: "Show Form Dialog", browsable: true, emissionApproved: false, processTypes: ["attended-ui"], properties: [] },
+    { className: "WaitFormTask", displayName: "Wait Form Task", browsable: true, emissionApproved: false, processTypes: ["attended-ui"], properties: [] },
   ],
 };
 
@@ -785,6 +810,7 @@ const CRYPTOGRAPHY_ACTIVITIES: PackageActivityDefs = {
         childProp("Result", { dir: "Out", wrapper: "OutArgument", typeArgs: "x:String" }),
       ],
     },
+    { className: "KeyedHashFile", displayName: "Keyed Hash File", browsable: true, emissionApproved: false, processTypes: ["general"], properties: [] },
   ],
 };
 
@@ -1392,6 +1418,10 @@ const GOOGLE_CLOUD_ACTIVITIES: PackageActivityDefs = {
         childProp("Magnitude", { dir: "Out", type: "System.Double", wrapper: "OutArgument", typeArgs: "x:Double" }),
       ],
     },
+    { className: "GoogleStorageUploadFile", displayName: "Google Storage Upload File", browsable: true, emissionApproved: false, processTypes: ["api-integration"], properties: [] },
+    { className: "GoogleStorageDownloadFile", displayName: "Google Storage Download File", browsable: true, emissionApproved: false, processTypes: ["api-integration"], properties: [] },
+    { className: "GoogleStorageDeleteFile", displayName: "Google Storage Delete File", browsable: true, emissionApproved: false, processTypes: ["api-integration"], properties: [] },
+    { className: "GoogleStorageListFiles", displayName: "Google Storage List Files", browsable: true, emissionApproved: false, processTypes: ["api-integration"], properties: [] },
   ],
 };
 
@@ -1423,6 +1453,9 @@ const GOOGLE_VISION_ACTIVITIES: PackageActivityDefs = {
         childProp("Labels", { dir: "Out", type: "System.Collections.Generic.List", wrapper: "OutArgument", typeArgs: "scg:List(x:Object)" }),
       ],
     },
+    { className: "GoogleVisionDetectLabels", displayName: "Google Vision Detect Labels", browsable: true, emissionApproved: false, processTypes: ["api-integration"], properties: [] },
+    { className: "GoogleVisionDetectText", displayName: "Google Vision Detect Text", browsable: true, emissionApproved: false, processTypes: ["api-integration"], properties: [] },
+    { className: "GoogleVisionDetectFaces", displayName: "Google Vision Detect Faces", browsable: true, emissionApproved: false, processTypes: ["api-integration"], properties: [] },
   ],
 };
 
@@ -1711,6 +1744,8 @@ const JIRA_ACTIVITIES: PackageActivityDefs = {
         childProp("Comment", { required: true }),
       ],
     },
+    { className: "JiraGetIssues", displayName: "Get Jira Issues", browsable: true, emissionApproved: false, processTypes: ["api-integration", "orchestration"], properties: [] },
+    { className: "JiraTransitionIssue", displayName: "Transition Jira Issue", browsable: true, emissionApproved: false, processTypes: ["api-integration", "orchestration"], properties: [] },
   ],
 };
 
@@ -1846,6 +1881,12 @@ const FTP_ACTIVITIES: PackageActivityDefs = {
         childProp("Exists", { dir: "Out", type: "System.Boolean", wrapper: "OutArgument", typeArgs: "x:Boolean" }),
       ],
     },
+    { className: "FTPConnect", displayName: "FTP Connect", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "FTPDisconnect", displayName: "FTP Disconnect", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "FTPUploadFile", displayName: "FTP Upload File", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "FTPDownloadFile", displayName: "FTP Download File", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "FTPDeleteFile", displayName: "FTP Delete File", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "FTPFileExists", displayName: "FTP File Exists", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
   ],
 };
 
@@ -1910,6 +1951,8 @@ const PRESENTATIONS_ACTIVITIES: PackageActivityDefs = {
         prop("ReplaceAll", { type: "System.Boolean", default: "True" }),
       ],
     },
+    { className: "ReadPresentation", displayName: "Read Presentation", browsable: true, emissionApproved: false, processTypes: ["general"], properties: [] },
+    { className: "SavePresentation", displayName: "Save Presentation", browsable: true, emissionApproved: false, processTypes: ["general"], properties: [] },
   ],
 };
 
@@ -2043,6 +2086,8 @@ const DOCUMENT_UNDERSTANDING_ACTIVITIES: PackageActivityDefs = {
         prop("ExportFormat", { validValues: ["JSON", "CSV", "Excel"], default: "JSON" }),
       ],
     },
+    { className: "CreateDocumentValidationAction", displayName: "Create Document Validation Action", browsable: true, emissionApproved: false, processTypes: ["document-processing"], properties: [] },
+    { className: "WaitForDocumentValidationAction", displayName: "Wait For Document Validation Action", browsable: true, emissionApproved: false, processTypes: ["document-processing"], properties: [] },
   ],
 };
 
@@ -2155,6 +2200,18 @@ const MAIL_ACTIVITIES: PackageActivityDefs = {
         COMMON_CONTINUE_ON_ERROR,
       ],
     },
+    { className: "GetImapMailMessages", displayName: "Get IMAP Mail Messages", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "GetPop3MailMessages", displayName: "Get POP3 Mail Messages", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "SaveMailMessage", displayName: "Save Mail Message", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "MoveMail", displayName: "Move Mail", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "SendExchangeMailMessage", displayName: "Send Exchange Mail Message", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "GetExchangeMailMessages", displayName: "Get Exchange Mail Messages", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "SaveAttachments", displayName: "Save Attachments", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "ForEachMail", displayName: "For Each Mail", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "ReplyToMail", displayName: "Reply To Mail", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "ForwardMail", displayName: "Forward Mail", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "MarkMailAsRead", displayName: "Mark Mail As Read", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "DeleteMail", displayName: "Delete Mail", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
   ],
 };
 
@@ -2240,6 +2297,10 @@ const DATA_SERVICE_ACTIVITIES: PackageActivityDefs = {
         COMMON_CONTINUE_ON_ERROR,
       ],
     },
+    { className: "UpdateEntityRecord", displayName: "Update Entity Record", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration", "orchestration"], properties: [] },
+    { className: "DeleteEntityRecord", displayName: "Delete Entity Record", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration", "orchestration"], properties: [] },
+    { className: "GetEntityRecords", displayName: "Get Entity Records", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration", "orchestration"], properties: [] },
+    { className: "GetEntityRecordById", displayName: "Get Entity Record By Id", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration", "orchestration"], properties: [] },
   ],
 };
 
@@ -2290,6 +2351,11 @@ const PERSISTENCE_ACTIVITIES: PackageActivityDefs = {
         COMMON_CONTINUE_ON_ERROR,
       ],
     },
+    { className: "CreateStorageBucket", displayName: "Create Storage Bucket", browsable: true, emissionApproved: false, processTypes: ["general", "orchestration"], properties: [] },
+    { className: "ListStorageFiles", displayName: "List Storage Files", browsable: true, emissionApproved: false, processTypes: ["general", "orchestration"], properties: [] },
+    { className: "ReadStorageText", displayName: "Read Storage Text", browsable: true, emissionApproved: false, processTypes: ["general", "orchestration"], properties: [] },
+    { className: "WriteStorageText", displayName: "Write Storage Text", browsable: true, emissionApproved: false, processTypes: ["general", "orchestration"], properties: [] },
+    { className: "DeleteStorageFile", displayName: "Delete Storage File", browsable: true, emissionApproved: false, processTypes: ["general", "orchestration"], properties: [] },
   ],
 };
 
@@ -2336,6 +2402,7 @@ const INTEGRATION_SERVICE_ACTIVITIES: PackageActivityDefs = {
         prop("EventType", { required: true }),
       ],
     },
+    { className: "IntegrationServiceConnector", displayName: "Integration Service Connector", browsable: true, emissionApproved: false, processTypes: ["api-integration"], properties: [] },
   ],
 };
 
@@ -2531,6 +2598,7 @@ const DYNAMICS_ACTIVITIES: PackageActivityDefs = {
         childProp("Fields", { type: "System.Collections.Generic.Dictionary", wrapper: "InArgument", typeArgs: "scg:Dictionary(x:String,x:String)", required: true }),
       ],
     },
+    { className: "DynamicsDeleteRecord", displayName: "Delete Record (Dynamics 365)", browsable: true, emissionApproved: false, processTypes: ["api-integration"], properties: [] },
   ],
 };
 
@@ -2821,6 +2889,23 @@ const EXCEL_ACTIVITIES: PackageActivityDefs = {
         COMMON_CONTINUE_ON_ERROR,
       ],
     },
+    { className: "CloseWorkbook", displayName: "Close Workbook", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "SaveWorkbook", displayName: "Save Workbook", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "InsertColumns", displayName: "Insert Columns", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "InsertRows", displayName: "Insert Rows", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "DeleteColumn", displayName: "Delete Column", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "DeleteRows", displayName: "Delete Rows", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "GetWorkbookSheet", displayName: "Get Workbook Sheet", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "GetWorkbookSheets", displayName: "Get Workbook Sheets", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "CopyPasteRange", displayName: "Copy Paste Range", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "AutoFillRange", displayName: "Auto Fill Range", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "LookupRange", displayName: "Lookup Range", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "ReadCell", displayName: "Read Cell", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "WriteCell", displayName: "Write Cell", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "AppendRange", displayName: "Append Range", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "CreatePivotTable", displayName: "Create Pivot Table", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "ForEachExcelRow", displayName: "For Each Excel Row", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
+    { className: "ForEachSheet", displayName: "For Each Sheet", browsable: true, emissionApproved: false, processTypes: ["general", "document-processing"], properties: [] },
   ],
 };
 
@@ -2844,6 +2929,7 @@ const UIAUTOMATION_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       displayName: "Click",
       browsable: true,
       emissionApproved: true,
+      preferModern: "NClick",
       processTypes: ["attended-ui", "unattended-ui"],
       propertiesComplete: true,
       properties: [
@@ -2861,6 +2947,7 @@ const UIAUTOMATION_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       displayName: "Type Into",
       browsable: true,
       emissionApproved: true,
+      preferModern: "NTypeInto",
       processTypes: ["attended-ui", "unattended-ui"],
       propertiesComplete: true,
       properties: [
@@ -2878,6 +2965,7 @@ const UIAUTOMATION_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       displayName: "Get Text",
       browsable: true,
       emissionApproved: true,
+      preferModern: "NGetText",
       processTypes: ["attended-ui", "unattended-ui"],
       propertiesComplete: true,
       properties: [
@@ -2887,10 +2975,121 @@ const UIAUTOMATION_ACTIVITIES_ENRICHED: PackageActivityDefs = {
       ],
     },
     {
+      className: "SelectItem",
+      displayName: "Select Item",
+      browsable: true,
+      emissionApproved: true,
+      preferModern: "NSelectItem",
+      processTypes: ["attended-ui", "unattended-ui"],
+      propertiesComplete: true,
+      properties: [
+        prop("Item", { required: true }),
+        COMMON_TIMEOUT,
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "CheckState",
+      displayName: "Check State",
+      browsable: true,
+      emissionApproved: true,
+      preferModern: "NCheckState",
+      processTypes: ["attended-ui", "unattended-ui"],
+      propertiesComplete: true,
+      properties: [
+        childProp("Result", { dir: "Out", type: "System.Boolean", wrapper: "OutArgument", typeArgs: "x:Boolean" }),
+        COMMON_TIMEOUT,
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "NClick",
+      displayName: "Click (Modern)",
+      browsable: true,
+      emissionApproved: true,
+      processTypes: ["attended-ui", "unattended-ui"],
+      properties: [
+        prop("ClickType", { validValues: ["CLICK_SINGLE", "CLICK_DOUBLE"], default: "CLICK_SINGLE" }),
+        prop("MouseButton", { validValues: ["BTN_LEFT", "BTN_RIGHT", "BTN_MIDDLE"], default: "BTN_LEFT" }),
+        prop("DelayAfter", { type: "System.Int32", default: "300" }),
+        prop("DelayBefore", { type: "System.Int32", default: "200" }),
+        COMMON_TIMEOUT,
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "NTypeInto",
+      displayName: "Type Into (Modern)",
+      browsable: true,
+      emissionApproved: true,
+      processTypes: ["attended-ui", "unattended-ui"],
+      properties: [
+        prop("Text", { required: true }),
+        prop("ClickBeforeTyping", { type: "System.Boolean", default: "True" }),
+        prop("EmptyField", { type: "System.Boolean", default: "False" }),
+        prop("DelayAfter", { type: "System.Int32", default: "300" }),
+        prop("DelayBefore", { type: "System.Int32", default: "200" }),
+        COMMON_TIMEOUT,
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "NGetText",
+      displayName: "Get Text (Modern)",
+      browsable: true,
+      emissionApproved: true,
+      processTypes: ["attended-ui", "unattended-ui"],
+      properties: [
+        childProp("Value", { dir: "Out", wrapper: "OutArgument", typeArgs: "x:String" }),
+        prop("DelayAfter", { type: "System.Int32", default: "300" }),
+        prop("DelayBefore", { type: "System.Int32", default: "200" }),
+        COMMON_TIMEOUT,
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "NSelectItem",
+      displayName: "Select Item (Modern)",
+      browsable: true,
+      emissionApproved: true,
+      processTypes: ["attended-ui", "unattended-ui"],
+      properties: [
+        prop("Item", { required: true }),
+        COMMON_TIMEOUT,
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "NCheckState",
+      displayName: "Check State (Modern)",
+      browsable: true,
+      emissionApproved: true,
+      processTypes: ["attended-ui", "unattended-ui"],
+      properties: [
+        childProp("Result", { dir: "Out", type: "System.Boolean", wrapper: "OutArgument", typeArgs: "x:Boolean" }),
+        COMMON_TIMEOUT,
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
+      className: "NApplicationCard",
+      displayName: "Use Application/Browser (Modern)",
+      browsable: true,
+      emissionApproved: true,
+      processTypes: ["attended-ui", "unattended-ui"],
+      properties: [
+        prop("Url"),
+        prop("BrowserType", { validValues: ["Chrome", "Firefox", "Edge", "Chromium"], default: "Chrome" }),
+        prop("Selector"),
+        COMMON_CONTINUE_ON_ERROR,
+      ],
+    },
+    {
       className: "OpenBrowser",
       displayName: "Open Browser",
       browsable: true,
       emissionApproved: true,
+      preferModern: "NApplicationCard",
       processTypes: ["attended-ui", "unattended-ui"],
       propertiesComplete: true,
       properties: [
@@ -3087,6 +3286,33 @@ const SYSTEM_CORE_ACTIVITIES_ENRICHED: PackageActivityDefs = {
   ],
 };
 
+const DATABASE_ACTIVITIES: PackageActivityDefs = {
+  packageId: "UiPath.Database.Activities",
+  activities: [
+    { className: "DatabaseConnect", displayName: "Database Connect", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "DatabaseDisconnect", displayName: "Database Disconnect", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+    { className: "InsertDataTable", displayName: "Insert Data Table", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+  ],
+};
+
+const INTELLIGENT_OCR_ACTIVITIES: PackageActivityDefs = {
+  packageId: "UiPath.IntelligentOCR.Activities",
+  activities: [
+    { className: "LoadTaxonomy", displayName: "Load Taxonomy", browsable: true, emissionApproved: false, processTypes: ["document-processing"], properties: [] },
+    { className: "DataExtractionScope", displayName: "Data Extraction Scope", browsable: true, emissionApproved: false, processTypes: ["document-processing"], properties: [] },
+    { className: "PresentValidationStation", displayName: "Present Validation Station", browsable: true, emissionApproved: false, processTypes: ["document-processing", "attended-ui"], properties: [] },
+    { className: "TrainClassifiers", displayName: "Train Classifiers", browsable: true, emissionApproved: false, processTypes: ["document-processing"], properties: [] },
+    { className: "TrainExtractors", displayName: "Train Extractors", browsable: true, emissionApproved: false, processTypes: ["document-processing"], properties: [] },
+  ],
+};
+
+const ML_ACTIVITIES: PackageActivityDefs = {
+  packageId: "UiPath.MLActivities",
+  activities: [
+    { className: "MLModelRun", displayName: "ML Model Run", browsable: true, emissionApproved: false, processTypes: ["general", "api-integration"], properties: [] },
+  ],
+};
+
 export const ACTIVITY_DEFINITIONS_REGISTRY: PackageActivityDefs[] = [
   SYSTEM_CORE_ACTIVITIES_ENRICHED,
   SYSTEM_ACTIVITIES_ENRICHED,
@@ -3128,6 +3354,9 @@ export const ACTIVITY_DEFINITIONS_REGISTRY: PackageActivityDefs[] = [
   DYNAMICS_ACTIVITIES,
   WORKDAY_ACTIVITIES,
   COUPA_ACTIVITIES,
+  DATABASE_ACTIVITIES,
+  INTELLIGENT_OCR_ACTIVITIES,
+  ML_ACTIVITIES,
 ];
 
 export function getRegistryPackageIds(): string[] {

@@ -1,7 +1,8 @@
 import type { GeneratorFn, GeneratorArgs } from "./deterministic-generators";
 import * as gen from "./deterministic-generators";
+import { catalogService } from "../catalog/catalog-service";
 
-export const LEGACY_TO_MODERN_ALIAS_MAP: Record<string, string> = {
+const STATIC_LEGACY_TO_MODERN_FALLBACK: Record<string, string> = {
   "Click": "NClick",
   "ui:Click": "NClick",
   "TypeInto": "NTypeInto",
@@ -25,6 +26,31 @@ export const LEGACY_TO_MODERN_ALIAS_MAP: Record<string, string> = {
   "AttachWindow": "NApplicationCard",
   "ui:AttachWindow": "NApplicationCard",
 };
+
+function buildAliasMapFromCatalog(): Record<string, string> {
+  if (!catalogService.isLoaded()) return {};
+  const map: Record<string, string> = {};
+  const allNames = catalogService.getAllActivityClassNames();
+  for (const className of allNames) {
+    const schema = catalogService.getActivitySchema(className);
+    if (schema?.activity.preferModern) {
+      const modern = schema.activity.preferModern;
+      map[className] = modern;
+      map[`ui:${className}`] = modern;
+    }
+  }
+  return map;
+}
+
+export function getLegacyToModernAliasMap(): Record<string, string> {
+  const catalogDerived = buildAliasMapFromCatalog();
+  return { ...STATIC_LEGACY_TO_MODERN_FALLBACK, ...catalogDerived };
+}
+
+export const LEGACY_TO_MODERN_ALIAS_MAP: Record<string, string> =
+  catalogService.isLoaded()
+    ? getLegacyToModernAliasMap()
+    : STATIC_LEGACY_TO_MODERN_FALLBACK;
 
 export type GeneratorEntry = {
   fn: GeneratorFn;
@@ -102,7 +128,8 @@ const GENERATOR_REGISTRY: Record<string, GeneratorEntry> = {
 
 export function resolveTemplateName(template: string): string {
   const stripped = template.includes(":") ? template.split(":").pop()! : template;
-  return LEGACY_TO_MODERN_ALIAS_MAP[template] || LEGACY_TO_MODERN_ALIAS_MAP[stripped] || stripped;
+  const map = catalogService.isLoaded() ? getLegacyToModernAliasMap() : LEGACY_TO_MODERN_ALIAS_MAP;
+  return map[template] || map[stripped] || stripped;
 }
 
 export function getGenerator(templateName: string): GeneratorEntry | null {

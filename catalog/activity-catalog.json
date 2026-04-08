@@ -1,7 +1,7 @@
 {
   "catalogVersion": "2.0.0",
-  "generatedAt": "2026-04-07T11:47:02.895Z",
-  "lastVerifiedAt": "2026-04-07T11:47:02.895Z",
+  "generatedAt": "2026-04-08T17:58:59.225Z",
+  "lastVerifiedAt": "2026-04-08T17:58:59.225Z",
   "studioVersion": "25.10.7",
   "packages": [
     {
@@ -1960,6 +1960,7 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
+          "preferModern": "NClick",
           "propertyConflicts": [
             {
               "property": "Selector",
@@ -2054,6 +2055,7 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
+          "preferModern": "NTypeInto",
           "propertyConflicts": [
             {
               "property": "Selector",
@@ -2108,6 +2110,7 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
+          "preferModern": "NGetText",
           "propertyConflicts": [
             {
               "property": "Selector",
@@ -2120,6 +2123,453 @@
           ],
           "xamlExample": "<ui:GetText DisplayName=\"Get element text\">\n  <ui:GetText.Value><OutArgument x:TypeArguments=\"x:String\">[extractedText]</OutArgument></ui:GetText.Value>\n</ui:GetText>",
           "namespace": "UiPath.UIAutomation.Activities"
+        },
+        {
+          "className": "SelectItem",
+          "displayName": "Select Item",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Item",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "30000"
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true,
+          "preferModern": "NSelectItem"
+        },
+        {
+          "className": "CheckState",
+          "displayName": "Check State",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Result",
+              "direction": "Out",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:Boolean",
+              "required": false
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "30000"
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true,
+          "propertiesComplete": true,
+          "preferModern": "NCheckState"
+        },
+        {
+          "className": "NClick",
+          "displayName": "Click (Modern)",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "ClickType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "validValues": [
+                "CLICK_SINGLE",
+                "CLICK_DOUBLE"
+              ],
+              "default": "CLICK_SINGLE"
+            },
+            {
+              "name": "MouseButton",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "validValues": [
+                "BTN_LEFT",
+                "BTN_RIGHT",
+                "BTN_MIDDLE"
+              ],
+              "default": "BTN_LEFT"
+            },
+            {
+              "name": "DelayAfter",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "300"
+            },
+            {
+              "name": "DelayBefore",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "200"
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "30000"
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true
+        },
+        {
+          "className": "NTypeInto",
+          "displayName": "Type Into (Modern)",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Text",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "ClickBeforeTyping",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "True"
+            },
+            {
+              "name": "EmptyField",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            },
+            {
+              "name": "DelayAfter",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "300"
+            },
+            {
+              "name": "DelayBefore",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "200"
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "30000"
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true
+        },
+        {
+          "className": "NGetText",
+          "displayName": "Get Text (Modern)",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Value",
+              "direction": "Out",
+              "clrType": "System.String",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:String",
+              "required": false
+            },
+            {
+              "name": "DelayAfter",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "300"
+            },
+            {
+              "name": "DelayBefore",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "200"
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "30000"
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true
+        },
+        {
+          "className": "NSelectItem",
+          "displayName": "Select Item (Modern)",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Item",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": true
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "30000"
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true
+        },
+        {
+          "className": "NCheckState",
+          "displayName": "Check State (Modern)",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Result",
+              "direction": "Out",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "child-element",
+              "argumentWrapper": "OutArgument",
+              "typeArguments": "x:Boolean",
+              "required": false
+            },
+            {
+              "name": "TimeoutMS",
+              "direction": "In",
+              "clrType": "System.Int32",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "30000"
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true
+        },
+        {
+          "className": "NApplicationCard",
+          "displayName": "Use Application/Browser (Modern)",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui",
+            "unattended-ui"
+          ],
+          "properties": [
+            {
+              "name": "Url",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "BrowserType",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "validValues": [
+                "Chrome",
+                "Firefox",
+                "Edge",
+                "Chromium"
+              ],
+              "default": "Chrome"
+            },
+            {
+              "name": "Selector",
+              "direction": "In",
+              "clrType": "System.String",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false
+            },
+            {
+              "name": "ContinueOnError",
+              "direction": "In",
+              "clrType": "System.Boolean",
+              "xamlSyntax": "attribute",
+              "argumentWrapper": null,
+              "typeArguments": null,
+              "required": false,
+              "default": "False"
+            }
+          ],
+          "emissionApproved": true
         },
         {
           "className": "OpenBrowser",
@@ -2188,8 +2638,8 @@
           ],
           "emissionApproved": true,
           "propertiesComplete": true,
-          "namespace": "UiPath.UIAutomation.Activities",
-          "preferModern": "UseBrowser"
+          "preferModern": "NApplicationCard",
+          "namespace": "UiPath.UIAutomation.Activities"
         },
         {
           "className": "CloseApplication",
@@ -5024,11 +5474,28 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.Cryptography.Activities"
+        },
+        {
+          "className": "KeyedHashFile",
+          "displayName": "Keyed Hash File",
+          "browsable": true,
+          "processTypes": [
+            "general"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
     {
       "packageId": "UiPath.Database.Activities",
+      "version": "2.0.0",
+      "feedStatus": "verified",
+      "preferredVersion": "2.0.0",
+      "generationApproved": true,
+      "prefix": "udb",
+      "clrNamespace": "UiPath.Database.Activities",
+      "assembly": "UiPath.Database.Activities",
       "activities": [
         {
           "className": "ExecuteQuery",
@@ -5196,12 +5663,41 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.Database.Activities"
+        },
+        {
+          "className": "DatabaseConnect",
+          "displayName": "Database Connect",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "DatabaseDisconnect",
+          "displayName": "Database Disconnect",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "InsertDataTable",
+          "displayName": "Insert Data Table",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
-      ],
-      "version": "2.0.0",
-      "feedStatus": "verified",
-      "preferredVersion": "2.0.0",
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.DataService.Activities",
@@ -5527,6 +6023,54 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.DataService.Activities"
+        },
+        {
+          "className": "UpdateEntityRecord",
+          "displayName": "Update Entity Record",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "orchestration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "DeleteEntityRecord",
+          "displayName": "Delete Entity Record",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "orchestration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GetEntityRecords",
+          "displayName": "Get Entity Records",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "orchestration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GetEntityRecordById",
+          "displayName": "Get Entity Record By Id",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration",
+            "orchestration"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
@@ -5771,6 +6315,26 @@
           ],
           "emissionApproved": false,
           "namespace": "UiPath.DocumentUnderstanding.Activities"
+        },
+        {
+          "className": "CreateDocumentValidationAction",
+          "displayName": "Create Document Validation Action",
+          "browsable": true,
+          "processTypes": [
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "WaitForDocumentValidationAction",
+          "displayName": "Wait For Document Validation Action",
+          "browsable": true,
+          "processTypes": [
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
@@ -6243,6 +6807,193 @@
             ]
           },
           "namespace": "UiPath.Excel.Activities"
+        },
+        {
+          "className": "CloseWorkbook",
+          "displayName": "Close Workbook",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "SaveWorkbook",
+          "displayName": "Save Workbook",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "InsertColumns",
+          "displayName": "Insert Columns",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "InsertRows",
+          "displayName": "Insert Rows",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "DeleteColumn",
+          "displayName": "Delete Column",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "DeleteRows",
+          "displayName": "Delete Rows",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GetWorkbookSheet",
+          "displayName": "Get Workbook Sheet",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GetWorkbookSheets",
+          "displayName": "Get Workbook Sheets",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "CopyPasteRange",
+          "displayName": "Copy Paste Range",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "AutoFillRange",
+          "displayName": "Auto Fill Range",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "LookupRange",
+          "displayName": "Lookup Range",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "ReadCell",
+          "displayName": "Read Cell",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "WriteCell",
+          "displayName": "Write Cell",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "AppendRange",
+          "displayName": "Append Range",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "CreatePivotTable",
+          "displayName": "Create Pivot Table",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "ForEachExcelRow",
+          "displayName": "For Each Excel Row",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "ForEachSheet",
+          "displayName": "For Each Sheet",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
@@ -6401,6 +7152,26 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.Form.Activities"
+        },
+        {
+          "className": "ShowFormDialog",
+          "displayName": "Show Form Dialog",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "WaitFormTask",
+          "displayName": "Wait Form Task",
+          "browsable": true,
+          "processTypes": [
+            "attended-ui"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
@@ -6669,6 +7440,72 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.FTP.Activities"
+        },
+        {
+          "className": "FTPConnect",
+          "displayName": "FTP Connect",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "FTPDisconnect",
+          "displayName": "FTP Disconnect",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "FTPUploadFile",
+          "displayName": "FTP Upload File",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "FTPDownloadFile",
+          "displayName": "FTP Download File",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "FTPDeleteFile",
+          "displayName": "FTP Delete File",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "FTPFileExists",
+          "displayName": "FTP File Exists",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
@@ -7094,6 +7931,46 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.GoogleCloud.Activities"
+        },
+        {
+          "className": "GoogleStorageUploadFile",
+          "displayName": "Google Storage Upload File",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleStorageDownloadFile",
+          "displayName": "Google Storage Download File",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleStorageDeleteFile",
+          "displayName": "Google Storage Delete File",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleStorageListFiles",
+          "displayName": "Google Storage List Files",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
@@ -7195,6 +8072,36 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.GoogleVision.Activities"
+        },
+        {
+          "className": "GoogleVisionDetectLabels",
+          "displayName": "Google Vision Detect Labels",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleVisionDetectText",
+          "displayName": "Google Vision Detect Text",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleVisionDetectFaces",
+          "displayName": "Google Vision Detect Faces",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
@@ -7841,6 +8748,138 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.GSuite.Activities"
+        },
+        {
+          "className": "GSuiteApplicationScope",
+          "displayName": "GSuite Application Scope",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleSheetReadRange",
+          "displayName": "Google Sheet Read Range",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleSheetWriteRange",
+          "displayName": "Google Sheet Write Range",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleSheetAppendRange",
+          "displayName": "Google Sheet Append Range",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleSheetDeleteRange",
+          "displayName": "Google Sheet Delete Range",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleDocsReadDocument",
+          "displayName": "Google Docs Read Document",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleDocsWriteDocument",
+          "displayName": "Google Docs Write Document",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleDriveDeleteFile",
+          "displayName": "Google Drive Delete File",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleDriveListFiles",
+          "displayName": "Google Drive List Files",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleDriveCreateFolder",
+          "displayName": "Google Drive Create Folder",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleCalendarDeleteEvent",
+          "displayName": "Google Calendar Delete Event",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GoogleCalendarUpdateEvent",
+          "displayName": "Google Calendar Update Event",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
@@ -8016,11 +9055,28 @@
           ],
           "emissionApproved": false,
           "namespace": "UiPath.IntegrationService.Activities"
+        },
+        {
+          "className": "IntegrationServiceConnector",
+          "displayName": "Integration Service Connector",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
     {
       "packageId": "UiPath.IntelligentOCR.Activities",
+      "version": "6.27.3",
+      "feedStatus": "verified",
+      "preferredVersion": "6.27.3",
+      "generationApproved": true,
+      "prefix": "uocr",
+      "clrNamespace": "UiPath.IntelligentOCR.Activities",
+      "assembly": "UiPath.IntelligentOCR.Activities",
       "activities": [
         {
           "className": "DigitizeDocument",
@@ -8177,12 +9233,59 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.IntelligentOCR.Activities"
+        },
+        {
+          "className": "LoadTaxonomy",
+          "displayName": "Load Taxonomy",
+          "browsable": true,
+          "processTypes": [
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "DataExtractionScope",
+          "displayName": "Data Extraction Scope",
+          "browsable": true,
+          "processTypes": [
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "PresentValidationStation",
+          "displayName": "Present Validation Station",
+          "browsable": true,
+          "processTypes": [
+            "document-processing",
+            "attended-ui"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "TrainClassifiers",
+          "displayName": "Train Classifiers",
+          "browsable": true,
+          "processTypes": [
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "TrainExtractors",
+          "displayName": "Train Extractors",
+          "browsable": true,
+          "processTypes": [
+            "document-processing"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
-      ],
-      "version": "6.27.3",
-      "feedStatus": "verified",
-      "preferredVersion": "6.27.3",
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.Jira.Activities",
@@ -8494,6 +9597,28 @@
           ],
           "emissionApproved": false,
           "namespace": "UiPath.Jira.Activities"
+        },
+        {
+          "className": "JiraGetIssues",
+          "displayName": "Get Jira Issues",
+          "browsable": true,
+          "processTypes": [
+            "api-integration",
+            "orchestration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "JiraTransitionIssue",
+          "displayName": "Transition Jira Issue",
+          "browsable": true,
+          "processTypes": [
+            "api-integration",
+            "orchestration"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
@@ -9108,6 +10233,138 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.Mail.Activities"
+        },
+        {
+          "className": "GetImapMailMessages",
+          "displayName": "Get IMAP Mail Messages",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GetPop3MailMessages",
+          "displayName": "Get POP3 Mail Messages",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "SaveMailMessage",
+          "displayName": "Save Mail Message",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "MoveMail",
+          "displayName": "Move Mail",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "SendExchangeMailMessage",
+          "displayName": "Send Exchange Mail Message",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "GetExchangeMailMessages",
+          "displayName": "Get Exchange Mail Messages",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "SaveAttachments",
+          "displayName": "Save Attachments",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "ForEachMail",
+          "displayName": "For Each Mail",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "ReplyToMail",
+          "displayName": "Reply To Mail",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "ForwardMail",
+          "displayName": "Forward Mail",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "MarkMailAsRead",
+          "displayName": "Mark Mail As Read",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "DeleteMail",
+          "displayName": "Delete Mail",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
@@ -9310,6 +10567,16 @@
           ],
           "emissionApproved": false,
           "namespace": "UiPath.MicrosoftDynamics.Activities"
+        },
+        {
+          "className": "DynamicsDeleteRecord",
+          "displayName": "Delete Record (Dynamics 365)",
+          "browsable": true,
+          "processTypes": [
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
@@ -9848,6 +11115,127 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.MicrosoftOffice365.Activities"
+        },
+        {
+          "className": "Office365ApplicationScope",
+          "displayName": "Office 365 Application Scope",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "O365SendMail",
+          "displayName": "O365 Send Mail",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "O365GetMail",
+          "displayName": "O365 Get Mail",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "O365ReadRange",
+          "displayName": "O365 Read Range",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "O365WriteRange",
+          "displayName": "O365 Write Range",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "O365CreateFile",
+          "displayName": "O365 Create File",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "O365DownloadFile",
+          "displayName": "O365 Download File",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "O365DeleteFile",
+          "displayName": "O365 Delete File",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "O365ListFiles",
+          "displayName": "O365 List Files",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "O365CalendarCreateEvent",
+          "displayName": "O365 Calendar Create Event",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "O365CalendarGetEvents",
+          "displayName": "O365 Calendar Get Events",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
@@ -10046,6 +11434,13 @@
     },
     {
       "packageId": "UiPath.MLActivities",
+      "version": "2.0.4",
+      "feedStatus": "unverified",
+      "preferredVersion": "2.0.4",
+      "generationApproved": true,
+      "prefix": "uml",
+      "clrNamespace": "UiPath.MLActivities",
+      "assembly": "UiPath.MLActivities",
       "activities": [
         {
           "className": "MLSkill",
@@ -10135,12 +11530,19 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.MLActivities"
+        },
+        {
+          "className": "MLModelRun",
+          "displayName": "ML Model Run",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "api-integration"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
-      ],
-      "version": "2.0.4",
-      "feedStatus": "unverified",
-      "preferredVersion": "2.0.4",
-      "generationApproved": true
+      ]
     },
     {
       "packageId": "UiPath.PDF.Activities",
@@ -10743,6 +12145,61 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.Persistence.Activities"
+        },
+        {
+          "className": "CreateStorageBucket",
+          "displayName": "Create Storage Bucket",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "ListStorageFiles",
+          "displayName": "List Storage Files",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "ReadStorageText",
+          "displayName": "Read Storage Text",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "WriteStorageText",
+          "displayName": "Write Storage Text",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "DeleteStorageFile",
+          "displayName": "Delete Storage File",
+          "browsable": true,
+          "processTypes": [
+            "general",
+            "orchestration"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
@@ -10941,6 +12398,26 @@
           ],
           "emissionApproved": true,
           "namespace": "UiPath.Presentations.Activities"
+        },
+        {
+          "className": "ReadPresentation",
+          "displayName": "Read Presentation",
+          "browsable": true,
+          "processTypes": [
+            "general"
+          ],
+          "properties": [],
+          "emissionApproved": false
+        },
+        {
+          "className": "SavePresentation",
+          "displayName": "Save Presentation",
+          "browsable": true,
+          "processTypes": [
+            "general"
+          ],
+          "properties": [],
+          "emissionApproved": false
         }
       ]
     },
