@@ -4721,10 +4721,120 @@ function countPropertyMetrics(node: WorkflowNode, metrics: ValueIntentMetrics): 
   }
 }
 
+const SCALAR_REQUIRED_PROPERTIES = new Set([
+  "WorkflowFileName", "workflowFileName",
+  "Message", "message",
+  "AssetName", "assetName",
+  "EntityType", "entityType",
+  "QueueName", "queueName",
+  "ProcessName", "processName",
+  "FileName", "fileName",
+  "DisplayName", "displayName",
+  "To", "Subject", "Body",
+  "Level", "level",
+  "Text", "text",
+]);
+
+function resolveScalarRequiredProperty(
+  value: PropertyValue,
+  key: string,
+  templateName: string,
+  workflowFile: string | undefined,
+  props: Record<string, any>,
+): boolean {
+  if (!SCALAR_REQUIRED_PROPERTIES.has(key)) return false;
+
+  if (isValueIntent(value)) {
+    const vi = value as ValueIntent;
+    if (vi.type === "literal" || vi.type === "vb_expression") {
+      if (typeof vi.value === "string") {
+        props[key] = vi.value;
+        emitTypedPropertyDiagnostic({
+          workflowFile: workflowFile || "unknown",
+          templateName,
+          propertyName: key,
+          classification: "scalar-from-object",
+          action: "scalar-resolved",
+          reason: `Scalar-required property "${key}" resolved from ValueIntent (type=${vi.type}) to plain scalar`,
+          stage: "pre-dispatch-scalar-resolution",
+        });
+        return true;
+      }
+    }
+    if (vi.type === "variable" && typeof vi.name === "string") {
+      const FILENAME_PROPERTIES = new Set(["WorkflowFileName", "workflowFileName", "FileName", "fileName"]);
+      if (FILENAME_PROPERTIES.has(key)) {
+        props[key] = vi.name;
+        emitTypedPropertyDiagnostic({
+          workflowFile: workflowFile || "unknown",
+          templateName,
+          propertyName: key,
+          classification: "scalar-from-object",
+          action: "scalar-resolved",
+          reason: `Filename property "${key}" resolved from ValueIntent variable to name "${vi.name}"`,
+          stage: "pre-dispatch-scalar-resolution",
+        });
+        return true;
+      }
+    }
+  }
+
+  if (typeof value === "object" && value !== null && !isValueIntent(value)) {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.type === "string") {
+      if ((obj.type === "literal" || obj.type === "vb_expression") && typeof obj.value === "string") {
+        props[key] = obj.value;
+        emitTypedPropertyDiagnostic({
+          workflowFile: workflowFile || "unknown",
+          templateName,
+          propertyName: key,
+          classification: "scalar-from-object",
+          action: "scalar-resolved",
+          reason: `Scalar-required property "${key}" resolved from typed object (type=${obj.type}) to plain scalar`,
+          stage: "pre-dispatch-scalar-resolution",
+        });
+        return true;
+      }
+      if (obj.type === "variable" && typeof obj.name === "string") {
+        props[key] = obj.name;
+        emitTypedPropertyDiagnostic({
+          workflowFile: workflowFile || "unknown",
+          templateName,
+          propertyName: key,
+          classification: "scalar-from-object",
+          action: "scalar-resolved",
+          reason: `Scalar-required property "${key}" resolved from typed variable object to name "${obj.name}"`,
+          stage: "pre-dispatch-scalar-resolution",
+        });
+        return true;
+      }
+    }
+
+    console.warn(`[normalizeSpecProperties] Scalar-required property "${key}" on "${templateName}" contains unresolvable structured value — blocking: ${JSON.stringify(value).substring(0, 120)}`);
+    emitTypedPropertyDiagnostic({
+      workflowFile: workflowFile || "unknown",
+      templateName,
+      propertyName: key,
+      classification: "unsupported-structured",
+      action: "blocked",
+      reason: `Scalar-required property "${key}" contains unresolvable structured value — blocked to prevent object leakage`,
+      rawShape: JSON.stringify(value).substring(0, 200),
+      stage: "pre-dispatch-scalar-resolution",
+    });
+    delete props[key];
+    return true;
+  }
+
+  return false;
+}
+
 function normalizeSpecProperties(node: WorkflowNode, workflowFile?: string): void {
   if (node.kind === "activity") {
     const templateName = node.template || "";
     for (const [key, value] of Object.entries(node.properties || {})) {
+      if (resolveScalarRequiredProperty(value, key, templateName, workflowFile, node.properties as Record<string, any>)) {
+        continue;
+      }
       if (isValueIntent(value)) {
         resolveNestedJsonInValueIntent(value as ValueIntent, key, node.properties as Record<string, any>);
       } else if (!isValueIntent(value) && typeof value === "string") {

@@ -21,6 +21,28 @@ function mapVariable(v: FlatVariable): VariableDeclaration {
   };
 }
 
+function tryResolveObjectToScalar(val: unknown): { resolved: true; value: PropertyValue } | { resolved: false } {
+  if (typeof val !== "object" || val === null) return { resolved: false };
+  const obj = val as Record<string, unknown>;
+
+  if (typeof obj.type === "string") {
+    if ((obj.type === "literal" || obj.type === "vb_expression") && typeof obj.value === "string") {
+      return { resolved: true, value: obj.value };
+    }
+    if (obj.type === "variable" && typeof obj.name === "string" && obj.name !== "") {
+      return { resolved: true, value: obj.name };
+    }
+    if (obj.type === "url_with_params" && typeof obj.baseUrl === "string") {
+      return { resolved: true, value: obj.baseUrl };
+    }
+    if (obj.type === "expression" && typeof obj.left === "string" && typeof obj.operator === "string" && typeof obj.right === "string") {
+      return { resolved: true, value: `${obj.left} ${obj.operator} ${obj.right}` };
+    }
+  }
+
+  return { resolved: false };
+}
+
 function mapProperties(props: Record<string, unknown>): Record<string, PropertyValue> {
   const result: Record<string, PropertyValue> = {};
   for (const [key, val] of Object.entries(props)) {
@@ -28,7 +50,17 @@ function mapProperties(props: Record<string, unknown>): Record<string, PropertyV
     if (isValueIntent(val)) {
       result[key] = val;
     } else if (typeof val === "object") {
-      result[key] = JSON.stringify(val);
+      const obj = val as Record<string, unknown>;
+      if (typeof obj.type === "string" && ["literal", "variable", "vb_expression", "expression", "url_with_params"].includes(obj.type)) {
+        const scalarResolution = tryResolveObjectToScalar(val);
+        if (scalarResolution.resolved) {
+          result[key] = scalarResolution.value;
+        } else {
+          console.warn(`[mapProperties] Blocking malformed ValueIntent-shaped object for property "${key}" — cannot safely resolve to scalar: ${JSON.stringify(val).substring(0, 120)}`);
+        }
+      } else {
+        result[key] = JSON.stringify(val);
+      }
     } else {
       result[key] = String(val);
     }

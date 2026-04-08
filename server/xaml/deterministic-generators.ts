@@ -9,9 +9,29 @@ export function _uuid(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
+function resolveToScalarString(val: unknown): string {
+  if (val === null || val === undefined) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  if (typeof val === "object") {
+    const obj = val as Record<string, unknown>;
+    if (typeof obj.type === "string") {
+      if ((obj.type === "literal" || obj.type === "vb_expression") && typeof obj.value === "string") return obj.value;
+      if (obj.type === "variable" && typeof obj.name === "string") return obj.name;
+      if (obj.type === "url_with_params" && typeof obj.baseUrl === "string") return obj.baseUrl;
+      if (obj.type === "expression" && typeof obj.left === "string" && typeof obj.operator === "string" && typeof obj.right === "string") {
+        return `${obj.left} ${obj.operator} ${obj.right}`;
+      }
+    }
+    console.warn(`[Deterministic Generator] Unresolvable structured object blocked from scalar position: ${JSON.stringify(obj).substring(0, 120)}`);
+    return "";
+  }
+  return String(val);
+}
+
 export function _escapeXmlAttr(val: unknown): string {
   if (val === null || val === undefined) return "";
-  const s = typeof val === "string" ? val : String(val);
+  const s = resolveToScalarString(val);
   return escapeXml(s);
 }
 
@@ -38,7 +58,7 @@ export type GeneratorFn = (args: GeneratorArgs, children?: string) => string;
 function _prop(args: GeneratorArgs, ...keys: string[]): string {
   for (const k of keys) {
     const v = args[k];
-    if (v !== undefined && v !== null && v !== "") return String(v);
+    if (v !== undefined && v !== null && v !== "") return resolveToScalarString(v);
   }
   return "";
 }
@@ -185,8 +205,8 @@ export function gen_ncheck_state(args: GeneratorArgs): string {
 
 export function gen_log_message(args: GeneratorArgs): string {
   const dn = _escapeXmlAttr(args.displayName || "Log Message");
-  const level = args.level || args.Level || "Info";
-  const message = args.message || args.Message || "";
+  const level = resolveToScalarString(args.level || args.Level || "Info");
+  const message = resolveToScalarString(args.message || args.Message || "");
 
   return `<ui:LogMessage Level="${_escapeXmlAttr(level)}" Message="${_escapeXmlAttr(message)}" DisplayName="${dn}" />`;
 }
@@ -223,7 +243,7 @@ export function gen_delay(args: GeneratorArgs): string {
 
 export function gen_invoke_workflow_file(args: GeneratorArgs): string {
   const dn = _escapeXmlAttr(args.displayName || "Invoke Workflow");
-  const fileName = args.workflowFileName || args.WorkflowFileName || "";
+  const fileName = resolveToScalarString(args.workflowFileName || args.WorkflowFileName || "");
   const wfArguments = args.arguments || args.Arguments;
 
   let argsBlock = "";
@@ -257,7 +277,7 @@ export function gen_take_screenshot(args: GeneratorArgs): string {
 
 export function gen_get_credential(args: GeneratorArgs): string {
   const dn = _escapeXmlAttr(args.displayName || "Get Credential");
-  const assetName = _prop(args, "assetName", "AssetName");
+  const assetName = resolveToScalarString(args.assetName || args.AssetName || "");
   const username = _prop(args, "username", "Username", "outputVar");
   const password = _prop(args, "password", "Password");
 
@@ -283,7 +303,7 @@ export function gen_get_credential(args: GeneratorArgs): string {
 
 export function gen_get_asset(args: GeneratorArgs): string {
   const dn = _escapeXmlAttr(args.displayName || "Get Asset");
-  const assetName = _prop(args, "assetName", "AssetName");
+  const assetName = resolveToScalarString(args.assetName || args.AssetName || "");
   const outputVar = _propOr(args, "str_AssetValue", "outputVar", "Value", "value");
 
   return `<ui:GetAsset AssetName="${_escapeXmlAttr(assetName)}" DisplayName="${dn}">
@@ -295,7 +315,7 @@ export function gen_get_asset(args: GeneratorArgs): string {
 
 export function gen_add_queue_item(args: GeneratorArgs): string {
   const dn = _escapeXmlAttr(args.displayName || "Add Queue Item");
-  const queueName = args.queueName || args.QueueName || "";
+  const queueName = resolveToScalarString(args.queueName || args.QueueName || "");
   const reference = args.reference || args.Reference || "";
   const priority = args.priority || args.Priority || "Normal";
 
@@ -309,7 +329,7 @@ export function gen_add_queue_item(args: GeneratorArgs): string {
 
 export function gen_get_transaction_item(args: GeneratorArgs): string {
   const dn = _escapeXmlAttr(args.displayName || "Get Transaction Item");
-  const queueName = args.queueName || args.QueueName || "";
+  const queueName = resolveToScalarString(args.queueName || args.QueueName || "");
   const outputVar = args.outputVar || args.TransactionItem || "qi_TransactionItem";
 
   return `<ui:GetTransactionItem QueueName="${_escapeXmlAttr(queueName)}" DisplayName="${dn}">
