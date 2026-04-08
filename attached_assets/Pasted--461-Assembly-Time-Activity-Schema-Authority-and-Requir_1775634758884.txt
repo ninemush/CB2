@@ -1,0 +1,153 @@
+#461 - Assembly-Time Activity Schema Authority and Required-Property Emission
+
+What & Why
+The latest benchmark runs show that after symbol fixes, spec-level workflow interface derivation, contract improvements, and typed-property boundary enforcement, the dominant remaining failure class is now assembly-time activity invalidity.
+
+Recent runs still show repeated missing required properties for core activities, including examples such as:
+- While activity missing required property "Condition"
+- Log Message activity missing required property "Message"
+- Invoke Workflow File activity missing required property "WorkflowFileName"
+- Get Credential activity missing required property "AssetName"
+
+This means the pipeline is still emitting activities without minimum schema-complete shape and relying on post-emission repair/enforcement layers to rescue them. A Studio developer would never create these activities without their required properties in the first place.
+
+The activity catalog and registry already contain much of the schema truth, but that truth is still not being applied authoritatively enough during assembly. The required-property enforcer and quality gate are still acting as major downstream repair/audit layers instead of safety nets.
+
+This task must move required-property authority earlier into assembly so activities are emitted with the correct minimum shape on first pass.
+
+Done looks like
+- Repeated benchmark failures for missing required activity properties drop materially.
+- Core activities are emitted with their minimum required properties present on first pass when authoritative data exists.
+- The tree assembler uses activity schema truth during emission rather than relying primarily on post-emission required-property enforcement.
+- Child-element versus attribute routing for required properties follows schema truth during assembly.
+- Post-emission required-property enforcement remains in place as a safety net, but it is no longer the primary mechanism that makes common activities minimally valid.
+- Benchmark runs show a material reduction in required-property-related structural invalidity.
+
+Out of scope
+- Broad workflow contract redesign
+- Graph connectivity fixes
+- Prompt engineering
+- Rewriting all expression logic
+- Weakening required-property enforcement or the quality gate
+- Silent invention of business data when the process/spec provides no authoritative source
+- Broad namespace/prefix redesign except where directly needed for required-property emission shape
+
+Design rules
+Assembly-time authority first
+If the catalog/registry/schema already knows that an activity requires a property, the assembler must try to emit that property correctly during assembly rather than hoping a later repair layer fills it in.
+
+No silent business invention
+If a required property has no authoritative source value, do not invent business content. Emit an explicit diagnostic and only use safe placeholders or fallback behavior where the existing schema/enforcer rules already define that as acceptable.
+
+Schema-safe shape
+If the schema says a required property belongs in child-element form, do not emit it as an attribute just to satisfy completeness checks. Assembly must honor schema shape, not just property presence.
+
+Safety-net preservation
+Keep required-property-enforcer.ts and downstream validators in place. This task reduces their workload; it does not remove them.
+
+No generic blanket filling
+Do not blindly populate every missing property. Focus on schema-required properties for activities where assembly already has sufficient authoritative context or known safe defaults.
+
+Tasks
+1. Trace the assembly-time required-property path
+Trace how required properties are currently handled from:
+- activity schema / registry lookup
+- tree assembly property emission
+- xaml generation
+- post-emission required-property enforcement
+- quality gate detection
+
+Use the latest benchmark failures as evidence targets, especially:
+- While.Condition
+- Log Message.Message
+- Invoke Workflow File.WorkflowFileName
+- Get Credential.AssetName
+
+2. Identify where assembly already has authoritative schema truth but does not apply it
+Review where the assembler already knows:
+- activity type
+- catalog schema / registry entry
+- required property list
+- child-element versus attribute syntax
+but still emits an incomplete activity.
+
+3. Add assembly-time required-property emission for supported activities
+For common benchmark-relevant activities where authoritative source values are available or safely derivable from existing assembly context, emit the required properties during assembly instead of leaving them to post-emission repair.
+
+Examples to cover if supported by available assembly context:
+- While.Condition
+- LogMessage.Message
+- InvokeWorkflowFile.WorkflowFileName
+- GetCredential.AssetName
+
+Do not guess business values that are not actually available.
+
+4. Route required properties using schema-correct shape
+If the schema indicates a required property should be emitted as:
+- attribute
+- child element
+- typed child element
+then assembly must emit it in that shape on first pass.
+
+Do not satisfy required-property presence using the wrong shape.
+
+5. Preserve explicit existing values
+If the workflow spec or assembly context already provides a non-empty, schema-consistent value for a required property, preserve it. Do not overwrite explicit values with defaults or generic placeholders.
+
+6. Add explicit diagnostics for unresolved required properties at assembly time
+If assembly knows an activity requires a property but does not have sufficient authoritative value to emit it, surface a diagnostic that clearly says:
+- activity type
+- required property
+- expected shape
+- why emission was not possible at assembly time
+This should reduce ambiguity about whether the failure is due to missing business input or a pipeline omission.
+
+7. Keep downstream enforcement but reduce its burden
+Do not remove required-property-enforcer.ts or downstream completeness checks.
+Success should mean:
+- fewer properties left for post-emission repair
+- fewer blocked generic substitutions
+- fewer required-property structural-invalidity findings on benchmark runs
+
+8. Add focused regression tests
+Add tests covering:
+- While emitted with Condition when authoritative source exists
+- LogMessage emitted with Message when authoritative source exists
+- InvokeWorkflowFile emitted with WorkflowFileName in the correct shape
+- GetCredential emitted with AssetName when authoritative source exists
+- child-element required properties are emitted in child-element form, not flattened into attributes
+- explicit valid values are preserved
+- unresolved required properties produce clear diagnostics rather than silent invention
+- benchmark-style missing required-property failures drop materially
+
+Primary files to modify
+- server/workflow-tree-assembler.ts
+- server/uipath-activity-registry.ts
+- server/catalog/xaml-template-builder.ts
+- server/__tests__/pipeline-regression.test.ts
+
+Reference files
+- server/required-property-enforcer.ts
+- server/xaml-generator.ts
+- server/uipath-quality-gate.ts
+- server/final-artifact-validation.ts
+- server/package-assembler.ts
+- server/xaml/xaml-compliance.ts
+- server/xaml/expression-builder.ts
+- server/emission-gate.ts
+
+What this does not touch
+- spec-to-tree-mapper.ts
+- deterministic-scaffold.ts
+- workflow-contract-integrity.ts
+- invoke-binding-canonicalizer.ts
+- declaration-registry.ts
+- graph validator logic
+
+Success measure
+Benchmark runs should show a clear reduction in:
+- missing required property findings
+- required-property-related structural invalidity
+- downstream required-property repair burden
+
+Common benchmark activities should be emitted with minimum schema-valid shape on first pass rather than being rescued later.
