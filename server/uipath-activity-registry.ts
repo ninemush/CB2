@@ -442,7 +442,7 @@ export const NAMESPACE_PREFIX_TO_PACKAGE: Record<string, string> = {
   "udu": "UiPath.DocumentUnderstanding.Activities",
   "ucm": "UiPath.CommunicationsMining.Activities",
   "uwebapi": "UiPath.WebAPI.Activities",
-  "ucomplex": "UiPath.ComplexScenarios.Activities",
+  "ucs": "UiPath.ComplexScenarios.Activities",
   "uwfe": "UiPath.WorkflowEvents.Activities",
   "uo365": "UiPath.MicrosoftOffice365.Activities",
   "uteams": "UiPath.MicrosoftTeams.Activities",
@@ -536,7 +536,7 @@ export function scanXamlForRequiredPackages(xamlContent: string): Set<string> {
     }
   }
 
-  const xmlnsPattern = /xmlns:\w+="clr-namespace:(UiPath\.[^;]+);assembly=([^"]+)"/g;
+  const xmlnsPattern = /xmlns:\w+="clr-namespace:(UiPath\.[^;&]+);assembly=([^"&]+)"/g;
   while ((match = xmlnsPattern.exec(xamlContent)) !== null) {
     const ns = match[1].trim();
     const assemblyName = match[2].trim();
@@ -570,7 +570,7 @@ export function scanXamlForRequiredPackages(xamlContent: string): Set<string> {
     }
   }
 
-  const assemblyRefPattern = /clr-namespace:([^;]+);assembly=([^"]+)/g;
+  const assemblyRefPattern = /clr-namespace:([^;&]+);assembly=([^"&]+)/g;
   while ((match = assemblyRefPattern.exec(xamlContent)) !== null) {
     const ns = match[1].trim();
     const assemblyName = match[2].trim();

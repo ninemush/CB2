@@ -44,7 +44,7 @@ import {
 } from "../workflow-status-classifier";
 import AdmZip from "adm-zip";
 import { runQualityGate, type QualityGateInput } from "../uipath-quality-gate";
-import { normalizeXaml, smartBracketWrap, ensureBracketWrapped, looksLikePlainText, BARE_WORD_LITERALS_SET, CLR_NAMESPACE_TO_XAML_PREFIX, PACKAGE_NAMESPACE_MAP, injectMissingNamespaceDeclarations } from "../xaml/xaml-compliance";
+import { normalizeXaml, smartBracketWrap, ensureBracketWrapped, looksLikePlainText, BARE_WORD_LITERALS_SET, CLR_NAMESPACE_TO_XAML_PREFIX, PACKAGE_NAMESPACE_MAP, GUARANTEED_ACTIVITY_PREFIX_MAP, injectMissingNamespaceDeclarations } from "../xaml/xaml-compliance";
 import { normalizePropertyToValueIntent } from "../xaml/expression-builder";
 import { scanXamlForRequiredPackages, NAMESPACE_PREFIX_TO_PACKAGE } from "../uipath-activity-registry";
 import { checkNormalizationInvariants } from "../emission-gate";
@@ -4749,6 +4749,125 @@ describe("Typed property object boundary enforcement (Task #460)", () => {
         expect(diag.lowered).toBe(false);
         expect(diag.blockReason).toBeTruthy();
       });
+    });
+  });
+
+  describe("ucs/ComplexScenarios namespace compliance (Task #471 regressions)", () => {
+    it("compliance accepts XAML with xmlns:ucs=ComplexScenarios and ucs:MultipleAssign activity", () => {
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="TestComplexScenarios"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=mscorlib"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:ucs="clr-namespace:UiPath.ComplexScenarios.Activities;assembly=UiPath.ComplexScenarios.Activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <TextExpression.NamespacesForImplementation>
+    <sco:Collection x:TypeArguments="x:String">
+      <x:String>System</x:String>
+      <x:String>System.Collections.Generic</x:String>
+      <x:String>System.Data</x:String>
+      <x:String>System.Linq</x:String>
+      <x:String>UiPath.Core</x:String>
+      <x:String>UiPath.Core.Activities</x:String>
+    </sco:Collection>
+  </TextExpression.NamespacesForImplementation>
+  <Sequence DisplayName="Main">
+    <ucs:MultipleAssign DisplayName="Set Variables">
+      <ucs:MultipleAssign.Assignments>
+        <x:Reference>__var1</x:Reference>
+      </ucs:MultipleAssign.Assignments>
+    </ucs:MultipleAssign>
+  </Sequence>
+</Activity>`;
+      expect(() => normalizeXaml(xaml)).not.toThrow();
+    });
+
+    it("auto-populate merges PACKAGE_NAMESPACE_MAP URIs into existing APPROVED_XMLNS_MAPPINGS entries", () => {
+      const ucsInfo = PACKAGE_NAMESPACE_MAP["UiPath.ComplexScenarios.Activities"];
+      expect(ucsInfo).toBeTruthy();
+      expect(ucsInfo.prefix).toBe("ucs");
+
+      const xaml = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="TestMerge"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=mscorlib"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:ucs="clr-namespace:UiPath.ComplexScenarios.Activities;assembly=UiPath.ComplexScenarios.Activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <TextExpression.NamespacesForImplementation>
+    <sco:Collection x:TypeArguments="x:String">
+      <x:String>System</x:String>
+      <x:String>System.Collections.Generic</x:String>
+      <x:String>System.Data</x:String>
+      <x:String>System.Linq</x:String>
+      <x:String>UiPath.Core</x:String>
+      <x:String>UiPath.Core.Activities</x:String>
+    </sco:Collection>
+  </TextExpression.NamespacesForImplementation>
+  <Sequence DisplayName="Main">
+    <ui:LogMessage Level="Info" Message="[&quot;test&quot;]" DisplayName="Log" />
+  </Sequence>
+</Activity>`;
+      expect(() => normalizeXaml(xaml)).not.toThrow();
+    });
+
+    it("xmlns regex does not extract corrupted package names from entity-encoded error text in LogMessage", () => {
+      const xamlWithEmbeddedError = `<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="StubTest"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=mscorlib"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence DisplayName="StubTest">
+    <ui:LogMessage Level="Warn" Message="[&quot;STUB: TestWorkflow — xmlns:ucs=&quot;clr-namespace:UiPath.ComplexScenarios.Activities;assembly=UiPath.ComplexScenarios.Activities&quot; which does not match. Implement the actual logic here.&quot;]" DisplayName="Stub Warning" />
+  </Sequence>
+</Activity>`;
+      const packages = scanXamlForRequiredPackages(xamlWithEmbeddedError);
+      for (const pkg of packages) {
+        expect(pkg).not.toContain("&quot;");
+        expect(pkg).not.toContain(" ");
+        expect(pkg).toMatch(/^[A-Za-z0-9.]+$/);
+      }
+    });
+
+    it("prefix consistency: ucs maps to UiPath.ComplexScenarios.Activities across all registries including catalog", () => {
+      const pnmEntry = PACKAGE_NAMESPACE_MAP["UiPath.ComplexScenarios.Activities"];
+      expect(pnmEntry).toBeTruthy();
+      expect(pnmEntry.prefix).toBe("ucs");
+
+      expect(NAMESPACE_PREFIX_TO_PACKAGE["ucs"]).toBe("UiPath.ComplexScenarios.Activities");
+      expect(NAMESPACE_PREFIX_TO_PACKAGE["ucomplex"]).toBeUndefined();
+
+      const complexActivities = ["MultipleAssign", "BuildDataTable", "FilterDataTable", "OutputDataTable", "AddDataRow", "LookupDataTable"];
+      for (const activity of complexActivities) {
+        const prefix = GUARANTEED_ACTIVITY_PREFIX_MAP[activity];
+        if (prefix !== undefined) {
+          expect(prefix).toBe("ucs");
+        }
+      }
+
+      if (catalogServiceImport.isLoaded()) {
+        const catalogPkg = catalogServiceImport.getPackageForActivity("MultipleAssign") ||
+                           catalogServiceImport.getPackageForActivity("ucs:MultipleAssign");
+        if (catalogPkg) {
+          expect(catalogPkg).toBe("UiPath.ComplexScenarios.Activities");
+        }
+      }
     });
   });
 });

@@ -1493,7 +1493,7 @@ const APPROVED_XMLNS_MAPPINGS: Record<string, { validUris: string[] }> = {
   "scg2": { validUris: ["clr-namespace:System.Data;assembly=System.Data", "clr-namespace:System.Data;assembly=System.Data.Common"] },
   "sco": { validUris: ["clr-namespace:System.Collections.ObjectModel;assembly=System.Private.CoreLib", "clr-namespace:System.Collections.ObjectModel;assembly=mscorlib", "clr-namespace:System.Collections.ObjectModel;assembly=System.Runtime"] },
   "uix": { validUris: ["http://schemas.uipath.com/workflow/activities/uix"] },
-  "ucs": { validUris: ["http://schemas.uipath.com/workflow/activities/collection", "clr-namespace:UiPath.Core.Activities;assembly=UiPath.System.Activities"] },
+  "ucs": { validUris: ["http://schemas.uipath.com/workflow/activities/collection", "clr-namespace:UiPath.Core.Activities;assembly=UiPath.System.Activities", "clr-namespace:UiPath.ComplexScenarios.Activities;assembly=UiPath.ComplexScenarios.Activities"] },
   "udb": { validUris: ["http://schemas.uipath.com/workflow/activities/database", "clr-namespace:UiPath.Database.Activities;assembly=UiPath.Database.Activities"] },
   "umail": { validUris: ["http://schemas.uipath.com/workflow/activities/mail", "clr-namespace:UiPath.Mail.Activities;assembly=UiPath.Mail.Activities"] },
   "updf": { validUris: ["http://schemas.uipath.com/workflow/activities/pdf", "clr-namespace:UiPath.PDF.Activities;assembly=UiPath.PDF.Activities"] },
@@ -1505,8 +1505,12 @@ const APPROVED_XMLNS_MAPPINGS: Record<string, { validUris: string[] }> = {
 };
 
 for (const [, info] of Object.entries(PACKAGE_NAMESPACE_MAP)) {
-  if (info.prefix && info.prefix !== "" && !APPROVED_XMLNS_MAPPINGS[info.prefix]) {
-    APPROVED_XMLNS_MAPPINGS[info.prefix] = { validUris: [info.xmlns] };
+  if (info.prefix && info.prefix !== "") {
+    if (!APPROVED_XMLNS_MAPPINGS[info.prefix]) {
+      APPROVED_XMLNS_MAPPINGS[info.prefix] = { validUris: [info.xmlns] };
+    } else if (!APPROVED_XMLNS_MAPPINGS[info.prefix].validUris.includes(info.xmlns)) {
+      APPROVED_XMLNS_MAPPINGS[info.prefix].validUris.push(info.xmlns);
+    }
   }
 }
 

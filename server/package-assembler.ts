@@ -2402,7 +2402,7 @@ function extractXamlNamespaceAndAssemblyPackages(allXamlContent: string): Set<st
   const packages = new Set<string>();
   const assemblyToPackage = buildAssemblyToPackageMap();
 
-  const xmlnsPattern = /xmlns:\w+="clr-namespace:[^;]*;assembly=([^"]+)"/g;
+  const xmlnsPattern = /xmlns:\w+="clr-namespace:[^;&]*;assembly=([^"&]+)"/g;
   let match;
   while ((match = xmlnsPattern.exec(allXamlContent)) !== null) {
     const assemblyName = match[1].trim();
@@ -5472,8 +5472,9 @@ async function buildNuGetPackageImpl(pkg: UiPathPackage, version: string = "1.0.
           });
         }
       }
-      if (unusedDeps.length > 0) {
-        console.log(`[Dependency Alignment] Removed ${unusedDeps.length} unused dependenc(ies): ${unusedDeps.join(", ")}${proactiveRemovals.length > 0 ? ` (${proactiveRemovals.length} silently from proactive resolution)` : ""}`);
+      const actuallyRemoved = unusedDeps.filter(pkg => !specPredictedPackages.has(pkg));
+      if (actuallyRemoved.length > 0) {
+        console.log(`[Dependency Alignment] Removed ${actuallyRemoved.length} unused dependenc(ies): ${actuallyRemoved.join(", ")}${proactiveRemovals.length > 0 ? ` (${proactiveRemovals.length} silently from proactive resolution)` : ""}`);
       }
 
       const MANDATORY_BASELINE_PACKAGES: string[] = ["UiPath.System.Activities"];
