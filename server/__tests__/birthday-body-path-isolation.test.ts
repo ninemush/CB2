@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveActivityTemplate, assembleWorkflowFromSpec } from "../workflow-tree-assembler";
+import { resolveActivityTemplate, assembleWorkflowFromSpec, getAndClearTemplateDispatchNormalizations } from "../workflow-tree-assembler";
 import { normalizeXaml } from "../xaml/xaml-compliance";
 import { catalogService } from "../catalog/catalog-service";
 import type { ActivityNode, WorkflowSpec } from "../workflow-spec-types";
@@ -59,7 +59,7 @@ describe("Birthday Body path isolation (E8)", () => {
     expect(normalized, "Must NOT contain ui:SendSmtpMailMessage after normalization").not.toMatch(/<ui:SendSmtpMailMessage[\s>]/);
   });
 
-  it("DEFECT REPRODUCTION: prefixed template 'ui:SendSmtpMailMessage' bypasses dedicated template and omits Body", () => {
+  it("FIX VERIFIED: prefixed template 'ui:SendSmtpMailMessage' now dispatches to dedicated template and emits Body", () => {
     if (!catalogService.isLoaded()) catalogService.load();
 
     const prefixedNode: ActivityNode = {
@@ -82,9 +82,7 @@ describe("Birthday Body path isolation (E8)", () => {
     expect(bareXml, "Bare template MUST emit Body").toContain("SendSmtpMailMessage.Body");
 
     const prefixedXml = resolveActivityTemplate(prefixedNode, []);
-    const prefixedHasBody = prefixedXml.includes("SendSmtpMailMessage.Body") || prefixedXml.includes(".Body");
-
-    expect(prefixedHasBody, "DEFECT CONFIRMED: prefixed template 'ui:SendSmtpMailMessage' does NOT emit Body child element — this is the root cause of DHG #36 violations #87-#90").toBe(false);
+    expect(prefixedXml, "Prefixed template MUST now emit Body (fix applied: dispatchKey strips namespace prefix)").toContain("SendSmtpMailMessage.Body");
   });
 
   it("full assembleWorkflowFromSpec with SendSmtpMailMessage Body absent still emits Body", () => {
@@ -126,5 +124,221 @@ describe("Birthday Body path isolation (E8)", () => {
 
     const smtpMatches = normalized.match(/<(?:umail|ui):SendSmtpMailMessage[\s>]/g) || [];
     expect(smtpMatches.length, "Must have 2 SendSmtpMailMessage opening tags").toBe(2);
+  });
+});
+
+describe("Task #464: Benchmark-hit required property source binding regression tests", () => {
+  describe("SendSmtpMailMessage.Body — confirmed pair source binding", () => {
+    it("prefixed template binds valid upstream source via dedicated template dispatch", () => {
+      if (!catalogService.isLoaded()) catalogService.load();
+      getAndClearTemplateDispatchNormalizations();
+
+      const prefixVariants = ["ui:SendSmtpMailMessage", "umail:SendSmtpMailMessage"];
+      for (const prefix of prefixVariants) {
+        const node: ActivityNode = {
+          kind: "activity",
+          template: prefix,
+          displayName: `Test (${prefix})`,
+          properties: { To: "t@t.com", Subject: "Hi", Body: "Hello World", Server: "smtp", Port: "587" },
+          errorHandling: "none",
+        };
+        const xml = resolveActivityTemplate(node, []);
+        expect(xml, `${prefix}: Body child element must be emitted`).toContain("SendSmtpMailMessage.Body");
+        expect(xml, `${prefix}: Body must contain provided value`).toContain("Hello World");
+      }
+
+      const normalizations = getAndClearTemplateDispatchNormalizations();
+      expect(normalizations.length).toBe(2);
+      for (const rec of normalizations) {
+        expect(rec.normalizedDispatchKey).toBe("SendSmtpMailMessage");
+        expect(rec.inRequiredPropertyGuaranteeMap).toBe(true);
+        expect(rec.requiredPropertyGuaranteed).toContain("Body");
+        expect(rec.confirmedPairDetail).toBeDefined();
+        expect(rec.confirmedPairDetail!.sourcePresent).toBe(true);
+        expect(rec.confirmedPairDetail!.valueSource).toBe("upstream");
+        expect(rec.confirmedPairDetail!.fallbackApplied).toBe(false);
+        expect(rec.confirmedPairDetail!.chosenValue).toBe("Hello World");
+      }
+    });
+
+    it("uses safe structural fallback when Body is absent from properties", () => {
+      if (!catalogService.isLoaded()) catalogService.load();
+      getAndClearTemplateDispatchNormalizations();
+
+      const node: ActivityNode = {
+        kind: "activity",
+        template: "ui:SendSmtpMailMessage",
+        displayName: "Send Email (no body)",
+        properties: { To: "t@t.com", Subject: "Hi", Server: "smtp", Port: "587" },
+        errorHandling: "none",
+      };
+      const xml = resolveActivityTemplate(node, []);
+      expect(xml, "Body child element must still be emitted").toContain("SendSmtpMailMessage.Body");
+      expect(xml, "Fallback uses str_EmailBody placeholder variable").toContain("str_EmailBody");
+      expect(xml, "HANDOFF comment is emitted for absent Body").toContain("HANDOFF");
+
+      const records = getAndClearTemplateDispatchNormalizations();
+      expect(records.length).toBe(1);
+      expect(records[0].confirmedPairDetail).toBeDefined();
+      expect(records[0].confirmedPairDetail!.sourcePresent).toBe(false);
+      expect(records[0].confirmedPairDetail!.valueSource).toBe("fallback");
+      expect(records[0].confirmedPairDetail!.fallbackApplied).toBe(true);
+      expect(records[0].confirmedPairDetail!.chosenValue).toBe("str_EmailBody");
+    });
+
+    it("does not emit empty string or generic False as Body fallback", () => {
+      if (!catalogService.isLoaded()) catalogService.load();
+
+      const node: ActivityNode = {
+        kind: "activity",
+        template: "ui:SendSmtpMailMessage",
+        displayName: "Send Email",
+        properties: { To: "t@t.com", Subject: "Hi", Server: "smtp", Port: "587" },
+        errorHandling: "none",
+      };
+      const xml = resolveActivityTemplate(node, []);
+      expect(xml).not.toMatch(/Body[^>]*>\s*<InArgument[^>]*>\s*<\/InArgument>/);
+      expect(xml).not.toMatch(/Body[^>]*>\s*<InArgument[^>]*>""<\/InArgument>/);
+    });
+  });
+
+  describe("Mail family dedicated templates with namespace prefix normalization", () => {
+    it("GmailSendMessage with prefix emits Body, To, Subject", () => {
+      if (!catalogService.isLoaded()) catalogService.load();
+
+      const node: ActivityNode = {
+        kind: "activity",
+        template: "ui:GmailSendMessage",
+        displayName: "Send Gmail",
+        properties: { To: "t@t.com", Subject: "Hi" },
+        errorHandling: "none",
+      };
+      const xml = resolveActivityTemplate(node, []);
+      expect(xml).toContain(".Body");
+      expect(xml).toContain(".To");
+      expect(xml).toContain(".Subject");
+    });
+
+    it("SendOutlookMailMessage with prefix emits Body and To/Subject attributes", () => {
+      if (!catalogService.isLoaded()) catalogService.load();
+
+      const node: ActivityNode = {
+        kind: "activity",
+        template: "ui:SendOutlookMailMessage",
+        displayName: "Send Outlook",
+        properties: { To: "t@t.com", Subject: "Hi" },
+        errorHandling: "none",
+      };
+      const xml = resolveActivityTemplate(node, []);
+      expect(xml).toContain(".Body");
+      expect(xml).toContain('To=');
+      expect(xml).toContain('Subject=');
+    });
+  });
+
+  describe("Diagnostics for confirmed pairs", () => {
+    it("template dispatch normalization records are populated for prefixed templates", () => {
+      if (!catalogService.isLoaded()) catalogService.load();
+      getAndClearTemplateDispatchNormalizations();
+
+      const node: ActivityNode = {
+        kind: "activity",
+        template: "ui:SendSmtpMailMessage",
+        displayName: "Test Diagnostic",
+        properties: { To: "t@t.com", Subject: "Hi", Server: "smtp", Port: "587" },
+        errorHandling: "none",
+      };
+      resolveActivityTemplate(node, []);
+
+      const records = getAndClearTemplateDispatchNormalizations();
+      expect(records.length).toBe(1);
+      expect(records[0].originalTemplate).toBe("ui:SendSmtpMailMessage");
+      expect(records[0].normalizedDispatchKey).toBe("SendSmtpMailMessage");
+      expect(records[0].inRequiredPropertyGuaranteeMap).toBe(true);
+      expect(records[0].requiredPropertyGuaranteed).toEqual(["Body"]);
+    });
+
+    it("no normalization record for bare (non-prefixed) templates", () => {
+      if (!catalogService.isLoaded()) catalogService.load();
+      getAndClearTemplateDispatchNormalizations();
+
+      const node: ActivityNode = {
+        kind: "activity",
+        template: "SendSmtpMailMessage",
+        displayName: "Test No Diagnostic",
+        properties: { To: "t@t.com", Subject: "Hi", Server: "smtp", Port: "587" },
+        errorHandling: "none",
+      };
+      resolveActivityTemplate(node, []);
+
+      const records = getAndClearTemplateDispatchNormalizations();
+      expect(records.length).toBe(0);
+    });
+
+    it("diagnostic records for unrecognized prefixed templates show no dedicated match", () => {
+      if (!catalogService.isLoaded()) catalogService.load();
+      getAndClearTemplateDispatchNormalizations();
+
+      const node: ActivityNode = {
+        kind: "activity",
+        template: "ui:SomeUnknownActivity",
+        displayName: "Test Unknown",
+        properties: {},
+        errorHandling: "none",
+      };
+      resolveActivityTemplate(node, []);
+
+      const records = getAndClearTemplateDispatchNormalizations();
+      expect(records.length).toBe(1);
+      expect(records[0].inRequiredPropertyGuaranteeMap).toBe(false);
+      expect(records[0].requiredPropertyGuaranteed).toEqual([]);
+      expect(records[0].confirmedPairDetail).toBeUndefined();
+    });
+  });
+
+  describe("No generic invalid defaults emitted for confirmed paths (diagnostic guardrails, not scope expansion)", () => {
+    it("LogMessage always emits Message attribute — no empty string fallback", () => {
+      if (!catalogService.isLoaded()) catalogService.load();
+
+      const variants = [
+        { template: "LogMessage", displayName: "Log 1" },
+        { template: "ui:LogMessage", displayName: "Log 2" },
+      ];
+
+      for (const v of variants) {
+        const node: ActivityNode = {
+          kind: "activity",
+          template: v.template,
+          displayName: v.displayName,
+          properties: { Level: "Info" },
+          errorHandling: "none",
+        };
+        const xml = resolveActivityTemplate(node, []);
+        expect(xml, `${v.template}: Message attribute must be present`).toContain("Message=");
+        expect(xml, `${v.template}: Message must not be empty`).not.toMatch(/Message=""\s/);
+      }
+    });
+
+    it("InvokeWorkflowFile always emits WorkflowFileName — no empty string fallback", () => {
+      if (!catalogService.isLoaded()) catalogService.load();
+
+      const variants = [
+        { template: "InvokeWorkflowFile", displayName: "Invoke 1" },
+        { template: "ui:InvokeWorkflowFile", displayName: "Invoke 2" },
+      ];
+
+      for (const v of variants) {
+        const node: ActivityNode = {
+          kind: "activity",
+          template: v.template,
+          displayName: v.displayName,
+          properties: { WorkflowFileName: "Test.xaml" },
+          errorHandling: "none",
+        };
+        const xml = resolveActivityTemplate(node, []);
+        expect(xml, `${v.template}: WorkflowFileName must be present`).toContain("WorkflowFileName=");
+        expect(xml, `${v.template}: WorkflowFileName must contain provided value`).toContain("Test.xaml");
+      }
+    });
   });
 });

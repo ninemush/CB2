@@ -204,3 +204,51 @@ This matches the prefix-stripping logic already used in `spec-to-tree-mapper.ts:
 - E8 defect reproduction test (test 3) must be updated to expect Body IS present even with `template: "ui:SendSmtpMailMessage"`.
 - All existing E8 tests continue to pass.
 - Full BirthdayGreetingsV20 pipeline produces zero `MISSING_REQUIRED_ACTIVITY_PROPERTY` violations for `Body` on `SendSmtpMailMessage`.
+
+---
+
+## Implementation Scope (Task #464 — Frozen)
+
+**Date:** 2026-04-07
+
+### Frozen Confirmed-Defect Target List
+
+| Activity | Required Property | Status | Evidence |
+|----------|------------------|--------|----------|
+| `SendSmtpMailMessage` | `Body` | FIXED | E8 test 3 updated; WTA:2102 `dispatchKey` strips prefix |
+
+No other activity/property pair is confirmed defective by Birthday benchmark evidence.
+`LogMessage.Message` is NOT a defect — DHG (36) exhaustive search yields zero matches.
+
+### Fallback Policy for `SendSmtpMailMessage.Body`
+
+**Policy:** Structural fallback IS allowed. When `Body` is absent from AI-enriched properties, the dedicated template (`resolveSendSmtpMailMessageTemplate`) emits:
+- `str_EmailBody` variable placeholder wrapped in `<InArgument x:TypeArguments="x:String">[str_EmailBody]</InArgument>`
+- HANDOFF comment: `<!-- HANDOFF: Body binding was not provided — using placeholder variable str_EmailBody. Replace with actual email body content. -->`
+
+**Rationale:**
+- Produces structurally complete XAML (not rejected by validators or QG).
+- Signals to developer that Body needs real value via HANDOFF comment.
+- Does NOT use empty string `""` or generic `False` — these would silently produce incomplete email automation.
+
+### Failure Point Classification
+
+- **Type:** Upstream source absence + namespace prefix mismatch bypassing dedicated template dispatch.
+- **Root cause:** AI enricher returns `ui:SendSmtpMailMessage` as template name; `resolveActivityTemplate()` compared raw template name (with prefix) against dedicated template dispatch names (bare), causing fallback to generic XML path which does not guarantee `Body` child element.
+- **Fix location:** `workflow-tree-assembler.ts` line 2102 — `dispatchKey` strips `^[A-Za-z0-9]+:` prefix before all dedicated template dispatch comparisons.
+- **NOT an enforcer rejection or post-emission mutation.**
+
+### Diagnostic Infrastructure
+
+- `TemplateDispatchNormalizationRecord` interface tracks every prefix normalization event with: original template, normalized key, display name, dedicated template match status, and guaranteed required properties.
+- `getAndClearTemplateDispatchNormalizations()` / `getTemplateDispatchNormalizations()` exported for benchmark and test consumption.
+- Console log at dispatch time: `[Template Dispatch] Normalized "..." → dispatchKey "..."`.
+
+### Regression Test Coverage (E8)
+
+14 tests total in `server/__tests__/birthday-body-path-isolation.test.ts`:
+- 4 original Birthday isolation tests (dedicated template, normalization, fix verification, full assembly)
+- 3 confirmed-pair source binding tests (prefix variants, fallback, no empty defaults)
+- 2 mail family cross-template tests (Gmail, Outlook with prefix)
+- 3 diagnostic recording tests (populated, absent for bare, unrecognized)
+- 2 no-invalid-default tests (LogMessage.Message, InvokeWorkflowFile.WorkflowFileName)

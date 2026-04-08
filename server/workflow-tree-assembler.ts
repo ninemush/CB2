@@ -64,6 +64,33 @@ export interface ResidualJsonDefect {
   rawPayload: string;
 }
 
+export interface TemplateDispatchNormalizationRecord {
+  originalTemplate: string;
+  normalizedDispatchKey: string;
+  displayName: string;
+  inRequiredPropertyGuaranteeMap: boolean;
+  requiredPropertyGuaranteed: string[];
+  confirmedPairDetail?: {
+    sourcePresent: boolean;
+    valueSource: "upstream" | "fallback";
+    fallbackApplied: boolean;
+    chosenValue: string;
+  };
+}
+
+const NORMALIZATION_BUFFER_LIMIT = 200;
+let _templateDispatchNormalizations: TemplateDispatchNormalizationRecord[] = [];
+
+export function getAndClearTemplateDispatchNormalizations(): TemplateDispatchNormalizationRecord[] {
+  const records = [..._templateDispatchNormalizations];
+  _templateDispatchNormalizations = [];
+  return records;
+}
+
+export function getTemplateDispatchNormalizations(): TemplateDispatchNormalizationRecord[] {
+  return [..._templateDispatchNormalizations];
+}
+
 let _activeRemediationContext: AssemblyRemediationContext | null = null;
 let _activeDeclarationLookup: ((name: string) => boolean) | null = null;
 let _activeTargetFramework: "Windows" | "Portable" = "Windows";
@@ -2083,6 +2110,37 @@ export function resolveActivityTemplate(
   const wasNormalized = dispatchKey !== templateName;
   if (wasNormalized) {
     console.log(`[Template Dispatch] Normalized "${templateName}" → dispatchKey "${dispatchKey}"`);
+  }
+
+  const DEDICATED_TEMPLATE_REQUIRED_GUARANTEES: Record<string, string[]> = {
+    "SendSmtpMailMessage": ["Body"],
+    "GmailSendMessage": ["Body", "To", "Subject"],
+    "SendOutlookMailMessage": ["Body", "To", "Subject"],
+    "LogMessage": ["Message"],
+    "InvokeWorkflowFile": ["WorkflowFileName"],
+  };
+
+  if (wasNormalized) {
+    const guarantees = DEDICATED_TEMPLATE_REQUIRED_GUARANTEES[dispatchKey] || [];
+    if (_templateDispatchNormalizations.length < NORMALIZATION_BUFFER_LIMIT) {
+      const record: TemplateDispatchNormalizationRecord = {
+        originalTemplate: templateName,
+        normalizedDispatchKey: dispatchKey,
+        displayName: node.displayName,
+        inRequiredPropertyGuaranteeMap: guarantees.length > 0,
+        requiredPropertyGuaranteed: guarantees,
+      };
+      if (dispatchKey === "SendSmtpMailMessage") {
+        const bodyProvided = !!(props.Body && String(props.Body).trim());
+        record.confirmedPairDetail = {
+          sourcePresent: bodyProvided,
+          valueSource: bodyProvided ? "upstream" : "fallback",
+          fallbackApplied: !bodyProvided,
+          chosenValue: bodyProvided ? String(props.Body) : "str_EmailBody",
+        };
+      }
+      _templateDispatchNormalizations.push(record);
+    }
   }
 
   if (dispatchKey === "Assign") {
