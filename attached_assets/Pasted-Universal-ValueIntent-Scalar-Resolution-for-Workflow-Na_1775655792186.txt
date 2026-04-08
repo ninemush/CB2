@@ -1,0 +1,126 @@
+Universal ValueIntent Scalar Resolution for Workflow Names and Required Scalar Properties
+
+What & Why
+Recent runs suggest the deterministic emitter direction is correct, but a major remaining upstream defect is that ValueIntent-style objects are still leaking into places that require resolved scalar strings before generator dispatch.
+
+The most damaging visible example is workflow filenames, where values shaped like:
+{"type":"literal","value":"ResolveBirthdayRecipient.xaml"}
+are reaching generator paths that expect:
+ResolveBirthdayRecipient.xaml
+
+This creates phantom workflow names, broken InvokeWorkflow wiring, and unreachable-XAML defects.
+
+The same class of problem likely affects other scalar-required properties used by deterministic generators and assembly-time required-property checks, including common fields like:
+- WorkflowFileName
+- Message
+- AssetName
+- EntityType
+- other generator inputs that must be plain strings before emission
+
+This task must establish one authoritative scalar-resolution step before deterministic generator dispatch. Any property that is expected to be a scalar input for generator emission must be resolved to a plain scalar string before it reaches generator logic. If it cannot be resolved safely, it must be diagnostically blocked rather than passed through as an object or guessed.
+
+This is not a broad expression rewrite. It is a targeted pre-dispatch normalization fix for scalar-required properties.
+
+Done looks like
+- Workflow filenames no longer contain serialized ValueIntent JSON objects.
+- InvokeWorkflow generator inputs receive plain scalar WorkflowFileName values.
+- Benchmark runs no longer produce phantom .xaml names derived from serialized objects.
+- Required scalar properties such as Message, AssetName, EntityType, and WorkflowFileName are resolved to plain strings before deterministic generator dispatch where authoritative data exists.
+- Unsupported or ambiguous structured values are blocked with explicit diagnostics rather than silently stringified.
+- Unreachable workflow defects caused by malformed workflow filenames drop materially on the benchmark runs.
+
+Out of scope
+- Broad workflow contract redesign
+- Graph connectivity redesign
+- REFramework InitAllSettings structural generator work
+- Prompt engineering
+- Rewriting all expression logic
+- Silent coercion of unsupported structured values into guessed strings
+- Replacing the deterministic engine
+
+Design rules
+Scalar-before-dispatch
+If a generator input is semantically a scalar property, it must be normalized to a plain scalar before generator dispatch.
+
+No silent invention
+Do not invent filenames, messages, entity types, or asset names. If a typed object cannot be safely resolved to a scalar, emit a diagnostic and block or preserve fallback behavior already defined by the pipeline.
+
+No JSON-to-string hacks
+Do not stringify typed objects into JSON text to satisfy scalar inputs. A generator expecting a scalar must receive a true scalar, not serialized structure.
+
+Preserve valid explicit values
+If the spec already contains a valid plain scalar value, leave it unchanged.
+
+Tasks
+1. Trace scalar-required property paths before deterministic generator dispatch.
+Identify where generator inputs are read for:
+- WorkflowFileName
+- Message
+- AssetName
+- EntityType
+- other benchmark-relevant scalar-required properties
+Trace from spec normalization through adapter logic into deterministic generator arguments.
+
+2. Add a single pre-dispatch scalar resolution step.
+Before deterministic generator dispatch, resolve typed property objects for scalar-required generator inputs into plain strings when authoritative resolution is possible.
+At minimum handle:
+- {type:"literal", value:"X"}
+- {type:"variable", name:"X"} only where the generator contract truly expects a scalar string representation and existing behavior already supports that
+- any current ValueIntent forms already supported by the pipeline’s expression/value helpers
+
+3. Apply universal workflow filename canonicalization.
+Ensure workflow filenames are normalized to plain string names before any invoke generation, workflow linking, or reachability analysis.
+If a filename-like property still contains a typed object at generator dispatch time, block it diagnostically rather than emitting it raw.
+
+4. Extend the same scalar resolution to benchmark-critical required scalar properties.
+Apply the same pre-dispatch scalar resolution to:
+- LogMessage.Message
+- GetCredential.AssetName
+- QueryEntity.EntityType
+- UpdateEntity.EntityType
+- InvokeWorkflowFile.WorkflowFileName
+where these are generator inputs requiring plain scalar values.
+
+5. Add diagnostics.
+Extend an existing reporting surface to show:
+- property name
+- original value shape
+- resolved scalar value or blocked reason
+- source workflow/activity
+Keep this lightweight.
+
+6. Add focused regression tests.
+Add tests covering:
+- WorkflowFileName ValueIntent literal resolves to plain filename
+- malformed filename object is blocked, not stringified
+- Message literal ValueIntent resolves to scalar
+- AssetName literal ValueIntent resolves to scalar
+- EntityType literal ValueIntent resolves to scalar
+- plain scalar values remain unchanged
+- benchmark-style unreachable phantom filenames no longer appear
+
+Primary files to modify
+- server/workflow-tree-assembler.ts
+- server/workflow-spec-types.ts
+- server/xaml/expression-builder.ts
+- server/__tests__/pipeline-regression.test.ts
+
+Reference files
+- server/package-assembler.ts
+- server/xaml-generator.ts
+- server/uipath-quality-gate.ts
+- server/final-artifact-validation.ts
+- server/emission-gate.ts
+
+What this does not touch
+- deterministic-scaffold.ts
+- workflow-contract-integrity.ts
+- invoke-binding-canonicalizer.ts
+- graph validator logic
+- REFramework asset templates
+
+Success measure
+Benchmark runs should show a material reduction in:
+- unreachable workflows caused by malformed workflow filenames
+- missing required scalar-property defects caused by typed objects not being resolved
+- generator inputs receiving object-shaped values where scalars are required
