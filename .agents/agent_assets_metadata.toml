@@ -66,3 +66,9 @@ id = "POyCjQJC5xXd2t06qkKjg"
 uri = "file://pipeline-run-diagnostic-47058712.md"
 type = "text"
 title = "Pipeline Run Diagnostic: 47058712"
+
+[[outputs]]
+id = "cCyVenuUuz3qSTVvBoIXg"
+uri = "file://dll-truth-audit-report.md"
+type = "text"
+title = "DLL Truth Post-Implementation Audit Report"
