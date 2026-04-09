@@ -15,6 +15,7 @@ import type {
 } from "./catalog-service";
 import { PACKAGE_NAMESPACE_MAP } from "../xaml/xaml-compliance";
 import { CANONICAL_STUDIO_VERSION } from "./metadata-schemas";
+import { loadDllExtract, importDllMetadata, type DllImportPackage } from "./dll-metadata-importer";
 
 const CATALOG_VERSION = "2.0.0";
 
@@ -93,8 +94,48 @@ export interface GenerateCatalogOptions {
   preserveExisting?: boolean;
   existingCatalogPath?: string;
   metadataPath?: string;
+  dllMetadataPath?: string;
   outputPath?: string;
   studioVersion?: string;
+}
+
+const ENRICHMENT_FIELDS = [
+  "emissionApproved", "canonicalIdentity", "compositionRules",
+  "xamlExample", "isDeprecated", "preferModern", "processTypes",
+  "propertyConflicts", "propertiesComplete",
+] as const;
+
+function copyEnrichmentFromExisting(target: CatalogActivity, existing: CatalogActivity): void {
+  if (existing.emissionApproved !== undefined) target.emissionApproved = existing.emissionApproved;
+  if (existing.canonicalIdentity) target.canonicalIdentity = existing.canonicalIdentity;
+  if (existing.compositionRules) target.compositionRules = existing.compositionRules;
+  if (existing.propertyConflicts) target.propertyConflicts = existing.propertyConflicts;
+  if (existing.xamlExample) target.xamlExample = existing.xamlExample;
+  if (existing.isDeprecated !== undefined) target.isDeprecated = existing.isDeprecated;
+  if (existing.preferModern) target.preferModern = existing.preferModern;
+  if (existing.propertiesComplete) target.propertiesComplete = existing.propertiesComplete;
+  if (existing.processTypes && existing.processTypes.length > 0) target.processTypes = existing.processTypes;
+  if (existing.namespace && !target.namespace) target.namespace = existing.namespace;
+  if (existing.displayName && existing.displayName !== existing.className) target.displayName = existing.displayName;
+  target.browsable = existing.browsable;
+}
+
+function mergeDllActivityIntoApproved(existing: CatalogActivity, dllActivity: CatalogActivity): CatalogActivity {
+  const existingPropNames = new Set(existing.properties.map(p => p.name));
+  const newDllProps = dllActivity.properties.filter(p => !existingPropNames.has(p.name));
+  const merged: CatalogActivity = {
+    ...existing,
+    properties: [...existing.properties, ...newDllProps],
+  };
+  return merged;
+}
+
+function mergeDllActivityIntoNonApproved(existing: CatalogActivity, dllActivity: CatalogActivity): CatalogActivity {
+  const merged: CatalogActivity = {
+    ...dllActivity,
+  };
+  copyEnrichmentFromExisting(merged, existing);
+  return merged;
 }
 
 export function generateActivityCatalog(options: GenerateCatalogOptions = {}): ActivityCatalog {
@@ -102,6 +143,7 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
     preserveExisting = true,
     existingCatalogPath = join(process.cwd(), "catalog", "activity-catalog.json"),
     metadataPath = join(process.cwd(), "catalog", "generation-metadata.json"),
+    dllMetadataPath = join(process.cwd(), "catalog", "dll-metadata", "uipath-activity-metadata-from-dll-full.json"),
     studioVersion = CANONICAL_STUDIO_VERSION,
   } = options;
 
@@ -130,7 +172,22 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
     }
   }
 
+  let dllPackageMap = new Map<string, DllImportPackage>();
+  if (existsSync(dllMetadataPath)) {
+    try {
+      const dllExtract = loadDllExtract(dllMetadataPath);
+      const dllResult = importDllMetadata(dllExtract);
+      for (const pkg of dllResult.packages) {
+        dllPackageMap.set(pkg.packageId, pkg);
+      }
+      console.log(`[Catalog Generator] Loaded DLL metadata: ${dllResult.stats.totalPackages} packages, ${dllResult.stats.totalActivities} activities, ${dllResult.stats.totalProperties} properties (${dllResult.stats.filteredNoiseProperties} noise filtered, ${dllResult.stats.displayNamesNormalized} displayNames normalized)`);
+    } catch (e: any) {
+      console.warn(`[Catalog Generator] Failed to load DLL metadata: ${e.message}`);
+    }
+  }
+
   const packages: CatalogPackage[] = [];
+  const processedPackageIds = new Set<string>();
 
   function preserveEnrichmentFields(act: CatalogActivity): CatalogActivity {
     if (act.emissionApproved === undefined) {
@@ -139,18 +196,66 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
     return act;
   }
 
+  function mergeDllIntoExistingPackage(existingPkg: CatalogPackage, dllPkg: DllImportPackage): CatalogActivity[] {
+    const existingActivityMap = new Map<string, CatalogActivity>();
+    for (const act of existingPkg.activities) {
+      existingActivityMap.set(act.className, act);
+    }
+
+    const dllActivityMap = new Map<string, CatalogActivity>();
+    for (const act of dllPkg.activities) {
+      dllActivityMap.set(act.className, act);
+    }
+
+    const mergedActivities: CatalogActivity[] = [];
+    const processedClassNames = new Set<string>();
+
+    for (const existingAct of existingPkg.activities) {
+      const dllAct = dllActivityMap.get(existingAct.className);
+      processedClassNames.add(existingAct.className);
+
+      if (dllAct) {
+        if (existingAct.emissionApproved) {
+          mergedActivities.push(mergeDllActivityIntoApproved(existingAct, dllAct));
+        } else {
+          mergedActivities.push(mergeDllActivityIntoNonApproved(existingAct, dllAct));
+        }
+      } else {
+        mergedActivities.push(preserveEnrichmentFields(existingAct));
+      }
+    }
+
+    for (const dllAct of dllPkg.activities) {
+      if (!processedClassNames.has(dllAct.className)) {
+        mergedActivities.push({ ...dllAct, emissionApproved: false, browsable: true });
+      }
+    }
+
+    return mergedActivities;
+  }
+
   for (const [pkgId, existingPkg] of existingPackageMap) {
     const hasRegistryDef = ACTIVITY_DEFINITIONS_REGISTRY.some(r => r.packageId === pkgId);
     if (!hasRegistryDef) {
       const vInfo = resolveVersion(pkgId, metadataPackages);
+      const dllPkg = dllPackageMap.get(pkgId);
+
+      let activities: CatalogActivity[];
+      if (dllPkg) {
+        activities = mergeDllIntoExistingPackage(existingPkg, dllPkg);
+      } else {
+        activities = existingPkg.activities.map(preserveEnrichmentFields);
+      }
+
       packages.push({
         ...existingPkg,
         version: vInfo.version,
         feedStatus: vInfo.feedStatus,
         preferredVersion: vInfo.preferred,
         generationApproved: existingPkg.generationApproved ?? (vInfo.feedStatus !== "delisted"),
-        activities: existingPkg.activities.map(preserveEnrichmentFields),
+        activities,
       });
+      processedPackageIds.add(pkgId);
     }
   }
 
@@ -158,6 +263,7 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
     const vInfo = resolveVersion(regPkg.packageId, metadataPackages);
     const existingPkg = existingPackageMap.get(regPkg.packageId);
     const nsDefaults = PACKAGE_NAMESPACE_DEFAULTS[regPkg.packageId];
+    const dllPkg = dllPackageMap.get(regPkg.packageId);
 
     if (existingPkg) {
       const registryClassNames = new Set(regPkg.activities.map(a => a.className));
@@ -166,6 +272,13 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
       const existingActivityMap = new Map<string, CatalogActivity>();
       for (const act of existingPkg.activities) {
         existingActivityMap.set(act.className, act);
+      }
+
+      const dllActivityMap = new Map<string, CatalogActivity>();
+      if (dllPkg) {
+        for (const act of dllPkg.activities) {
+          dllActivityMap.set(act.className, act);
+        }
       }
 
       const registryActivities = regPkg.activities.map(a => {
@@ -180,8 +293,31 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
           if (existing.isDeprecated !== undefined) converted.isDeprecated = existing.isDeprecated;
           if (existing.preferModern && !converted.preferModern) converted.preferModern = existing.preferModern;
         }
+
+        if (dllPkg) {
+          const dllAct = dllActivityMap.get(a.className);
+          if (dllAct) {
+            const existingPropNames = new Set(converted.properties.map(p => p.name));
+            const newDllProps = dllAct.properties.filter(p => !existingPropNames.has(p.name));
+            if (newDllProps.length > 0) {
+              converted.properties = [...converted.properties, ...newDllProps];
+            }
+          }
+        }
+
         return converted;
       });
+
+      let dllOnlyActivities: CatalogActivity[] = [];
+      if (dllPkg) {
+        const allProcessedClassNames = new Set([
+          ...registryClassNames,
+          ...preservedExisting.map(a => a.className),
+        ]);
+        dllOnlyActivities = dllPkg.activities
+          .filter(a => !allProcessedClassNames.has(a.className))
+          .map(a => ({ ...a, emissionApproved: false, browsable: true }));
+      }
 
       packages.push({
         packageId: regPkg.packageId,
@@ -190,9 +326,17 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
         preferredVersion: vInfo.preferred,
         generationApproved: existingPkg.generationApproved ?? (vInfo.feedStatus !== "delisted"),
         ...(nsDefaults ? { prefix: nsDefaults.prefix, clrNamespace: nsDefaults.clrNamespace, assembly: nsDefaults.assembly } : {}),
-        activities: [...preservedExisting, ...registryActivities],
+        activities: [...preservedExisting, ...registryActivities, ...dllOnlyActivities],
       });
     } else {
+      let dllOnlyActivities: CatalogActivity[] = [];
+      if (dllPkg) {
+        const registryClassNames = new Set(regPkg.activities.map(a => a.className));
+        dllOnlyActivities = dllPkg.activities
+          .filter(a => !registryClassNames.has(a.className))
+          .map(a => ({ ...a, emissionApproved: false, browsable: true }));
+      }
+
       packages.push({
         packageId: regPkg.packageId,
         version: vInfo.version,
@@ -200,9 +344,26 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
         preferredVersion: vInfo.preferred,
         generationApproved: vInfo.feedStatus !== "delisted",
         ...(nsDefaults ? { prefix: nsDefaults.prefix, clrNamespace: nsDefaults.clrNamespace, assembly: nsDefaults.assembly } : {}),
-        activities: regPkg.activities.map(convertActivity),
+        activities: [...regPkg.activities.map(convertActivity), ...dllOnlyActivities],
       });
     }
+    processedPackageIds.add(regPkg.packageId);
+  }
+
+  for (const [dllPkgId, dllPkg] of dllPackageMap) {
+    if (processedPackageIds.has(dllPkgId)) continue;
+    const vInfo = resolveVersion(dllPkgId, metadataPackages);
+    const nsDefaults = PACKAGE_NAMESPACE_DEFAULTS[dllPkgId];
+
+    packages.push({
+      packageId: dllPkgId,
+      version: vInfo.version,
+      feedStatus: vInfo.feedStatus,
+      preferredVersion: vInfo.preferred,
+      generationApproved: false,
+      ...(nsDefaults ? { prefix: nsDefaults.prefix, clrNamespace: nsDefaults.clrNamespace, assembly: nsDefaults.assembly } : {}),
+      activities: dllPkg.activities.map(a => ({ ...a, emissionApproved: false, browsable: true })),
+    });
   }
 
   packages.sort((a, b) => {
@@ -229,7 +390,8 @@ export function generateActivityCatalog(options: GenerateCatalogOptions = {}): A
   };
 
   const totalActivities = packages.reduce((sum, p) => sum + p.activities.length, 0);
-  console.log(`[Catalog Generator] Generated catalog: ${packages.length} packages, ${totalActivities} activities, studio ${resolvedStudioVersion}`);
+  const dllOnlyCount = dllPackageMap.size - [...processedPackageIds].filter(id => dllPackageMap.has(id)).length;
+  console.log(`[Catalog Generator] Generated catalog: ${packages.length} packages, ${totalActivities} activities, studio ${resolvedStudioVersion} (${dllOnlyCount} new DLL-only packages)`);
 
   return catalog;
 }
