@@ -258,10 +258,10 @@ function checkBestPractices(xaml: string): AnalysisViolation[] {
     });
   }
 
-  const hardcodedTimeouts = /<[^>]+TimeoutMS="(?!30000)[0-9]+"/g;
+  const hardcodedTimeouts = /<[^>]+(?:TimeoutMS|Timeout)="(?!30000)[0-9]+"/g;
   while ((match = hardcodedTimeouts.exec(xaml)) !== null) {
     const lineNum = xaml.substring(0, match.index).split("\n").length;
-    const timeoutMatch = match[0].match(/TimeoutMS="([0-9]+)"/);
+    const timeoutMatch = match[0].match(/(?:TimeoutMS|Timeout)="([0-9]+)"/);
     const val = timeoutMatch ? timeoutMatch[1] : "unknown";
     if (val !== "30000") {
       violations.push({

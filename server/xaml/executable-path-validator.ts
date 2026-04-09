@@ -39,8 +39,8 @@ const HIGH_RISK_REQUIRED_OVERRIDES: Record<string, string[]> = {
   "InvokeWorkflowFile": ["WorkflowFileName"],
   "ui:SendSmtpMailMessage": ["To", "Subject", "Body", "Host", "Port"],
   "SendSmtpMailMessage": ["To", "Subject", "Body", "Host", "Port"],
-  "ui:AddQueueItem": ["QueueName", "ItemInformation"],
-  "AddQueueItem": ["QueueName", "ItemInformation"],
+  "ui:AddQueueItem": ["QueueType", "QueueName", "ItemInformation"],
+  "AddQueueItem": ["QueueType", "QueueName", "ItemInformation"],
   "ui:CreateFormTask": ["Title", "FormData", "TaskCatalog", "TaskTitle", "TaskData"],
   "CreateFormTask": ["Title", "FormData", "TaskCatalog", "TaskTitle", "TaskData"],
 };

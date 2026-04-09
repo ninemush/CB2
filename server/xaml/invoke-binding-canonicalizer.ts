@@ -113,7 +113,7 @@ const INVOKE_ACTIVITY_TYPES = [
 const INVOKE_SYSTEM_ATTRS = new Set([
   "workflowfilename", "workflowfilepath", "filename",
   "displayname", "continueonerror", "timeout", "isolated",
-  "targetfolder", "logmessage", "timeoutms",
+  "targetfolder", "logmessage", "timeoutms", "inuielement",
 ]);
 
 const PSEUDO_PROPERTY_NAMES = new Set([
@@ -396,6 +396,9 @@ const EXPRESSION_BEARING_ATTR_PATTERNS = [
   { pattern: /\bValue\s*=\s*"([^"]+)"/g, propName: "Value" },
   { pattern: /\bTo\s*=\s*"([^"]+)"/g, propName: "To" },
   { pattern: /\bText\s*=\s*"([^"]+)"/g, propName: "Text" },
+  { pattern: /\bTextString\s*=\s*"([^"]+)"/g, propName: "TextString" },
+  { pattern: /\bQueueType\s*=\s*"([^"]+)"/g, propName: "QueueType" },
+  { pattern: /\bTimeout\s*=\s*"([^"]+)"/g, propName: "Timeout" },
   { pattern: /\bExpression\s*=\s*"([^"]+)"/g, propName: "Expression" },
   { pattern: /\bException\s*=\s*"([^"]+)"/g, propName: "Exception" },
   { pattern: /\bBody\s*=\s*"([^"]+)"/g, propName: "Body" },
@@ -520,7 +523,7 @@ function scanForPlaceholderSentinels(
   workflowName: string,
   residualDefects: ResidualExpressionSerializationDefect[],
 ): void {
-  const executableAttrPattern = /\b(Message|Condition|Value|To|Text|Expression|WorkflowFileName)\s*=\s*"([^"]+)"/g;
+  const executableAttrPattern = /\b(Message|Condition|Value|To|Text|TextString|Expression|WorkflowFileName|QueueType|Timeout)\s*=\s*"([^"]+)"/g;
   let match;
   while ((match = executableAttrPattern.exec(content)) !== null) {
     const propName = match[1];
@@ -548,6 +551,7 @@ const CHILD_ELEMENT_PROPERTY_PATTERNS = [
   { parentTag: "LogMessage", propName: "Level", isTarget: false },
   { parentTag: "If", propName: "Condition", isTarget: false },
   { parentTag: "Throw", propName: "Exception", isTarget: false },
+  { parentTag: "AddQueueItem", propName: "QueueType", isTarget: false },
   { parentTag: "AddQueueItem", propName: "QueueName", isTarget: false },
   { parentTag: "AddQueueItem", propName: "ItemInformation", isTarget: false },
   { parentTag: "SendSmtpMailMessage", propName: "Subject", isTarget: false },
@@ -572,7 +576,7 @@ function getSafeReplacementForProperty(propertyName: string, isTarget: boolean):
   if (isTarget) return "Nothing";
   const lowerProp = propertyName.toLowerCase();
   if (lowerProp === "condition") return "False";
-  if (lowerProp === "message" || lowerProp === "text" || lowerProp === "subject" || lowerProp === "body" || lowerProp === "queuename") return '""';
+  if (lowerProp === "message" || lowerProp === "text" || lowerProp === "textstring" || lowerProp === "subject" || lowerProp === "body" || lowerProp === "queuename" || lowerProp === "queuetype") return '""';
   if (lowerProp === "value") return '""';
   if (lowerProp === "exception") return "Nothing";
   return "Nothing";

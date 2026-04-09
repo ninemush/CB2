@@ -1,4 +1,5 @@
 import { ACTIVITY_DEFINITIONS_REGISTRY } from "./catalog/activity-definitions";
+import { catalogService } from "./catalog/catalog-service";
 import { isSentinelValue } from "./required-property-enforcer";
 
 export type LossType = "value-loss" | "shape-loss" | null;
@@ -64,11 +65,24 @@ export function traceRequiredPropertyThroughSpec(
   const traces: RequiredPropertyTraceEntry[] = [];
   const effectiveDisplayName = displayName || strippedType;
 
-  for (const pkg of ACTIVITY_DEFINITIONS_REGISTRY) {
-    const actDef = pkg.activities.find(a => a.className === strippedType);
-    if (!actDef) continue;
+  let resolvedProperties: Array<{ name: string; required: boolean; xamlSyntax: string }> | null = null;
+  if (catalogService.isLoaded()) {
+    const schema = catalogService.getActivitySchema(strippedType);
+    if (schema) {
+      resolvedProperties = schema.activity.properties.map(p => ({ name: p.name, required: p.required, xamlSyntax: p.xamlSyntax }));
+    }
+  }
+  if (!resolvedProperties) {
+    for (const pkg of ACTIVITY_DEFINITIONS_REGISTRY) {
+      const actDef = pkg.activities.find(a => a.className === strippedType);
+      if (!actDef) continue;
+      resolvedProperties = actDef.properties.map(p => ({ name: p.name, required: p.required, xamlSyntax: p.xamlSyntax }));
+      break;
+    }
+  }
+  if (!resolvedProperties) return traces;
 
-    for (const propDef of actDef.properties) {
+  for (const propDef of resolvedProperties) {
       if (!propDef.required) continue;
 
       const specValue = specProperties[propDef.name];
@@ -105,8 +119,6 @@ export function traceRequiredPropertyThroughSpec(
         remediationHint: specPresent && !isPlaceholder ? null : `Required property "${propDef.name}" on ${strippedType} was ${isPlaceholder ? "set to a placeholder" : "not present"} in the spec`,
       });
     }
-    break;
-  }
 
   return traces;
 }
@@ -342,15 +354,28 @@ export function detectPropertyNameMismatch(
   const strippedType = activityType.replace(/^ui:/, "");
   const mismatches: Array<{ specKey: string; catalogKey: string; mismatchType: string }> = [];
 
-  for (const pkg of ACTIVITY_DEFINITIONS_REGISTRY) {
-    const actDef = pkg.activities.find(a => a.className === strippedType);
-    if (!actDef) continue;
+  let catalogRequiredNames: string[] | null = null;
+  if (catalogService.isLoaded()) {
+    const schema = catalogService.getActivitySchema(strippedType);
+    if (schema) {
+      catalogRequiredNames = schema.activity.properties
+        .filter(p => p.required)
+        .map(p => p.name);
+    }
+  }
+  if (!catalogRequiredNames) {
+    for (const pkg of ACTIVITY_DEFINITIONS_REGISTRY) {
+      const actDef = pkg.activities.find(a => a.className === strippedType);
+      if (!actDef) continue;
+      catalogRequiredNames = actDef.properties
+        .filter(p => p.required)
+        .map(p => p.name);
+      break;
+    }
+  }
+  if (!catalogRequiredNames) return mismatches;
 
-    const catalogRequiredNames = actDef.properties
-      .filter(p => p.required)
-      .map(p => p.name);
-
-    for (const catalogName of catalogRequiredNames) {
+  for (const catalogName of catalogRequiredNames) {
       const exactMatch = specPropertyKeys.includes(catalogName);
       if (!exactMatch) {
         const caseInsensitiveMatch = specPropertyKeys.find(
@@ -377,8 +402,6 @@ export function detectPropertyNameMismatch(
         }
       }
     }
-    break;
-  }
 
   return mismatches;
 }

@@ -1,4 +1,5 @@
 import { ACTIVITY_DEFINITIONS_REGISTRY, type ActivityPropertyDef, type PackageActivityDefs, type ActivityDef } from "./catalog/activity-definitions";
+import { catalogService } from "./catalog/catalog-service";
 import type { StudioProfile } from "./catalog/metadata-service";
 import type { WorkflowNode, ActivityNode } from "./workflow-spec-types";
 import { checkLoweringReceivedNormalizedOnly, markLoweringAdoptionResult, type ActivePathAdoptionTraceEntry } from "./pre-lowering-spec-normalization";
@@ -111,6 +112,12 @@ const CRITICAL_FAMILY_MAPPINGS: CriticalFamilyMapping[] = [
 ];
 
 function resolveRegistryRequiredProperties(className: string, packageId: string): string[] {
+  if (catalogService.isLoaded()) {
+    const schema = catalogService.getActivitySchema(className) || catalogService.getActivitySchema(`${packageId}:${className}`);
+    if (schema) {
+      return schema.activity.properties.filter(p => p.required).map(p => p.name);
+    }
+  }
   const pkg = ACTIVITY_DEFINITIONS_REGISTRY.find(p => p.packageId === packageId);
   if (!pkg) return [];
   const actDef = pkg.activities.find(a => a.className === className);
@@ -119,6 +126,12 @@ function resolveRegistryRequiredProperties(className: string, packageId: string)
 }
 
 function resolveRegistryChildElements(className: string, packageId: string): string[] {
+  if (catalogService.isLoaded()) {
+    const schema = catalogService.getActivitySchema(className) || catalogService.getActivitySchema(`${packageId}:${className}`);
+    if (schema) {
+      return schema.activity.properties.filter(p => p.xamlSyntax === "child-element").map(p => p.name);
+    }
+  }
   const pkg = ACTIVITY_DEFINITIONS_REGISTRY.find(p => p.packageId === packageId);
   if (!pkg) return [];
   const actDef = pkg.activities.find(a => a.className === className);
@@ -127,6 +140,12 @@ function resolveRegistryChildElements(className: string, packageId: string): str
 }
 
 function resolveConcreteType(className: string, packageId: string): string {
+  if (catalogService.isLoaded()) {
+    const schema = catalogService.getActivitySchema(className) || catalogService.getActivitySchema(`${packageId}:${className}`);
+    if (schema && schema.activity.namespace) {
+      return `${schema.activity.namespace}.${className}`;
+    }
+  }
   const pkg = ACTIVITY_DEFINITIONS_REGISTRY.find(p => p.packageId === packageId);
   if (!pkg) return `${packageId}.${className}`;
   const actDef = pkg.activities.find(a => a.className === className);
@@ -139,11 +158,21 @@ function buildContract(mapping: CriticalFamilyMapping): CriticalActivityFamilyCo
   const reqProps = resolveRegistryRequiredProperties(mapping.className, mapping.packageId);
   const childElems = resolveRegistryChildElements(mapping.className, mapping.packageId);
   const concreteType = resolveConcreteType(mapping.className, mapping.packageId);
-  const pkg = ACTIVITY_DEFINITIONS_REGISTRY.find(p => p.packageId === mapping.packageId);
-  const actDef = pkg?.activities.find(a => a.className === mapping.className);
+  let displayLabel = mapping.className;
+  if (catalogService.isLoaded()) {
+    const schema = catalogService.getActivitySchema(mapping.className);
+    if (schema) {
+      displayLabel = schema.activity.displayName || mapping.className;
+    }
+  }
+  if (displayLabel === mapping.className) {
+    const pkg = ACTIVITY_DEFINITIONS_REGISTRY.find(p => p.packageId === mapping.packageId);
+    const actDef = pkg?.activities.find(a => a.className === mapping.className);
+    if (actDef?.displayName) displayLabel = actDef.displayName;
+  }
   return {
     familyId: mapping.familyId,
-    displayLabel: actDef?.displayName || mapping.className,
+    displayLabel,
     className: mapping.className,
     concreteType,
     packageId: mapping.packageId,
@@ -156,10 +185,13 @@ function buildContract(mapping: CriticalFamilyMapping): CriticalActivityFamilyCo
 }
 
 let _cachedContracts: CriticalActivityFamilyContract[] | null = null;
+let _contractsCatalogGeneration = -1;
 
 function getCriticalContracts(): CriticalActivityFamilyContract[] {
-  if (!_cachedContracts) {
+  const currentGen = catalogService.isLoaded() ? catalogService.getLoadGeneration() : -1;
+  if (!_cachedContracts || _contractsCatalogGeneration !== currentGen) {
     _cachedContracts = CRITICAL_FAMILY_MAPPINGS.map(buildContract);
+    _contractsCatalogGeneration = currentGen;
   }
   return _cachedContracts;
 }
@@ -315,6 +347,25 @@ function detectPseudoRepresentations(properties: Record<string, any>): string[] 
 }
 
 function getRegistryPropertyDef(className: string, packageId: string, propName: string): ActivityPropertyDef | null {
+  if (catalogService.isLoaded()) {
+    const schema = catalogService.getActivitySchema(className) || catalogService.getActivitySchema(`${packageId}:${className}`);
+    if (schema) {
+      const catalogProp = schema.activity.properties.find(p => p.name === propName);
+      if (catalogProp) {
+        return {
+          name: catalogProp.name,
+          direction: catalogProp.direction,
+          clrType: catalogProp.clrType,
+          xamlSyntax: catalogProp.xamlSyntax,
+          argumentWrapper: catalogProp.argumentWrapper,
+          typeArguments: catalogProp.typeArguments,
+          required: catalogProp.required,
+          ...(catalogProp.validValues ? { validValues: catalogProp.validValues } : {}),
+          ...(catalogProp.default !== undefined ? { default: catalogProp.default } : {}),
+        };
+      }
+    }
+  }
   const pkg = ACTIVITY_DEFINITIONS_REGISTRY.find(p => p.packageId === packageId);
   if (!pkg) return null;
   const actDef = pkg.activities.find(a => a.className === className);

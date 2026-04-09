@@ -3564,22 +3564,23 @@ function sweepXmlForResidualJsonIntents(xml: string): string {
 }
 
 const ACTIVITIES_REQUIRING_LEGACY_TEMPLATE = new Set([
-  "Assign",
-  "SendSmtpMailMessage",
-  "SendOutlookMailMessage",
-  "ExcelApplicationScope",
-  "UseExcel",
-  "NApplicationCard",
-  "UseApplicationBrowser",
-  "UseBrowser",
-  "UseApplication",
-  "OpenBrowser",
-  "AttachBrowser",
-  "AttachWindow",
+  "Assign",               // System.Activities base type — requires runtime type inference (To/Value generic typing)
+  "SendSmtpMailMessage",  // Complex multi-property mail with child-element body — legacy template handles MIME structure
+  "SendOutlookMailMessage", // Same as SendSmtpMailMessage — legacy template handles Outlook-specific property shape
+  "ExcelApplicationScope",  // Scope activity requiring nested Body child — modern generator lacks scope nesting support
+  "UseExcel",             // Modern Excel scope — still requires legacy Body child nesting like ExcelApplicationScope
+  "NApplicationCard",     // UI Automation scope — requires Target/Selector child-element nesting not in modern generator
+  "UseApplicationBrowser", // Browser scope — requires nested Body and Target child elements
+  "UseBrowser",           // Legacy browser scope — same nesting requirements as UseApplicationBrowser
+  "UseApplication",       // Application scope — requires nested Body child element
+  "OpenBrowser",          // Legacy browser open — requires nested Body child element for contained activities
+  "AttachBrowser",        // Legacy browser attach — same body-nesting requirements
+  "AttachWindow",         // Legacy window attach — same body-nesting requirements
 ]);
 
 const STRUCTURED_PROPERTY_KEYS: Record<string, Set<string>> = {
   "InvokeWorkflowFile": new Set(["Arguments", "arguments"]),
+  // No DLL-renamed properties affect structured keys — QueueType/Timeout/TextString/InUiElement are all scalar attributes
 };
 
 function resolveValueIntentToString(vi: { type: string; name?: string; value?: string; expression?: string; baseUrl?: string }): string {
@@ -4728,12 +4729,15 @@ const SCALAR_REQUIRED_PROPERTIES = new Set([
   "AssetName", "assetName",
   "EntityType", "entityType",
   "QueueName", "queueName",
+  "QueueType", "queueType",
   "ProcessName", "processName",
   "FileName", "fileName",
   "DisplayName", "displayName",
   "To", "Subject", "Body",
   "Level", "level",
   "Text", "text",
+  "TextString", "textString",
+  "Timeout", "timeout",
 ]);
 
 function resolveScalarRequiredProperty(

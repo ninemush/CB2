@@ -172,8 +172,8 @@ const WORKFLOW_FILENAME_ATTRS = [
 
 const INVOKE_SYSTEM_ATTRS = new Set([
   "workflowfilename", "workflowfilepath", "filename",
-  "displayname", "continueonerror", "timeout", "isolated",
-  "targetfolder", "logmessage",
+  "displayname", "continueonerror", "timeout", "timeoutms", "isolated",
+  "targetfolder", "logmessage", "inuielement",
 ]);
 
 const NON_CONTRACT_EXCLUSION_PATTERNS: Array<{ pattern: RegExp; category: ExclusionCategory; reason: string }> = [
