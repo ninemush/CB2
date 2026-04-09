@@ -90,6 +90,8 @@ export function areTypesCompatible(sourceType: string, targetType: string): bool
 
   if (src === "UiPath.Core.QueueItem" && tgt === "UiPath.Core.QueueItemData") return true;
 
+  if (isUiPathEnumStringCompatible(src, tgt)) return true;
+
   return false;
 }
 
@@ -149,6 +151,26 @@ const CONVERSION_MAP: Record<string, Record<string, ConversionInfo>> = {
     "System.Collections.IEnumerable": { kind: "unrepairable", detail: "Object variable is bound to a property expecting IEnumerable — retype the variable to the correct concrete collection type (e.g., List(Of String), DataTable) based on the upstream activity output" },
   },
 };
+
+const UIPATH_ENUM_STRING_COMPATIBLE: Record<string, string[]> = {
+  "UiPath.UIAutomationNext.Enums.NClickType": ["CLICK_SINGLE", "CLICK_DOUBLE", "CLICK_DOWN", "CLICK_UP"],
+  "UiPath.UIAutomationNext.Enums.NMouseButton": ["BTN_LEFT", "BTN_RIGHT", "BTN_MIDDLE"],
+  "UiPath.Core.Activities.LogLevel": ["Info", "Warn", "Error", "Fatal", "Trace"],
+  "UiPath.Core.ProcessingStatus": ["Successful", "Failed", "InProgress"],
+  "UiPath.Core.Activities.ErrorType": ["Business", "Application"],
+  "UiPath.Core.Activities.PathType": ["File", "Directory"],
+  "UiPath.Core.QueueItemPriority": ["Low", "Normal", "High"],
+  "CredentialManagement.CredentialType": ["Generic", "DomainPassword", "DomainCertificate"],
+  "UiPath.Cryptography.SymmetricAlgorithms": ["AES", "DES", "RC2", "Rijndael", "TripleDES"],
+  "UiPath.Cryptography.KeyedHashAlgorithms": ["HMACMD5", "HMACRIPEMD160", "HMACSHA1", "HMACSHA256", "HMACSHA384", "HMACSHA512", "MACTripleDES"],
+  "UiPath.Mail.EOrderByDate": ["NewestFirst", "OldestFirst"],
+};
+
+export function isUiPathEnumStringCompatible(sourceType: string, targetType: string): boolean {
+  if (sourceType === "System.String" && UIPATH_ENUM_STRING_COMPATIBLE[targetType]) return true;
+  if (targetType === "System.String" && UIPATH_ENUM_STRING_COMPATIBLE[sourceType]) return true;
+  return false;
+}
 
 export function getConversion(sourceType: string, targetType: string): ConversionInfo | null {
   const src = normalizeClrType(sourceType);
